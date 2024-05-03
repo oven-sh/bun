@@ -1,12 +1,12 @@
-// @known-failing-on-windows: 1 failing
 import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
+import { join } from "path";
 import { bunEnv, bunExe } from "harness";
 
 test("reportError", () => {
   const cwd = import.meta.dir;
   const { stderr } = spawnSync({
-    cmd: [bunExe(), new URL("./reportError.ts", import.meta.url).pathname],
+    cmd: [bunExe(), join(import.meta.dir, "reportError.ts")],
     cwd,
     env: {
       ...bunEnv,
@@ -14,6 +14,9 @@ test("reportError", () => {
       BUN_JSC_showPrivateScriptsInStackTraces: "0",
     },
   });
-  const output = stderr.toString().replaceAll(cwd, "");
+  let output = stderr.toString().replaceAll(cwd, "").replaceAll("\\", "/");
+  // remove bun version from output
+  output = output.split("\n").slice(0, -2).join("\n");
+
   expect(output).toMatchSnapshot();
 });

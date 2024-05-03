@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 import { tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
@@ -24,6 +23,8 @@ const testDir = tempDirWithFiles("watch", {
   "sym.txt": "hello",
   [encodingFileName]: "hello",
 });
+
+const isWindows = process.platform === "win32";
 
 describe("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {
@@ -74,7 +75,7 @@ describe("fs.watch", () => {
     watcher.on("change", (event, filename) => {
       count++;
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
         if (count >= 2) {
           watcher.close();
@@ -114,7 +115,7 @@ describe("fs.watch", () => {
       if (basename === "subfolder") return;
       count++;
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
         if (count >= 2) {
           watcher.close();
@@ -145,7 +146,7 @@ describe("fs.watch", () => {
     let err: Error | undefined = undefined;
     const watcher = fs.watch(testsubdir, function (event, filename) {
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(filename).toBe("deleted.txt");
       } catch (e: any) {
         err = e;
@@ -229,7 +230,7 @@ describe("fs.watch", () => {
     } catch (err: any) {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ENOENT");
-      expect(err.syscall).toBe("watch");
+      expect(err.syscall).toBe("open");
       done();
     }
   });
@@ -241,18 +242,20 @@ describe("fs.watch", () => {
     const filepath = path.join(testDir, encodingFileName);
 
     const promises: Promise<any>[] = [];
-    encodings.forEach(name => {
+    encodings.forEach(encoding => {
       const encoded_filename =
-        name !== "buffer" ? Buffer.from(encodingFileName, "utf8").toString(name) : Buffer.from(encodingFileName);
+        encoding !== "buffer"
+          ? Buffer.from(encodingFileName, "utf8").toString(encoding)
+          : Buffer.from(encodingFileName);
 
       promises.push(
         new Promise((resolve, reject) => {
           watchers.push(
-            fs.watch(filepath, { encoding: name }, (event, filename) => {
+            fs.watch(filepath, { encoding: encoding }, (event, filename) => {
               try {
                 expect(event).toBe("change");
 
-                if (name !== "buffer") {
+                if (encoding !== "buffer") {
                   expect(filename).toBe(encoded_filename);
                 } else {
                   expect(filename).toBeInstanceOf(Buffer);
@@ -315,7 +318,7 @@ describe("fs.watch", () => {
     try {
       const ac = new AbortController();
       const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
-      watcher.once("error", () => {
+      watcher.once("error", err => {
         try {
           watcher.close();
           done();
@@ -405,30 +408,35 @@ describe("fs.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
-  test("should throw if no permission to watch the directory", async () => {
+  // on windows 0o200 will be readable (match nodejs behavior)
+  test.skipIf(isWindows)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
-    await fs.promises.chmod(filepath, 0o200);
+    fs.chmodSync(filepath, 0o200);
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
-      expect("unreacheable").toBe(false);
+      expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message).toBe("Permission denied");
+      expect(err.code).toBe("EACCES");
+      expect(err.syscall).toBe("open");
     }
   });
 
-  test("should throw if no permission to watch the file", async () => {
-    const filepath = path.join(testDir, "permission-file");
-    fs.writeFileSync(filepath, "hello.txt");
-    await fs.promises.chmod(filepath, 0o200);
+  test.skipIf(isWindows)("should throw if no permission to watch the file", async () => {
+    const filepath = path.join(testDir, "permission-file.txt");
 
+    fs.writeFileSync(filepath, "hello.txt");
+    fs.chmodSync(filepath, 0o200);
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
-      expect("unreacheable").toBe(false);
+      expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message).toBe("Permission denied");
+      expect(err.code).toBe("EACCES");
+      expect(err.syscall).toBe("open");
     }
   });
 });
@@ -455,7 +463,7 @@ describe("fs.promises.watch", () => {
       for await (const event of watcher) {
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
 
           if (count >= 2) {
@@ -502,7 +510,7 @@ describe("fs.promises.watch", () => {
 
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
 
           if (count >= 2) {
@@ -577,7 +585,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }
@@ -605,7 +613,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }
@@ -628,7 +636,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch (e: any) {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }

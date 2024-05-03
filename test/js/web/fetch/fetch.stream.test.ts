@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { Socket, Server, TCPSocketListener } from "bun";
 import { readFileSync } from "fs";
 import { join } from "path";

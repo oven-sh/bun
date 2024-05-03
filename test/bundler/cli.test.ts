@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { bunEnv, bunExe } from "harness";
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
@@ -52,5 +51,35 @@ describe("bun build", () => {
       testExec(outfile);
       fs.rmSync(baseDir, { recursive: true, force: true });
     }
+  });
+
+  test("works with utf8 bom", () => {
+    const tmp = fs.mkdtempSync(path.join(tmpdir(), "bun-build-utf8-bom-"));
+    const src = path.join(tmp, "index.js");
+    fs.writeFileSync(src, '\ufeffconsole.log("hello world");', { encoding: "utf8" });
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "build", src],
+      env: bunEnv,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("__dirname and __filename are printed correctly", () => {
+    const baseDir = `${tmpdir()}/bun-build-dirname-filename-${Date.now()}`;
+    fs.mkdirSync(baseDir, { recursive: true });
+    fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
+    fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--compile", "--outfile", path.join(baseDir, "exe.exe")],
+      env: bunEnv,
+      cwd: baseDir,
+    });
+    expect(exitCode).toBe(0);
+
+    const { stdout, stderr } = Bun.spawnSync({
+      cmd: [path.join(baseDir, "exe.exe")],
+    });
+    expect(stdout.toString()).toContain(path.join(baseDir, "我") + "\n");
+    expect(stdout.toString()).toContain(path.join(baseDir, "我", "我.ts") + "\n");
   });
 });

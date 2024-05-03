@@ -3,8 +3,8 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
-const JSC = @import("root").bun.JSC;
+const HTTPClient = bun.http;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
@@ -12,12 +12,12 @@ const FetchHeaders = JSC.FetchHeaders;
 const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -37,9 +37,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
 const AnyBlob = JSC.WebCore.AnyBlob;
@@ -71,7 +71,7 @@ pub const Request = struct {
     upgrader: ?*anyopaque = null,
 
     // We must report a consistent value for this
-    reported_estimated_size: ?u63 = null,
+    reported_estimated_size: usize = 0,
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
@@ -128,10 +128,16 @@ pub const Request = struct {
     }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
-        return this.reported_estimated_size orelse brk: {
-            this.reported_estimated_size = @as(u63, @truncate(this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request)));
-            break :brk this.reported_estimated_size.?;
-        };
+        return this.reported_estimated_size;
+    }
+
+    pub fn calculateEstimatedByteSize(this: *Request) void {
+        this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
+        this.calculateEstimatedByteSize();
+        return Request.toJSUnchecked(globalObject, this);
     }
 
     pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -174,7 +180,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable) |stream| {
+                if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -366,7 +372,7 @@ pub const Request = struct {
                     });
 
                     if (comptime Environment.allow_assert) {
-                        std.debug.assert(this.sizeOfURL() == url_bytelength);
+                        bun.assert(this.sizeOfURL() == url_bytelength);
                     }
 
                     if (url_bytelength < 128) {
@@ -378,7 +384,7 @@ pub const Request = struct {
                         }) catch @panic("Unexpected error while printing URL");
 
                         if (comptime Environment.allow_assert) {
-                            std.debug.assert(this.sizeOfURL() == url.len);
+                            bun.assert(this.sizeOfURL() == url.len);
                         }
 
                         var href = bun.JSC.URL.hrefFromString(bun.String.fromBytes(url));
@@ -391,7 +397,7 @@ pub const Request = struct {
                             }
                         } else {
                             // TODO: what is the right thing to do for invalid URLS?
-                            this.url = bun.String.create(url);
+                            this.url = bun.String.createUTF8(url);
                         }
 
                         return;
@@ -414,7 +420,7 @@ pub const Request = struct {
                             req_url,
                         }) catch bun.outOfMemory();
                         defer bun.default_allocator.free(temp_url);
-                        this.url = bun.String.create(temp_url);
+                        this.url = bun.String.createUTF8(temp_url);
                     }
 
                     const href = bun.JSC.URL.hrefFromString(this.url);
@@ -428,9 +434,9 @@ pub const Request = struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.sizeOfURL() == req_url.len);
+                bun.assert(this.sizeOfURL() == req_url.len);
             }
-            this.url = bun.String.create(req_url);
+            this.url = bun.String.createUTF8(req_url);
         }
     }
 
@@ -487,7 +493,7 @@ pub const Request = struct {
                 _ = req.body.unref();
                 return null;
             };
-            req.url = str.dupeRef();
+            req.url = str;
 
             if (!req.url.isEmpty())
                 fields.insert(.url);
@@ -512,7 +518,7 @@ pub const Request = struct {
             const value_type = value.jsType();
             const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
             if (value_type == .DOMWrapper) {
-                if (value.as(Request)) |request| {
+                if (value.asDirect(Request)) |request| {
                     if (values_to_try.len == 1) {
                         request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
                         return req;
@@ -541,7 +547,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.as(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(JSC.WebCore.Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);
@@ -588,7 +594,7 @@ pub const Request = struct {
 
             if (!fields.contains(.url)) {
                 if (value.fastGet(globalThis, .url)) |url| {
-                    req.url = bun.String.fromJS(url, globalThis).dupeRef();
+                    req.url = bun.String.fromJS(url, globalThis);
                     if (!req.url.isEmpty())
                         fields.insert(.url);
 
@@ -601,7 +607,7 @@ pub const Request = struct {
                         _ = req.body.unref();
                         return null;
                     };
-                    req.url = str.dupeRef();
+                    req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
@@ -679,6 +685,8 @@ pub const Request = struct {
         {
             req.headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
         }
+
+        req.calculateEstimatedByteSize();
 
         return req;
     }

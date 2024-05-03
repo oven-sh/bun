@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "ZigGlobalObject.h"
+
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
@@ -178,7 +180,7 @@ public:
         Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(&globalObject);
         Vector<BunInspectorConnection*, 8> connections;
         {
-            WTF::LockHolder locker(inspectorConnectionsLock);
+            Locker<Lock> locker(inspectorConnectionsLock);
             connections.appendVector(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
         }
 
@@ -234,7 +236,7 @@ public:
         WTF::Vector<WTF::String, 12> messages;
 
         {
-            WTF::LockHolder locker(jsThreadMessagesLock);
+            Locker<Lock> locker(jsThreadMessagesLock);
             this->jsThreadMessages.swap(messages);
         }
 
@@ -274,7 +276,7 @@ public:
         WTF::Vector<WTF::String, 12> messages;
 
         {
-            WTF::LockHolder locker(debuggerThreadMessagesLock);
+            Locker<Lock> locker(debuggerThreadMessagesLock);
             this->debuggerThreadMessages.swap(messages);
         }
 
@@ -295,7 +297,7 @@ public:
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
     {
         {
-            WTF::LockHolder locker(debuggerThreadMessagesLock);
+            Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
         }
 
@@ -309,7 +311,7 @@ public:
     void sendMessageToInspectorFromDebuggerThread(const WTF::String& inputMessage)
     {
         {
-            WTF::LockHolder locker(jsThreadMessagesLock);
+            Locker<Lock> locker(jsThreadMessagesLock);
             jsThreadMessages.append(inputMessage);
         }
 
@@ -430,7 +432,7 @@ const JSC::ClassInfo JSBunInspectorConnection::s_info = { "BunInspectorConnectio
 extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
 {
     {
-        WTF::LockHolder locker(inspectorConnectionsLock);
+        Locker<Lock> locker(inspectorConnectionsLock);
         if (inspectorConnections == nullptr) {
             inspectorConnections = new WTF::HashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>();
         }
@@ -472,7 +474,7 @@ extern "C" void BunDebugger__willHotReload()
     }
 
     debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext& context) {
-        WTF::LockHolder locker(inspectorConnectionsLock);
+        Locker<Lock> locker(inspectorConnectionsLock);
         for (auto& connections : *inspectorConnections) {
             for (auto* connection : connections.value) {
                 connection->sendMessageToFrontend("{\"method\":\"Bun.canReload\"}"_s);
@@ -500,7 +502,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         targetContext->jsGlobalObject(), shouldRef);
 
     {
-        WTF::LockHolder locker(inspectorConnectionsLock);
+        Locker<Lock> locker(inspectorConnectionsLock);
         auto connections = inspectorConnections->get(targetContext->identifier());
         connections.append(connection);
         inspectorConnections->set(targetContext->identifier(), connections);
@@ -540,7 +542,6 @@ enum class AsyncCallTypeUint8 : uint8_t {
 
 static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTypeUint8 callType)
 {
-    Inspector::InspectorDebuggerAgent::AsyncCallType type;
     switch (callType) {
     case AsyncCallTypeUint8::DOMTimer:
         return Inspector::InspectorDebuggerAgent::AsyncCallType::DOMTimer;

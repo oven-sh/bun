@@ -65,7 +65,7 @@ pub const BrotliReaderArrayList = struct {
         if (options.params.DISABLE_RING_BUFFER_REALLOCATION)
             _ = brotli.setParameter(c.BrotliDecoderParameter.DISABLE_RING_BUFFER_REALLOCATION, 1);
 
-        std.debug.assert(list.items.ptr != input.ptr);
+        bun.assert(list.items.ptr != input.ptr);
 
         return BrotliReaderArrayList.new(
             .{
@@ -91,7 +91,7 @@ pub const BrotliReaderArrayList = struct {
             return;
         }
 
-        std.debug.assert(this.list.items.ptr != this.input.ptr);
+        bun.assert(this.list.items.ptr != this.input.ptr);
 
         while (this.state == State.Uninitialized or this.state == State.Inflating) {
             var unused_capacity = this.list.unusedCapacitySlice();
@@ -101,7 +101,7 @@ pub const BrotliReaderArrayList = struct {
                 unused_capacity = this.list.unusedCapacitySlice();
             }
 
-            std.debug.assert(unused_capacity.len > 0);
+            bun.assert(unused_capacity.len > 0);
 
             var next_in = this.input[this.total_in..];
 
@@ -126,7 +126,7 @@ pub const BrotliReaderArrayList = struct {
             switch (result) {
                 .success => {
                     if (comptime bun.Environment.allow_assert) {
-                        std.debug.assert(this.brotli.isFinished());
+                        bun.assert(this.brotli.isFinished());
                     }
 
                     this.end();
@@ -143,6 +143,9 @@ pub const BrotliReaderArrayList = struct {
                 },
 
                 .needs_more_input => {
+                    if (in_remaining > 0) {
+                        @panic("Brotli wants more data");
+                    }
                     this.state = .Inflating;
                     if (is_done) {
                         this.state = .Error;

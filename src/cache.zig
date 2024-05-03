@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const js_ast = bun.JSAst;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
 const options = @import("./options.zig");
@@ -169,26 +169,27 @@ pub const Fs = struct {
         var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else undefined;
 
         if (_file_handle == null) {
-            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd.int() > 0) {
-                file_handle = std.fs.Dir.openFile(dirname_fd.asDir(), std.fs.path.basename(path), .{ .mode = .read_only }) catch |err| brk: {
+            if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd != .zero) {
+                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), std.os.O.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
-                        error.FileNotFound => {
-                            const handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+                        error.ENOENT => {
+                            const handle = try bun.openFile(path, .{ .mode = .read_only });
                             Output.prettyErrorln(
-                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {d}<r>. You don't need to do anything, but this indicates a bug.",
+                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
                             );
-                            break :brk handle;
+                            break :brk bun.toFD(handle.handle);
                         },
                         else => return err,
                     }
-                };
+                }).asFile();
             } else {
-                file_handle = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
+                file_handle = try bun.openFile(path, .{ .mode = .read_only });
             }
         }
 
-        debug("openat({d}, {s}) = {d}", .{ dirname_fd, path, file_handle.handle });
+        if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
+            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.toFD(file_handle.handle) });
 
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
@@ -311,6 +312,10 @@ pub const Json = struct {
         }
 
         return try parse(cache, log, source, allocator, json_parser.ParseJSON);
+    }
+
+    pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
+        return try parse(cache, log, source, allocator, json_parser.ParseTSConfig);
     }
 
     pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {

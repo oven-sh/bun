@@ -1,7 +1,7 @@
 /// This file is mostly the API schema but with all the options normalized.
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Fs = @import("fs.zig");
 
 const resolver = @import("./resolver/resolver.zig");
@@ -23,14 +23,14 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const WriteDestination = enum {
     stdout,
@@ -81,6 +81,7 @@ pub const ExternalModules = struct {
     node_modules: std.BufSet = undefined,
     abs_paths: std.BufSet = undefined,
     patterns: []const WildcardPattern = undefined,
+
     pub const WildcardPattern = struct {
         prefix: string,
         suffix: string,
@@ -579,13 +580,11 @@ pub const Target = enum {
         });
         array.set(Target.bun, &[_]string{
             "bun",
-            "worker",
             "node",
         });
         array.set(Target.bun_macro, &[_]string{
             "macro",
             "bun",
-            "worker",
             "node",
         });
 
@@ -649,12 +648,25 @@ pub const Loader = enum(u8) {
     base64,
     dataurl,
     text,
+    bunsh,
+    sqlite,
+    sqlite_embedded,
+
+    pub inline fn isSQLite(this: Loader) bool {
+        return switch (this) {
+            .sqlite, .sqlite_embedded => true,
+            else => false,
+        };
+    }
 
     pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
             // TODO: CSS
             .css,
+            .napi,
+            .sqlite,
+            .sqlite_embedded,
             => true,
             else => false,
         };
@@ -681,7 +693,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm => true,
+            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -700,6 +712,7 @@ pub const Loader = enum(u8) {
         map.set(Loader.wasm, "input.wasm");
         map.set(Loader.napi, "input.node");
         map.set(Loader.text, "input.txt");
+        map.set(Loader.bunsh, "input.sh");
         break :brk map;
     };
 
@@ -720,7 +733,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
+            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{}, global, exception);
             return null;
         };
     }
@@ -744,6 +757,9 @@ pub const Loader = enum(u8) {
         .{ "base64", Loader.base64 },
         .{ "txt", Loader.text },
         .{ "text", Loader.text },
+        .{ "sh", Loader.bunsh },
+        .{ "sqlite", Loader.sqlite },
+        .{ "sqlite_embedded", Loader.sqlite_embedded },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -765,6 +781,8 @@ pub const Loader = enum(u8) {
         .{ "base64", Api.Loader.base64 },
         .{ "txt", Api.Loader.text },
         .{ "text", Api.Loader.text },
+        .{ "sh", Api.Loader.file },
+        .{ "sqlite", Api.Loader.sqlite },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -790,7 +808,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
-            .file => .file,
+            .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
@@ -798,11 +816,13 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .sqlite_embedded, .sqlite => .sqlite,
         };
     }
 
     pub fn fromAPI(loader: Api.Loader) Loader {
         return switch (loader) {
+            ._none => .file,
             .jsx => .jsx,
             .js => .js,
             .ts => .ts,
@@ -816,7 +836,8 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
-            else => .file,
+            .sqlite => .sqlite,
+            _ => .file,
         };
     }
 
@@ -853,7 +874,7 @@ pub const Loader = enum(u8) {
     }
 };
 
-pub const defaultLoaders = ComptimeStringMap(Loader, .{
+const default_loaders_posix = .{
     .{ ".jsx", Loader.jsx },
     .{ ".json", Loader.json },
     .{ ".js", Loader.jsx },
@@ -873,7 +894,16 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
     .{ ".node", Loader.napi },
     .{ ".txt", Loader.text },
     .{ ".text", Loader.text },
-});
+};
+const default_loaders_win32 = default_loaders_posix ++ .{
+    .{ ".sh", Loader.bunsh },
+};
+
+const default_loaders = if (Environment.isWindows) default_loaders_win32 else default_loaders_posix;
+pub const defaultLoaders = ComptimeStringMap(
+    Loader,
+    default_loaders,
+);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
@@ -909,6 +939,18 @@ pub const ESMConditions = struct {
             .import = import_condition_map,
             .require = require_condition_map,
         };
+    }
+
+    pub fn appendSlice(self: *ESMConditions, conditions: []const string) !void {
+        try self.default.ensureUnusedCapacity(conditions.len);
+        try self.import.ensureUnusedCapacity(conditions.len);
+        try self.require.ensureUnusedCapacity(conditions.len);
+
+        for (conditions) |condition| {
+            self.default.putAssumeCapacityNoClobber(condition, {});
+            self.import.putAssumeCapacityNoClobber(condition, {});
+            self.require.putAssumeCapacityNoClobber(condition, {});
+        }
     }
 };
 
@@ -1146,7 +1188,7 @@ pub fn definesFromTransformOptions(
         const framework = framework_env orelse break :load_env;
 
         if (Environment.allow_assert) {
-            std.debug.assert(framework.behavior != ._none);
+            bun.assert(framework.behavior != ._none);
         }
 
         behavior = framework.behavior;
@@ -1637,8 +1679,8 @@ pub const BundleOptions = struct {
             .transform_options = transform,
         };
 
-        Analytics.Features.define = Analytics.Features.define or transform.define != null;
-        Analytics.Features.loaders = Analytics.Features.loaders or transform.loaders != null;
+        Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
+        Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;
@@ -1662,6 +1704,10 @@ pub const BundleOptions = struct {
         }
 
         opts.conditions = try ESMConditions.init(allocator, Target.DefaultConditions.get(opts.target));
+
+        if (transform.conditions.len > 0) {
+            opts.conditions.appendSlice(transform.conditions) catch bun.outOfMemory();
+        }
 
         switch (opts.target) {
             .node => {
@@ -1714,13 +1760,10 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.framework = Analytics.Features.framework or opts.framework != null;
-        Analytics.Features.filesystem_router = Analytics.Features.filesystem_router or opts.routes.routes_enabled;
-        Analytics.Features.origin = Analytics.Features.origin or transform.origin != null;
-        Analytics.Features.public_folder = Analytics.Features.public_folder or opts.routes.static_dir_enabled;
-        Analytics.Features.macros = Analytics.Features.macros or opts.target == .bun_macro;
-        Analytics.Features.external = Analytics.Features.external or transform.external.len > 0;
-        Analytics.Features.single_page_app_routing = Analytics.Features.single_page_app_routing or opts.routes.single_page_app_routing;
+        Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
+        Analytics.Features.origin += @as(usize, @intFromBool(opts.origin.href.len > 0));
+        Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
+        Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
     }
 };
@@ -1979,12 +2022,11 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(bun.fdcast(file.value.move.dir), bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), bun.fdcast(dir), bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
+        try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        var dir_obj = std.fs.Dir{ .fd = bun.fdcast(dir) };
-        const file_out = (try dir_obj.createFile(rel_path, .{}));
+        const file_out = (try dir.asDir().createFile(rel_path, .{}));
 
         const fd_out = file_out.handle;
         var do_close = false;
@@ -2020,7 +2062,7 @@ pub const OutputFile = struct {
             .noop => JSC.JSValue.undefined,
             .copy => |copy| brk: {
                 const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd.int() != 0)
+                    if (copy.fd != .zero)
                         JSC.Node.PathOrFileDescriptor{
                             .fd = copy.fd,
                         }
@@ -2263,7 +2305,7 @@ pub const EntryPoint = struct {
     }
 
     fn normalizedPath(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string) !string {
-        std.debug.assert(std.fs.path.isAbsolute(this.path));
+        bun.assert(std.fs.path.isAbsolute(this.path));
         var str = this.path;
         if (strings.indexOf(str, toplevel_path)) |top| {
             str = str[top + toplevel_path.len ..];
@@ -2566,10 +2608,24 @@ pub const PathTemplate = struct {
         return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
     }
 
+    inline fn writeReplacingSlashesOnWindows(w: anytype, slice: []const u8) !void {
+        if (Environment.isWindows) {
+            var remain = slice;
+            while (strings.indexOfChar(remain, '/')) |i| {
+                try w.writeAll(remain[0..i]);
+                try w.writeByte('\\');
+                remain = remain[i + 1 ..];
+            }
+            try w.writeAll(remain);
+        } else {
+            try w.writeAll(slice);
+        }
+    }
+
     pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
-            try writer.writeAll(remain[0..j]);
+            try writeReplacingSlashesOnWindows(writer, remain[0..j]);
             remain = remain[j + 1 ..];
             if (remain.len == 0) {
                 // TODO: throw error
@@ -2588,7 +2644,7 @@ pub const PathTemplate = struct {
 
                 if (count == 0) {
                     end_len = @intFromPtr(c) - @intFromPtr(remain.ptr);
-                    std.debug.assert(end_len <= remain.len);
+                    bun.assert(end_len <= remain.len);
                     break;
                 }
             }
@@ -2596,15 +2652,15 @@ pub const PathTemplate = struct {
             const placeholder = remain[0..end_len];
 
             const field = PathTemplate.Placeholder.map.get(placeholder) orelse {
-                try writer.writeAll(placeholder);
+                try writeReplacingSlashesOnWindows(writer, placeholder);
                 remain = remain[end_len..];
                 continue;
             };
 
             switch (field) {
-                .dir => try writer.writeAll(if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
-                .name => try writer.writeAll(self.placeholder.name),
-                .ext => try writer.writeAll(self.placeholder.ext),
+                .dir => try writeReplacingSlashesOnWindows(writer, if (self.placeholder.dir.len > 0) self.placeholder.dir else "."),
+                .name => try writeReplacingSlashesOnWindows(writer, self.placeholder.name),
+                .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
                         try writer.print("{any}", .{(hashFormatter(hash))});
@@ -2614,7 +2670,7 @@ pub const PathTemplate = struct {
             remain = remain[end_len + 1 ..];
         }
 
-        try writer.writeAll(remain);
+        try writeReplacingSlashesOnWindows(writer, remain);
     }
 
     pub const hashFormatter = bun.fmt.hexIntLower;

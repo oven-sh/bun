@@ -20,25 +20,12 @@ namespace WebCore {
 using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro(AbortSignal) \
-    macro(Buffer) \
-    macro(Bun) \
-    macro(Loader) \
-    macro(ReadableByteStreamController) \
-    macro(ReadableStream) \
-    macro(ReadableStreamBYOBReader) \
-    macro(ReadableStreamBYOBRequest) \
-    macro(ReadableStreamDefaultController) \
-    macro(ReadableStreamDefaultReader) \
-    macro(TransformStream) \
-    macro(TransformStreamDefaultController) \
-    macro(WritableStream) \
-    macro(WritableStreamDefaultController) \
-    macro(WritableStreamDefaultWriter) \
     macro(__esModule) \
     macro(_events) \
     macro(abortAlgorithm) \
+    macro(AbortSignal) \
     macro(abortSteps) \
+    macro(addAbortAlgorithmToSignal) \
     macro(addEventListener) \
     macro(appendFromJS) \
     macro(argv) \
@@ -49,6 +36,8 @@ using namespace JSC;
     macro(backpressureChangePromise) \
     macro(basename) \
     macro(body) \
+    macro(Buffer) \
+    macro(Bun) \
     macro(bunNativePtr) \
     macro(bunNativeType) \
     macro(byobRequest) \
@@ -58,14 +47,13 @@ using namespace JSC;
     macro(cloneArrayBuffer) \
     macro(close) \
     macro(closeAlgorithm) \
-    macro(closeRequest) \
-    macro(closeRequested) \
     macro(closed) \
     macro(closedPromise) \
     macro(closedPromiseCapability) \
+    macro(closeRequest) \
+    macro(closeRequested) \
     macro(code) \
     macro(connect) \
-    macro(consumeReadableStream) \
     macro(controlledReadableStream) \
     macro(controller) \
     macro(cork) \
@@ -75,8 +63,8 @@ using namespace JSC;
     macro(createInternalModuleById) \
     macro(createNativeReadableStream) \
     macro(createReadableStream) \
-    macro(createUsedReadableStream) \
     macro(createUninitializedArrayBuffer) \
+    macro(createUsedReadableStream) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \
     macro(data) \
@@ -95,6 +83,7 @@ using namespace JSC;
     macro(errno) \
     macro(errorSteps) \
     macro(evaluateCommonJSModule) \
+    macro(evaluated) \
     macro(execArgv) \
     macro(exports) \
     macro(extname) \
@@ -138,12 +127,14 @@ using namespace JSC;
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
     macro(loadCJS2ESM) \
+    macro(Loader) \
     macro(localStreams) \
     macro(main) \
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
     macro(method) \
+    macro(mockedFunction) \
     macro(nextTick) \
     macro(normalize) \
     macro(on) \
@@ -176,14 +167,21 @@ using namespace JSC;
     macro(put) \
     macro(queue) \
     macro(read) \
-    macro(readIntoRequests) \
-    macro(readRequests) \
     macro(readable) \
+    macro(ReadableByteStreamController) \
+    macro(ReadableStream) \
+    macro(ReadableStreamBYOBReader) \
+    macro(ReadableStreamBYOBRequest) \
     macro(readableStreamController) \
+    macro(ReadableStreamDefaultController) \
+    macro(ReadableStreamDefaultReader) \
     macro(readableStreamToArray) \
     macro(reader) \
+    macro(readIntoRequests) \
+    macro(readRequests) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
+    macro(removeAbortAlgorithmFromSignal) \
     macro(redirect) \
     macro(relative) \
     macro(releaseLock) \
@@ -225,6 +223,8 @@ using namespace JSC;
     macro(toNamespacedPath) \
     macro(trace) \
     macro(transformAlgorithm) \
+    macro(TransformStream) \
+    macro(TransformStreamDefaultController) \
     macro(uncork) \
     macro(underlyingByteSource) \
     macro(underlyingSink) \
@@ -236,12 +236,14 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(view) \
-    macro(whenSignalAborted) \
     macro(writable) \
+    macro(WritableStream) \
+    macro(WritableStreamDefaultController) \
+    macro(WritableStreamDefaultWriter) \
     macro(write) \
     macro(writeAlgorithm) \
-    macro(writeRequests) \
     macro(writer) \
+    macro(writeRequests) \
     macro(writing) \
     macro(written) \
 

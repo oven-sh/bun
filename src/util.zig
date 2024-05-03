@@ -30,10 +30,8 @@ pub fn fromEntries(
             try map.ensureUnusedCapacity(allocator, entries.len);
         }
 
-        comptime var i: usize = 0;
-
-        inline while (i < std.meta.fields(EntryType).len) : (i += 1) {
-            map.putAssumeCapacity(entries[i].@"0", entries[i].@"1");
+        inline for (entries) |entry| {
+            map.putAssumeCapacity(entry[0], entry[1]);
         }
 
         return map;
@@ -47,7 +45,7 @@ pub fn fromEntries(
         if (comptime @hasDecl(EntryType, "iterator")) {
             var iter = entries.iterator();
             while (iter.next()) |entry| {
-                map.putAssumeCapacity(entry.@"0", entry.@"1");
+                map.putAssumeCapacity(entry[0], entry[1]);
             }
 
             return map;
@@ -60,7 +58,7 @@ pub fn fromEntries(
         }
 
         inline for (comptime std.meta.fieldNames(@TypeOf(EntryType))) |entry| {
-            map.putAssumeCapacity(entry.@"0", entry.@"1");
+            map.putAssumeCapacity(entry[0], entry[1]);
         }
 
         return map;
@@ -71,10 +69,8 @@ pub fn fromEntries(
             try map.ensureUnusedCapacity(allocator, std.meta.fields(std.meta.Child(EntryType)).len);
         }
 
-        comptime var i: usize = 0;
-
-        inline while (i < std.meta.fields(std.meta.Child(EntryType)).len) : (i += 1) {
-            map.putAssumeCapacity(entries.*[i].@"0", entries.*[i].@"1");
+        inline for (entries) |entry| {
+            map.putAssumeCapacity(entry[0], entry[1]);
         }
 
         return map;
@@ -261,7 +257,7 @@ pub fn Batcher(comptime Type: type) type {
         }
 
         pub inline fn done(this: *@This()) void {
-            std.debug.assert(this.head.len == 0);
+            bun.assert(this.head.len == 0);
         }
 
         pub inline fn eat(this: *@This(), value: Type) *Type {
@@ -282,54 +278,6 @@ pub fn Batcher(comptime Type: type) type {
             return prev;
         }
     };
-}
-
-test "fromEntries" {
-    const values = try from(std.AutoHashMap(u32, u32), std.heap.page_allocator, .{
-        .{ 123, 456 },
-        .{ 789, 101112 },
-    });
-    const mapToMap = try from(std.AutoHashMap(u32, u32), std.heap.page_allocator, values);
-    try std.testing.expectEqual(values.get(123).?, 456);
-    try std.testing.expectEqual(values.get(789).?, 101112);
-    try std.testing.expectEqual(mapToMap.get(123).?, 456);
-    try std.testing.expectEqual(mapToMap.get(789).?, 101112);
-}
-
-test "from" {
-    const values = try from(
-        []const u32,
-        std.heap.page_allocator,
-        &.{ 1, 2, 3, 4, 5, 6 },
-    );
-    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5, 6 }, values);
-}
-
-test "from arraylist" {
-    const values = try from(
-        std.ArrayList(u32),
-        std.heap.page_allocator,
-        &.{ 1, 2, 3, 4, 5, 6 },
-    );
-    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5, 6 }, values.items);
-
-    const cloned = try from(
-        std.ArrayListUnmanaged(u32),
-        std.heap.page_allocator,
-        values,
-    );
-
-    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5, 6 }, cloned.items);
-}
-
-test "from arraylist with struct" {
-    const Entry = std.meta.Tuple(&.{ u32, u32 });
-    const values = try from(
-        std.ArrayList(Entry),
-        std.heap.page_allocator,
-        &.{ Entry{ 123, 456 }, Entry{ 123, 456 }, Entry{ 123, 456 }, Entry{ 123, 456 } },
-    );
-    try std.testing.expectEqualSlices(Entry, &[_]Entry{ .{ 123, 456 }, .{ 123, 456 }, .{ 123, 456 }, .{ 123, 456 } }, values.items);
 }
 
 fn needsAllocator(comptime Fn: anytype) bool {

@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import wt, {
   getEnvironmentData,
   isMainThread,
@@ -176,4 +175,14 @@ test("receiveMessageOnPort works as FIFO", () => {
       receiveMessageOnPort(value);
     }).toThrow();
   }
+});
+
+test("you can override globalThis.postMessage", async () => {
+  const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url).href);
+  const message = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.postMessage("Hello from worker!");
+  });
+  expect(message).toBe("Hello from worker!");
+  await worker.terminate();
 });

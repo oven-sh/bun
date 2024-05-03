@@ -15,7 +15,7 @@ const Ref = @import("./ast/base.zig").Ref;
 
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -39,7 +39,7 @@ const ResolverType = Resolver.Resolver;
 const ESModule = @import("./resolver/package_json.zig").ESModule;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PluginRunner = bun.bundler.PluginRunner;
 pub const CSSResolveError = error{ResolveMessage};
 
@@ -104,7 +104,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| std.fs.File{ .handle = bun.fdcast(_fd) } else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.asFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -179,21 +179,9 @@ pub const Linker = struct {
         return std.fmt.allocPrint(this.allocator, "{s}://{}{s}", .{ origin.displayProtocol(), origin.displayHost(), this.options.node_modules_bundle.?.bundle.import_from_name }) catch unreachable;
     }
 
-    // pub const Scratch = struct {
-    //     threadlocal var externals: std.ArrayList(u32) = undefined;
-    //     threadlocal var has_externals: std.ArrayList(u32) = undefined;
-    //     pub fn externals() {
-
-    //     }
-    // };
     // This modifies the Ast in-place!
     // But more importantly, this does the following:
     // - Wrap CommonJS files
-    threadlocal var require_part: js_ast.Part = undefined;
-    threadlocal var require_part_stmts: [1]js_ast.Stmt = undefined;
-    threadlocal var require_part_import_statement: js_ast.S.Import = undefined;
-    threadlocal var require_part_import_clauses: [1]js_ast.ClauseItem = undefined;
-    const require_alias: string = "__require";
     pub fn link(
         linker: *ThisLinker,
         file_path: Fs.Path,
@@ -209,20 +197,16 @@ pub const Linker = struct {
 
         const is_deferred = result.pending_imports.len > 0;
 
-        var import_records = result.ast.import_records.listManaged(linker.allocator);
+        const import_records = result.ast.import_records.listManaged(linker.allocator);
         defer {
             result.ast.import_records = ImportRecord.List.fromList(import_records);
         }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
-                var record_i: u32 = 0;
-                const record_count = @as(u32, @truncate(import_records.items.len));
-
-                while (record_i < record_count) : (record_i += 1) {
-                    var import_record = &import_records.items[record_i];
+                for (import_records.items, 0..) |*import_record, record_i| {
                     if (import_record.is_unused or
-                        (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
+                        (is_bun and is_deferred and !result.isPendingImport(@intCast(record_i)))) continue;
 
                     const record_index = record_i;
                     if (comptime !ignore_runtime) {
@@ -240,7 +224,7 @@ pub const Linker = struct {
                                 );
                             }
 
-                            result.ast.runtime_import_record_id = record_index;
+                            result.ast.runtime_import_record_id = @intCast(record_index);
                             result.ast.needs_runtime = true;
                             continue;
                         }
@@ -250,8 +234,9 @@ pub const Linker = struct {
                         if (JSC.HardcodedModule.Aliases.get(import_record.path.text, linker.options.target)) |replacement| {
                             import_record.path.text = replacement.path;
                             import_record.tag = replacement.tag;
+                            import_record.is_external_without_side_effects = true;
                             if (replacement.tag != .none) {
-                                externals.append(record_index) catch unreachable;
+                                externals.append(@intCast(record_index)) catch unreachable;
                                 continue;
                             }
                         }
@@ -729,7 +714,7 @@ pub const Linker = struct {
 
             .absolute_url => {
                 if (strings.eqlComptime(namespace, "node")) {
-                    if (comptime Environment.isDebug) std.debug.assert(strings.eqlComptime(source_path[0..5], "node:"));
+                    if (comptime Environment.isDebug) bun.assert(strings.eqlComptime(source_path[0..5], "node:"));
 
                     return Fs.Path.init(try std.fmt.allocPrint(
                         linker.allocator,

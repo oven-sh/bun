@@ -21,35 +21,39 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 const std = @import("std");
+const bun = @import("root").bun;
+
+const eqlComptime = @import("./string_immutable.zig").eqlComptime;
+const expect = std.testing.expect;
+const isAllAscii = @import("./string_immutable.zig").isAllASCII;
 const math = std.math;
 const mem = std.mem;
-const BunString = @import("./bun.zig").String;
-const expect = std.testing.expect;
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayListUnmanaged;
-const ArrayListManaged = std.ArrayList;
-const DirIterator = @import("./bun.js/node/dir_iterator.zig");
-const bun = @import("./bun.zig");
-const Syscall = bun.sys;
-const PathLike = @import("./bun.js/node/types.zig").PathLike;
-const Maybe = @import("./bun.js/node/types.zig").Maybe;
-const Dirent = @import("./bun.js/node/types.zig").Dirent;
-const PathString = @import("./string_types.zig").PathString;
-const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
-const isAllAscii = @import("./string_immutable.zig").isAllASCII;
-const EntryKind = @import("./bun.js/node/types.zig").Dirent.Kind;
-const Arena = std.heap.ArenaAllocator;
-const GlobAscii = @import("./glob_ascii.zig");
-const C = @import("./c.zig");
-const ResolvePath = @import("./resolver/resolve_path.zig");
-const eqlComptime = @import("./string_immutable.zig").eqlComptime;
-
 const isWindows = @import("builtin").os.tag == .windows;
 
+const Allocator = std.mem.Allocator;
+const Arena = std.heap.ArenaAllocator;
+const ArrayList = std.ArrayListUnmanaged;
+const ArrayListManaged = std.ArrayList;
+const BunString = bun.String;
+const C = @import("./c.zig");
 const CodepointIterator = @import("./string_immutable.zig").PackedCodepointIterator;
 const Codepoint = CodepointIterator.Cursor.CodePointType;
+const Dirent = @import("./bun.js/node/types.zig").Dirent;
+const DirIterator = @import("./bun.js/node/dir_iterator.zig");
+const EntryKind = @import("./bun.js/node/types.zig").Dirent.Kind;
+const GlobAscii = @import("./glob_ascii.zig");
+const JSC = bun.JSC;
+const Maybe = JSC.Maybe;
+const PathLike = @import("./bun.js/node/types.zig").PathLike;
+const PathString = @import("./string_types.zig").PathString;
+const ResolvePath = @import("./resolver/resolve_path.zig");
+const Syscall = bun.sys;
+const ZigString = @import("./bun.js/bindings/bindings.zig").ZigString;
+
 // const Codepoint = u32;
 const Cursor = CodepointIterator.Cursor;
+
+const log = bun.Output.scoped(.Glob, false);
 
 const CursorState = struct {
     cursor: CodepointIterator.Cursor = .{},
@@ -109,7 +113,7 @@ const CursorState = struct {
     }
 };
 
-pub const BunGlobWalker = GlobWalker_(null);
+pub const BunGlobWalker = GlobWalker_(null, SyscallAccessor, false);
 
 fn dummyFilterTrue(val: []const u8) bool {
     _ = val;
@@ -121,10 +125,210 @@ fn dummyFilterFalse(val: []const u8) bool {
     return false;
 }
 
+pub fn statatWindows(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
+    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    const dir = switch (Syscall.getFdPath(fd, &buf)) {
+        .err => |e| return .{ .err = e },
+        .result => |s| s,
+    };
+    const parts: []const []const u8 = &.{
+        dir[0..dir.len],
+        path,
+    };
+    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    return Syscall.stat(statpath);
+}
+
+pub const SyscallAccessor = struct {
+    const count_fds = true;
+
+    const Handle = struct {
+        value: bun.FileDescriptor,
+
+        const zero = Handle{ .value = bun.FileDescriptor.zero };
+
+        pub fn isZero(this: Handle) bool {
+            return this.value == bun.FileDescriptor.zero;
+        }
+
+        pub fn eql(this: Handle, other: Handle) bool {
+            return this.value == other.value;
+        }
+    };
+
+    const DirIter = struct {
+        value: DirIterator.WrappedIterator,
+
+        pub inline fn next(self: *DirIter) Maybe(?DirIterator.IteratorResult) {
+            return self.value.next();
+        }
+
+        pub inline fn iterate(dir: Handle) DirIter {
+            return .{ .value = DirIterator.WrappedIterator.init(dir.value.asDir()) };
+        }
+    };
+
+    pub fn open(path: [:0]const u8) !Maybe(Handle) {
+        return switch (Syscall.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            .err => |err| .{ .err = err },
+            .result => |fd| .{ .result = Handle{ .value = fd } },
+        };
+    }
+
+    pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
+        return switch (Syscall.fstatat(handle.value, path)) {
+            .err => |err| .{ .err = err },
+            .result => |s| .{ .result = s },
+        };
+    }
+
+    pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
+        return switch (Syscall.openat(handle.value, path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            .err => |err| .{ .err = err },
+            .result => |fd| .{ .result = Handle{ .value = fd } },
+        };
+    }
+
+    pub fn close(handle: Handle) ?Syscall.Error {
+        return Syscall.close(handle.value);
+    }
+
+    pub fn getcwd(path_buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+        return Syscall.getcwd(path_buf);
+    }
+};
+
+pub const DirEntryAccessor = struct {
+    const FS = bun.fs.FileSystem;
+
+    const count_fds = false;
+
+    const Handle = struct {
+        value: ?*FS.DirEntry,
+
+        const zero = Handle{ .value = null };
+
+        pub fn isZero(this: Handle) bool {
+            return this.value == null;
+        }
+
+        pub fn eql(this: Handle, other: Handle) bool {
+            // TODO this might not be quite right, we're comparing pointers, not the underlying directory
+            // On the other hand, DirEntries are only ever created once (per generation), so this should be fine?
+            // Realistically, as closing the handle is a no-op, this should be fine either way.
+            return this.value == other.value;
+        }
+    };
+
+    const DirIter = struct {
+        value: ?FS.DirEntry.EntryMap.Iterator,
+
+        const IterResult = struct {
+            name: NameWrapper,
+            kind: std.fs.File.Kind,
+
+            const NameWrapper = struct {
+                value: []const u8,
+
+                pub fn slice(this: NameWrapper) []const u8 {
+                    return this.value;
+                }
+            };
+        };
+
+        pub inline fn next(self: *DirIter) Maybe(?IterResult) {
+            if (self.value) |*value| {
+                const nextval = value.next() orelse return .{ .result = null };
+                const name = nextval.key_ptr.*;
+                const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
+                const fskind = switch (kind) {
+                    .file => std.fs.File.Kind.file,
+                    .dir => std.fs.File.Kind.directory,
+                };
+                return .{
+                    .result = .{
+                        .name = IterResult.NameWrapper{ .value = name },
+                        .kind = fskind,
+                    },
+                };
+            } else {
+                return .{ .result = null };
+            }
+        }
+
+        pub inline fn iterate(dir: Handle) DirIter {
+            const entry = dir.value orelse return DirIter{ .value = null };
+            return .{ .value = entry.data.iterator() };
+        }
+    };
+
+    pub fn statat(handle: Handle, path_: [:0]const u8) Maybe(bun.Stat) {
+        var path: [:0]const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                const slice = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+                buf[slice.len] = 0;
+                path = buf[0..slice.len :0];
+            }
+        }
+        return Syscall.stat(path);
+    }
+
+    pub fn open(path: [:0]const u8) !Maybe(Handle) {
+        return openat(Handle.zero, path);
+    }
+
+    pub fn openat(handle: Handle, path_: [:0]const u8) !Maybe(Handle) {
+        var path: []const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                path = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+            }
+        }
+        // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
+        // The glob implementation specifically checks for this error when dealing with symlinks
+        // return .{ .err = Syscall.Error.fromCode(bun.C.E.NOTDIR, Syscall.Tag.open) };
+        const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
+            return err;
+        };
+        switch (res.*) {
+            .entries => |entry| {
+                return .{ .result = Handle{ .value = entry } };
+            },
+            .err => |err| {
+                return err.original_err;
+            },
+        }
+    }
+
+    pub inline fn close(handle: Handle) ?Syscall.Error {
+        // TODO is this a noop?
+        _ = handle;
+        return null;
+    }
+
+    pub fn getcwd(path_buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+        @memcpy(path_buf, bun.fs.FileSystem.instance.fs.cwd);
+    }
+};
+
 pub fn GlobWalker_(
     comptime ignore_filter_fn: ?*const fn ([]const u8) bool,
+    comptime Accessor: type,
+    comptime sentinel: bool,
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
+
+    const count_fds = Accessor.count_fds and bun.Environment.allow_assert;
+
+    const stdJoin = comptime if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
+    const bunJoin = comptime if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
+    const MatchedPath = comptime if (!sentinel) []const u8 else [:0]const u8;
 
     return struct {
         const GlobWalker = @This();
@@ -141,32 +345,84 @@ pub fn GlobWalker_(
         /// If the pattern contains "./" or "../"
         has_relative_components: bool = false,
 
+        end_byte_of_basename_excluding_special_syntax: u32 = 0,
+        basename_excluding_special_syntax_component_idx: u32 = 0,
+
         patternComponents: ArrayList(Component) = .{},
-        matchedPaths: ArrayList(BunString) = .{},
+        matchedPaths: MatchedMap = .{},
         i: u32 = 0,
 
         dot: bool = false,
         absolute: bool = false,
+
         cwd: []const u8 = "",
         follow_symlinks: bool = false,
         error_on_broken_symlinks: bool = false,
         only_files: bool = true,
 
-        pathBuf: [bun.MAX_PATH_BYTES]u8 = undefined,
+        pathBuf: bun.PathBuffer = undefined,
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
+
+        /// Array hashmap used as a set (values are the keys)
+        /// to store matched paths and prevent duplicates
+        ///
+        /// BunString is used so that we can call BunString.toJSArray()
+        /// on the result of `.keys()` to give the result back to JS
+        ///
+        /// The only type of string impl we use is ZigString since
+        /// all matched paths are UTF-8 (DirIterator converts them on
+        /// windows) and allocated on the arnea
+        ///
+        /// Multiple patterns are not supported so right now this is
+        /// only possible when running a pattern like:
+        ///
+        /// `foo/**/*`
+        ///
+        /// Use `.keys()` to get the matched paths
+        const MatchedMap = std.ArrayHashMapUnmanaged(BunString, void, struct {
+            pub fn hash(_: @This(), this: BunString) u32 {
+                bun.assert(this.tag == .ZigString);
+                const slice = this.byteSlice();
+                if (comptime sentinel) {
+                    const slicez = slice[0 .. slice.len - 1 :0];
+                    return std.array_hash_map.hashString(slicez);
+                }
+
+                return std.array_hash_map.hashString(slice);
+            }
+
+            pub fn eql(_: @This(), this: BunString, other: BunString, _: usize) bool {
+                return this.eql(other);
+            }
+        }, true);
 
         /// The glob walker references the .directory.path so its not safe to
         /// copy/move this
         const IterState = union(enum) {
             /// Pops the next item off the work stack
             get_next,
+
             /// Currently iterating over a directory
             directory: Directory,
 
+            /// Two particular cases where this is used:
+            ///
+            /// 1. A pattern with no special glob syntax was supplied, for example: `/Users/zackradisic/foo/bar`
+            ///
+            ///    In that case, the mere existence of the file/dir counts as a match, so we can eschew directory
+            ///    iterating and walking for a simple stat call to the path.
+            ///
+            /// 2. Pattern ending in literal optimization
+            ///
+            ///    With a pattern like: `packages/**/package.json`, once the iteration component index reaches
+            ///    the final component, which is a literal string ("package.json"), we can similarly make a
+            ///    single stat call to complete the pattern.
+            matched: MatchedPath,
+
             const Directory = struct {
-                fd: bun.FileDescriptor,
-                iter: DirIterator.WrappedIterator,
+                fd: Accessor.Handle,
+                iter: Accessor.DirIter,
                 path: [bun.MAX_PATH_BYTES]u8,
                 dir_path: [:0]const u8,
 
@@ -183,31 +439,84 @@ pub fn GlobWalker_(
         pub const Iterator = struct {
             walker: *GlobWalker,
             iter_state: IterState = .get_next,
-            cwd_fd: bun.FileDescriptor = .zero,
+            cwd_fd: Accessor.Handle = Accessor.Handle.zero,
             empty_dir_path: [0:0]u8 = [0:0]u8{},
             /// This is to make sure in debug/tests that we are closing file descriptors
             /// We should only have max 2 open at a time. One for the cwd, and one for the
             /// directory being iterated on.
-            fds_open: if (bun.Environment.allow_assert) usize else u0 = 0,
+            fds_open: if (count_fds) usize else u0 = 0,
 
             pub fn init(this: *Iterator) !Maybe(void) {
+                log("Iterator init pattern={s}", .{this.walker.pattern});
+                var was_absolute = false;
+                const root_work_item = brk: {
+                    var use_posix = bun.Environment.isPosix;
+                    const is_absolute = if (bun.Environment.isPosix) std.fs.path.isAbsolute(this.walker.pattern) else std.fs.path.isAbsolute(this.walker.pattern) or is_absolute: {
+                        use_posix = true;
+                        break :is_absolute std.fs.path.isAbsolutePosix(this.walker.pattern);
+                    };
+
+                    if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, 0, .directory);
+
+                    was_absolute = true;
+
+                    const path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    const component_idx = this.walker.basename_excluding_special_syntax_component_idx + 1;
+
+                    // This means we got a pattern without any special glob syntax, for example:
+                    // `/Users/zackradisic/foo/bar`
+                    // In that case we don't need to do any walking and can just open up the FS entry
+                    if (component_idx >= this.walker.patternComponents.items.len) {
+                        const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                        const fd = switch (try Accessor.open(path)) {
+                            .err => |e| {
+                                if (e.getErrno() == bun.C.E.NOTDIR) {
+                                    // TODO check symlink
+                                    this.iter_state = .{ .matched = path };
+                                    return Maybe(void).success;
+                                }
+                                const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
+                                return .{ .err = e.withPath(errpath) };
+                            },
+                            .result => |fd| fd,
+                        };
+                        _ = Accessor.close(fd);
+                        this.iter_state = .{ .matched = path };
+                        return Maybe(void).success;
+                    }
+
+                    bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
+
+                    break :brk WorkItem.new(
+                        path_without_special_syntax,
+                        component_idx,
+                        .directory,
+                    );
+                };
+
                 var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
-                const root_path = this.walker.cwd;
+                const root_path = root_work_item.path;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                const cwd_fd = switch (Syscall.open(@ptrCast(path_buf[0 .. root_path.len + 1]), std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                // const root_path_z = path_buf[0..root_path.len :0];
+                const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
                     .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,
                 };
 
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     this.fds_open += 1;
                 }
 
                 this.cwd_fd = cwd_fd;
 
-                const root_work_item = WorkItem.new(this.walker.cwd, 0, .directory);
-                switch (try this.transitionToDirIterState(root_work_item, true)) {
+                switch (if (was_absolute) try this.transitionToDirIterState(
+                    root_work_item,
+                    false,
+                ) else try this.transitionToDirIterState(
+                    root_work_item,
+                    true,
+                )) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }
@@ -232,28 +541,30 @@ pub fn GlobWalker_(
                     }
                 }
 
-                if (bun.Environment.allow_assert) {
-                    std.debug.assert(this.fds_open == 0);
+                if (comptime count_fds) {
+                    if (bun.Environment.allow_assert) {
+                        bun.assert(this.fds_open == 0);
+                    }
                 }
             }
 
             pub fn closeCwdFd(this: *Iterator) void {
-                if (this.cwd_fd == .zero) return;
-                _ = Syscall.close(this.cwd_fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+                if (this.cwd_fd.isZero()) return;
+                _ = Accessor.close(this.cwd_fd);
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
-            pub fn closeDisallowingCwd(this: *Iterator, fd: bun.FileDescriptor) void {
-                if (fd == this.cwd_fd) return;
-                _ = Syscall.close(fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+            pub fn closeDisallowingCwd(this: *Iterator, fd: Accessor.Handle) void {
+                if (fd.isZero() or fd.eql(this.cwd_fd)) return;
+                _ = Accessor.close(fd);
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
             pub fn bumpOpenFds(this: *Iterator) void {
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    std.debug.assert(this.fds_open <= 2);
+                    bun.assert(this.fds_open <= 2);
                 }
             }
 
@@ -262,8 +573,9 @@ pub fn GlobWalker_(
                 work_item: WorkItem,
                 comptime root: bool,
             ) !Maybe(void) {
+                log("transition => {s}", .{work_item.path});
                 this.iter_state = .{ .directory = .{
-                    .fd = .zero,
+                    .fd = Accessor.Handle.zero,
                     .iter = undefined,
                     .path = undefined,
                     .dir_path = undefined,
@@ -291,17 +603,10 @@ pub fn GlobWalker_(
                 var had_dot_dot = false;
                 const component_idx = this.walker.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
 
-                this.iter_state.directory.dir_path = dir_path;
-                this.iter_state.directory.component_idx = component_idx;
-                this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
-                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
-                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
-                this.iter_state.directory.at_cwd = false;
-
-                const fd: bun.FileDescriptor = fd: {
+                const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
-                        if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                        if (had_dot_dot) break :fd switch (try Accessor.openat(this.cwd_fd, dir_path)) {
                             .err => |err| return .{
                                 .err = this.walker.handleSysErrWithPath(err, dir_path),
                             },
@@ -315,7 +620,7 @@ pub fn GlobWalker_(
                         break :fd this.cwd_fd;
                     }
 
-                    break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                    break :fd switch (try Accessor.openat(this.cwd_fd, dir_path)) {
                         .err => |err| return .{
                             .err = this.walker.handleSysErrWithPath(err, dir_path),
                         },
@@ -326,18 +631,75 @@ pub fn GlobWalker_(
                     };
                 };
 
+                // Optimization:
+                // If we have a pattern like:
+                // `packages/*/package.json`
+                //              ^ and we are at this component, with let's say
+                //                a directory named: `packages/frontend/`
+                //
+                // Then we can just open `packages/frontend/package.json` without
+                // doing any iteration on the current directory.
+                //
+                // More generally, we can apply this optimization if we are on the
+                // last component and it is a literal with no special syntax.
+                if (component_idx == this.walker.patternComponents.items.len -| 1 and
+                    this.walker.patternComponents.items[component_idx].syntax_hint == .Literal)
+                {
+                    defer {
+                        this.closeDisallowingCwd(fd);
+                    }
+                    const stackbuf_size = 256;
+                    var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
+                    const pathz = try stfb.get().dupeZ(u8, this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern));
+                    const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
+                        .err => |e_| {
+                            var e: bun.sys.Error = e_;
+                            if (e.getErrno() == bun.C.E.NOENT) {
+                                this.iter_state = .get_next;
+                                return Maybe(void).success;
+                            }
+                            return .{ .err = e.withPath(this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern)) };
+                        },
+                        .result => |stat| stat,
+                    };
+                    const matches = (bun.S.ISDIR(@intCast(stat_result.mode)) and !this.walker.only_files) or bun.S.ISREG(@intCast(stat_result.mode)) or !this.walker.only_files;
+                    if (matches) {
+                        if (try this.walker.prepareMatchedPath(pathz, dir_path)) |path| {
+                            this.iter_state = .{ .matched = path };
+                        } else {
+                            this.iter_state = .get_next;
+                        }
+                    } else {
+                        this.iter_state = .get_next;
+                    }
+                    return Maybe(void).success;
+                }
+
+                this.iter_state.directory.dir_path = dir_path;
+                this.iter_state.directory.component_idx = component_idx;
+                this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
+                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
+                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
+                this.iter_state.directory.at_cwd = false;
+                this.iter_state.directory.fd = Accessor.Handle.zero;
+
+                log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
+
                 this.iter_state.directory.fd = fd;
-                const dir = std.fs.Dir{ .fd = bun.fdcast(fd) };
-                const iterator = DirIterator.iterate(dir, .u8);
+                const iterator = Accessor.DirIter.iterate(fd);
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
                 return Maybe(void).success;
             }
 
-            pub fn next(this: *Iterator) !Maybe(?[]const u8) {
+            pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
                 while (true) {
                     switch (this.iter_state) {
+                        .matched => |path| {
+                            this.iter_state = .get_next;
+                            return .{ .result = path };
+                        },
                         .get_next => {
                             // Done
                             if (this.walker.workbuf.items.len == 0) return .{ .result = null };
@@ -364,7 +726,7 @@ pub fn GlobWalker_(
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
-                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                                    const maybe_dir_fd: ?Accessor.Handle = switch (try Accessor.openat(this.cwd_fd, symlink_full_path_z)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
                                                 break :brk null;
@@ -383,7 +745,7 @@ pub fn GlobWalker_(
                                                     next_pattern.?.syntax_hint != .Double and
                                                     this.walker.matchPatternImpl(next_pattern.?, entry_name)))
                                                 {
-                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                                 }
                                             }
                                             continue;
@@ -397,14 +759,14 @@ pub fn GlobWalker_(
                                     const dir_fd = maybe_dir_fd orelse {
                                         // No directory file descriptor, it's a file
                                         if (is_last)
-                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
 
                                         if (pattern.syntax_hint == .Double and
                                             component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
                                             next_pattern.?.syntax_hint != .Double and
                                             this.walker.matchPatternImpl(next_pattern.?, entry_name))
                                         {
-                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                         }
 
                                         continue;
@@ -417,14 +779,25 @@ pub fn GlobWalker_(
                                     const recursion_idx_bump_ = this.walker.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
 
                                     if (recursion_idx_bump_) |recursion_idx_bump| {
-                                        try this.walker.workbuf.append(
-                                            this.walker.arena.allocator(),
-                                            WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
-                                        );
+                                        if (recursion_idx_bump == 2) {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                            );
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx, .directory, dir_fd),
+                                            );
+                                        } else {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                            );
+                                        }
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
-                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                     }
 
                                     continue;
@@ -445,6 +818,7 @@ pub fn GlobWalker_(
                                 this.iter_state = .get_next;
                                 continue;
                             };
+                            log("dir: {s} entry: {s}", .{ dir.dir_path, entry.name.slice() });
 
                             const dir_iter_state: *const IterState.Directory = &this.iter_state.directory;
 
@@ -453,7 +827,7 @@ pub fn GlobWalker_(
                                 .file => {
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
-                                        const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared };
                                     }
                                     continue;
@@ -470,14 +844,25 @@ pub fn GlobWalker_(
 
                                         const subdir_entry_name = try this.walker.join(subdir_parts);
 
-                                        try this.walker.workbuf.append(
-                                            this.walker.arena.allocator(),
-                                            WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
-                                        );
+                                        if (recursion_idx_bump == 2) {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                            );
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx, .directory),
+                                            );
+                                        } else {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                            );
+                                        }
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
-                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
                                     }
 
@@ -512,7 +897,7 @@ pub fn GlobWalker_(
 
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
-                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
                                     }
 
@@ -531,7 +916,7 @@ pub fn GlobWalker_(
             idx: u32,
             kind: Kind,
             entry_start: u32 = 0,
-            fd: ?bun.FileDescriptor = null,
+            fd: ?Accessor.Handle = null,
 
             const Kind = enum {
                 directory,
@@ -546,7 +931,7 @@ pub fn GlobWalker_(
                 };
             }
 
-            fn newWithFd(path: []const u8, idx: u32, kind: Kind, fd: bun.FileDescriptor) WorkItem {
+            fn newWithFd(path: []const u8, idx: u32, kind: Kind, fd: Accessor.Handle) WorkItem {
                 return .{
                     .path = path,
                     .idx = idx,
@@ -573,12 +958,21 @@ pub fn GlobWalker_(
             len: u32,
 
             syntax_hint: SyntaxHint = .None,
+            trailing_sep: bool = false,
             is_ascii: bool = false,
 
             /// Only used when component is not ascii
             unicode_set: bool = false,
             start_cp: u32 = 0,
             end_cp: u32 = 0,
+
+            pub fn patternSlice(this: *const Component, pattern: []const u8) []const u8 {
+                return pattern[this.start .. this.start + this.len - @as(u1, @bitCast(this.trailing_sep))];
+            }
+
+            pub fn patternSliceCp(this: *const Component, pattern: []u32) []u32 {
+                return pattern[this.start_cp .. this.end_cp - @as(u1, @bitCast(this.trailing_sep))];
+            }
 
             const SyntaxHint = enum {
                 None,
@@ -594,6 +988,13 @@ pub fn GlobWalker_(
                 Dot,
                 /// ../
                 DotBack,
+
+                fn isSpecialSyntax(this: SyntaxHint) bool {
+                    return switch (this) {
+                        .Literal => false,
+                        else => true,
+                    };
+                }
             };
         };
 
@@ -608,23 +1009,10 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
-            errdefer arena.deinit();
-            var cwd: []const u8 = undefined;
-            switch (Syscall.getcwd(&this.pathBuf)) {
-                .err => |err| {
-                    return .{ .err = err };
-                },
-                .result => |result| {
-                    const copiedCwd = try arena.allocator().alloc(u8, result.len);
-                    @memcpy(copiedCwd, result);
-                    cwd = copiedCwd;
-                },
-            }
-
             return try this.initWithCwd(
                 arena,
                 pattern,
-                cwd,
+                bun.fs.FileSystem.instance.top_level_dir,
                 dot,
                 absolute,
                 follow_symlinks,
@@ -635,6 +1023,22 @@ pub fn GlobWalker_(
 
         pub fn convertUtf8ToCodepoints(codepoints: []u32, pattern: []const u8) void {
             _ = bun.simdutf.convert.utf8.to.utf32.le(pattern, codepoints);
+        }
+
+        pub fn debugPatternComopnents(this: *GlobWalker) void {
+            const pattern = this.pattern;
+            const components = &this.patternComponents;
+            const ptr = @intFromPtr(this);
+            log("GlobWalker(0x{x}) components:", .{ptr});
+            for (components.items) |cmp| {
+                switch (cmp.syntax_hint) {
+                    .Single => log("  *", .{}),
+                    .Double => log("  **", .{}),
+                    .Dot => log("  .", .{}),
+                    .DotBack => log("  ../", .{}),
+                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), cmp.patternSlice(pattern) }),
+                }
+            }
         }
 
         /// `cwd` should be allocated with the arena
@@ -650,32 +1054,43 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
-            var patternComponents = ArrayList(Component){};
+            log("initWithCwd(cwd={s})", .{cwd});
+            this.* = .{
+                .cwd = cwd,
+                .pattern = pattern,
+                .dot = dot,
+                .absolute = absolute,
+                .follow_symlinks = follow_symlinks,
+                .error_on_broken_symlinks = error_on_broken_symlinks,
+                .only_files = only_files,
+                .basename_excluding_special_syntax_component_idx = 0,
+                .end_byte_of_basename_excluding_special_syntax = @intCast(pattern.len),
+            };
+
             try GlobWalker.buildPatternComponents(
                 arena,
-                &patternComponents,
+                &this.patternComponents,
                 pattern,
                 &this.cp_len,
                 &this.pattern_codepoints,
                 &this.has_relative_components,
+                &this.end_byte_of_basename_excluding_special_syntax,
+                &this.basename_excluding_special_syntax_component_idx,
             );
 
-            this.cwd = cwd;
-
-            this.patternComponents = patternComponents;
-            this.pattern = pattern;
+            // copy arena after all allocations are successful
             this.arena = arena.*;
-            this.dot = dot;
-            this.absolute = absolute;
-            this.follow_symlinks = follow_symlinks;
-            this.error_on_broken_symlinks = error_on_broken_symlinks;
-            this.only_files = only_files;
+
+            if (bun.Environment.allow_assert) {
+                this.debugPatternComopnents();
+            }
 
             return Maybe(void).success;
         }
 
         /// NOTE This also calls deinit on the arena, if you don't want to do that then
         pub fn deinit(this: *GlobWalker, comptime clear_arena: bool) void {
+            log("GlobWalker.deinit", .{});
             if (comptime clear_arena) {
                 this.arena.deinit();
             }
@@ -704,7 +1119,9 @@ pub fn GlobWalker_(
                 .err => |err| return .{ .err = err },
                 .result => |matched_path| matched_path,
             }) |path| {
-                try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
+                log("walker: matched path: {s}", .{path});
+                // The paths are already put into this.matchedPaths, which we use for the output,
+                // so we don't need to do anything here
             }
 
             return Maybe(void).success;
@@ -868,7 +1285,7 @@ pub fn GlobWalker_(
         }
 
         /// A file can only match if:
-        /// a) it matches against the the last pattern, or
+        /// a) it matches against the last pattern, or
         /// b) it matches the next pattern, provided the current
         ///    pattern is a double wildcard and the next pattern is
         ///    not a double wildcard
@@ -884,6 +1301,8 @@ pub fn GlobWalker_(
             pattern: *Component,
             next_pattern: ?*Component,
         ) bool {
+            if (pattern.trailing_sep) return false;
+
             // Handle case b)
             if (!is_last) return pattern.syntax_hint == .Double and
                 component_idx + 1 == this.patternComponents.items.len -| 1 and
@@ -899,17 +1318,18 @@ pub fn GlobWalker_(
             pattern_component: *Component,
             filepath: []const u8,
         ) bool {
+            log("matchPatternImpl: {s}", .{filepath});
             if (!this.dot and GlobWalker.startsWithDot(filepath)) return false;
             if (is_ignored(filepath)) return false;
 
             return switch (pattern_component.syntax_hint) {
                 .Double, .Single => true,
                 .WildcardFilepath => if (comptime !isWindows)
-                    matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+                    matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
                 .Literal => if (comptime !isWindows)
-                    matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+                    matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
                 else => this.matchPatternSlow(pattern_component, filepath),
@@ -921,7 +1341,7 @@ pub fn GlobWalker_(
             if (comptime !isWindows) {
                 if (pattern_component.is_ascii and isAllAscii(filepath))
                     return GlobAscii.match(
-                        this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                        pattern_component.patternSlice(this.pattern),
                         filepath,
                     );
             }
@@ -941,33 +1361,61 @@ pub fn GlobWalker_(
         }
 
         fn componentStringUnicodeWindows(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            return pattern_component.patternSliceCp(this.pattern_codepoints);
         }
 
         fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            if (pattern_component.unicode_set) return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            if (pattern_component.unicode_set) return pattern_component.patternSliceCp(this.pattern_codepoints);
 
-            const codepoints = this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            const codepoints = pattern_component.patternSliceCp(this.pattern_codepoints);
             GlobWalker.convertUtf8ToCodepoints(
                 codepoints,
-                this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                pattern_component.patternSlice(this.pattern),
             );
             pattern_component.unicode_set = true;
             return codepoints;
         }
 
-        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) ![]const u8 {
-            const name = try this.arena.allocator().dupe(u8, symlink_full_path);
-            return name;
+        inline fn matchedPathToBunString(matched_path: MatchedPath) BunString {
+            if (comptime sentinel) {
+                return BunString.fromBytes(matched_path[0 .. matched_path.len + 1]);
+            }
+            return BunString.fromBytes(matched_path);
         }
 
-        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: [:0]const u8) ![]const u8 {
+        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !?MatchedPath {
+            const result = try this.matchedPaths.getOrPut(this.arena.allocator(), BunString.fromBytes(symlink_full_path));
+            if (result.found_existing) {
+                log("(dupe) prepared match: {s}", .{symlink_full_path});
+                return null;
+            }
+            if (comptime !sentinel) {
+                const slice = try this.arena.allocator().dupe(u8, symlink_full_path);
+                result.key_ptr.* = matchedPathToBunString(slice);
+                return slice;
+            }
+            const slicez = try this.arena.allocator().dupeZ(u8, symlink_full_path);
+            result.key_ptr.* = matchedPathToBunString(slicez);
+            return slicez;
+        }
+
+        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: []const u8) !?MatchedPath {
             const subdir_parts: []const []const u8 = &[_][]const u8{
                 dir_name[0..dir_name.len],
                 entry_name,
             };
-            const name = try this.join(subdir_parts);
-            return name;
+            const name_matched_path = try this.join(subdir_parts);
+            const name = matchedPathToBunString(name_matched_path);
+            const result = try this.matchedPaths.getOrPutValue(this.arena.allocator(), name, {});
+            if (result.found_existing) {
+                log("(dupe) prepared match: {s}", .{name_matched_path});
+                this.arena.allocator().free(name_matched_path);
+                return null;
+            }
+            result.key_ptr.* = name;
+            // if (comptime sentinel) return name[0 .. name.len - 1 :0];
+            log("prepared match: {s}", .{name_matched_path});
+            return name_matched_path;
         }
 
         fn appendMatchedPath(
@@ -979,53 +1427,37 @@ pub fn GlobWalker_(
                 dir_name[0..dir_name.len],
                 entry_name,
             };
-            const name = try this.join(subdir_parts);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+            const name_matched_path = try this.join(subdir_parts);
+            const name = matchedPathToBunString(name_matched_path);
+            const result = try this.matchedPaths.getOrPut(this.arena.allocator(), name);
+            if (result.found_existing) {
+                this.arena.allocator().free(name_matched_path);
+                log("(dupe) prepared match: {s}", .{name_matched_path});
+                return;
+            }
+            result.key_ptr.* = name;
         }
 
         fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
             const name = try this.arena.allocator().dupe(u8, symlink_full_path);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+            try this.matchedPaths.put(this.arena.allocator(), BunString.fromBytes(name), {});
         }
 
-        inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) ![]u8 {
-            return if (!this.absolute)
+        inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) !MatchedPath {
+            if (!this.absolute) {
                 // If relative paths enabled, stdlib join is preferred over
                 // ResolvePath.joinBuf because it doesn't try to normalize the path
-                try std.fs.path.join(this.arena.allocator(), subdir_parts)
-            else
-                try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
+                return try stdJoin(this.arena.allocator(), subdir_parts);
+            }
+
+            const out = try this.arena.allocator().dupe(u8, bunJoin(subdir_parts, .auto));
+            if (comptime sentinel) return out[0 .. out.len - 1 :0];
+
+            return out;
         }
 
         inline fn startsWithDot(filepath: []const u8) bool {
-            if (comptime !isWindows) {
-                return filepath[0] == '.';
-            } else {
-                return filepath[1] == '.';
-            }
-        }
-
-        fn hasLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) bool {
-            if (comptime bun.Environment.isWindows and allow_non_utf8) {
-                // utf-16
-                if (filepath.len >= 4 and filepath[1] == '.' and filepath[3] == '/')
-                    return true;
-            } else {
-                if (filepath.len >= 2 and filepath[0] == '.' and filepath[1] == '/')
-                    return true;
-            }
-
-            return false;
-        }
-
-        /// NOTE This doesn't check that there is leading dot, use `hasLeadingDot()` to do that
-        fn removeLeadingDot(filepath: []const u8, comptime allow_non_utf8: bool) []const u8 {
-            if (comptime bun.Environment.allow_assert) std.debug.assert(hasLeadingDot(filepath, allow_non_utf8));
-            if (comptime bun.Environment.isWindows and allow_non_utf8) {
-                return filepath[4..];
-            } else {
-                return filepath[2..];
-            }
+            return filepath.len > 0 and filepath[0] == '.';
         }
 
         fn checkSpecialSyntax(pattern: []const u8) bool {
@@ -1067,23 +1499,21 @@ pub fn GlobWalker_(
             return false;
         }
 
-        fn addComponent(
-            allocator: Allocator,
+        fn makeComponent(
             pattern: []const u8,
-            patternComponents: *ArrayList(Component),
             start_cp: u32,
             end_cp: u32,
             start_byte: u32,
             end_byte: u32,
             has_relative_patterns: *bool,
-        ) !void {
+        ) ?Component {
             var component: Component = .{
                 .start = start_byte,
                 .len = end_byte - start_byte,
                 .start_cp = start_cp,
                 .end_cp = end_cp,
             };
-            if (component.len == 0) return;
+            if (component.len == 0) return null;
 
             out: {
                 if (component.len == 1 and pattern[component.start] == '.') {
@@ -1126,7 +1556,20 @@ pub fn GlobWalker_(
                     {
                         for (pattern[component.start + 2 ..]) |c| {
                             switch (c) {
-                                '[', '{', '!', '?' => break :out_of_check_wildcard_filepath,
+                                // The fast path checks that path[1..] == pattern[1..],
+                                // this will obviously not work if additional
+                                // glob syntax is present in the pattern, so we
+                                // must not apply this optimization if we see
+                                // special glob syntax.
+                                //
+                                // This is not a complete check, there can be
+                                // false negatives, but that's okay, it just
+                                // means we don't apply the optimization.
+                                //
+                                // We also don't need to look for the `!` token,
+                                // because that only applies negation if at the
+                                // beginning of the string.
+                                '[', '{', '?', '*' => break :out_of_check_wildcard_filepath,
                                 else => {},
                             }
                         }
@@ -1144,7 +1587,13 @@ pub fn GlobWalker_(
                 component.is_ascii = true;
             }
 
-            try patternComponents.append(allocator, component);
+            if (pattern[component.start + component.len -| 1] == '/') {
+                component.trailing_sep = true;
+            } else if (comptime bun.Environment.isWindows) {
+                component.trailing_sep = pattern[component.start + component.len -| 1] == '\\';
+            }
+
+            return component;
         }
 
         fn buildPatternComponents(
@@ -1154,6 +1603,8 @@ pub fn GlobWalker_(
             out_cp_len: *u32,
             out_pattern_cp: *[]u32,
             has_relative_patterns: *bool,
+            end_byte_of_basename_excluding_special_syntax: *u32,
+            basename_excluding_special_syntax_component_idx: *u32,
         ) !void {
             var start_cp: u32 = 0;
             var start_byte: u32 = 0;
@@ -1163,23 +1614,35 @@ pub fn GlobWalker_(
 
             var cp_len: u32 = 0;
             var prevIsBackslash = false;
+            var saw_special = false;
             while (iter.next(&cursor)) : (cp_len += 1) {
                 const c = cursor.c;
 
                 switch (c) {
                     '\\' => {
                         if (comptime isWindows) {
-                            const end_cp = cp_len;
-                            try addComponent(
-                                arena.allocator(),
+                            var end_cp = cp_len;
+                            var end_byte = cursor.i;
+                            // is last char
+                            if (cursor.i + cursor.width == pattern.len) {
+                                end_cp += 1;
+                                end_byte += cursor.width;
+                            }
+                            if (makeComponent(
                                 pattern,
-                                patternComponents,
                                 start_cp,
                                 end_cp,
                                 start_byte,
-                                cursor.i,
+                                end_byte,
                                 has_relative_patterns,
-                            );
+                            )) |component| {
+                                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                                if (!saw_special) {
+                                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                }
+                                try patternComponents.append(arena.allocator(), component);
+                            }
                             start_cp = cp_len + 1;
                             start_byte = cursor.i + cursor.width;
                             continue;
@@ -1200,16 +1663,21 @@ pub fn GlobWalker_(
                             end_cp += 1;
                             end_byte += cursor.width;
                         }
-                        try addComponent(
-                            arena.allocator(),
+                        if (makeComponent(
                             pattern,
-                            patternComponents,
                             start_cp,
                             end_cp,
                             start_byte,
                             end_byte,
                             has_relative_patterns,
-                        );
+                        )) |component| {
+                            saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                            if (!saw_special) {
+                                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                            }
+                            try patternComponents.append(arena.allocator(), component);
+                        }
                         start_cp = cp_len + 1;
                         start_byte = cursor.i + cursor.width;
                     },
@@ -1228,16 +1696,24 @@ pub fn GlobWalker_(
             out_pattern_cp.* = codepoints;
 
             const end_cp = cp_len;
-            try addComponent(
-                arena.allocator(),
+            if (makeComponent(
                 pattern,
-                patternComponents,
                 start_cp,
                 end_cp,
                 start_byte,
                 @intCast(pattern.len),
                 has_relative_patterns,
-            );
+            )) |component| {
+                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                if (!saw_special) {
+                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                }
+                try patternComponents.append(arena.allocator(), component);
+            } else if (!saw_special) {
+                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+            }
         }
     };
 }
@@ -1661,1483 +2137,35 @@ pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
 }
 
-// test "basic" {
-//     try expect(match("abc", "abc"));
-//     try expect(match("*", "abc"));
-//     try expect(match("*", ""));
-//     try expect(match("**", ""));
-//     try expect(match("*c", "abc"));
-//     try expect(!match("*b", "abc"));
-//     try expect(match("a*", "abc"));
-//     try expect(!match("b*", "abc"));
-//     try expect(match("a*", "a"));
-//     try expect(match("*a", "a"));
-//     try expect(match("a*b*c*d*e*", "axbxcxdxe"));
-//     try expect(match("a*b*c*d*e*", "axbxcxdxexxx"));
-//     try expect(match("a*b?c*x", "abxbbxdbxebxczzx"));
-//     try expect(!match("a*b?c*x", "abxbbxdbxebxczzy"));
-
-//     try expect(match("a/*/test", "a/foo/test"));
-//     try expect(!match("a/*/test", "a/foo/bar/test"));
-//     try expect(match("a/**/test", "a/foo/test"));
-//     try expect(match("a/**/test", "a/foo/bar/test"));
-//     try expect(match("a/**/b/c", "a/foo/bar/b/c"));
-//     try expect(match("a\\*b", "a*b"));
-//     try expect(!match("a\\*b", "axb"));
-
-//     try expect(match("[abc]", "a"));
-//     try expect(match("[abc]", "b"));
-//     try expect(match("[abc]", "c"));
-//     try expect(!match("[abc]", "d"));
-//     try expect(match("x[abc]x", "xax"));
-//     try expect(match("x[abc]x", "xbx"));
-//     try expect(match("x[abc]x", "xcx"));
-//     try expect(!match("x[abc]x", "xdx"));
-//     try expect(!match("x[abc]x", "xay"));
-//     try expect(match("[?]", "?"));
-//     try expect(!match("[?]", "a"));
-//     try expect(match("[*]", "*"));
-//     try expect(!match("[*]", "a"));
-
-//     try expect(match("[a-cx]", "a"));
-//     try expect(match("[a-cx]", "b"));
-//     try expect(match("[a-cx]", "c"));
-//     try expect(!match("[a-cx]", "d"));
-//     try expect(match("[a-cx]", "x"));
-
-//     try expect(!match("[^abc]", "a"));
-//     try expect(!match("[^abc]", "b"));
-//     try expect(!match("[^abc]", "c"));
-//     try expect(match("[^abc]", "d"));
-//     try expect(!match("[!abc]", "a"));
-//     try expect(!match("[!abc]", "b"));
-//     try expect(!match("[!abc]", "c"));
-//     try expect(match("[!abc]", "d"));
-//     try expect(match("[\\!]", "!"));
-
-//     try expect(match("a*b*[cy]*d*e*", "axbxcxdxexxx"));
-//     try expect(match("a*b*[cy]*d*e*", "axbxyxdxexxx"));
-//     try expect(match("a*b*[cy]*d*e*", "axbxxxyxdxexxx"));
-
-//     try expect(match("test.{jpg,png}", "test.jpg"));
-//     try expect(match("test.{jpg,png}", "test.png"));
-//     try expect(match("test.{j*g,p*g}", "test.jpg"));
-//     try expect(match("test.{j*g,p*g}", "test.jpxxxg"));
-//     try expect(match("test.{j*g,p*g}", "test.jxg"));
-//     try expect(!match("test.{j*g,p*g}", "test.jnt"));
-//     try expect(match("test.{j*g,j*c}", "test.jnc"));
-//     try expect(match("test.{jpg,p*g}", "test.png"));
-//     try expect(match("test.{jpg,p*g}", "test.pxg"));
-//     try expect(!match("test.{jpg,p*g}", "test.pnt"));
-//     try expect(match("test.{jpeg,png}", "test.jpeg"));
-//     try expect(!match("test.{jpeg,png}", "test.jpg"));
-//     try expect(match("test.{jpeg,png}", "test.png"));
-//     try expect(match("test.{jp\\,g,png}", "test.jp,g"));
-//     try expect(!match("test.{jp\\,g,png}", "test.jxg"));
-//     try expect(match("test/{foo,bar}/baz", "test/foo/baz"));
-//     try expect(match("test/{foo,bar}/baz", "test/bar/baz"));
-//     try expect(!match("test/{foo,bar}/baz", "test/baz/baz"));
-//     try expect(match("test/{foo*,bar*}/baz", "test/foooooo/baz"));
-//     try expect(match("test/{foo*,bar*}/baz", "test/barrrrr/baz"));
-//     try expect(match("test/{*foo,*bar}/baz", "test/xxxxfoo/baz"));
-//     try expect(match("test/{*foo,*bar}/baz", "test/xxxxbar/baz"));
-//     try expect(match("test/{foo/**,bar}/baz", "test/bar/baz"));
-//     try expect(!match("test/{foo/**,bar}/baz", "test/bar/test/baz"));
-
-//     try expect(!match("*.txt", "some/big/path/to/the/needle.txt"));
-//     try expect(match(
-//         "some/**/needle.{js,tsx,mdx,ts,jsx,txt}",
-//         "some/a/bigger/path/to/the/crazy/needle.txt",
-//     ));
-//     try expect(match(
-//         "some/**/{a,b,c}/**/needle.txt",
-//         "some/foo/a/bigger/path/to/the/crazy/needle.txt",
-//     ));
-//     try expect(!match(
-//         "some/**/{a,b,c}/**/needle.txt",
-//         "some/foo/d/bigger/path/to/the/crazy/needle.txt",
-//     ));
-//     try expect(match("a/{a{a,b},b}", "a/aa"));
-//     try expect(match("a/{a{a,b},b}", "a/ab"));
-//     try expect(!match("a/{a{a,b},b}", "a/ac"));
-//     try expect(match("a/{a{a,b},b}", "a/b"));
-//     try expect(!match("a/{a{a,b},b}", "a/c"));
-//     try expect(match("a/{b,c[}]*}", "a/b"));
-//     try expect(match("a/{b,c[}]*}", "a/c}xx"));
-// }
-
-// // The below tests are based on Bash and micromatch.
-// // https://github.com/micromatch/picomatch/blob/master/test/bash.js
-// test "bash" {
-//     try expect(!match("a*", "*"));
-//     try expect(!match("a*", "**"));
-//     try expect(!match("a*", "\\*"));
-//     try expect(!match("a*", "a/*"));
-//     try expect(!match("a*", "b"));
-//     try expect(!match("a*", "bc"));
-//     try expect(!match("a*", "bcd"));
-//     try expect(!match("a*", "bdir/"));
-//     try expect(!match("a*", "Beware"));
-//     try expect(match("a*", "a"));
-//     try expect(match("a*", "ab"));
-//     try expect(match("a*", "abc"));
-
-//     try expect(!match("\\a*", "*"));
-//     try expect(!match("\\a*", "**"));
-//     try expect(!match("\\a*", "\\*"));
-
-//     try expect(match("\\a*", "a"));
-//     try expect(!match("\\a*", "a/*"));
-//     try expect(match("\\a*", "abc"));
-//     try expect(match("\\a*", "abd"));
-//     try expect(match("\\a*", "abe"));
-//     try expect(!match("\\a*", "b"));
-//     try expect(!match("\\a*", "bb"));
-//     try expect(!match("\\a*", "bcd"));
-//     try expect(!match("\\a*", "bdir/"));
-//     try expect(!match("\\a*", "Beware"));
-//     try expect(!match("\\a*", "c"));
-//     try expect(!match("\\a*", "ca"));
-//     try expect(!match("\\a*", "cb"));
-//     try expect(!match("\\a*", "d"));
-//     try expect(!match("\\a*", "dd"));
-//     try expect(!match("\\a*", "de"));
-// }
-
-// test "bash directories" {
-//     try expect(!match("b*/", "*"));
-//     try expect(!match("b*/", "**"));
-//     try expect(!match("b*/", "\\*"));
-//     try expect(!match("b*/", "a"));
-//     try expect(!match("b*/", "a/*"));
-//     try expect(!match("b*/", "abc"));
-//     try expect(!match("b*/", "abd"));
-//     try expect(!match("b*/", "abe"));
-//     try expect(!match("b*/", "b"));
-//     try expect(!match("b*/", "bb"));
-//     try expect(!match("b*/", "bcd"));
-//     try expect(match("b*/", "bdir/"));
-//     try expect(!match("b*/", "Beware"));
-//     try expect(!match("b*/", "c"));
-//     try expect(!match("b*/", "ca"));
-//     try expect(!match("b*/", "cb"));
-//     try expect(!match("b*/", "d"));
-//     try expect(!match("b*/", "dd"));
-//     try expect(!match("b*/", "de"));
-// }
-
-// test "bash escaping" {
-//     try expect(!match("\\^", "*"));
-//     try expect(!match("\\^", "**"));
-//     try expect(!match("\\^", "\\*"));
-//     try expect(!match("\\^", "a"));
-//     try expect(!match("\\^", "a/*"));
-//     try expect(!match("\\^", "abc"));
-//     try expect(!match("\\^", "abd"));
-//     try expect(!match("\\^", "abe"));
-//     try expect(!match("\\^", "b"));
-//     try expect(!match("\\^", "bb"));
-//     try expect(!match("\\^", "bcd"));
-//     try expect(!match("\\^", "bdir/"));
-//     try expect(!match("\\^", "Beware"));
-//     try expect(!match("\\^", "c"));
-//     try expect(!match("\\^", "ca"));
-//     try expect(!match("\\^", "cb"));
-//     try expect(!match("\\^", "d"));
-//     try expect(!match("\\^", "dd"));
-//     try expect(!match("\\^", "de"));
-
-//     try expect(match("\\*", "*"));
-//     // try expect(match("\\*", "\\*"));
-//     try expect(!match("\\*", "**"));
-//     try expect(!match("\\*", "a"));
-//     try expect(!match("\\*", "a/*"));
-//     try expect(!match("\\*", "abc"));
-//     try expect(!match("\\*", "abd"));
-//     try expect(!match("\\*", "abe"));
-//     try expect(!match("\\*", "b"));
-//     try expect(!match("\\*", "bb"));
-//     try expect(!match("\\*", "bcd"));
-//     try expect(!match("\\*", "bdir/"));
-//     try expect(!match("\\*", "Beware"));
-//     try expect(!match("\\*", "c"));
-//     try expect(!match("\\*", "ca"));
-//     try expect(!match("\\*", "cb"));
-//     try expect(!match("\\*", "d"));
-//     try expect(!match("\\*", "dd"));
-//     try expect(!match("\\*", "de"));
-
-//     try expect(!match("a\\*", "*"));
-//     try expect(!match("a\\*", "**"));
-//     try expect(!match("a\\*", "\\*"));
-//     try expect(!match("a\\*", "a"));
-//     try expect(!match("a\\*", "a/*"));
-//     try expect(!match("a\\*", "abc"));
-//     try expect(!match("a\\*", "abd"));
-//     try expect(!match("a\\*", "abe"));
-//     try expect(!match("a\\*", "b"));
-//     try expect(!match("a\\*", "bb"));
-//     try expect(!match("a\\*", "bcd"));
-//     try expect(!match("a\\*", "bdir/"));
-//     try expect(!match("a\\*", "Beware"));
-//     try expect(!match("a\\*", "c"));
-//     try expect(!match("a\\*", "ca"));
-//     try expect(!match("a\\*", "cb"));
-//     try expect(!match("a\\*", "d"));
-//     try expect(!match("a\\*", "dd"));
-//     try expect(!match("a\\*", "de"));
-
-//     try expect(match("*q*", "aqa"));
-//     try expect(match("*q*", "aaqaa"));
-//     try expect(!match("*q*", "*"));
-//     try expect(!match("*q*", "**"));
-//     try expect(!match("*q*", "\\*"));
-//     try expect(!match("*q*", "a"));
-//     try expect(!match("*q*", "a/*"));
-//     try expect(!match("*q*", "abc"));
-//     try expect(!match("*q*", "abd"));
-//     try expect(!match("*q*", "abe"));
-//     try expect(!match("*q*", "b"));
-//     try expect(!match("*q*", "bb"));
-//     try expect(!match("*q*", "bcd"));
-//     try expect(!match("*q*", "bdir/"));
-//     try expect(!match("*q*", "Beware"));
-//     try expect(!match("*q*", "c"));
-//     try expect(!match("*q*", "ca"));
-//     try expect(!match("*q*", "cb"));
-//     try expect(!match("*q*", "d"));
-//     try expect(!match("*q*", "dd"));
-//     try expect(!match("*q*", "de"));
-
-//     try expect(match("\\**", "*"));
-//     try expect(match("\\**", "**"));
-//     try expect(!match("\\**", "\\*"));
-//     try expect(!match("\\**", "a"));
-//     try expect(!match("\\**", "a/*"));
-//     try expect(!match("\\**", "abc"));
-//     try expect(!match("\\**", "abd"));
-//     try expect(!match("\\**", "abe"));
-//     try expect(!match("\\**", "b"));
-//     try expect(!match("\\**", "bb"));
-//     try expect(!match("\\**", "bcd"));
-//     try expect(!match("\\**", "bdir/"));
-//     try expect(!match("\\**", "Beware"));
-//     try expect(!match("\\**", "c"));
-//     try expect(!match("\\**", "ca"));
-//     try expect(!match("\\**", "cb"));
-//     try expect(!match("\\**", "d"));
-//     try expect(!match("\\**", "dd"));
-//     try expect(!match("\\**", "de"));
-// }
-
-// test "bash classes" {
-//     try expect(!match("a*[^c]", "*"));
-//     try expect(!match("a*[^c]", "**"));
-//     try expect(!match("a*[^c]", "\\*"));
-//     try expect(!match("a*[^c]", "a"));
-//     try expect(!match("a*[^c]", "a/*"));
-//     try expect(!match("a*[^c]", "abc"));
-//     try expect(match("a*[^c]", "abd"));
-//     try expect(match("a*[^c]", "abe"));
-//     try expect(!match("a*[^c]", "b"));
-//     try expect(!match("a*[^c]", "bb"));
-//     try expect(!match("a*[^c]", "bcd"));
-//     try expect(!match("a*[^c]", "bdir/"));
-//     try expect(!match("a*[^c]", "Beware"));
-//     try expect(!match("a*[^c]", "c"));
-//     try expect(!match("a*[^c]", "ca"));
-//     try expect(!match("a*[^c]", "cb"));
-//     try expect(!match("a*[^c]", "d"));
-//     try expect(!match("a*[^c]", "dd"));
-//     try expect(!match("a*[^c]", "de"));
-//     try expect(!match("a*[^c]", "baz"));
-//     try expect(!match("a*[^c]", "bzz"));
-//     try expect(!match("a*[^c]", "BZZ"));
-//     try expect(!match("a*[^c]", "beware"));
-//     try expect(!match("a*[^c]", "BewAre"));
-
-//     try expect(match("a[X-]b", "a-b"));
-//     try expect(match("a[X-]b", "aXb"));
-
-//     try expect(!match("[a-y]*[^c]", "*"));
-//     try expect(match("[a-y]*[^c]", "a*"));
-//     try expect(!match("[a-y]*[^c]", "**"));
-//     try expect(!match("[a-y]*[^c]", "\\*"));
-//     try expect(!match("[a-y]*[^c]", "a"));
-//     try expect(match("[a-y]*[^c]", "a123b"));
-//     try expect(!match("[a-y]*[^c]", "a123c"));
-//     try expect(match("[a-y]*[^c]", "ab"));
-//     try expect(!match("[a-y]*[^c]", "a/*"));
-//     try expect(!match("[a-y]*[^c]", "abc"));
-//     try expect(match("[a-y]*[^c]", "abd"));
-//     try expect(match("[a-y]*[^c]", "abe"));
-//     try expect(!match("[a-y]*[^c]", "b"));
-//     try expect(match("[a-y]*[^c]", "bd"));
-//     try expect(match("[a-y]*[^c]", "bb"));
-//     try expect(match("[a-y]*[^c]", "bcd"));
-//     try expect(match("[a-y]*[^c]", "bdir/"));
-//     try expect(!match("[a-y]*[^c]", "Beware"));
-//     try expect(!match("[a-y]*[^c]", "c"));
-//     try expect(match("[a-y]*[^c]", "ca"));
-//     try expect(match("[a-y]*[^c]", "cb"));
-//     try expect(!match("[a-y]*[^c]", "d"));
-//     try expect(match("[a-y]*[^c]", "dd"));
-//     try expect(match("[a-y]*[^c]", "dd"));
-//     try expect(match("[a-y]*[^c]", "dd"));
-//     try expect(match("[a-y]*[^c]", "de"));
-//     try expect(match("[a-y]*[^c]", "baz"));
-//     try expect(match("[a-y]*[^c]", "bzz"));
-//     try expect(match("[a-y]*[^c]", "bzz"));
-//     // assert(!isMatch('bzz', '[a-y]*[^c]', { regex: true }));
-//     try expect(!match("[a-y]*[^c]", "BZZ"));
-//     try expect(match("[a-y]*[^c]", "beware"));
-//     try expect(!match("[a-y]*[^c]", "BewAre"));
-
-//     try expect(match("a\\*b/*", "a*b/ooo"));
-//     try expect(match("a\\*?/*", "a*b/ooo"));
-
-//     try expect(!match("a[b]c", "*"));
-//     try expect(!match("a[b]c", "**"));
-//     try expect(!match("a[b]c", "\\*"));
-//     try expect(!match("a[b]c", "a"));
-//     try expect(!match("a[b]c", "a/*"));
-//     try expect(match("a[b]c", "abc"));
-//     try expect(!match("a[b]c", "abd"));
-//     try expect(!match("a[b]c", "abe"));
-//     try expect(!match("a[b]c", "b"));
-//     try expect(!match("a[b]c", "bb"));
-//     try expect(!match("a[b]c", "bcd"));
-//     try expect(!match("a[b]c", "bdir/"));
-//     try expect(!match("a[b]c", "Beware"));
-//     try expect(!match("a[b]c", "c"));
-//     try expect(!match("a[b]c", "ca"));
-//     try expect(!match("a[b]c", "cb"));
-//     try expect(!match("a[b]c", "d"));
-//     try expect(!match("a[b]c", "dd"));
-//     try expect(!match("a[b]c", "de"));
-//     try expect(!match("a[b]c", "baz"));
-//     try expect(!match("a[b]c", "bzz"));
-//     try expect(!match("a[b]c", "BZZ"));
-//     try expect(!match("a[b]c", "beware"));
-//     try expect(!match("a[b]c", "BewAre"));
-
-//     try expect(!match("a[\"b\"]c", "*"));
-//     try expect(!match("a[\"b\"]c", "**"));
-//     try expect(!match("a[\"b\"]c", "\\*"));
-//     try expect(!match("a[\"b\"]c", "a"));
-//     try expect(!match("a[\"b\"]c", "a/*"));
-//     try expect(match("a[\"b\"]c", "abc"));
-//     try expect(!match("a[\"b\"]c", "abd"));
-//     try expect(!match("a[\"b\"]c", "abe"));
-//     try expect(!match("a[\"b\"]c", "b"));
-//     try expect(!match("a[\"b\"]c", "bb"));
-//     try expect(!match("a[\"b\"]c", "bcd"));
-//     try expect(!match("a[\"b\"]c", "bdir/"));
-//     try expect(!match("a[\"b\"]c", "Beware"));
-//     try expect(!match("a[\"b\"]c", "c"));
-//     try expect(!match("a[\"b\"]c", "ca"));
-//     try expect(!match("a[\"b\"]c", "cb"));
-//     try expect(!match("a[\"b\"]c", "d"));
-//     try expect(!match("a[\"b\"]c", "dd"));
-//     try expect(!match("a[\"b\"]c", "de"));
-//     try expect(!match("a[\"b\"]c", "baz"));
-//     try expect(!match("a[\"b\"]c", "bzz"));
-//     try expect(!match("a[\"b\"]c", "BZZ"));
-//     try expect(!match("a[\"b\"]c", "beware"));
-//     try expect(!match("a[\"b\"]c", "BewAre"));
-
-//     try expect(!match("a[\\\\b]c", "*"));
-//     try expect(!match("a[\\\\b]c", "**"));
-//     try expect(!match("a[\\\\b]c", "\\*"));
-//     try expect(!match("a[\\\\b]c", "a"));
-//     try expect(!match("a[\\\\b]c", "a/*"));
-//     try expect(match("a[\\\\b]c", "abc"));
-//     try expect(!match("a[\\\\b]c", "abd"));
-//     try expect(!match("a[\\\\b]c", "abe"));
-//     try expect(!match("a[\\\\b]c", "b"));
-//     try expect(!match("a[\\\\b]c", "bb"));
-//     try expect(!match("a[\\\\b]c", "bcd"));
-//     try expect(!match("a[\\\\b]c", "bdir/"));
-//     try expect(!match("a[\\\\b]c", "Beware"));
-//     try expect(!match("a[\\\\b]c", "c"));
-//     try expect(!match("a[\\\\b]c", "ca"));
-//     try expect(!match("a[\\\\b]c", "cb"));
-//     try expect(!match("a[\\\\b]c", "d"));
-//     try expect(!match("a[\\\\b]c", "dd"));
-//     try expect(!match("a[\\\\b]c", "de"));
-//     try expect(!match("a[\\\\b]c", "baz"));
-//     try expect(!match("a[\\\\b]c", "bzz"));
-//     try expect(!match("a[\\\\b]c", "BZZ"));
-//     try expect(!match("a[\\\\b]c", "beware"));
-//     try expect(!match("a[\\\\b]c", "BewAre"));
-
-//     try expect(!match("a[\\b]c", "*"));
-//     try expect(!match("a[\\b]c", "**"));
-//     try expect(!match("a[\\b]c", "\\*"));
-//     try expect(!match("a[\\b]c", "a"));
-//     try expect(!match("a[\\b]c", "a/*"));
-//     try expect(!match("a[\\b]c", "abc"));
-//     try expect(!match("a[\\b]c", "abd"));
-//     try expect(!match("a[\\b]c", "abe"));
-//     try expect(!match("a[\\b]c", "b"));
-//     try expect(!match("a[\\b]c", "bb"));
-//     try expect(!match("a[\\b]c", "bcd"));
-//     try expect(!match("a[\\b]c", "bdir/"));
-//     try expect(!match("a[\\b]c", "Beware"));
-//     try expect(!match("a[\\b]c", "c"));
-//     try expect(!match("a[\\b]c", "ca"));
-//     try expect(!match("a[\\b]c", "cb"));
-//     try expect(!match("a[\\b]c", "d"));
-//     try expect(!match("a[\\b]c", "dd"));
-//     try expect(!match("a[\\b]c", "de"));
-//     try expect(!match("a[\\b]c", "baz"));
-//     try expect(!match("a[\\b]c", "bzz"));
-//     try expect(!match("a[\\b]c", "BZZ"));
-//     try expect(!match("a[\\b]c", "beware"));
-//     try expect(!match("a[\\b]c", "BewAre"));
-
-//     try expect(!match("a[b-d]c", "*"));
-//     try expect(!match("a[b-d]c", "**"));
-//     try expect(!match("a[b-d]c", "\\*"));
-//     try expect(!match("a[b-d]c", "a"));
-//     try expect(!match("a[b-d]c", "a/*"));
-//     try expect(match("a[b-d]c", "abc"));
-//     try expect(!match("a[b-d]c", "abd"));
-//     try expect(!match("a[b-d]c", "abe"));
-//     try expect(!match("a[b-d]c", "b"));
-//     try expect(!match("a[b-d]c", "bb"));
-//     try expect(!match("a[b-d]c", "bcd"));
-//     try expect(!match("a[b-d]c", "bdir/"));
-//     try expect(!match("a[b-d]c", "Beware"));
-//     try expect(!match("a[b-d]c", "c"));
-//     try expect(!match("a[b-d]c", "ca"));
-//     try expect(!match("a[b-d]c", "cb"));
-//     try expect(!match("a[b-d]c", "d"));
-//     try expect(!match("a[b-d]c", "dd"));
-//     try expect(!match("a[b-d]c", "de"));
-//     try expect(!match("a[b-d]c", "baz"));
-//     try expect(!match("a[b-d]c", "bzz"));
-//     try expect(!match("a[b-d]c", "BZZ"));
-//     try expect(!match("a[b-d]c", "beware"));
-//     try expect(!match("a[b-d]c", "BewAre"));
-
-//     try expect(!match("a?c", "*"));
-//     try expect(!match("a?c", "**"));
-//     try expect(!match("a?c", "\\*"));
-//     try expect(!match("a?c", "a"));
-//     try expect(!match("a?c", "a/*"));
-//     try expect(match("a?c", "abc"));
-//     try expect(!match("a?c", "abd"));
-//     try expect(!match("a?c", "abe"));
-//     try expect(!match("a?c", "b"));
-//     try expect(!match("a?c", "bb"));
-//     try expect(!match("a?c", "bcd"));
-//     try expect(!match("a?c", "bdir/"));
-//     try expect(!match("a?c", "Beware"));
-//     try expect(!match("a?c", "c"));
-//     try expect(!match("a?c", "ca"));
-//     try expect(!match("a?c", "cb"));
-//     try expect(!match("a?c", "d"));
-//     try expect(!match("a?c", "dd"));
-//     try expect(!match("a?c", "de"));
-//     try expect(!match("a?c", "baz"));
-//     try expect(!match("a?c", "bzz"));
-//     try expect(!match("a?c", "BZZ"));
-//     try expect(!match("a?c", "beware"));
-//     try expect(!match("a?c", "BewAre"));
-
-//     try expect(match("*/man*/bash.*", "man/man1/bash.1"));
-
-//     try expect(match("[^a-c]*", "*"));
-//     try expect(match("[^a-c]*", "**"));
-//     try expect(!match("[^a-c]*", "a"));
-//     try expect(!match("[^a-c]*", "a/*"));
-//     try expect(!match("[^a-c]*", "abc"));
-//     try expect(!match("[^a-c]*", "abd"));
-//     try expect(!match("[^a-c]*", "abe"));
-//     try expect(!match("[^a-c]*", "b"));
-//     try expect(!match("[^a-c]*", "bb"));
-//     try expect(!match("[^a-c]*", "bcd"));
-//     try expect(!match("[^a-c]*", "bdir/"));
-//     try expect(match("[^a-c]*", "Beware"));
-//     try expect(match("[^a-c]*", "Beware"));
-//     try expect(!match("[^a-c]*", "c"));
-//     try expect(!match("[^a-c]*", "ca"));
-//     try expect(!match("[^a-c]*", "cb"));
-//     try expect(match("[^a-c]*", "d"));
-//     try expect(match("[^a-c]*", "dd"));
-//     try expect(match("[^a-c]*", "de"));
-//     try expect(!match("[^a-c]*", "baz"));
-//     try expect(!match("[^a-c]*", "bzz"));
-//     try expect(match("[^a-c]*", "BZZ"));
-//     try expect(!match("[^a-c]*", "beware"));
-//     try expect(match("[^a-c]*", "BewAre"));
-// }
-
-// test "bash wildmatch" {
-//     try expect(!match("a[]-]b", "aab"));
-//     try expect(!match("[ten]", "ten"));
-//     try expect(match("]", "]"));
-//     try expect(match("a[]-]b", "a-b"));
-//     try expect(match("a[]-]b", "a]b"));
-//     try expect(match("a[]]b", "a]b"));
-//     try expect(match("a[\\]a\\-]b", "aab"));
-//     try expect(match("t[a-g]n", "ten"));
-//     try expect(match("t[^a-g]n", "ton"));
-// }
-
-// test "bash slashmatch" {
-//     // try expect(!match("f[^eiu][^eiu][^eiu][^eiu][^eiu]r", "foo/bar"));
-//     try expect(match("foo[/]bar", "foo/bar"));
-//     try expect(match("f[^eiu][^eiu][^eiu][^eiu][^eiu]r", "foo-bar"));
-// }
-
-// test "bash extra_stars" {
-//     try expect(!match("a**c", "bbc"));
-//     try expect(match("a**c", "abc"));
-//     try expect(!match("a**c", "bbd"));
-
-//     try expect(!match("a***c", "bbc"));
-//     try expect(match("a***c", "abc"));
-//     try expect(!match("a***c", "bbd"));
-
-//     try expect(!match("a*****?c", "bbc"));
-//     try expect(match("a*****?c", "abc"));
-//     try expect(!match("a*****?c", "bbc"));
-
-//     try expect(match("?*****??", "bbc"));
-//     try expect(match("?*****??", "abc"));
-
-//     try expect(match("*****??", "bbc"));
-//     try expect(match("*****??", "abc"));
-
-//     try expect(match("?*****?c", "bbc"));
-//     try expect(match("?*****?c", "abc"));
-
-//     try expect(match("?***?****c", "bbc"));
-//     try expect(match("?***?****c", "abc"));
-//     try expect(!match("?***?****c", "bbd"));
-
-//     try expect(match("?***?****?", "bbc"));
-//     try expect(match("?***?****?", "abc"));
-
-//     try expect(match("?***?****", "bbc"));
-//     try expect(match("?***?****", "abc"));
-
-//     try expect(match("*******c", "bbc"));
-//     try expect(match("*******c", "abc"));
-
-//     try expect(match("*******?", "bbc"));
-//     try expect(match("*******?", "abc"));
-
-//     try expect(match("a*cd**?**??k", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??k", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??k***", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??***k", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??***k**", "abcdecdhjk"));
-//     try expect(match("a****c**?**??*****", "abcdecdhjk"));
-// }
-
-// test "stars" {
-//     try expect(!match("*.js", "a/b/c/z.js"));
-//     try expect(!match("*.js", "a/b/z.js"));
-//     try expect(!match("*.js", "a/z.js"));
-//     try expect(match("*.js", "z.js"));
-
-//     // try expect(!match("*/*", "a/.ab"));
-//     // try expect(!match("*", ".ab"));
-
-//     try expect(match("z*.js", "z.js"));
-//     try expect(match("*/*", "a/z"));
-//     try expect(match("*/z*.js", "a/z.js"));
-//     try expect(match("a/z*.js", "a/z.js"));
-
-//     try expect(match("*", "ab"));
-//     try expect(match("*", "abc"));
-
-//     try expect(!match("f*", "bar"));
-//     try expect(!match("*r", "foo"));
-//     try expect(!match("b*", "foo"));
-//     try expect(!match("*", "foo/bar"));
-//     try expect(match("*c", "abc"));
-//     try expect(match("a*", "abc"));
-//     try expect(match("a*c", "abc"));
-//     try expect(match("*r", "bar"));
-//     try expect(match("b*", "bar"));
-//     try expect(match("f*", "foo"));
-
-//     try expect(match("*abc*", "one abc two"));
-//     try expect(match("a*b", "a         b"));
-
-//     try expect(!match("*a*", "foo"));
-//     try expect(match("*a*", "bar"));
-//     try expect(match("*abc*", "oneabctwo"));
-//     try expect(!match("*-bc-*", "a-b.c-d"));
-//     try expect(match("*-*.*-*", "a-b.c-d"));
-//     try expect(match("*-b*c-*", "a-b.c-d"));
-//     try expect(match("*-b.c-*", "a-b.c-d"));
-//     try expect(match("*.*", "a-b.c-d"));
-//     try expect(match("*.*-*", "a-b.c-d"));
-//     try expect(match("*.*-d", "a-b.c-d"));
-//     try expect(match("*.c-*", "a-b.c-d"));
-//     try expect(match("*b.*d", "a-b.c-d"));
-//     try expect(match("a*.c*", "a-b.c-d"));
-//     try expect(match("a-*.*-d", "a-b.c-d"));
-//     try expect(match("*.*", "a.b"));
-//     try expect(match("*.b", "a.b"));
-//     try expect(match("a.*", "a.b"));
-//     try expect(match("a.b", "a.b"));
-
-//     try expect(!match("**-bc-**", "a-b.c-d"));
-//     try expect(match("**-**.**-**", "a-b.c-d"));
-//     try expect(match("**-b**c-**", "a-b.c-d"));
-//     try expect(match("**-b.c-**", "a-b.c-d"));
-//     try expect(match("**.**", "a-b.c-d"));
-//     try expect(match("**.**-**", "a-b.c-d"));
-//     try expect(match("**.**-d", "a-b.c-d"));
-//     try expect(match("**.c-**", "a-b.c-d"));
-//     try expect(match("**b.**d", "a-b.c-d"));
-//     try expect(match("a**.c**", "a-b.c-d"));
-//     try expect(match("a-**.**-d", "a-b.c-d"));
-//     try expect(match("**.**", "a.b"));
-//     try expect(match("**.b", "a.b"));
-//     try expect(match("a.**", "a.b"));
-//     try expect(match("a.b", "a.b"));
-
-//     try expect(match("*/*", "/ab"));
-//     try expect(match(".", "."));
-//     try expect(!match("a/", "a/.b"));
-//     try expect(match("/*", "/ab"));
-//     try expect(match("/??", "/ab"));
-//     try expect(match("/?b", "/ab"));
-//     try expect(match("/*", "/cd"));
-//     try expect(match("a", "a"));
-//     try expect(match("a/.*", "a/.b"));
-//     try expect(match("?/?", "a/b"));
-//     try expect(match("a/**/j/**/z/*.md", "a/b/c/d/e/j/n/p/o/z/c.md"));
-//     try expect(match("a/**/z/*.md", "a/b/c/d/e/z/c.md"));
-//     try expect(match("a/b/c/*.md", "a/b/c/xyz.md"));
-//     try expect(match("a/b/c/*.md", "a/b/c/xyz.md"));
-//     try expect(match("a/*/z/.a", "a/b/z/.a"));
-//     try expect(!match("bz", "a/b/z/.a"));
-//     try expect(match("a/**/c/*.md", "a/bb.bb/aa/b.b/aa/c/xyz.md"));
-//     try expect(match("a/**/c/*.md", "a/bb.bb/aa/bb/aa/c/xyz.md"));
-//     try expect(match("a/*/c/*.md", "a/bb.bb/c/xyz.md"));
-//     try expect(match("a/*/c/*.md", "a/bb/c/xyz.md"));
-//     try expect(match("a/*/c/*.md", "a/bbbb/c/xyz.md"));
-//     try expect(match("*", "aaa"));
-//     try expect(match("*", "ab"));
-//     try expect(match("ab", "ab"));
-
-//     try expect(!match("*/*/*", "aaa"));
-//     try expect(!match("*/*/*", "aaa/bb/aa/rr"));
-//     try expect(!match("aaa*", "aaa/bba/ccc"));
-//     // try expect(!match("aaa**", "aaa/bba/ccc"));
-//     try expect(!match("aaa/*", "aaa/bba/ccc"));
-//     try expect(!match("aaa/*ccc", "aaa/bba/ccc"));
-//     try expect(!match("aaa/*z", "aaa/bba/ccc"));
-//     try expect(!match("*/*/*", "aaa/bbb"));
-//     try expect(!match("*/*jk*/*i", "ab/zzz/ejkl/hi"));
-//     try expect(match("*/*/*", "aaa/bba/ccc"));
-//     try expect(match("aaa/**", "aaa/bba/ccc"));
-//     try expect(match("aaa/*", "aaa/bbb"));
-//     try expect(match("*/*z*/*/*i", "ab/zzz/ejkl/hi"));
-//     try expect(match("*j*i", "abzzzejklhi"));
-
-//     try expect(match("*", "a"));
-//     try expect(match("*", "b"));
-//     try expect(!match("*", "a/a"));
-//     try expect(!match("*", "a/a/a"));
-//     try expect(!match("*", "a/a/b"));
-//     try expect(!match("*", "a/a/a/a"));
-//     try expect(!match("*", "a/a/a/a/a"));
-
-//     try expect(!match("*/*", "a"));
-//     try expect(match("*/*", "a/a"));
-//     try expect(!match("*/*", "a/a/a"));
-
-//     try expect(!match("*/*/*", "a"));
-//     try expect(!match("*/*/*", "a/a"));
-//     try expect(match("*/*/*", "a/a/a"));
-//     try expect(!match("*/*/*", "a/a/a/a"));
-
-//     try expect(!match("*/*/*/*", "a"));
-//     try expect(!match("*/*/*/*", "a/a"));
-//     try expect(!match("*/*/*/*", "a/a/a"));
-//     try expect(match("*/*/*/*", "a/a/a/a"));
-//     try expect(!match("*/*/*/*", "a/a/a/a/a"));
-
-//     try expect(!match("*/*/*/*/*", "a"));
-//     try expect(!match("*/*/*/*/*", "a/a"));
-//     try expect(!match("*/*/*/*/*", "a/a/a"));
-//     try expect(!match("*/*/*/*/*", "a/a/b"));
-//     try expect(!match("*/*/*/*/*", "a/a/a/a"));
-//     try expect(match("*/*/*/*/*", "a/a/a/a/a"));
-//     try expect(!match("*/*/*/*/*", "a/a/a/a/a/a"));
-
-//     try expect(!match("a/*", "a"));
-//     try expect(match("a/*", "a/a"));
-//     try expect(!match("a/*", "a/a/a"));
-//     try expect(!match("a/*", "a/a/a/a"));
-//     try expect(!match("a/*", "a/a/a/a/a"));
-
-//     try expect(!match("a/*/*", "a"));
-//     try expect(!match("a/*/*", "a/a"));
-//     try expect(match("a/*/*", "a/a/a"));
-//     try expect(!match("a/*/*", "b/a/a"));
-//     try expect(!match("a/*/*", "a/a/a/a"));
-//     try expect(!match("a/*/*", "a/a/a/a/a"));
-
-//     try expect(!match("a/*/*/*", "a"));
-//     try expect(!match("a/*/*/*", "a/a"));
-//     try expect(!match("a/*/*/*", "a/a/a"));
-//     try expect(match("a/*/*/*", "a/a/a/a"));
-//     try expect(!match("a/*/*/*", "a/a/a/a/a"));
-
-//     try expect(!match("a/*/*/*/*", "a"));
-//     try expect(!match("a/*/*/*/*", "a/a"));
-//     try expect(!match("a/*/*/*/*", "a/a/a"));
-//     try expect(!match("a/*/*/*/*", "a/a/b"));
-//     try expect(!match("a/*/*/*/*", "a/a/a/a"));
-//     try expect(match("a/*/*/*/*", "a/a/a/a/a"));
-
-//     try expect(!match("a/*/a", "a"));
-//     try expect(!match("a/*/a", "a/a"));
-//     try expect(match("a/*/a", "a/a/a"));
-//     try expect(!match("a/*/a", "a/a/b"));
-//     try expect(!match("a/*/a", "a/a/a/a"));
-//     try expect(!match("a/*/a", "a/a/a/a/a"));
-
-//     try expect(!match("a/*/b", "a"));
-//     try expect(!match("a/*/b", "a/a"));
-//     try expect(!match("a/*/b", "a/a/a"));
-//     try expect(match("a/*/b", "a/a/b"));
-//     try expect(!match("a/*/b", "a/a/a/a"));
-//     try expect(!match("a/*/b", "a/a/a/a/a"));
-
-//     try expect(!match("*/**/a", "a"));
-//     try expect(!match("*/**/a", "a/a/b"));
-//     try expect(match("*/**/a", "a/a"));
-//     try expect(match("*/**/a", "a/a/a"));
-//     try expect(match("*/**/a", "a/a/a/a"));
-//     try expect(match("*/**/a", "a/a/a/a/a"));
-
-//     try expect(!match("*/", "a"));
-//     try expect(!match("*/*", "a"));
-//     try expect(!match("a/*", "a"));
-//     // try expect(!match("*/*", "a/"));
-//     // try expect(!match("a/*", "a/"));
-//     try expect(!match("*", "a/a"));
-//     try expect(!match("*/", "a/a"));
-//     try expect(!match("*/", "a/x/y"));
-//     try expect(!match("*/*", "a/x/y"));
-//     try expect(!match("a/*", "a/x/y"));
-//     // try expect(match("*", "a/"));
-//     try expect(match("*", "a"));
-//     try expect(match("*/", "a/"));
-//     try expect(match("*{,/}", "a/"));
-//     try expect(match("*/*", "a/a"));
-//     try expect(match("a/*", "a/a"));
-
-//     try expect(!match("a/**/*.txt", "a.txt"));
-//     try expect(match("a/**/*.txt", "a/x/y.txt"));
-//     try expect(!match("a/**/*.txt", "a/x/y/z"));
-
-//     try expect(!match("a/*.txt", "a.txt"));
-//     try expect(match("a/*.txt", "a/b.txt"));
-//     try expect(!match("a/*.txt", "a/x/y.txt"));
-//     try expect(!match("a/*.txt", "a/x/y/z"));
-
-//     try expect(match("a*.txt", "a.txt"));
-//     try expect(!match("a*.txt", "a/b.txt"));
-//     try expect(!match("a*.txt", "a/x/y.txt"));
-//     try expect(!match("a*.txt", "a/x/y/z"));
-
-//     try expect(match("*.txt", "a.txt"));
-//     try expect(!match("*.txt", "a/b.txt"));
-//     try expect(!match("*.txt", "a/x/y.txt"));
-//     try expect(!match("*.txt", "a/x/y/z"));
-
-//     try expect(!match("a*", "a/b"));
-//     try expect(!match("a/**/b", "a/a/bb"));
-//     try expect(!match("a/**/b", "a/bb"));
-
-//     try expect(!match("*/**", "foo"));
-//     try expect(!match("**/", "foo/bar"));
-//     try expect(!match("**/*/", "foo/bar"));
-//     try expect(!match("*/*/", "foo/bar"));
-
-//     try expect(match("**/..", "/home/foo/.."));
-//     try expect(match("**/a", "a"));
-//     try expect(match("**", "a/a"));
-//     try expect(match("a/**", "a/a"));
-//     try expect(match("a/**", "a/"));
-//     // try expect(match("a/**", "a"));
-//     try expect(!match("**/", "a/a"));
-//     // try expect(match("**/a/**", "a"));
-//     // try expect(match("a/**", "a"));
-//     try expect(!match("**/", "a/a"));
-//     try expect(match("*/**/a", "a/a"));
-//     // try expect(match("a/**", "a"));
-//     try expect(match("*/**", "foo/"));
-//     try expect(match("**/*", "foo/bar"));
-//     try expect(match("*/*", "foo/bar"));
-//     try expect(match("*/**", "foo/bar"));
-//     try expect(match("**/", "foo/bar/"));
-//     // try expect(match("**/*", "foo/bar/"));
-//     try expect(match("**/*/", "foo/bar/"));
-//     try expect(match("*/**", "foo/bar/"));
-//     try expect(match("*/*/", "foo/bar/"));
-
-//     try expect(!match("*/foo", "bar/baz/foo"));
-//     try expect(!match("**/bar/*", "deep/foo/bar"));
-//     try expect(!match("*/bar/**", "deep/foo/bar/baz/x"));
-//     try expect(!match("/*", "ef"));
-//     try expect(!match("foo?bar", "foo/bar"));
-//     try expect(!match("**/bar*", "foo/bar/baz"));
-//     // try expect(!match("**/bar**", "foo/bar/baz"));
-//     try expect(!match("foo**bar", "foo/baz/bar"));
-//     try expect(!match("foo*bar", "foo/baz/bar"));
-//     // try expect(match("foo/**", "foo"));
-//     try expect(match("/*", "/ab"));
-//     try expect(match("/*", "/cd"));
-//     try expect(match("/*", "/ef"));
-//     try expect(match("a/**/j/**/z/*.md", "a/b/j/c/z/x.md"));
-//     try expect(match("a/**/j/**/z/*.md", "a/j/z/x.md"));
-
-//     try expect(match("**/foo", "bar/baz/foo"));
-//     try expect(match("**/bar/*", "deep/foo/bar/baz"));
-//     try expect(match("**/bar/**", "deep/foo/bar/baz/"));
-//     try expect(match("**/bar/*/*", "deep/foo/bar/baz/x"));
-//     try expect(match("foo/**/**/bar", "foo/b/a/z/bar"));
-//     try expect(match("foo/**/bar", "foo/b/a/z/bar"));
-//     try expect(match("foo/**/**/bar", "foo/bar"));
-//     try expect(match("foo/**/bar", "foo/bar"));
-//     try expect(match("*/bar/**", "foo/bar/baz/x"));
-//     try expect(match("foo/**/**/bar", "foo/baz/bar"));
-//     try expect(match("foo/**/bar", "foo/baz/bar"));
-//     try expect(match("**/foo", "XXX/foo"));
-// }
-
-// test "globstars" {
-//     try expect(match("**/*.js", "a/b/c/d.js"));
-//     try expect(match("**/*.js", "a/b/c.js"));
-//     try expect(match("**/*.js", "a/b.js"));
-//     try expect(match("a/b/**/*.js", "a/b/c/d/e/f.js"));
-//     try expect(match("a/b/**/*.js", "a/b/c/d/e.js"));
-//     try expect(match("a/b/c/**/*.js", "a/b/c/d.js"));
-//     try expect(match("a/b/**/*.js", "a/b/c/d.js"));
-//     try expect(match("a/b/**/*.js", "a/b/d.js"));
-//     try expect(!match("a/b/**/*.js", "a/d.js"));
-//     try expect(!match("a/b/**/*.js", "d.js"));
-
-//     try expect(!match("**c", "a/b/c"));
-//     try expect(!match("a/**c", "a/b/c"));
-//     try expect(!match("a/**z", "a/b/c"));
-//     try expect(!match("a/**b**/c", "a/b/c/b/c"));
-//     try expect(!match("a/b/c**/*.js", "a/b/c/d/e.js"));
-//     try expect(match("a/**/b/**/c", "a/b/c/b/c"));
-//     try expect(match("a/**b**/c", "a/aba/c"));
-//     try expect(match("a/**b**/c", "a/b/c"));
-//     try expect(match("a/b/c**/*.js", "a/b/c/d.js"));
-
-//     try expect(!match("a/**/*", "a"));
-//     try expect(!match("a/**/**/*", "a"));
-//     try expect(!match("a/**/**/**/*", "a"));
-//     try expect(!match("**/a", "a/"));
-//     try expect(!match("a/**/*", "a/"));
-//     try expect(!match("a/**/**/*", "a/"));
-//     try expect(!match("a/**/**/**/*", "a/"));
-//     try expect(!match("**/a", "a/b"));
-//     try expect(!match("a/**/j/**/z/*.md", "a/b/c/j/e/z/c.txt"));
-//     try expect(!match("a/**/b", "a/bb"));
-//     try expect(!match("**/a", "a/c"));
-//     try expect(!match("**/a", "a/b"));
-//     try expect(!match("**/a", "a/x/y"));
-//     try expect(!match("**/a", "a/b/c/d"));
-//     try expect(match("**", "a"));
-//     try expect(match("**/a", "a"));
-//     // try expect(match("a/**", "a"));
-//     try expect(match("**", "a/"));
-//     try expect(match("**/a/**", "a/"));
-//     try expect(match("a/**", "a/"));
-//     try expect(match("a/**/**", "a/"));
-//     try expect(match("**/a", "a/a"));
-//     try expect(match("**", "a/b"));
-//     try expect(match("*/*", "a/b"));
-//     try expect(match("a/**", "a/b"));
-//     try expect(match("a/**/*", "a/b"));
-//     try expect(match("a/**/**/*", "a/b"));
-//     try expect(match("a/**/**/**/*", "a/b"));
-//     try expect(match("a/**/b", "a/b"));
-//     try expect(match("**", "a/b/c"));
-//     try expect(match("**/*", "a/b/c"));
-//     try expect(match("**/**", "a/b/c"));
-//     try expect(match("*/**", "a/b/c"));
-//     try expect(match("a/**", "a/b/c"));
-//     try expect(match("a/**/*", "a/b/c"));
-//     try expect(match("a/**/**/*", "a/b/c"));
-//     try expect(match("a/**/**/**/*", "a/b/c"));
-//     try expect(match("**", "a/b/c/d"));
-//     try expect(match("a/**", "a/b/c/d"));
-//     try expect(match("a/**/*", "a/b/c/d"));
-//     try expect(match("a/**/**/*", "a/b/c/d"));
-//     try expect(match("a/**/**/**/*", "a/b/c/d"));
-//     try expect(match("a/b/**/c/**/*.*", "a/b/c/d.e"));
-//     try expect(match("a/**/f/*.md", "a/b/c/d/e/f/g.md"));
-//     try expect(match("a/**/f/**/k/*.md", "a/b/c/d/e/f/g/h/i/j/k/l.md"));
-//     try expect(match("a/b/c/*.md", "a/b/c/def.md"));
-//     try expect(match("a/*/c/*.md", "a/bb.bb/c/ddd.md"));
-//     try expect(match("a/**/f/*.md", "a/bb.bb/cc/d.d/ee/f/ggg.md"));
-//     try expect(match("a/**/f/*.md", "a/bb.bb/cc/dd/ee/f/ggg.md"));
-//     try expect(match("a/*/c/*.md", "a/bb/c/ddd.md"));
-//     try expect(match("a/*/c/*.md", "a/bbbb/c/ddd.md"));
-
-//     try expect(match("foo/bar/**/one/**/*.*", "foo/bar/baz/one/image.png"));
-//     try expect(match("foo/bar/**/one/**/*.*", "foo/bar/baz/one/two/image.png"));
-//     try expect(match("foo/bar/**/one/**/*.*", "foo/bar/baz/one/two/three/image.png"));
-//     try expect(!match("a/b/**/f", "a/b/c/d/"));
-//     // try expect(match("a/**", "a"));
-//     try expect(match("**", "a"));
-//     // try expect(match("a{,/**}", "a"));
-//     try expect(match("**", "a/"));
-//     try expect(match("a/**", "a/"));
-//     try expect(match("**", "a/b/c/d"));
-//     try expect(match("**", "a/b/c/d/"));
-//     try expect(match("**/**", "a/b/c/d/"));
-//     try expect(match("**/b/**", "a/b/c/d/"));
-//     try expect(match("a/b/**", "a/b/c/d/"));
-//     try expect(match("a/b/**/", "a/b/c/d/"));
-//     try expect(match("a/b/**/c/**/", "a/b/c/d/"));
-//     try expect(match("a/b/**/c/**/d/", "a/b/c/d/"));
-//     try expect(match("a/b/**/**/*.*", "a/b/c/d/e.f"));
-//     try expect(match("a/b/**/*.*", "a/b/c/d/e.f"));
-//     try expect(match("a/b/**/c/**/d/*.*", "a/b/c/d/e.f"));
-//     try expect(match("a/b/**/d/**/*.*", "a/b/c/d/e.f"));
-//     try expect(match("a/b/**/d/**/*.*", "a/b/c/d/g/e.f"));
-//     try expect(match("a/b/**/d/**/*.*", "a/b/c/d/g/g/e.f"));
-//     try expect(match("a/b-*/**/z.js", "a/b-c/z.js"));
-//     try expect(match("a/b-*/**/z.js", "a/b-c/d/e/z.js"));
-
-//     try expect(match("*/*", "a/b"));
-//     try expect(match("a/b/c/*.md", "a/b/c/xyz.md"));
-//     try expect(match("a/*/c/*.md", "a/bb.bb/c/xyz.md"));
-//     try expect(match("a/*/c/*.md", "a/bb/c/xyz.md"));
-//     try expect(match("a/*/c/*.md", "a/bbbb/c/xyz.md"));
-
-//     try expect(match("**/*", "a/b/c"));
-//     try expect(match("**/**", "a/b/c"));
-//     try expect(match("*/**", "a/b/c"));
-//     try expect(match("a/**/j/**/z/*.md", "a/b/c/d/e/j/n/p/o/z/c.md"));
-//     try expect(match("a/**/z/*.md", "a/b/c/d/e/z/c.md"));
-//     try expect(match("a/**/c/*.md", "a/bb.bb/aa/b.b/aa/c/xyz.md"));
-//     try expect(match("a/**/c/*.md", "a/bb.bb/aa/bb/aa/c/xyz.md"));
-//     try expect(!match("a/**/j/**/z/*.md", "a/b/c/j/e/z/c.txt"));
-//     try expect(!match("a/b/**/c{d,e}/**/xyz.md", "a/b/c/xyz.md"));
-//     try expect(!match("a/b/**/c{d,e}/**/xyz.md", "a/b/d/xyz.md"));
-//     try expect(!match("a/**/", "a/b"));
-//     // try expect(!match("**/*", "a/b/.js/c.txt"));
-//     try expect(!match("a/**/", "a/b/c/d"));
-//     try expect(!match("a/**/", "a/bb"));
-//     try expect(!match("a/**/", "a/cb"));
-//     try expect(match("/**", "/a/b"));
-//     try expect(match("**/*", "a.b"));
-//     try expect(match("**/*", "a.js"));
-//     try expect(match("**/*.js", "a.js"));
-//     // try expect(match("a/**/", "a/"));
-//     try expect(match("**/*.js", "a/a.js"));
-//     try expect(match("**/*.js", "a/a/b.js"));
-//     try expect(match("a/**/b", "a/b"));
-//     try expect(match("a/**b", "a/b"));
-//     try expect(match("**/*.md", "a/b.md"));
-//     try expect(match("**/*", "a/b/c.js"));
-//     try expect(match("**/*", "a/b/c.txt"));
-//     try expect(match("a/**/", "a/b/c/d/"));
-//     try expect(match("**/*", "a/b/c/d/a.js"));
-//     try expect(match("a/b/**/*.js", "a/b/c/z.js"));
-//     try expect(match("a/b/**/*.js", "a/b/z.js"));
-//     try expect(match("**/*", "ab"));
-//     try expect(match("**/*", "ab/c"));
-//     try expect(match("**/*", "ab/c/d"));
-//     try expect(match("**/*", "abc.js"));
-
-//     try expect(!match("**/", "a"));
-//     try expect(!match("**/a/*", "a"));
-//     try expect(!match("**/a/*/*", "a"));
-//     try expect(!match("*/a/**", "a"));
-//     try expect(!match("a/**/*", "a"));
-//     try expect(!match("a/**/**/*", "a"));
-//     try expect(!match("**/", "a/b"));
-//     try expect(!match("**/b/*", "a/b"));
-//     try expect(!match("**/b/*/*", "a/b"));
-//     try expect(!match("b/**", "a/b"));
-//     try expect(!match("**/", "a/b/c"));
-//     try expect(!match("**/**/b", "a/b/c"));
-//     try expect(!match("**/b", "a/b/c"));
-//     try expect(!match("**/b/*/*", "a/b/c"));
-//     try expect(!match("b/**", "a/b/c"));
-//     try expect(!match("**/", "a/b/c/d"));
-//     try expect(!match("**/d/*", "a/b/c/d"));
-//     try expect(!match("b/**", "a/b/c/d"));
-//     try expect(match("**", "a"));
-//     try expect(match("**/**", "a"));
-//     try expect(match("**/**/*", "a"));
-//     try expect(match("**/**/a", "a"));
-//     try expect(match("**/a", "a"));
-//     // try expect(match("**/a/**", "a"));
-//     // try expect(match("a/**", "a"));
-//     try expect(match("**", "a/b"));
-//     try expect(match("**/**", "a/b"));
-//     try expect(match("**/**/*", "a/b"));
-//     try expect(match("**/**/b", "a/b"));
-//     try expect(match("**/b", "a/b"));
-//     // try expect(match("**/b/**", "a/b"));
-//     // try expect(match("*/b/**", "a/b"));
-//     try expect(match("a/**", "a/b"));
-//     try expect(match("a/**/*", "a/b"));
-//     try expect(match("a/**/**/*", "a/b"));
-//     try expect(match("**", "a/b/c"));
-//     try expect(match("**/**", "a/b/c"));
-//     try expect(match("**/**/*", "a/b/c"));
-//     try expect(match("**/b/*", "a/b/c"));
-//     try expect(match("**/b/**", "a/b/c"));
-//     try expect(match("*/b/**", "a/b/c"));
-//     try expect(match("a/**", "a/b/c"));
-//     try expect(match("a/**/*", "a/b/c"));
-//     try expect(match("a/**/**/*", "a/b/c"));
-//     try expect(match("**", "a/b/c/d"));
-//     try expect(match("**/**", "a/b/c/d"));
-//     try expect(match("**/**/*", "a/b/c/d"));
-//     try expect(match("**/**/d", "a/b/c/d"));
-//     try expect(match("**/b/**", "a/b/c/d"));
-//     try expect(match("**/b/*/*", "a/b/c/d"));
-//     try expect(match("**/d", "a/b/c/d"));
-//     try expect(match("*/b/**", "a/b/c/d"));
-//     try expect(match("a/**", "a/b/c/d"));
-//     try expect(match("a/**/*", "a/b/c/d"));
-//     try expect(match("a/**/**/*", "a/b/c/d"));
-// }
-
-// test "utf8" {
-//     try expect(match("フ*/**/*", "フォルダ/aaa.js"));
-//     try expect(match("フォ*/**/*", "フォルダ/aaa.js"));
-//     try expect(match("フォル*/**/*", "フォルダ/aaa.js"));
-//     try expect(match("フ*ル*/**/*", "フォルダ/aaa.js"));
-//     try expect(match("フォルダ/**/*", "フォルダ/aaa.js"));
-// }
-
-// test "negation" {
-//     try expect(!match("!*", "abc"));
-//     try expect(!match("!abc", "abc"));
-//     try expect(!match("*!.md", "bar.md"));
-//     try expect(!match("foo!.md", "bar.md"));
-//     try expect(!match("\\!*!*.md", "foo!.md"));
-//     try expect(!match("\\!*!*.md", "foo!bar.md"));
-//     try expect(match("*!*.md", "!foo!.md"));
-//     try expect(match("\\!*!*.md", "!foo!.md"));
-//     try expect(match("!*foo", "abc"));
-//     try expect(match("!foo*", "abc"));
-//     try expect(match("!xyz", "abc"));
-//     try expect(match("*!*.*", "ba!r.js"));
-//     try expect(match("*.md", "bar.md"));
-//     try expect(match("*!*.*", "foo!.md"));
-//     try expect(match("*!*.md", "foo!.md"));
-//     try expect(match("*!.md", "foo!.md"));
-//     try expect(match("*.md", "foo!.md"));
-//     try expect(match("foo!.md", "foo!.md"));
-//     try expect(match("*!*.md", "foo!bar.md"));
-//     try expect(match("*b*.md", "foobar.md"));
-
-//     try expect(!match("a!!b", "a"));
-//     try expect(!match("a!!b", "aa"));
-//     try expect(!match("a!!b", "a/b"));
-//     try expect(!match("a!!b", "a!b"));
-//     try expect(match("a!!b", "a!!b"));
-//     try expect(!match("a!!b", "a/!!/b"));
-
-//     try expect(!match("!a/b", "a/b"));
-//     try expect(match("!a/b", "a"));
-//     try expect(match("!a/b", "a.b"));
-//     try expect(match("!a/b", "a/a"));
-//     try expect(match("!a/b", "a/c"));
-//     try expect(match("!a/b", "b/a"));
-//     try expect(match("!a/b", "b/b"));
-//     try expect(match("!a/b", "b/c"));
-
-//     try expect(!match("!abc", "abc"));
-//     try expect(match("!!abc", "abc"));
-//     try expect(!match("!!!abc", "abc"));
-//     try expect(match("!!!!abc", "abc"));
-//     try expect(!match("!!!!!abc", "abc"));
-//     try expect(match("!!!!!!abc", "abc"));
-//     try expect(!match("!!!!!!!abc", "abc"));
-//     try expect(match("!!!!!!!!abc", "abc"));
-
-//     // try expect(!match("!(*/*)", "a/a"));
-//     // try expect(!match("!(*/*)", "a/b"));
-//     // try expect(!match("!(*/*)", "a/c"));
-//     // try expect(!match("!(*/*)", "b/a"));
-//     // try expect(!match("!(*/*)", "b/b"));
-//     // try expect(!match("!(*/*)", "b/c"));
-//     // try expect(!match("!(*/b)", "a/b"));
-//     // try expect(!match("!(*/b)", "b/b"));
-//     // try expect(!match("!(a/b)", "a/b"));
-//     try expect(!match("!*", "a"));
-//     try expect(!match("!*", "a.b"));
-//     try expect(!match("!*/*", "a/a"));
-//     try expect(!match("!*/*", "a/b"));
-//     try expect(!match("!*/*", "a/c"));
-//     try expect(!match("!*/*", "b/a"));
-//     try expect(!match("!*/*", "b/b"));
-//     try expect(!match("!*/*", "b/c"));
-//     try expect(!match("!*/b", "a/b"));
-//     try expect(!match("!*/b", "b/b"));
-//     try expect(!match("!*/c", "a/c"));
-//     try expect(!match("!*/c", "a/c"));
-//     try expect(!match("!*/c", "b/c"));
-//     try expect(!match("!*/c", "b/c"));
-//     try expect(!match("!*a*", "bar"));
-//     try expect(!match("!*a*", "fab"));
-//     // try expect(!match("!a/(*)", "a/a"));
-//     // try expect(!match("!a/(*)", "a/b"));
-//     // try expect(!match("!a/(*)", "a/c"));
-//     // try expect(!match("!a/(b)", "a/b"));
-//     try expect(!match("!a/*", "a/a"));
-//     try expect(!match("!a/*", "a/b"));
-//     try expect(!match("!a/*", "a/c"));
-//     try expect(!match("!f*b", "fab"));
-//     // try expect(match("!(*/*)", "a"));
-//     // try expect(match("!(*/*)", "a.b"));
-//     // try expect(match("!(*/b)", "a"));
-//     // try expect(match("!(*/b)", "a.b"));
-//     // try expect(match("!(*/b)", "a/a"));
-//     // try expect(match("!(*/b)", "a/c"));
-//     // try expect(match("!(*/b)", "b/a"));
-//     // try expect(match("!(*/b)", "b/c"));
-//     // try expect(match("!(a/b)", "a"));
-//     // try expect(match("!(a/b)", "a.b"));
-//     // try expect(match("!(a/b)", "a/a"));
-//     // try expect(match("!(a/b)", "a/c"));
-//     // try expect(match("!(a/b)", "b/a"));
-//     // try expect(match("!(a/b)", "b/b"));
-//     // try expect(match("!(a/b)", "b/c"));
-//     try expect(match("!*", "a/a"));
-//     try expect(match("!*", "a/b"));
-//     try expect(match("!*", "a/c"));
-//     try expect(match("!*", "b/a"));
-//     try expect(match("!*", "b/b"));
-//     try expect(match("!*", "b/c"));
-//     try expect(match("!*/*", "a"));
-//     try expect(match("!*/*", "a.b"));
-//     try expect(match("!*/b", "a"));
-//     try expect(match("!*/b", "a.b"));
-//     try expect(match("!*/b", "a/a"));
-//     try expect(match("!*/b", "a/c"));
-//     try expect(match("!*/b", "b/a"));
-//     try expect(match("!*/b", "b/c"));
-//     try expect(match("!*/c", "a"));
-//     try expect(match("!*/c", "a.b"));
-//     try expect(match("!*/c", "a/a"));
-//     try expect(match("!*/c", "a/b"));
-//     try expect(match("!*/c", "b/a"));
-//     try expect(match("!*/c", "b/b"));
-//     try expect(match("!*a*", "foo"));
-//     // try expect(match("!a/(*)", "a"));
-//     // try expect(match("!a/(*)", "a.b"));
-//     // try expect(match("!a/(*)", "b/a"));
-//     // try expect(match("!a/(*)", "b/b"));
-//     // try expect(match("!a/(*)", "b/c"));
-//     // try expect(match("!a/(b)", "a"));
-//     // try expect(match("!a/(b)", "a.b"));
-//     // try expect(match("!a/(b)", "a/a"));
-//     // try expect(match("!a/(b)", "a/c"));
-//     // try expect(match("!a/(b)", "b/a"));
-//     // try expect(match("!a/(b)", "b/b"));
-//     // try expect(match("!a/(b)", "b/c"));
-//     try expect(match("!a/*", "a"));
-//     try expect(match("!a/*", "a.b"));
-//     try expect(match("!a/*", "b/a"));
-//     try expect(match("!a/*", "b/b"));
-//     try expect(match("!a/*", "b/c"));
-//     try expect(match("!f*b", "bar"));
-//     try expect(match("!f*b", "foo"));
-
-//     try expect(!match("!.md", ".md"));
-//     try expect(match("!**/*.md", "a.js"));
-//     // try expect(!match("!**/*.md", "b.md"));
-//     try expect(match("!**/*.md", "c.txt"));
-//     try expect(match("!*.md", "a.js"));
-//     try expect(!match("!*.md", "b.md"));
-//     try expect(match("!*.md", "c.txt"));
-//     try expect(!match("!*.md", "abc.md"));
-//     try expect(match("!*.md", "abc.txt"));
-//     try expect(!match("!*.md", "foo.md"));
-//     try expect(match("!.md", "foo.md"));
-
-//     try expect(match("!*.md", "a.js"));
-//     try expect(match("!*.md", "b.txt"));
-//     try expect(!match("!*.md", "c.md"));
-//     try expect(!match("!a/*/a.js", "a/a/a.js"));
-//     try expect(!match("!a/*/a.js", "a/b/a.js"));
-//     try expect(!match("!a/*/a.js", "a/c/a.js"));
-//     try expect(!match("!a/*/*/a.js", "a/a/a/a.js"));
-//     try expect(match("!a/*/*/a.js", "b/a/b/a.js"));
-//     try expect(match("!a/*/*/a.js", "c/a/c/a.js"));
-//     try expect(!match("!a/a*.txt", "a/a.txt"));
-//     try expect(match("!a/a*.txt", "a/b.txt"));
-//     try expect(match("!a/a*.txt", "a/c.txt"));
-//     try expect(!match("!a.a*.txt", "a.a.txt"));
-//     try expect(match("!a.a*.txt", "a.b.txt"));
-//     try expect(match("!a.a*.txt", "a.c.txt"));
-//     try expect(!match("!a/*.txt", "a/a.txt"));
-//     try expect(!match("!a/*.txt", "a/b.txt"));
-//     try expect(!match("!a/*.txt", "a/c.txt"));
-
-//     try expect(match("!*.md", "a.js"));
-//     try expect(match("!*.md", "b.txt"));
-//     try expect(!match("!*.md", "c.md"));
-//     // try expect(!match("!**/a.js", "a/a/a.js"));
-//     // try expect(!match("!**/a.js", "a/b/a.js"));
-//     // try expect(!match("!**/a.js", "a/c/a.js"));
-//     try expect(match("!**/a.js", "a/a/b.js"));
-//     try expect(!match("!a/**/a.js", "a/a/a/a.js"));
-//     try expect(match("!a/**/a.js", "b/a/b/a.js"));
-//     try expect(match("!a/**/a.js", "c/a/c/a.js"));
-//     try expect(match("!**/*.md", "a/b.js"));
-//     try expect(match("!**/*.md", "a.js"));
-//     try expect(!match("!**/*.md", "a/b.md"));
-//     // try expect(!match("!**/*.md", "a.md"));
-//     try expect(!match("**/*.md", "a/b.js"));
-//     try expect(!match("**/*.md", "a.js"));
-//     try expect(match("**/*.md", "a/b.md"));
-//     try expect(match("**/*.md", "a.md"));
-//     try expect(match("!**/*.md", "a/b.js"));
-//     try expect(match("!**/*.md", "a.js"));
-//     try expect(!match("!**/*.md", "a/b.md"));
-//     // try expect(!match("!**/*.md", "a.md"));
-//     try expect(match("!*.md", "a/b.js"));
-//     try expect(match("!*.md", "a.js"));
-//     try expect(match("!*.md", "a/b.md"));
-//     try expect(!match("!*.md", "a.md"));
-//     try expect(match("!**/*.md", "a.js"));
-//     // try expect(!match("!**/*.md", "b.md"));
-//     try expect(match("!**/*.md", "c.txt"));
-// }
-
-// test "question_mark" {
-//     try expect(match("?", "a"));
-//     try expect(!match("?", "aa"));
-//     try expect(!match("?", "ab"));
-//     try expect(!match("?", "aaa"));
-//     try expect(!match("?", "abcdefg"));
-
-//     try expect(!match("??", "a"));
-//     try expect(match("??", "aa"));
-//     try expect(match("??", "ab"));
-//     try expect(!match("??", "aaa"));
-//     try expect(!match("??", "abcdefg"));
-
-//     try expect(!match("???", "a"));
-//     try expect(!match("???", "aa"));
-//     try expect(!match("???", "ab"));
-//     try expect(match("???", "aaa"));
-//     try expect(!match("???", "abcdefg"));
-
-//     try expect(!match("a?c", "aaa"));
-//     try expect(match("a?c", "aac"));
-//     try expect(match("a?c", "abc"));
-//     try expect(!match("ab?", "a"));
-//     try expect(!match("ab?", "aa"));
-//     try expect(!match("ab?", "ab"));
-//     try expect(!match("ab?", "ac"));
-//     try expect(!match("ab?", "abcd"));
-//     try expect(!match("ab?", "abbb"));
-//     try expect(match("a?b", "acb"));
-
-//     try expect(!match("a/?/c/?/e.md", "a/bb/c/dd/e.md"));
-//     try expect(match("a/??/c/??/e.md", "a/bb/c/dd/e.md"));
-//     try expect(!match("a/??/c.md", "a/bbb/c.md"));
-//     try expect(match("a/?/c.md", "a/b/c.md"));
-//     try expect(match("a/?/c/?/e.md", "a/b/c/d/e.md"));
-//     try expect(!match("a/?/c/???/e.md", "a/b/c/d/e.md"));
-//     try expect(match("a/?/c/???/e.md", "a/b/c/zzz/e.md"));
-//     try expect(!match("a/?/c.md", "a/bb/c.md"));
-//     try expect(match("a/??/c.md", "a/bb/c.md"));
-//     try expect(match("a/???/c.md", "a/bbb/c.md"));
-//     try expect(match("a/????/c.md", "a/bbbb/c.md"));
-// }
-
-// test "braces" {
-//     try expect(match("{a,b,c}", "a"));
-//     try expect(match("{a,b,c}", "b"));
-//     try expect(match("{a,b,c}", "c"));
-//     try expect(!match("{a,b,c}", "aa"));
-//     try expect(!match("{a,b,c}", "bb"));
-//     try expect(!match("{a,b,c}", "cc"));
-
-//     try expect(match("a/{a,b}", "a/a"));
-//     try expect(match("a/{a,b}", "a/b"));
-//     try expect(!match("a/{a,b}", "a/c"));
-//     try expect(!match("a/{a,b}", "b/b"));
-//     try expect(!match("a/{a,b,c}", "b/b"));
-//     try expect(match("a/{a,b,c}", "a/c"));
-//     try expect(match("a{b,bc}.txt", "abc.txt"));
-
-//     try expect(match("foo[{a,b}]baz", "foo{baz"));
-
-//     try expect(!match("a{,b}.txt", "abc.txt"));
-//     try expect(!match("a{a,b,}.txt", "abc.txt"));
-//     try expect(!match("a{b,}.txt", "abc.txt"));
-//     try expect(match("a{,b}.txt", "a.txt"));
-//     try expect(match("a{b,}.txt", "a.txt"));
-//     try expect(match("a{a,b,}.txt", "aa.txt"));
-//     try expect(match("a{a,b,}.txt", "aa.txt"));
-//     try expect(match("a{,b}.txt", "ab.txt"));
-//     try expect(match("a{b,}.txt", "ab.txt"));
-
-//     // try expect(match("{a/,}a/**", "a"));
-//     try expect(match("a{a,b/}*.txt", "aa.txt"));
-//     try expect(match("a{a,b/}*.txt", "ab/.txt"));
-//     try expect(match("a{a,b/}*.txt", "ab/a.txt"));
-//     // try expect(match("{a/,}a/**", "a/"));
-//     try expect(match("{a/,}a/**", "a/a/"));
-//     // try expect(match("{a/,}a/**", "a/a"));
-//     try expect(match("{a/,}a/**", "a/a/a"));
-//     try expect(match("{a/,}a/**", "a/a/"));
-//     try expect(match("{a/,}a/**", "a/a/a/"));
-//     try expect(match("{a/,}b/**", "a/b/a/"));
-//     try expect(match("{a/,}b/**", "b/a/"));
-//     try expect(match("a{,/}*.txt", "a.txt"));
-//     try expect(match("a{,/}*.txt", "ab.txt"));
-//     try expect(match("a{,/}*.txt", "a/b.txt"));
-//     try expect(match("a{,/}*.txt", "a/ab.txt"));
-
-//     try expect(match("a{,.*{foo,db},\\(bar\\)}.txt", "a.txt"));
-//     try expect(!match("a{,.*{foo,db},\\(bar\\)}.txt", "adb.txt"));
-//     try expect(match("a{,.*{foo,db},\\(bar\\)}.txt", "a.db.txt"));
-
-//     try expect(match("a{,*.{foo,db},\\(bar\\)}.txt", "a.txt"));
-//     try expect(!match("a{,*.{foo,db},\\(bar\\)}.txt", "adb.txt"));
-//     try expect(match("a{,*.{foo,db},\\(bar\\)}.txt", "a.db.txt"));
-
-//     // try expect(match("a{,.*{foo,db},\\(bar\\)}", "a"));
-//     try expect(!match("a{,.*{foo,db},\\(bar\\)}", "adb"));
-//     try expect(match("a{,.*{foo,db},\\(bar\\)}", "a.db"));
-
-//     // try expect(match("a{,*.{foo,db},\\(bar\\)}", "a"));
-//     try expect(!match("a{,*.{foo,db},\\(bar\\)}", "adb"));
-//     try expect(match("a{,*.{foo,db},\\(bar\\)}", "a.db"));
-
-//     try expect(!match("{,.*{foo,db},\\(bar\\)}", "a"));
-//     try expect(!match("{,.*{foo,db},\\(bar\\)}", "adb"));
-//     try expect(!match("{,.*{foo,db},\\(bar\\)}", "a.db"));
-//     try expect(match("{,.*{foo,db},\\(bar\\)}", ".db"));
-
-//     try expect(!match("{,*.{foo,db},\\(bar\\)}", "a"));
-//     try expect(match("{*,*.{foo,db},\\(bar\\)}", "a"));
-//     try expect(!match("{,*.{foo,db},\\(bar\\)}", "adb"));
-//     try expect(match("{,*.{foo,db},\\(bar\\)}", "a.db"));
-
-//     try expect(!match("a/b/**/c{d,e}/**/xyz.md", "a/b/c/xyz.md"));
-//     try expect(!match("a/b/**/c{d,e}/**/xyz.md", "a/b/d/xyz.md"));
-//     try expect(match("a/b/**/c{d,e}/**/xyz.md", "a/b/cd/xyz.md"));
-//     try expect(match("a/b/**/{c,d,e}/**/xyz.md", "a/b/c/xyz.md"));
-//     try expect(match("a/b/**/{c,d,e}/**/xyz.md", "a/b/d/xyz.md"));
-//     try expect(match("a/b/**/{c,d,e}/**/xyz.md", "a/b/e/xyz.md"));
-
-//     try expect(match("*{a,b}*", "xax"));
-//     try expect(match("*{a,b}*", "xxax"));
-//     try expect(match("*{a,b}*", "xbx"));
-
-//     try expect(match("*{*a,b}", "xba"));
-//     try expect(match("*{*a,b}", "xb"));
-
-//     try expect(!match("*??", "a"));
-//     try expect(!match("*???", "aa"));
-//     try expect(match("*???", "aaa"));
-//     try expect(!match("*****??", "a"));
-//     try expect(!match("*****???", "aa"));
-//     try expect(match("*****???", "aaa"));
-
-//     try expect(!match("a*?c", "aaa"));
-//     try expect(match("a*?c", "aac"));
-//     try expect(match("a*?c", "abc"));
-
-//     try expect(match("a**?c", "abc"));
-//     try expect(!match("a**?c", "abb"));
-//     try expect(match("a**?c", "acc"));
-//     try expect(match("a*****?c", "abc"));
-
-//     try expect(match("*****?", "a"));
-//     try expect(match("*****?", "aa"));
-//     try expect(match("*****?", "abc"));
-//     try expect(match("*****?", "zzz"));
-//     try expect(match("*****?", "bbb"));
-//     try expect(match("*****?", "aaaa"));
-
-//     try expect(!match("*****??", "a"));
-//     try expect(match("*****??", "aa"));
-//     try expect(match("*****??", "abc"));
-//     try expect(match("*****??", "zzz"));
-//     try expect(match("*****??", "bbb"));
-//     try expect(match("*****??", "aaaa"));
-
-//     try expect(!match("?*****??", "a"));
-//     try expect(!match("?*****??", "aa"));
-//     try expect(match("?*****??", "abc"));
-//     try expect(match("?*****??", "zzz"));
-//     try expect(match("?*****??", "bbb"));
-//     try expect(match("?*****??", "aaaa"));
-
-//     try expect(match("?*****?c", "abc"));
-//     try expect(!match("?*****?c", "abb"));
-//     try expect(!match("?*****?c", "zzz"));
-
-//     try expect(match("?***?****c", "abc"));
-//     try expect(!match("?***?****c", "bbb"));
-//     try expect(!match("?***?****c", "zzz"));
-
-//     try expect(match("?***?****?", "abc"));
-//     try expect(match("?***?****?", "bbb"));
-//     try expect(match("?***?****?", "zzz"));
-
-//     try expect(match("?***?****", "abc"));
-//     try expect(match("*******c", "abc"));
-//     try expect(match("*******?", "abc"));
-//     try expect(match("a*cd**?**??k", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??k", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??k***", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??***k", "abcdecdhjk"));
-//     try expect(match("a**?**cd**?**??***k**", "abcdecdhjk"));
-//     try expect(match("a****c**?**??*****", "abcdecdhjk"));
-
-//     try expect(!match("a/?/c/?/*/e.md", "a/b/c/d/e.md"));
-//     try expect(match("a/?/c/?/*/e.md", "a/b/c/d/e/e.md"));
-//     try expect(match("a/?/c/?/*/e.md", "a/b/c/d/efghijk/e.md"));
-//     try expect(match("a/?/**/e.md", "a/b/c/d/efghijk/e.md"));
-//     try expect(!match("a/?/e.md", "a/bb/e.md"));
-//     try expect(match("a/??/e.md", "a/bb/e.md"));
-//     try expect(!match("a/?/**/e.md", "a/bb/e.md"));
-//     try expect(match("a/?/**/e.md", "a/b/ccc/e.md"));
-//     try expect(match("a/*/?/**/e.md", "a/b/c/d/efghijk/e.md"));
-//     try expect(match("a/*/?/**/e.md", "a/b/c/d/efgh.ijk/e.md"));
-//     try expect(match("a/*/?/**/e.md", "a/b.bb/c/d/efgh.ijk/e.md"));
-//     try expect(match("a/*/?/**/e.md", "a/bbb/c/d/efgh.ijk/e.md"));
-
-//     try expect(match("a/*/ab??.md", "a/bbb/abcd.md"));
-//     try expect(match("a/bbb/ab??.md", "a/bbb/abcd.md"));
-//     try expect(match("a/bbb/ab???md", "a/bbb/abcd.md"));
-// }
-
-// fn matchSame(str: []const u8) bool {
-//     return match(str, str);
-// }
-// test "fuzz_tests" {
-//     // https://github.com/devongovett/glob-match/issues/1
-//     try expect(!matchSame(
-//         "{*{??*{??**,Uz*zz}w**{*{**a,z***b*[!}w??*azzzzzzzz*!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!z[za,z&zz}w**z*z*}",
-//     ));
-//     try expect(!matchSame(
-//         "**** *{*{??*{??***\x05 *{*{??*{??***0x5,\x00U\x00}]*****0x1,\x00***\x00,\x00\x00}w****,\x00U\x00}]*****0x1,\x00***\x00,\x00\x00}w*****0x1***{}*.*\x00\x00*\x00",
-//     ));
-// }
+/// Returns true if the given string contains glob syntax,
+/// excluding those escaped with backslashes
+/// TODO: this doesn't play nicely with Windows directory separator and
+/// backslashing, should we just require the user to supply posix filepaths?
+pub fn detectGlobSyntax(potential_pattern: []const u8) bool {
+    // Negation only allowed in the beginning of the pattern
+    if (potential_pattern.len > 0 and potential_pattern[0] == '!') return true;
+
+    // In descending order of how popular the token is
+    const SPECIAL_SYNTAX: [4]u8 = comptime [_]u8{ '*', '{', '[', '?' };
+
+    inline for (SPECIAL_SYNTAX) |token| {
+        var slice = potential_pattern[0..];
+        while (slice.len > 0) {
+            if (std.mem.indexOfScalar(u8, slice, token)) |idx| {
+                // Check for even number of backslashes preceding the
+                // token to know that it's not escaped
+                var i: usize = idx -| 1;
+                var backslash_count: u16 = 0;
+
+                while (i >= 0 and potential_pattern[i] == '\\') : (i -= 1) {
+                    backslash_count += 1;
+                }
+
+                if (backslash_count % 2 == 0) return true;
+                slice = slice[idx + 1 ..];
+            } else break;
+        }
+    }
+
+    return false;
+}

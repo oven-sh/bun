@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { listen, connect, TCPSocketListener, SocketHandler } from "bun";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount } from "harness";
@@ -41,7 +40,8 @@ it("remoteAddress works", async () => {
     socket: {
       open(ws) {
         try {
-          expect(ws.remoteAddress).toBe("127.0.0.1");
+          // windows returns the ipv6 address
+          expect(ws.remoteAddress).toMatch(/127.0.0.1/);
           resolve();
         } catch (e) {
           reject(e);
@@ -234,10 +234,10 @@ describe("tcp socket binaryType", () => {
                 (type === "arraybuffer"
                   ? ArrayBuffer
                   : type === "uint8array"
-                  ? Uint8Array
-                  : type === "buffer"
-                  ? Buffer
-                  : Error),
+                    ? Uint8Array
+                    : type === "buffer"
+                      ? Buffer
+                      : Error),
             ).toBe(true);
             const msg = `${socket.data.isServer ? "server:" : "client:"} Hello World! ${socket.data.counter++}`;
             socket.data.sendQueue.push(msg);

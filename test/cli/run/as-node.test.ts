@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, test, expect } from "bun:test";
 import { bunExe, fakeNodeRun, tempDirWithFiles } from "../../harness";
 import { join } from "path";
@@ -90,11 +89,11 @@ describe("fake node cli", () => {
 
   test("process args work", () => {
     const temp = tempDirWithFiles("fake-node", {
-      "index.js": "console.log(JSON.stringify(process.argv))",
+      "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",
     });
     expect(fakeNodeRun(temp, ["index", "a", "b", "c"]).stdout).toBe(
       // note: no extension here is INTENTIONAL
-      JSON.stringify([bunExe(), join(temp, "index"), "a", "b", "c"]),
+      JSON.stringify([join(temp, "index"), "a", "b", "c"]),
     );
   });
 

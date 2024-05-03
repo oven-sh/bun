@@ -1,4 +1,4 @@
-pub const js = @import("root").bun.JSC.C;
+pub const js = bun.JSC.C;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -11,7 +11,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const JavaScript = @import("./javascript.zig");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const WebCore = @import("./webcore.zig");
 const Test = @import("./test/jest.zig");
 const Fetch = WebCore.Fetch;
@@ -19,7 +19,7 @@ const Response = WebCore.Response;
 const Request = WebCore.Request;
 const Router = @import("./api/filesystem_router.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
@@ -52,7 +52,7 @@ pub fn toJS(globalObject: *JSC.JSGlobalObject, comptime ValueType: type, value: 
         bool => return JSC.JSValue.jsBoolean(if (comptime Type != ValueType) value.* else value),
         *JSC.JSGlobalObject => return value.toJSValue(),
         []const u8, [:0]const u8, [*:0]const u8, []u8, [:0]u8, [*:0]u8 => {
-            const str = bun.String.create(value);
+            const str = bun.String.createUTF8(value);
             defer str.deref();
             return str.toJS(globalObject);
         },
@@ -252,7 +252,7 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
 
 /// Print a JSValue to stdout; this is only meant for debugging purposes
 pub fn dump(value: JSValue, globalObject: *JSC.JSGlobalObject) !void {
-    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject };
     try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
     Output.flush();
 }
@@ -414,7 +414,7 @@ pub const ArrayBuffer = extern struct {
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
-        std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
+        bun.assert(value.asArrayBuffer_(ctx.ptr(), &out));
         out.value = value;
         return out;
     }
@@ -580,6 +580,7 @@ pub const MarkedArrayBuffer = struct {
             .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
+
     pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
@@ -743,7 +744,7 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     // mimalloc knows the size of things
     // but we don't
     // if (comptime Environment.allow_assert) {
-    //     std.debug.assert(mimalloc.mi_check_owned(bytes_) or
+    //     bun.assert(mimalloc.mi_check_owned(bytes_) or
     //         mimalloc.mi_heap_check_owned(JSC.VirtualMachine.get().arena.heap.?, bytes_));
     // }
 
@@ -943,11 +944,11 @@ pub fn DOMCall(
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
         ) callconv(.C) JSValue {
-            return @call(.auto, @field(Container, functionName), .{
+            return @field(Container, functionName)(
                 globalObject,
                 thisValue,
                 arguments_ptr[0..arguments_len],
-            });
+            );
         }
 
         pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
@@ -1196,11 +1197,8 @@ pub fn wrapInstanceMethod(
             var args: Args = undefined;
 
             const has_exception_ref: bool = comptime brk: {
-                var i: usize = 0;
-                while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                    const ArgType = FunctionTypeInfo.params[i].type.?;
-
-                    if (ArgType == JSC.C.ExceptionRef) {
+                for (FunctionTypeInfo.params) |param| {
+                    if (param.type.? == JSC.C.ExceptionRef) {
                         break :brk true;
                     }
                 }
@@ -1210,11 +1208,9 @@ pub fn wrapInstanceMethod(
             var exception_value = [_]JSC.C.JSValueRef{null};
             const exception: JSC.C.ExceptionRef = if (comptime has_exception_ref) &exception_value else undefined;
 
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
+            inline for (FunctionTypeInfo.params, 0..) |param, i| {
+                const ArgType = param.type.?;
+                switch (ArgType) {
                     *Container => {
                         args[i] = this;
                     },
@@ -1373,11 +1369,9 @@ pub fn wrapStaticMethod(
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;
 
-            comptime var i: usize = 0;
-            inline while (i < FunctionTypeInfo.params.len) : (i += 1) {
-                const ArgType = comptime FunctionTypeInfo.params[i].type.?;
-
-                switch (comptime ArgType) {
+            inline for (FunctionTypeInfo.params, 0..) |param, i| {
+                const ArgType = param.type.?;
+                switch (param.type.?) {
                     *JSC.JSGlobalObject => {
                         args[i] = globalThis.ptr();
                     },
@@ -1697,7 +1691,7 @@ pub const MemoryReportingAllocator = struct {
         _ = prev;
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
-            // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
+            // bun.assert(prev > this.memory_cost.load(.Monotonic));
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }
@@ -1743,3 +1737,13 @@ pub const MemoryReportingAllocator = struct {
         .free = @ptrCast(&MemoryReportingAllocator.free),
     };
 };
+
+/// According to https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date,
+/// maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
+pub const init_timestamp = std.math.maxInt(JSC.JSTimeType);
+pub const JSTimeType = u52;
+
+pub fn toJSTime(sec: isize, nsec: isize) JSTimeType {
+    const millisec = @as(u64, @intCast(@divTrunc(nsec, std.time.ns_per_ms)));
+    return @as(JSTimeType, @truncate(@as(u64, @intCast(sec * std.time.ms_per_s)) + millisec));
+}

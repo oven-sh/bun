@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const FileSystem = @import("../fs.zig").FileSystem;
 const PathName = @import("../fs.zig").PathName;
@@ -35,15 +35,15 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
-const HTTPThread = @import("root").bun.http.HTTPThread;
+const HTTPThread = bun.http.HTTPThread;
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
 
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
     comptime {
@@ -168,7 +168,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        const writer_: std.fs.File.Writer = Output.errorWriter();
+        const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
@@ -185,7 +185,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // when the tests fail, we want to repeat the failures at the end
@@ -212,13 +212,13 @@ pub const CommandLineReporter = struct {
 
         if (this.jest.bail == this.summary.fail) {
             this.printSummary();
-            Output.prettyError("\nBailed out after {d} failures<r>\n", .{this.jest.bail});
+            Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ this.jest.bail, if (this.jest.bail == 1) "" else "s" });
             Global.exit(1);
         }
     }
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var writer_ = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
@@ -242,7 +242,8 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
-        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var writer_ = Output.errorWriter();
+
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
 
         // when the tests skip, we want to repeat the failures at the end
@@ -410,7 +411,7 @@ const Scanner = struct {
             if (@as(FileSystem.RealFS.EntriesOption.Tag, root.*) == .entries) {
                 var iter = root.entries.data.iterator();
                 const fd = root.entries.fd;
-                std.debug.assert(fd != bun.invalid_fd);
+                bun.assert(fd != bun.invalid_fd);
                 while (iter.next()) |entry| {
                     this.next(entry.value_ptr.*, fd);
                 }
@@ -419,8 +420,8 @@ const Scanner = struct {
 
         while (this.dirs_to_scan.readItem()) |entry| {
             if (!Environment.isWindows) {
-                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
-                std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+                const dir = entry.relative_dir.asDir();
+                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
@@ -431,14 +432,13 @@ const Scanner = struct {
                 FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch continue;
             } else {
-                const dir = std.fs.Dir{ .fd = bun.fdcast(entry.relative_dir) };
-                std.debug.assert(bun.toFD(dir.fd) != bun.invalid_fd);
+                const dir = entry.relative_dir.asDir();
+                bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
                 const child_dir = bun.openDirAbsolute(path2) catch continue;
                 path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                FileSystem.setMaxFd(child_dir.fd);
                 _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
             }
         }
@@ -532,7 +532,7 @@ const Scanner = struct {
                 }
 
                 if (comptime Environment.allow_assert)
-                    std.debug.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
+                    bun.assert(!strings.contains(name, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str));
 
                 for (this.exclusion_names) |exclude_name| {
                     if (strings.eql(exclude_name, name)) return;
@@ -680,6 +680,7 @@ pub const TestCommand = struct {
             vm.bundler.options.minify_syntax = false;
             vm.bundler.options.minify_identifiers = false;
             vm.bundler.options.minify_whitespace = false;
+            vm.bundler.options.dead_code_elimination = false;
             vm.global.vm().setControlFlowProfiler(true);
         }
 
@@ -718,11 +719,28 @@ pub const TestCommand = struct {
             // Treat arguments as filters and scan the codebase
             const filter_names = if (ctx.positionals.len == 0) &[0][]const u8{} else ctx.positionals[1..];
 
+            const filter_names_normalized = if (!Environment.isWindows)
+                filter_names
+            else brk: {
+                const normalized = try ctx.allocator.alloc([]const u8, filter_names.len);
+                for (filter_names, normalized) |in, *out| {
+                    const to_normalize = try ctx.allocator.dupe(u8, in);
+                    bun.path.posixToPlatformInPlace(u8, to_normalize);
+                    out.* = to_normalize;
+                }
+                break :brk normalized;
+            };
+            defer if (Environment.isWindows) {
+                for (filter_names_normalized) |i|
+                    ctx.allocator.free(i);
+                ctx.allocator.free(filter_names_normalized);
+            };
+
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
                 .options = &vm.bundler.options,
                 .fs = vm.bundler.fs,
-                .filter_names = filter_names,
+                .filter_names = filter_names_normalized,
                 .results = &results,
             };
             const dir_to_scan = brk: {
@@ -950,7 +968,7 @@ pub const TestCommand = struct {
                 const vm = this.vm;
                 var files = this.files;
                 const allocator = this.allocator;
-                std.debug.assert(files.len > 0);
+                bun.assert(files.len > 0);
 
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
@@ -1024,13 +1042,12 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    const result = promise.result(vm.global.vm());
-                    vm.runErrorHandler(result, null);
+                    vm.onError(vm.global, promise.result(vm.global.vm()));
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
                         reporter.printSummary();
-                        Output.prettyError("\nBailed out after {d} failures<r>\n", .{reporter.jest.bail});
+                        Output.prettyError("\nBailed out after {d} failure{s}<r>\n", .{ reporter.jest.bail, if (reporter.jest.bail == 1) "" else "s" });
                         Global.exit(1);
                     }
 
@@ -1109,8 +1126,8 @@ pub const TestCommand = struct {
 
         if (is_last) {
             if (jest.Jest.runner != null) {
-                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |after| {
-                    vm.global.bunVM().runErrorHandler(after, null);
+                if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
+                    vm.onError(vm.global, err);
                 }
             }
         }

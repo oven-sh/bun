@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
@@ -232,6 +232,7 @@ pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime n
 
 pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !T {
     const str = value.toBunString(globalThis);
+    defer str.deref();
     inline for (@typeInfo(T).Enum.fields) |enum_field| {
         if (str.eqlComptime(enum_field.name))
             return @field(T, enum_field.name);

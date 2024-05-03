@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import fetch2, { fetch, Response, Request, Headers } from "node-fetch";
 import * as iso from "isomorphic-fetch";
 import * as vercelFetch from "@vercel/fetch";
@@ -8,8 +7,8 @@ import { test, expect } from "bun:test";
 
 test("node-fetch", () => {
   expect(Response.prototype).toBeInstanceOf(globalThis.Response);
-  expect(Request).toBe(globalThis.Request);
-  expect(new Headers()).toBeInstanceOf(globalThis.Headers);
+  expect(Request.prototype).toBeInstanceOf(globalThis.Request);
+  expect(Headers.prototype).toBeInstanceOf(globalThis.Headers);
   expect(fetch2.default).toBe(fetch2);
   expect(fetch2.Response).toBe(Response);
 });

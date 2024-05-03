@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import fs from "fs";
 import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
@@ -65,6 +64,7 @@ describe("bundler", () => {
     ],
   });
   itBundled("loader/File", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     files: {
       "/entry.js": `
         import path from 'path';
@@ -85,6 +85,7 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollision", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     files: {
       "/entry.js": /* js */ `
         import path from 'path';
@@ -110,6 +111,7 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/FileMultipleNoCollisionAssetNames", {
+    todo: process.platform === "win32", // TODO(@paperdave)
     files: {
       "/entry.js": /* js */ `
         import path from 'path';

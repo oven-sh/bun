@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect } from "bun:test";
 import { gzipSync, deflateSync, inflateSync, gunzipSync } from "bun";
 
@@ -15,6 +14,16 @@ describe("zlib", () => {
     const compressed = gzipSync(data);
     const decompressed = gunzipSync(compressed);
     expect(decompressed.join("")).toBe(data.join(""));
+  });
+
+  it("should throw on invalid raw deflate data", () => {
+    const data = new TextEncoder().encode("Hello World!".repeat(1));
+    expect(() => inflateSync(data)).toThrow(new Error("invalid stored block lengths"));
+  });
+
+  it("should throw on invalid gzip data", () => {
+    const data = new TextEncoder().encode("Hello World!".repeat(1));
+    expect(() => gunzipSync(data)).toThrow(new Error("incorrect header check"));
   });
 });
 

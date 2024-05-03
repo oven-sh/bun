@@ -1,7 +1,7 @@
 const std = @import("std");
 const pathRel = std.fs.path.relative;
 const builtin = @import("builtin");
-const Wyhash = @import("./src/wyhash.zig").Wyhash;
+const Wyhash11 = @import("./src/wyhash.zig").Wyhash11;
 
 const zig_version = builtin.zig_version;
 
@@ -79,11 +79,12 @@ const BunBuildOptions = struct {
     fallback_html_version: u64 = 0,
 
     tinycc: bool = true,
+    project: [:0]const u8 = "",
 
     pub fn updateRuntime(this: *BunBuildOptions) anyerror!void {
         if (std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only })) |file| {
             defer file.close();
-            const runtime_hash = Wyhash.hash(
+            const runtime_hash = Wyhash11.hash(
                 0,
                 try file.readToEndAlloc(std.heap.page_allocator, try file.getEndPos()),
             );
@@ -96,7 +97,7 @@ const BunBuildOptions = struct {
 
         if (std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only })) |file| {
             defer file.close();
-            const fallback_hash = Wyhash.hash(
+            const fallback_hash = Wyhash11.hash(
                 0,
                 try file.readToEndAlloc(std.heap.page_allocator, try file.getEndPos()),
             );
@@ -145,7 +146,7 @@ const fs = std.fs;
 pub fn build(b: *Build) !void {
     build_(b) catch |err| {
         if (@errorReturnTrace()) |trace| {
-            std.debug.dumpStackTrace(trace.*);
+            (std.debug).dumpStackTrace(trace.*);
         }
 
         return err;
@@ -192,16 +193,30 @@ pub fn build_(b: *Build) !void {
     const bin_label = if (optimize == std.builtin.OptimizeMode.Debug) "packages/debug-bun-" else "packages/bun-";
 
     var triplet_buf: [64]u8 = undefined;
-    var os_tagname = @tagName(target.getOs().tag);
 
     const arch: std.Target.Cpu.Arch = target.getCpuArch();
 
-    if (std.mem.eql(u8, os_tagname, "macos")) {
-        os_tagname = "darwin";
-        target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
-    } else if (target.isLinux()) {
-        target.setGnuLibCVersion(2, 27, 0);
+    var os_tagname = @tagName(target.getOs().tag);
+
+    switch (target.getOs().tag) {
+        .macos => {
+            os_tagname = "darwin";
+            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
+        },
+        .windows => {
+            target.os_version_min = std.zig.CrossTarget.OsVersion{
+                // Windows 1809
+                // Minimum version for a syscall related to bun.sys.renameat
+                // if you update this please update install.ps1
+                .windows = .win10_rs5,
+            };
+        },
+        .linux => {
+            target.setGnuLibCVersion(2, 27, 0);
+        },
+        else => {},
     }
+
     @memcpy(triplet_buf[0..].ptr, os_tagname);
     const osname = triplet_buf[0..os_tagname.len];
     triplet_buf[osname.len] = '-';
@@ -330,10 +345,12 @@ pub fn build_(b: *Build) !void {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 };
         } else if (arch.isX86()) {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.haswell };
-        } else if (arch.isAARCH64() and target.isDarwin()) {
-            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
-        } else if (arch.isAARCH64() and target.isLinux()) {
-            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
+        } else if (arch.isAARCH64()) {
+            if (target.isDarwin()) {
+                obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
+            } else {
+                obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
+            }
         }
 
         try default_build_options.updateRuntime();
@@ -362,6 +379,7 @@ pub fn build_(b: *Build) !void {
             actual_build_options.sizegen = true;
         }
 
+        actual_build_options.project = "bun";
         obj.addOptions("build_options", actual_build_options.step(b));
 
         // Generated Code
@@ -376,7 +394,7 @@ pub fn build_(b: *Build) !void {
         obj.linkLibC();
         obj.dll_export_fns = true;
         obj.strip = false;
-        obj.omit_frame_pointer = optimize != .Debug;
+        obj.omit_frame_pointer = false;
         obj.subsystem = .Console;
 
         // Disable stack probing on x86 so we don't need to include compiler_rt
@@ -573,6 +591,7 @@ pub fn build_(b: *Build) !void {
         \\For more info, see https://bun.sh/docs/project/contributing
         \\
     });
+
     b.default_step.dependOn(&mistake_message.step);
 }
 

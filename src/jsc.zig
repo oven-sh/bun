@@ -1,15 +1,15 @@
 // Top-level so it can access all files
+pub usingnamespace @import("./bun.js/base.zig");
+pub usingnamespace @import("./bun.js/bindings/bindings.zig");
+pub usingnamespace @import("./bun.js/bindings/exports.zig");
+pub usingnamespace @import("./bun.js/event_loop.zig");
+pub usingnamespace @import("./bun.js/javascript.zig");
+pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
-pub usingnamespace @import("./bun.js/bindings/exports.zig");
-pub usingnamespace @import("./bun.js/bindings/bindings.zig");
-pub usingnamespace @import("./bun.js/event_loop.zig");
-pub usingnamespace @import("./bun.js/base.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
 pub const Shimmer = @import("./bun.js/bindings/shimmer.zig").Shimmer;
-pub usingnamespace @import("./bun.js/javascript.zig");
-pub usingnamespace @import("./bun.js/module_loader.zig");
 pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
@@ -30,6 +30,7 @@ pub const Expect = @import("./bun.js/test/expect.zig");
 pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
     pub const Glob = @import("./bun.js/api/glob.zig");
+    pub const Shell = @import("./shell/shell.zig");
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;
     pub const BuildArtifact = @import("./bun.js/api/JSBundler.zig").BuildArtifact;
     pub const JSTranspiler = @import("./bun.js/api/JSTranspiler.zig");
@@ -40,11 +41,12 @@ pub const API = struct {
     pub const DebugHTTPServer = @import("./bun.js/api/server.zig").DebugHTTPServer;
     pub const DebugHTTPSServer = @import("./bun.js/api/server.zig").DebugHTTPSServer;
     pub const AnyRequestContext = @import("./bun.js/api/server.zig").AnyRequestContext;
-    pub const Bun = @import("./bun.js/api/bun.zig");
+    pub const Bun = @import("./bun.js/api/BunObject.zig");
     pub const FileSystemRouter = @import("./bun.js/api/filesystem_router.zig").FileSystemRouter;
     pub const MatchedRoute = @import("./bun.js/api/filesystem_router.zig").MatchedRoute;
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
+    pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
 };
@@ -69,19 +71,22 @@ comptime {
     }
 }
 
-pub const Maybe = Node.Maybe;
-pub const jsNumber = @This().JSValue.jsNumber;
-pub const jsBoolean = @This().JSValue.jsBoolean;
 const std = @import("std");
-
+const Syscall = @import("./sys.zig");
 const Output = @import("./output.zig");
+
+pub const Maybe = Syscall.Maybe;
+pub const jsBoolean = @This().JSValue.jsBoolean;
+pub const jsEmptyString = @This().JSValue.jsEmptyString;
+pub const jsNumber = @This().JSValue.jsNumber;
+
 const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     if (comptime is_bindgen) unreachable;
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
-pub const Subprocess = @import("./bun.js/api/bun.zig").Subprocess;
-pub const ResourceUsage = @import("./bun.js/api/bun.zig").ResourceUsage;
+pub const Subprocess = API.Bun.Subprocess;
+pub const ResourceUsage = API.Bun.ResourceUsage;
 
 /// Generated code! To regenerate, run:
 ///

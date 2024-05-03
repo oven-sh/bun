@@ -1,0 +1,166 @@
+[
+  {
+    "label": "node:buffer",
+    "pattern": "parallel/test-buffer",
+    "skip": [
+      {
+        "file": "backing-arraybuffer.js",
+        "reason": "Internal binding checks if the buffer is on the heap"
+      }
+    ],
+    "todo": [
+      {
+        "file": "constants.js",
+        "reason": "Hangs"
+      },
+      {
+        "file": "tostring-rangeerror.js",
+        "reason": "Hangs"
+      }
+    ]
+  },
+  {
+    "label": "node:path",
+    "pattern": "parallel/test-path"
+  },
+  {
+    "label": "node:child_process",
+    "pattern": "parallel/test-child-process"
+  },
+  {
+    "label": "node:async_hooks",
+    "pattern": "parallel/test-async-hooks"
+  },
+  {
+    "label": "node:crypto",
+    "pattern": "parallel/test-crypto"
+  },
+  {
+    "label": "node:dgram",
+    "pattern": "parallel/test-dgram"
+  },
+  {
+    "label": "node:diagnostics_channel",
+    "pattern": "parallel/test-diagnostics-channel"
+  },
+  {
+    "label": "node:fs",
+    "pattern": "parallel/test-fs"
+  },
+  {
+    "label": "node:dns",
+    "pattern": "parallel/test-dns"
+  },
+  {
+    "label": "node:domain",
+    "pattern": "parallel/test-domain"
+  },
+  {
+    "label": "node:events",
+    "pattern": "parallel/test-event-emitter"
+  },
+  {
+    "label": "node:http",
+    "pattern": "parallel/test-http"
+  },
+  {
+    "label": "node:http2",
+    "pattern": "parallel/test-http2"
+  },
+  {
+    "label": "node:https",
+    "pattern": "parallel/test-https"
+  },
+  {
+    "label": "node:net",
+    "pattern": "parallel/test-net"
+  },
+  {
+    "label": "node:os",
+    "pattern": "parallel/test-os"
+  },
+  {
+    "label": "process",
+    "pattern": "parallel/test-process"
+  },
+  {
+    "label": "node:stream",
+    "pattern": "parallel/test-stream"
+  },
+  {
+    "label": "node:stream",
+    "pattern": "parallel/test-readable"
+  },
+  {
+    "label": "node:timers",
+    "pattern": "parallel/test-timers"
+  },
+  {
+    "label": "node:timers",
+    "pattern": "parallel/test-next-tick"
+  },
+  {
+    "label": "node:tls",
+    "pattern": "parallel/test-tls"
+  },
+  {
+    "label": "node:tty",
+    "pattern": "parallel/test-tty"
+  },
+  {
+    "label": "node:url",
+    "pattern": "parallel/test-url"
+  },
+  {
+    "label": "node:util",
+    "pattern": "parallel/test-util"
+  },
+  {
+    "label": "node:trace_events",
+    "pattern": "parallel/test-trace-events"
+  },
+  {
+    "label": "node:vm",
+    "pattern": "parallel/test-vm"
+  },
+  {
+    "label": "node:zlib",
+    "pattern": "parallel/test-zlib"
+  },
+  {
+    "label": "node:worker_threads",
+    "pattern": "parallel/test-worker"
+  },
+  {
+    "label": "node:readline",
+    "pattern": "parallel/test-readline"
+  },
+  {
+    "label": "web:crypto",
+    "pattern": "parallel/test-webcrypto"
+  },
+  {
+    "label": "web:streams",
+    "pattern": "parallel/test-webstream"
+  },
+  {
+    "label": "web:streams",
+    "pattern": "parallel/test-whatwg-webstreams"
+  },
+  {
+    "label": "web:encoding",
+    "pattern": "parallel/test-whatwg-encoding"
+  },
+  {
+    "label": "web:url",
+    "pattern": "parallel/test-whatwg-url"
+  },
+  {
+    "label": "web:websocket",
+    "pattern": "parallel/test-websocket"
+  },
+  {
+    "label": "web:performance",
+    "pattern": "parallel/test-performance"
+  }
+]

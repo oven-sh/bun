@@ -1,6 +1,6 @@
-const BoringSSL = @import("root").bun.BoringSSL;
+const BoringSSL = bun.BoringSSL;
 const std = @import("std");
-pub const bun = @import("./bun.zig");
+pub const bun = @import("root").bun;
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
     return struct {
@@ -15,7 +15,7 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
                 .hasher = undefined,
             };
 
-            std.debug.assert(Init(&this.hasher) == 1);
+            bun.assert(Init(&this.hasher) == 1);
             return this;
         }
 
@@ -26,20 +26,17 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
 
         pub fn update(this: *@This(), data: []const u8) void {
             @setRuntimeSafety(false);
-            std.debug.assert(Update(&this.hasher, data.ptr, data.len) == 1);
+            bun.assert(Update(&this.hasher, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
             @setRuntimeSafety(false);
-            std.debug.assert(Final(out, &this.hasher) == 1);
+            bun.assert(Final(out, &this.hasher) == 1);
         }
     };
 }
 
-fn NewEVP(
-    comptime digest_size: comptime_int,
-    comptime MDName: []const u8,
-) type {
+fn NewEVP(comptime digest_size: comptime_int, comptime MDName: []const u8) type {
     return struct {
         ctx: BoringSSL.EVP_MD_CTX = undefined,
 
@@ -49,30 +46,28 @@ fn NewEVP(
         pub fn init() @This() {
             BoringSSL.load();
 
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
-            var this: @This() = .{
-                .ctx = undefined,
-            };
+            const md = @field(BoringSSL, MDName)();
+            var this = @This(){};
 
             BoringSSL.EVP_MD_CTX_init(&this.ctx);
 
-            std.debug.assert(BoringSSL.EVP_DigestInit(&this.ctx, md) == 1);
+            bun.assert(BoringSSL.EVP_DigestInit(&this.ctx, md) == 1);
 
             return this;
         }
 
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
-            const md = @call(.auto, @field(BoringSSL, MDName), .{});
+            const md = @field(BoringSSL, MDName)();
 
-            std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
+            bun.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }
 
         pub fn update(this: *@This(), data: []const u8) void {
-            std.debug.assert(BoringSSL.EVP_DigestUpdate(&this.ctx, data.ptr, data.len) == 1);
+            bun.assert(BoringSSL.EVP_DigestUpdate(&this.ctx, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
-            std.debug.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
+            bun.assert(BoringSSL.EVP_DigestFinal(&this.ctx, out, null) == 1);
         }
 
         pub fn deinit(this: *@This()) void {
@@ -80,6 +75,7 @@ fn NewEVP(
         }
     };
 }
+
 pub const EVP = struct {
     pub const SHA1 = NewEVP(std.crypto.hash.Sha1.digest_length, "EVP_sha1");
     pub const MD5 = NewEVP(16, "EVP_md5");
@@ -165,6 +161,7 @@ const boring = [_]type{
     Hashers.SHA512,
     Hashers.SHA384,
     Hashers.SHA256,
+    // Hashers.SHA512_224,
     Hashers.SHA512_256,
     void,
     void,
@@ -200,7 +197,7 @@ const labels = [_][]const u8{
     "Blake3",
 };
 pub fn main() anyerror!void {
-    var file = try std.fs.cwd().openFileZ(bun.argv()[bun.argv().len - 1], .{});
+    var file = try std.fs.cwd().openFileZ(bun.argv[bun.argv.len - 1], .{});
     const bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
 
     const engine = BoringSSL.ENGINE_new().?;
@@ -247,14 +244,10 @@ pub fn main() anyerror!void {
             .{},
         );
         const DigestType = if (BoringHasher != void) BoringHasher.Digest else [32]u8;
-        var digest1: DigestType = undefined;
-        var digest2: DigestType = undefined;
-        var digest3: DigestType = undefined;
-        var digest4: DigestType = undefined;
-        @memset(@as([*]u8, @ptrCast(&digest1))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest2))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest3))[0..@sizeOf(DigestType)], 0);
-        @memset(@as([*]u8, @ptrCast(&digest4))[0..@sizeOf(DigestType)], 0);
+        var digest1 = std.mem.zeroes(DigestType);
+        var digest2 = std.mem.zeroes(DigestType);
+        var digest3 = std.mem.zeroes(DigestType);
+        var digest4 = std.mem.zeroes(DigestType);
         defer {
             std.mem.doNotOptimizeAway(&digest1);
             std.mem.doNotOptimizeAway(&digest2);
@@ -325,13 +318,3 @@ pub fn main() anyerror!void {
         }
     }
 }
-
-// TODO(sno2): update SHA256 test to include BoringSSL engine
-// test "sha256" {
-//     const value: []const u8 = "hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world! hello, world!";
-//     var hash: SHA256.Digest = undefined;
-//     var hash2: SHA256.Digest = undefined;
-//     SHA256.hash(value, &hash);
-//     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
-//     try std.testing.expectEqual(hash, hash2);
-// }

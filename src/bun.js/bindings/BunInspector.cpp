@@ -67,11 +67,10 @@ public:
 
     void onMessage(std::string_view message)
     {
-        WTF::String messageString = WTF::String::fromUTF8(message.data(), message.length());
+        WTF::String messageString = WTF::String::fromUTF8(std::span { message.data(), message.length() });
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(this->globalObject->debugger());
         if (debugger) {
             debugger->runWhilePausedCallback = [](JSC::JSGlobalObject& globalObject, bool& done) -> void {
-                Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject.debugger());
                 Bun__tickWhilePaused(&done);
             };
         }

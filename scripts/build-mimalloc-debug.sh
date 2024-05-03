@@ -27,5 +27,14 @@ cmake "${CMAKE_FLAGS[@]}" . \
 
 ninja
 
-cp libmimalloc-debug.a $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
+if [ -f libmimalloc-valgrind-debug.a ]; then
+    file="libmimalloc-valgrind-debug.a"
+elif [ -f libmimalloc-debug.a ]; then
+    file="libmimalloc-debug.a"
+else
+    echo "Could not find libmimalloc-valgrind-debug.a or libmimalloc-debug.a"
+    exit 1
+fi
+
+cp $file $BUN_DEPS_OUT_DIR/libmimalloc-debug.a
 cp CMakeFiles/mimalloc-obj.dir/src/static.c.o $BUN_DEPS_OUT_DIR/libmimalloc-debug.o

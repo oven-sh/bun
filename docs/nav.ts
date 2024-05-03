@@ -116,6 +116,9 @@ export default {
     page("runtime/nodejs-apis", "Node.js compatibility", {
       description: `Bun aims for full Node.js compatibility. This page tracks the current compatibility status.`,
     }),
+    page("bundler/executables", "Single-file executable", {
+      description: "Compile a TypeScript or JavaScript file to a standalone executable",
+    }),
     page("runtime/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
     }),
@@ -177,6 +180,9 @@ export default {
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
+    page("cli/filter", "Filter", {
+      description: "Run scripts in multiple packages in parallel",
+    }),
     page("install/lockfile", "Lockfile", {
       description:
         "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
@@ -203,9 +209,6 @@ export default {
     }),
     page("bundler/plugins", "Plugins", {
       description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
-    }),
-    page("bundler/executables", "Executables", {
-      description: "Compile a TypeScript or JavaScript file to a standalone executable",
     }),
     page("bundler/macros", "Macros", {
       description: `Run JavaScript functions at bundle-time and inline the results into your bundle`,
@@ -306,9 +309,15 @@ export default {
     page("api/tcp", "TCP sockets", {
       description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
     }), // "`Bun.{listen|connect}`")
+    page("api/udp", "UDP sockets", {
+      description: `Bun's native API implements fast and flexible UDP sockets.`,
+    }), // "`Bun.udpSocket`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
+    page("runtime/shell", "$ Shell", {
+      description: `Bun's cross-platform shell-scripting API makes shell scripting with JavaScript fun`,
+    }), // "`Bun.$`"),
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
@@ -365,6 +374,9 @@ export default {
     }),
     page("project/contributing", "Contributing", {
       description: "Learn how to contribute to Bun and get your local development environment up and running.",
+    }),
+    page("project/building-windows", "Building Windows", {
+      description: "Learn how to setup a development environment for contributing to the Windows build of Bun.",
     }),
     page("project/licensing", "License", {
       description: `Bun is a MIT-licensed project with a large number of statically-linked dependencies with various licenses.`,

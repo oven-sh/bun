@@ -70,6 +70,8 @@ using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(constructJSBuffer);
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunused-function"
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_alloc);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow);
@@ -92,6 +94,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
+#pragma clang diagnostic pop
 
 static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t byteLength)
 {
@@ -254,9 +257,11 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     case WebCore::BufferEncodingType::hex: {
 
         if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            const auto span = view.span8();
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         } else {
-            written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            const auto span = view.span16();
+            written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         }
         break;
     }
@@ -361,12 +366,6 @@ static inline JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGl
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-// new Buffer(size)
-static inline JSC::EncodedJSValue constructBufferFromLength(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-{
-    return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame);
-}
-
 static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -376,6 +375,8 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
     JSC::EncodedJSValue result;
 
     if (view.is8Bit()) {
+        const auto span = view.span8();
+
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::ucs2:
@@ -383,19 +384,22 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         case WebCore::BufferEncodingType::base64:
         case WebCore::BufferEncodingType::base64url:
         case WebCore::BufferEncodingType::hex: {
-            result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, view.characters8(), view.length(), static_cast<uint8_t>(encoding));
+
+            result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }
         case WebCore::BufferEncodingType::ascii: // ascii is a noop for latin1
         case WebCore::BufferEncodingType::latin1: { // The native encoding is latin1, so we don't need to do any conversion.
-            result = JSValue::encode(createBuffer(lexicalGlobalObject, view.characters8(), view.length()));
+            result = JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size()));
             break;
         }
         default: {
+            result = 0;
             break;
         }
         }
     } else {
+        const auto span = view.span16();
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::base64:
@@ -403,17 +407,18 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         case WebCore::BufferEncodingType::hex:
         case WebCore::BufferEncodingType::ascii:
         case WebCore::BufferEncodingType::latin1: {
-            result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, view.characters16(), view.length(), static_cast<uint8_t>(encoding));
+            result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }
         case WebCore::BufferEncodingType::ucs2:
         case WebCore::BufferEncodingType::utf16le: {
             // The native encoding is UTF-16
             // so we don't need to do any conversion.
-            result = JSValue::encode(createBuffer(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(view.characters16()), view.length() * 2));
+            result = JSValue::encode(createBuffer(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(span.data()), span.size() * 2));
             break;
         }
         default: {
+            result = 0;
             break;
         }
         }
@@ -435,7 +440,6 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
 static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg0, JSValue arg1)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    uint32_t offset = 0;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -523,17 +527,19 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto* start = uint8Array->typedVector();
             auto* head = start;
             size_t remain = uint8Array->byteLength();
+            length = std::min(length, remain);
+
             memmove(head, view->vector(), length);
             remain -= length;
             head += length;
-            while (remain >= length) {
-                memcpy(head, start, length);
+            while (remain >= length && length > 0) {
+                memmove(head, start, length);
                 remain -= length;
                 head += length;
                 length <<= 1;
             }
             if (remain > 0) {
-                memcpy(head, start, remain);
+                memmove(head, start, remain);
             }
         } else {
             auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
@@ -600,17 +606,19 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
         auto view = str->tryGetValue(lexicalGlobalObject);
 
         if (view.is8Bit()) {
-            if (view.characters8()[length - 1] == 0x3D) {
+            const auto span = view.span8();
+            if (span.data()[length - 1] == 0x3D) {
                 length--;
 
-                if (length > 1 && view.characters8()[length - 1] == '=')
+                if (length > 1 && span.data()[length - 1] == '=')
                     length--;
             }
         } else {
-            if (view.characters16()[length - 1] == 0x3D) {
+            const auto span = view.span16();
+            if (span.data()[length - 1] == 0x3D) {
                 length--;
 
-                if (length > 1 && view.characters16()[length - 1] == '=')
+                if (length > 1 && span.data()[length - 1] == '=')
                     length--;
             }
         }
@@ -626,9 +634,11 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
     case WebCore::BufferEncodingType::utf8: {
         auto view = str->tryGetValue(lexicalGlobalObject);
         if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1(view.characters8(), view.length(), static_cast<uint8_t>(encoding));
+            const auto span = view.span8();
+            written = Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
         } else {
-            written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
+            const auto span = view.span16();
+            written = Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
         }
         break;
     }
@@ -643,7 +653,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
-    uint32_t offset = 0;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -868,7 +877,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto* encoding_ = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
     if (!encoding_)
         return JSValue::encode(jsBoolean(false));
@@ -1202,17 +1210,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             return JSC::JSValue::encode(jsUndefined());
         }
 
+        length = std::min(length, remain);
+
         memmove(head, view->vector(), length);
         remain -= length;
         head += length;
-        while (remain >= length) {
-            memcpy(head, startPtr, length);
+        while (remain >= length && length > 0) {
+            memmove(head, startPtr, length);
             remain -= length;
             head += length;
             length <<= 1;
         }
         if (remain > 0) {
-            memcpy(head, startPtr, remain);
+            memmove(head, startPtr, remain);
         }
     } else {
         auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
@@ -1495,10 +1505,8 @@ static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObj
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
             auto str = String::createUninitialized(u16length, data);
-            // always zero out the last byte of the string incase the buffer is not a multiple of 2
-            data[u16length - 1] = 0;
-            memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
-            return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+            memcpy(reinterpret_cast<void*>(data), reinterpret_cast<void*>(castedThis->typedVector() + offset), u16length * 2);
+            return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
 
         break;
@@ -2029,20 +2037,6 @@ const ClassInfo JSBufferPrototype::s_info = {
     "Uint8Array"_s,
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype)
 };
-
-static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAlloc(jsBufferConstructorAllocWithoutTypeChecks,
-    JSBufferConstructor::info(),
-    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
-    JSC::SpecUint8Array, JSC::SpecInt32Only);
-
-static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsafe(jsBufferConstructorAllocUnsafeWithoutTypeChecks,
-    JSBufferConstructor::info(),
-    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
-    JSC::SpecUint8Array, JSC::SpecInt32Only);
-static const JSC::DOMJIT::Signature DOMJITSignaturejsBufferConstructorAllocUnsafeSlow(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks,
-    JSBufferConstructor::info(),
-    JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::Heap),
-    JSC::SpecUint8Array, JSC::SpecInt32Only);
 
 /* Source for JSBuffer.lut.h
 @begin jsBufferConstructorTable

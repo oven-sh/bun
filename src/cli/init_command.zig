@@ -12,14 +12,14 @@ const std = @import("std");
 const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
+const ParseJSON = @import("../json_parser.zig").ParsePackageJSONUTF8;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {
@@ -39,7 +39,19 @@ pub const InitCommand = struct {
 
         Output.flush();
 
-        var input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
+        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
+        // deleting the entire line
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
+        else {};
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
+        var input = try bun.Output.buffered_stdin.reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
         if (strings.endsWithChar(input, '\r')) {
             input = input[0 .. input.len - 1];
         }
@@ -89,10 +101,9 @@ pub const InitCommand = struct {
         entry_point: string = "",
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
+    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
         const print_help = brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
+            for (argv) |arg| {
                 if (strings.eqlComptime(arg, "--help")) {
                     break :brk true;
                 }
@@ -137,10 +148,12 @@ pub const InitCommand = struct {
                 package_json_contents = try MutableString.init(alloc, size);
                 package_json_contents.list.expandToCapacity();
 
+                const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                 _ = pkg.preadAll(package_json_contents.list.items, 0) catch {
                     package_json_file = null;
                     break :read_package_json;
                 };
+                if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
             }
         }
 
@@ -231,18 +244,28 @@ pub const InitCommand = struct {
                 Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
                 Output.flush();
 
-                fields.name = try normalizePackageName(alloc, try prompt(
+                const name = prompt(
                     alloc,
                     "<r><cyan>package name<r> ",
                     fields.name,
                     Output.enable_ansi_colors_stdout,
-                ));
-                fields.entry_point = try prompt(
+                ) catch |err| {
+                    if (err == error.EndOfStream) return;
+                    return err;
+                };
+
+                fields.name = try normalizePackageName(alloc, name);
+
+                fields.entry_point = prompt(
                     alloc,
                     "<r><cyan>entry point<r> ",
                     fields.entry_point,
                     Output.enable_ansi_colors_stdout,
-                );
+                ) catch |err| {
+                    if (err == error.EndOfStream) return;
+                    return err;
+                };
+
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {
@@ -426,7 +449,7 @@ pub const InitCommand = struct {
         if (exists("package.json")) {
             var process = std.ChildProcess.init(
                 &.{
-                    try std.fs.selfExePathAlloc(alloc),
+                    try bun.selfExePath(),
                     "install",
                 },
                 alloc,

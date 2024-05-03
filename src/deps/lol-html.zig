@@ -7,7 +7,7 @@ pub const MemorySettings = extern struct {
 };
 
 inline fn auto_disable() void {
-    if (comptime @import("root").bun.FeatureFlags.disable_lolhtml)
+    if (comptime bun.FeatureFlags.disable_lolhtml)
         unreachable;
 }
 
@@ -591,7 +591,7 @@ pub const HTMLString = extern struct {
             return bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
         }
         defer this.deinit();
-        return bun.String.create(bytes);
+        return bun.String.createUTF8(bytes);
     }
 
     pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {

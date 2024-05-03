@@ -54,8 +54,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
     if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
@@ -143,24 +141,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
 
-    JSMap* esmRegistry = nullptr;
-
-    if (auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s))) {
-        if (auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s))) {
-            esmRegistry = jsCast<JSC::JSMap*>(registryValue);
-        }
-    }
-
     global->requireMap()->remove(globalObject, moduleIdValue);
-    if (esmRegistry)
-        esmRegistry->remove(globalObject, moduleIdValue);
-
-    // bool hasBeenRequired = global->requireMap()->has(globalObject, moduleIdValue);
-    // bool hasBeenImported = esmRegistry && esmRegistry->has(globalObject, moduleIdValue);
-    // if (hasBeenRequired || hasBeenImported) {
-    //     // callAndReplaceModule(global, moduleIdValue, functionValue, global->requireMap(), esmRegistry, hasBeenRequired, hasBeenImported);
-    //     // RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    // }
+    global->esmRegistryMap()->remove(globalObject, moduleIdValue);
 
     return JSValue::encode(jsUndefined());
 }
@@ -177,8 +159,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
 
     auto* filterObject = callframe->uncheckedArgument(0).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
     JSC::RegExpObject* filter = nullptr;
     if (JSValue filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s))) {
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
@@ -315,7 +295,6 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
         }
     }
 
-    // JSFunction* setupFunction = jsCast<JSFunction*>(setupFunctionValue);
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
     builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
@@ -366,7 +345,6 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
 
 extern "C" JSC::EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     return setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }
 
@@ -733,10 +711,9 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
+    const auto& builtinNames = WebCore::builtinNames(vm);
     paramsObject->putDirect(
-        vm, clientData->builtinNames().pathPublicName(),
+        vm, builtinNames.pathPublicName(),
         jsString(vm, pathString));
     arguments.append(paramsObject);
 
@@ -820,13 +797,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         JSC::VM& vm = globalObject->vm();
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-        auto clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
+        const auto& builtinNames = WebCore::builtinNames(vm);
         paramsObject->putDirect(
-            vm, clientData->builtinNames().pathPublicName(),
+            vm, builtinNames.pathPublicName(),
             Bun::toJS(globalObject, *path));
         paramsObject->putDirect(
-            vm, clientData->builtinNames().importerPublicName(),
+            vm, builtinNames.importerPublicName(),
             Bun::toJS(globalObject, *importer));
         arguments.append(paramsObject);
 

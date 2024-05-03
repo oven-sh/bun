@@ -1,6 +1,7 @@
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const Crypto = @import("../sha.zig").Hashers;
+const bun = @import("root").bun;
 
 pub const Integrity = extern struct {
     const empty_digest_buf: [Integrity.digest_buf_len]u8 = [_]u8{0} ** Integrity.digest_buf_len;
@@ -33,9 +34,9 @@ pub const Integrity = extern struct {
         var i: usize = 0;
 
         // initializer should zero it out
-        if (comptime @import("root").bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             for (integrity.value) |c| {
-                std.debug.assert(c == 0);
+                bun.assert(c == 0);
             }
         }
 
@@ -159,7 +160,7 @@ pub const Integrity = extern struct {
     }
 
     pub fn verify(this: *const Integrity, bytes: []const u8) bool {
-        return @call(.always_inline, verifyByTag, .{ this.tag, bytes, &this.value });
+        return @call(bun.callmod_inline, verifyByTag, .{ this.tag, bytes, &this.value });
     }
 
     pub fn verifyByTag(tag: Tag, bytes: []const u8, sum: []const u8) bool {

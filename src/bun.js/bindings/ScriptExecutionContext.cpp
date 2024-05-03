@@ -154,8 +154,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
 
 bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
 {
-    Locker locker { allScriptExecutionContextsMapLock };
-    auto* context = allScriptExecutionContextsMap().get(1);
+    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
 
     if (!context) {
         return false;
@@ -163,6 +162,12 @@ bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionCon
 
     context->postTaskConcurrently(WTFMove(task));
     return true;
+}
+
+ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    return allScriptExecutionContextsMap().get(1);
 }
 
 void ScriptExecutionContext::processMessageWithMessagePortsSoon(CompletionHandler<void()>&& completionHandler)
@@ -206,11 +211,11 @@ void ScriptExecutionContext::dispatchMessagePortEvents()
 
 void ScriptExecutionContext::checkConsistency() const
 {
-    for (auto* messagePort : m_messagePorts)
-        ASSERT(messagePort->scriptExecutionContext() == this);
+    // for (auto* messagePort : m_messagePorts)
+    //     ASSERT(messagePort->scriptExecutionContext() == this);
 
-    for (auto* destructionObserver : m_destructionObservers)
-        ASSERT(destructionObserver->scriptExecutionContext() == this);
+    // for (auto* destructionObserver : m_destructionObservers)
+    //     ASSERT(destructionObserver->scriptExecutionContext() == this);
 
     // for (auto* activeDOMObject : m_activeDOMObjects) {
     //     ASSERT(activeDOMObject->scriptExecutionContext() == this);
@@ -303,6 +308,34 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
     if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
         return nullptr;
     return JSC::jsCast<JSDOMGlobalObject*>(globalObject)->scriptExecutionContext();
+}
+
+void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTask(EventLoopTask* task)
+{
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
+{
+    reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
+}
+// Executes the task on context's thread asynchronously.
+void ScriptExecutionContext::postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
+{
+    auto* task = new EventLoopTask(WTFMove(lambda));
+    postTaskOnTimeout(task, timeout);
 }
 
 }

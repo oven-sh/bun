@@ -2,10 +2,51 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Rebuild Debug",
-      "command": "ninja",
-      "args": ["-Cbuild"],
       "type": "process",
-    }
-  ]
+      "label": "Install Dependencies",
+      "command": "scripts/all-dependencies.sh",
+      "windows": {
+        "command": "scripts/all-dependencies.ps1",
+      },
+      "icon": {
+        "id": "arrow-down",
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+    },
+    {
+      "type": "process",
+      "label": "Setup Environment",
+      "dependsOn": ["Install Dependencies"],
+      "command": "scripts/setup.sh",
+      "windows": {
+        "command": "scripts/setup.ps1",
+      },
+      "icon": {
+        "id": "check",
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+    },
+    {
+      "type": "process",
+      "label": "Build Bun",
+      "dependsOn": ["Setup Environment"],
+      "command": "bun",
+      "args": ["run", "build"],
+      "icon": {
+        "id": "gear",
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+      "isBuildCommand": true,
+      "runOptions": {
+        "instanceLimit": 1,
+        "reevaluateOnRerun": true,
+      },
+    },
+  ],
 }

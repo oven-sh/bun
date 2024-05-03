@@ -221,18 +221,9 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
-    struct us_socket_context_t *context = us_malloc(sizeof(struct us_socket_context_t) + context_ext_size);
+    struct us_socket_context_t *context = us_calloc(1, sizeof(struct us_socket_context_t) + context_ext_size);
     context->loop = loop;
-    context->head_sockets = 0;
-    context->head_listen_sockets = 0;
-    context->iterator = 0;
-    context->next = 0;
     context->is_low_prio = default_is_low_prio_handler;
-
-    /* Begin at 0 */
-    context->timestamp = 0;
-    context->long_timestamp = 0;
-    context->global_tick = 0;
 
     us_internal_loop_link(loop, context);
 
@@ -251,18 +242,9 @@ struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop
     /* This path is taken once either way - always BEFORE whatever SSL may do LATER.
      * context_ext_size will however be modified larger in case of SSL, to hold SSL extensions */
 
-    struct us_socket_context_t *context = us_malloc(sizeof(struct us_socket_context_t) + context_ext_size);
+    struct us_socket_context_t *context = us_calloc(1, sizeof(struct us_socket_context_t) + context_ext_size);
     context->loop = loop;
-    context->head_sockets = 0;
-    context->head_listen_sockets = 0;
-    context->iterator = 0;
-    context->next = 0;
     context->is_low_prio = default_is_low_prio_handler;
-
-    /* Begin at 0 */
-    context->timestamp = 0;
-    context->long_timestamp = 0;
-    context->global_tick = 0;
 
     us_internal_loop_link(loop, context);
 
@@ -330,14 +312,14 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     return ls;
 }
 
-struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_socket_context_t *context, const char *path, int options, int socket_ext_size) {
+struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_socket_context_t *context, const char *path, size_t pathlen, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return us_internal_ssl_socket_context_listen_unix((struct us_internal_ssl_socket_context_t *) context, path, options, socket_ext_size);
+        return us_internal_ssl_socket_context_listen_unix((struct us_internal_ssl_socket_context_t *) context, path, pathlen, options, socket_ext_size);
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, options);
+    LIBUS_SOCKET_DESCRIPTOR listen_socket_fd = bsd_create_listen_socket_unix(path, pathlen, options);
 
     if (listen_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
@@ -390,14 +372,14 @@ struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_
     return connect_socket;
 }
 
-struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, int options, int socket_ext_size) {
+struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_connect_unix((struct us_internal_ssl_socket_context_t *) context, server_path, options, socket_ext_size);
+        return (struct us_socket_t *) us_internal_ssl_socket_context_connect_unix((struct us_internal_ssl_socket_context_t *) context, server_path, pathlen, options, socket_ext_size);
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, options);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket_unix(server_path, pathlen, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }

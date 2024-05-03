@@ -1,4 +1,3 @@
-// @known-failing-on-windows: panic "TODO on Windows"
 import { itBundled, testForFile } from "../expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -17,6 +16,30 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "main": "./custom-main.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/custom-main.js": /* js */ `
+        module.exports = function() {
+          return 123
+        }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("packagejson/trailing-comma", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import fn from 'demo-pkg'
+        console.log(fn())
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          // very comment!!
+          /** even multi-line comment!! */
+          /** such feature much compatible very ecosystem */
+          "main": "./custom-main.js",
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/custom-main.js": /* js */ `
@@ -50,51 +73,51 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
-  itBundled("packagejson/SyntaxErrorComment", {
-    todo: true,
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import fn from 'demo-pkg'
-        console.log(fn())
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          // Single-line comment
-          "a": 1
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        module.exports = function() {
-          return 123
-        }
-      `,
-    },
-    bundleErrors: {
-      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support comments"],
-    },
-  });
-  itBundled("packagejson/SyntaxErrorTrailingComma", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import fn from 'demo-pkg'
-        console.log(fn())
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          "a": 1,
-          "b": 2,
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        module.exports = function() {
-          return 123
-        }
-      `,
-    },
-    bundleErrors: {
-      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support trailing commas"],
-    },
-  });
+  // itBundled("packagejson/SyntaxErrorComment", {
+  //   todo: true,
+  //   files: {
+  //     "/Users/user/project/src/entry.js": /* js */ `
+  //       import fn from 'demo-pkg'
+  //       console.log(fn())
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+  //       {
+  //         // Single-line comment
+  //         "a": 1
+  //       }
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
+  //       module.exports = function() {
+  //         return 123
+  //       }
+  //     `,
+  //   },
+  //   bundleErrors: {
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support comments"],
+  //   },
+  // });
+  // itBundled("packagejson/SyntaxErrorTrailingComma", {
+  //   files: {
+  //     "/Users/user/project/src/entry.js": /* js */ `
+  //       import fn from 'demo-pkg'
+  //       console.log(fn())
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+  //       {
+  //         "a": 1,
+  //         "b": 2,
+  //       }
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
+  //       module.exports = function() {
+  //         return 123
+  //       }
+  //     `,
+  //   },
+  //   bundleErrors: {
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support trailing commas"],
+  //   },
+  // });
   itBundled("packagejson/Module", {
     // GENERATED
     files: {
@@ -1382,8 +1405,30 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg1/custom2.js": `console.log('SUCCESS')`,
     },
     outfile: "/Users/user/project/out.js",
-    bundleErrors: {
-      "/Users/user/project/src/entry.js": [`Could not resolve: "pkg1". Maybe you need to "bun install"?`],
+    conditions: ["custom2"],
+    run: {
+      stdout: "SUCCESS",
+    },
+  });
+  itBundled("packagejson/ExportsCustomConditionsAPI", {
+    files: {
+      "/Users/user/project/src/entry.js": `import 'pkg1'`,
+      "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
+        {
+          "exports": {
+            "custom1": "./custom1.js",
+            "custom2": "./custom2.js",
+            "default": "./default.js"
+          }
+        }
+      `,
+      "/Users/user/project/node_modules/pkg1/custom2.js": `console.log('SUCCESS')`,
+    },
+    outfile: "/Users/user/project/out.js",
+    conditions: ["custom2"],
+    backend: "api",
+    run: {
+      stdout: "SUCCESS",
     },
   });
   itBundled("packagejson/ExportsNotExactMissingExtension", {

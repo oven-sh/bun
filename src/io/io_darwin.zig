@@ -24,7 +24,7 @@ pub const system = darwin;
 const fd_t = os.fd_t;
 
 const mem = std.mem;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const c = std.c;
 const bun = @import("root").bun;
 pub const darwin = struct {
@@ -104,8 +104,8 @@ pub const Waker = struct {
         *anyopaque,
     ) bool;
 
-    pub fn init(allocator: std.mem.Allocator) !Waker {
-        return initWithFileDescriptor(allocator, try std.os.kqueue());
+    pub fn init() !Waker {
+        return initWithFileDescriptor(bun.default_allocator, try std.os.kqueue());
     }
 
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
@@ -201,7 +201,7 @@ pub const Waker = struct {
 //             &timespec,
 //         );
 
-//         std.debug.assert(errno == 0);
+//         bun.assert(errno == 0);
 
 //         return UserFilterWaker{
 //             .kq = kq,

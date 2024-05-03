@@ -38,7 +38,12 @@ export function asyncIterator(this: Console) {
           // TODO: "\r", 0x4048, 0x4049, 0x404A, 0x404B, 0x404C, 0x404D, 0x404E, 0x404F
           i = indexOf(actualChunk, last);
           while (i !== -1) {
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.decode(
+              actualChunk.subarray(
+                last,
+                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+              ),
+            );
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -78,7 +83,12 @@ export function asyncIterator(this: Console) {
           while (i !== -1) {
             // This yield may end the function, in that case we need to be able to recover state
             // if the iterator was fired up again.
-            yield decoder.decode(actualChunk.subarray(last, i));
+            yield decoder.decode(
+              actualChunk.subarray(
+                last,
+                process.platform === "win32" ? (actualChunk[i - 1] === 0x0d /* \r */ ? i - 1 : i) : i,
+              ),
+            );
             last = i + 1;
             i = indexOf(actualChunk, last);
           }
@@ -129,7 +139,7 @@ export function write(this: Console, input) {
 // to do extra work at startup, since most people do not need `console.Console`.
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
-  const { inspect, formatWithOptions } = require("node:util");
+  const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
   const { isBuffer } = require("node:buffer");
 
   const StringPrototypeIncludes = String.prototype.includes;
@@ -153,22 +163,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kMinute = 60 * kSecond;
   const kHour = 60 * kMinute;
 
-  // Regex used for ansi escape code splitting
-  // Adopted from https://github.com/chalk/ansi-regex/blob/HEAD/index.js
-  // License: MIT, authors: @sindresorhus, Qix-, arjunmehta and LitoMore
-  // Matches all ansi escape code sequences in a string
-  var ansiPattern =
-    "[\\u001B\\u009B][[\\]()#;?]*" +
-    "(?:(?:(?:(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]+)*" +
-    "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/#&.:=?%@~_]*)*)?\\u0007)" +
-    "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-ntqry=><~]))";
-  var ansi = new RegExp(ansiPattern, "g");
-
-  function stripVTControlCharacters(str) {
-    return (RegExpPrototypeSymbolReplace as any).$call(ansi, str, "");
-  }
-
-  var internalGetStringWidth = $lazy("getStringWidth");
+  const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
 
   /**
    * Returns the number of columns required to display the given string.

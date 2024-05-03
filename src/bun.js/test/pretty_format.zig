@@ -400,7 +400,6 @@ pub const JestPrettyFormat = struct {
                 };
 
                 // Cell is the "unknown" type
-                // if we call JSObjectGetPrivate, it can segfault
                 if (js_type == .Cell) {
                     return .{
                         .tag = .NativeCode,
@@ -414,12 +413,6 @@ pub const JestPrettyFormat = struct {
                         .cell = js_type,
                     };
                 }
-
-                if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
-                    return .{
-                        .tag = .Private,
-                        .cell = js_type,
-                    };
 
                 // If we check an Object has a method table and it does not
                 // it will crash
@@ -1424,7 +1417,7 @@ pub const JestPrettyFormat = struct {
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = value.get(this.globalThis, "data").?;
+                                const data = value.fastGet(this.globalThis, .data).?;
                                 const tag = Tag.get(data, this.globalThis);
                                 if (tag.cell.isStringLike()) {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
@@ -1519,7 +1512,7 @@ pub const JestPrettyFormat = struct {
                             .skip_empty_name = true,
 
                             .include_value = true,
-                        }).init(this.globalThis, props.asObjectRef());
+                        }).init(this.globalThis, props);
                         defer props_iter.deinit();
 
                         const children_prop = props.get(this.globalThis, "children");

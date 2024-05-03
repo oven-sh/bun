@@ -1,4 +1,6 @@
 const env = @import("env.zig");
+const bun = @import("root").bun;
+
 pub const strong_etags_for_built_files = true;
 pub const keep_alive = false;
 
@@ -6,8 +8,9 @@ pub const keep_alive = false;
 pub const print_ast = false;
 pub const disable_printing_null = false;
 
-// This was a ~5% performance improvement
-pub const store_file_descriptors = !env.isWindows and !env.isBrowser;
+/// Store and reuse file descriptors during module resolution
+/// This was a ~5% performance improvement
+pub const store_file_descriptors = !env.isBrowser;
 
 pub const css_in_js_import_behavior = CSSInJSImportBehavior.facade;
 
@@ -69,22 +72,6 @@ pub const verbose_analytics = false;
 pub const disable_compression_in_http_client = false;
 
 pub const enable_keepalive = true;
-// Not sure why...
-// But this is slower!
-// ~/Build/throw
-// ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-// Benchmark #1: bun create react3 app --force --no-install
-//   Time (mean ± σ):     974.6 ms ±   6.8 ms    [User: 170.5 ms, System: 798.3 ms]
-//   Range (min … max):   960.8 ms … 984.6 ms    10 runs
-
-// ❯ mv /usr/local/opt/libgit2/lib/libgit2.dylib /usr/local/opt/libgit2/lib/libgit2.dylib.1
-
-// ~/Build/throw
-// ❯ hyperfine "bun create react3 app --force --no-install" --prepare="rm -rf app"
-// Benchmark #1: bun create react3 app --force --no-install
-//   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
-//   Range (min … max):   299.5 ms … 318.8 ms    10 runs
-pub const use_libgit2 = true;
 
 pub const atomic_file_watcher = env.isLinux;
 
@@ -104,13 +91,12 @@ pub const disable_lolhtml = false;
 /// "localhost" fails to connect.
 pub const hardcode_localhost_to_127_0_0_1 = false;
 
-/// React doesn't do anything with jsxs
-/// If the "jsxs" import is development, "jsxs" isn't supported
-/// But it's very easy to end up importing it accidentally, causing an error at runtime
-/// so we just disable it
-pub const support_jsxs_in_jsx_transform = false;
+/// React will issue warnings in development if there are multiple children
+/// without keys and "jsxs" is not used.
+/// https://github.com/oven-sh/bun/issues/10733
+pub const support_jsxs_in_jsx_transform = true;
 
-pub const use_simdutf = @import("root").bun.Environment.isNative and !@import("root").bun.JSC.is_bindgen;
+pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -118,7 +104,7 @@ pub const same_target_becomes_destructuring = true;
 
 pub const react_server_components = true;
 
-pub const help_catch_memory_issues = @import("root").bun.Environment.allow_assert;
+pub const help_catch_memory_issues = bun.Environment.allow_assert;
 
 /// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
 ///
@@ -177,5 +163,19 @@ pub const concurrent_transpiler = !env.isWindows;
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const disable_auto_js_to_ts_in_node_modules = true;
 
-// TODO: implement the IO for rtc for windows
-pub const runtime_transpiler_cache = !env.isWindows;
+pub const runtime_transpiler_cache = true;
+
+/// On Windows, node_modules/.bin uses pairs of '.exe' + '.bunx' files.  The
+/// fast path is to load the .bunx file within `bun.exe` instead of
+/// `bun_shim_impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
+///
+/// When debugging weird script runner issues, it may be worth disabling this in
+/// order to isolate your bug.
+pub const windows_bunx_fast_path = true;
+
+pub const breaking_changes_1_2 = false;
+
+// This causes strange bugs where writing via console.log (sync) has a different
+// order than via Bun.file.writer() so we turn it off until there's a unified,
+// buffered writer abstraction shared throughout Bun
+pub const nonblocking_stdout_and_stderr_on_posix = false;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
 const bun = @import("root").bun;
@@ -18,7 +18,7 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
@@ -65,7 +65,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             }
 
             pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
                 block.used +|= 1;
@@ -397,7 +397,7 @@ pub const Binding = struct {
                         if (b.has_spread and i == exprs.len - 1) {
                             break :convert Expr.init(E.Spread, E.Spread{ .value = expr }, expr.loc);
                         } else if (item.default_value) |default| {
-                            break :convert Expr.assign(expr, default, wrapper.allocator);
+                            break :convert Expr.assign(expr, default);
                         } else {
                             break :convert expr;
                         }
@@ -567,21 +567,30 @@ pub const SlotCounts = struct {
     }
 };
 
+const char_freq_count = 64;
 pub const CharAndCount = struct {
     char: u8 = 0,
     count: i32 = 0,
     index: usize = 0,
 
-    pub const Array = [64]CharAndCount;
+    pub const Array = [char_freq_count]CharAndCount;
 
     pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
-        return a.count > b.count or (a.count == b.count and a.index < b.index);
+        if (a.count != b.count) {
+            return a.count > b.count;
+        }
+
+        if (a.index != b.index) {
+            return a.index < b.index;
+        }
+
+        return a.char < b.char;
     }
 };
 
 pub const CharFreq = struct {
-    const Vector = @Vector(64, i32);
-    const Buffer = [64]i32;
+    const Vector = @Vector(char_freq_count, i32);
+    const Buffer = [char_freq_count]i32;
 
     freqs: Buffer align(1) = undefined,
 
@@ -601,10 +610,10 @@ pub const CharFreq = struct {
         // https://zig.godbolt.org/z/P5dPojWGK
         var freqs = out.*;
         defer out.* = freqs;
-        var deltas: [255]i32 = [_]i32{0} ** 255;
+        var deltas: [256]i32 = [_]i32{0} ** 256;
         var remain = text;
 
-        std.debug.assert(remain.len >= scan_big_chunk_size);
+        bun.assert(remain.len >= scan_big_chunk_size);
 
         const unrolled = remain.len - (remain.len % scan_big_chunk_size);
         const remain_end = remain.ptr + unrolled;
@@ -613,8 +622,7 @@ pub const CharFreq = struct {
 
         while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
             const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
-            comptime var i: usize = 0;
-            inline while (i < scan_big_chunk_size) : (i += scan_big_chunk_size) {
+            inline for (0..scan_big_chunk_size) |i| {
                 deltas[@as(usize, chunk[i])] += delta;
             }
         }
@@ -631,7 +639,7 @@ pub const CharFreq = struct {
     }
 
     fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
-        var freqs: [64]i32 = out.*;
+        var freqs: [char_freq_count]i32 = out.*;
         defer out.* = freqs;
 
         for (text) |c| {
@@ -649,29 +657,28 @@ pub const CharFreq = struct {
 
     pub fn include(this: *CharFreq, other: CharFreq) void {
         // https://zig.godbolt.org/z/Mq8eK6K9s
-        var left: @Vector(64, i32) = this.freqs;
-        defer this.freqs = left;
-        const right: @Vector(64, i32) = other.freqs;
+        const left: @Vector(char_freq_count, i32) = this.freqs;
+        const right: @Vector(char_freq_count, i32) = other.freqs;
 
-        left += right;
+        this.freqs = left + right;
     }
 
     pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
-        var array: CharAndCount.Array = brk: {
+        const array: CharAndCount.Array = brk: {
             var _array: CharAndCount.Array = undefined;
-            const freqs = this.freqs;
 
-            for (&_array, NameMinifier.default_tail, &freqs, 0..) |*dest, char, freq, i| {
+            for (&_array, NameMinifier.default_tail, this.freqs, 0..) |*dest, char, freq, i| {
                 dest.* = CharAndCount{
                     .char = char,
                     .index = i,
                     .count = freq,
                 };
             }
+
+            std.sort.pdq(CharAndCount, &_array, {}, CharAndCount.lessThan);
+
             break :brk _array;
         };
-
-        std.sort.pdq(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -711,9 +718,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(this.tail.items[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
     }
 
@@ -726,9 +733,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(default_tail[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
 
         return name.items;
@@ -1160,7 +1167,7 @@ pub const Symbol = struct {
         import,
 
         // Assigning to a "const" symbol will throw a TypeError at runtime
-        cconst,
+        constant,
 
         // This annotates all other symbols that don't have special behavior.
         other,
@@ -1361,7 +1368,7 @@ pub const Symbol = struct {
 
     pub fn isReactComponentishName(symbol: *const Symbol) bool {
         switch (symbol.kind) {
-            .hoisted, .hoisted_function, .cconst, .class, .other => {
+            .hoisted, .hoisted_function, .constant, .class, .other => {
                 return switch (symbol.original_name[0]) {
                     'A'...'Z' => true,
                     else => false,
@@ -1375,7 +1382,7 @@ pub const Symbol = struct {
     }
 };
 
-pub const OptionalChain = enum(u2) {
+pub const OptionalChain = enum(u1) {
 
     // "a?.b"
     start,
@@ -1458,6 +1465,27 @@ pub const E = struct {
 
             return array;
         }
+
+        /// Assumes each item in the array is a string
+        pub fn alphabetizeStrings(this: *Array) void {
+            if (comptime Environment.allow_assert) {
+                for (this.items.slice()) |item| {
+                    bun.assert(item.data == .e_string);
+                }
+            }
+            std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
+        }
+
+        const Sorter = struct {
+            pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
+            }
+        };
+    };
+
+    /// A string which will be printed as JSON by the JSPrinter.
+    pub const UTF8String = struct {
+        data: []const u8,
     };
 
     pub const Unary = struct {
@@ -1828,7 +1856,7 @@ pub const E = struct {
         //             while (iter.next(&query_string_values_buf)) |entry| {
         //                 str = ZigString.init(entry.name);
 
-        //                 std.debug.assert(entry.values.len > 0);
+        //                 bun.assert(entry.values.len > 0);
         //                 if (entry.values.len > 1) {
         //                     var values = query_string_value_refs_buf[0..entry.values.len];
         //                     for (entry.values) |value, i| {
@@ -2070,7 +2098,13 @@ pub const E = struct {
             return null;
         }
 
+        /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
+            if (comptime Environment.allow_assert) {
+                for (this.properties.slice()) |prop| {
+                    bun.assert(prop.key.?.data == .e_string);
+                }
+            }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
         }
 
@@ -2164,8 +2198,8 @@ pub const E = struct {
 
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
-            std.debug.assert(this.isUTF8());
-            std.debug.assert(other.isUTF8());
+            bun.assert(this.isUTF8());
+            bun.assert(other.isUTF8());
 
             if (other.rope_len == 0) {
                 other.rope_len = @as(u32, @truncate(other.data.len));
@@ -2207,7 +2241,7 @@ pub const E = struct {
         }
 
         pub fn slice16(this: *const String) []const u16 {
-            std.debug.assert(this.is_utf16);
+            bun.assert(this.is_utf16);
             return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
         }
 
@@ -2266,11 +2300,11 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 if (comptime !Environment.isNative) {
-                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false) catch return 0) orelse return s.data.len;
+                    const allocated = (strings.toUTF16Alloc(bun.default_allocator, s.data, false, false) catch return 0) orelse return s.data.len;
                     defer bun.default_allocator.free(allocated);
                     return @as(u32, @truncate(allocated.len));
                 }
-                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8.le(s.data)));
+                return @as(u32, @truncate(bun.simdutf.length.utf16.from.utf8(s.data)));
             }
 
             return @as(u32, @truncate(s.slice16().len));
@@ -2467,7 +2501,7 @@ pub const E = struct {
                 };
             }
 
-            std.debug.assert(this.head == .cooked);
+            bun.assert(this.head == .cooked);
 
             if (this.parts.len == 0) {
                 return Expr.init(E.String, this.head.cooked, loc);
@@ -2477,7 +2511,7 @@ pub const E = struct {
             var head = Expr.init(E.String, this.head.cooked, loc);
             for (this.parts) |part_| {
                 var part = part_;
-                std.debug.assert(part.tail == .cooked);
+                bun.assert(part.tail == .cooked);
 
                 switch (part.value.data) {
                     .e_number => {
@@ -2513,7 +2547,7 @@ pub const E = struct {
                         continue;
                     } else {
                         var prev_part = &parts.items[parts.items.len - 1];
-                        std.debug.assert(prev_part.tail == .cooked);
+                        bun.assert(prev_part.tail == .cooked);
 
                         if (prev_part.tail.cooked.isUTF8()) {
                             if (part.value.data.e_string.len() > 0) {
@@ -2631,6 +2665,8 @@ pub const E = struct {
     pub const Import = struct {
         expr: ExprNodeIndex,
         import_record_index: u32,
+        // This will be dynamic at some point.
+        type_attribute: TypeAttribute = .none,
 
         /// Comments inside "import()" expressions have special meaning for Webpack.
         /// Preserving comments inside these expressions makes it possible to use
@@ -2645,6 +2681,24 @@ pub const E = struct {
         pub fn isImportRecordNull(this: *const Import) bool {
             return this.import_record_index == std.math.maxInt(u32);
         }
+
+        pub const TypeAttribute = enum {
+            none,
+            json,
+            toml,
+            text,
+            file,
+
+            pub fn tag(this: TypeAttribute) ImportRecord.Tag {
+                return switch (this) {
+                    .none => .none,
+                    .json => .with_type_json,
+                    .toml => .with_type_toml,
+                    .text => .with_type_text,
+                    .file => .with_type_file,
+                };
+            }
+        };
     };
 };
 
@@ -2654,11 +2708,11 @@ pub const Stmt = struct {
 
     pub const Batcher = bun.Batcher(Stmt);
 
-    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
+    pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
             S.SExpr,
             S.SExpr{
-                .value = Expr.assign(a, b, allocator),
+                .value = Expr.assign(a, b),
             },
             a.loc,
         );
@@ -3038,6 +3092,8 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
+
     pub fn isAnonymousNamed(expr: Expr) bool {
         return switch (expr.data) {
             .e_arrow => true,
@@ -3240,9 +3296,17 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
-    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+    pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
         return expr.data.e_string.string(allocator) catch null;
+    }
+
+    pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+        switch (expr.data) {
+            .e_string => |str| return str.string(allocator) catch null,
+            .e_utf8_string => |str| return str.data,
+            else => return null,
+        }
     }
 
     pub fn asBool(
@@ -3322,7 +3386,7 @@ pub const Expr = struct {
     }
 
     pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
-        std.debug.assert(all.len > 0);
+        bun.assert(all.len > 0);
         switch (all.len) {
             1 => {
                 return all[0];
@@ -3331,12 +3395,10 @@ pub const Expr = struct {
                 return Expr.joinWithComma(all[0], all[1], allocator);
             },
             else => {
-                var i: usize = 1;
                 var expr = all[0];
-                while (i < all.len) : (i += 1) {
+                for (1..all.len) |i| {
                     expr = Expr.joinWithComma(expr, all[i], allocator);
                 }
-
                 return expr;
             },
         }
@@ -3412,6 +3474,18 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_array = brk: {
+                            const item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
+                    },
+                };
+            },
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = brk: {
                             const item = allocator.create(Type) catch unreachable;
                             item.* = st;
                             break :brk item;
@@ -3689,7 +3763,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -3829,6 +3903,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.UTF8String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_utf8_string = Data.Store.append(Type, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4054,7 +4136,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -4203,6 +4285,9 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+
+        /// A string that is UTF-8 encoded without escaping for use in JavaScript.
+        e_utf8_string,
 
         // This should never make it to the printer
         inline_identifier,
@@ -4658,7 +4743,7 @@ pub const Expr = struct {
         return false;
     }
 
-    pub fn assign(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
+    pub fn assign(a: Expr, b: Expr) Expr {
         return init(E.Binary, E.Binary{
             .op = .bin_assign,
             .left = a,
@@ -4865,6 +4950,8 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
+
+        e_utf8_string: *E.UTF8String,
 
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
@@ -5145,6 +5232,10 @@ pub const Expr = struct {
         pub const Equality = struct {
             equal: bool = false,
             ok: bool = false,
+
+            pub const @"true" = Equality{ .ok = true, .equal = true };
+            pub const @"false" = Equality{ .ok = true, .equal = false };
+            pub const unknown = Equality{ .ok = false };
         };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
@@ -5157,7 +5248,6 @@ pub const Expr = struct {
             comptime kind: enum { loose, strict },
         ) Equality {
             // https://dorey.github.io/JavaScript-Equality-Table/
-            var equality = Equality{};
             switch (left) {
                 .e_null, .e_undefined => {
                     const ok = switch (@as(Expr.Tag, right)) {
@@ -5183,14 +5273,16 @@ pub const Expr = struct {
                 .e_boolean => |l| {
                     switch (right) {
                         .e_boolean => {
-                            equality.ok = true;
-                            equality.equal = l.value == right.e_boolean.value;
+                            return .{
+                                .ok = true,
+                                .equal = l.value == right.e_boolean.value,
+                            };
                         },
                         .e_number => |num| {
                             if (comptime kind == .strict) {
                                 // "true === 1" is false
                                 // "false === 0" is false
-                                return .{ .ok = true, .equal = false };
+                                return Equality.false;
                             }
 
                             return .{
@@ -5202,7 +5294,7 @@ pub const Expr = struct {
                             };
                         },
                         .e_null, .e_undefined => {
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         else => {},
                     }
@@ -5230,53 +5322,60 @@ pub const Expr = struct {
 
                             // "1 === true" is false
                             // "0 === false" is false
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         .e_null, .e_undefined => {
                             // "(not null or undefined) == undefined" is false
-                            return .{ .ok = true, .equal = false };
+                            return Equality.false;
                         },
                         else => {},
                     }
                 },
                 .e_big_int => |l| {
                     if (right == .e_big_int) {
-                        equality.ok = true;
-                        equality.equal = strings.eql(l.value, l.value);
+                        if (strings.eqlLong(l.value, right.e_big_int.value, true)) {
+                            return Equality.true;
+                        }
+
+                        // 0x0000n == 0n is true
+                        return .{ .ok = false };
                     } else {
-                        equality.ok = switch (right) {
-                            .e_null, .e_undefined => true,
-                            else => false,
+                        return .{
+                            .ok = switch (right) {
+                                .e_null, .e_undefined => true,
+                                else => false,
+                            },
+                            .equal = false,
                         };
-                        equality.equal = false;
                     }
                 },
                 .e_string => |l| {
                     switch (right) {
                         .e_string => |r| {
-                            equality.ok = true;
                             r.resolveRopeIfNeeded(allocator);
                             l.resolveRopeIfNeeded(allocator);
-                            equality.equal = r.eql(E.String, l);
+                            return .{
+                                .ok = true,
+                                .equal = r.eql(E.String, l),
+                            };
                         },
                         .e_null, .e_undefined => {
-                            equality.ok = true;
-                            equality.equal = false;
+                            return Equality.false;
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
-                                if (r.value == 0 or r.value == 1) {
-                                    equality.ok = true;
-                                    equality.equal = if (r.value == 0)
-                                        l.eqlComptime("0")
-                                    else if (r.value == 1)
-                                        l.eqlComptime("1")
-                                    else
-                                        unreachable;
+                                if (r.value == 0 and (l.isBlank() or l.eqlComptime("0"))) {
+                                    return Equality.true;
                                 }
+
+                                if (r.value == 1 and l.eqlComptime("1")) {
+                                    return Equality.true;
+                                }
+
+                                // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
+                                return Equality.unknown;
                             } else {
-                                equality.ok = true;
-                                equality.equal = false;
+                                return Equality.false;
                             }
                         },
 
@@ -5286,7 +5385,7 @@ pub const Expr = struct {
                 else => {},
             }
 
-            return equality;
+            return Equality.unknown;
         }
 
         pub fn toJS(this: Data, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) ToJSError!JSC.JSValue {
@@ -5294,6 +5393,7 @@ pub const Expr = struct {
                 .e_array => |e| e.toJS(allocator, globalObject),
                 .e_object => |e| e.toJS(allocator, globalObject),
                 .e_string => |e| e.toJS(allocator, globalObject),
+                .e_utf8_string => |e| JSC.ZigString.fromUTF8(e.data).toValueGC(globalObject),
                 .e_null => JSC.JSValue.null,
                 .e_undefined => JSC.JSValue.undefined,
                 .e_boolean => |boolean| if (boolean.value)
@@ -5408,10 +5508,6 @@ pub const Expr = struct {
         }
     };
 };
-
-test "Byte size of Expr" {
-    try std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("\n\nByte Size {d}\n\n", .{@sizeOf(Expr.Data)}));
-}
 
 pub const EnumValue = struct {
     loc: logger.Loc,
@@ -5593,7 +5689,7 @@ pub const S = struct {
     pub const Throw = struct { value: ExprNodeIndex };
 
     pub const Local = struct {
-        kind: Kind = Kind.k_var,
+        kind: Kind = .k_var,
         decls: G.Decl.List = .{},
         is_export: bool = false,
         // The TypeScript compiler doesn't generate code for "import foo = bar"
@@ -5607,12 +5703,19 @@ pub const S = struct {
                 this.was_commonjs_export == other.was_commonjs_export;
         }
 
-        pub const Kind = enum(u2) {
+        pub const Kind = enum {
             k_var,
             k_let,
             k_const,
+            k_using,
+            k_await_using,
+
             pub fn jsonStringify(self: @This(), writer: anytype) !void {
                 return try writer.write(@tagName(self));
+            }
+
+            pub fn isUsing(self: Kind) bool {
+                return self == .k_using or self == .k_await_using;
             }
         };
     };
@@ -6382,7 +6485,7 @@ pub const DeclaredSymbol = struct {
         // TODO: SIMD
         for (is_top_level, refs) |top, ref| {
             if (top) {
-                @call(.always_inline, Fn, .{ ctx, ref });
+                @call(bun.callmod_inline, Fn, .{ ctx, ref });
             }
         }
     }
@@ -6590,7 +6693,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(bun.callmod_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 
@@ -6725,7 +6828,7 @@ pub fn printmem(comptime format: string, args: anytype) void {
 }
 
 pub const Macro = struct {
-    const JavaScript = @import("root").bun.JSC;
+    const JavaScript = bun.JSC;
     const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
@@ -6788,7 +6891,7 @@ pub const Macro = struct {
             else
                 import_record_path;
 
-            std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
+            bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
                 if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
@@ -6802,7 +6905,7 @@ pub const Macro = struct {
                                 source,
                                 import_range,
                                 log.msgs.allocator,
-                                "Macro \"{any}\" not found",
+                                "Macro \"{s}\" not found",
                                 .{import_record_path},
                                 .stmt,
                                 err,
@@ -6936,7 +7039,7 @@ pub const Macro = struct {
         var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
+            vm.onError(vm.global, loaded_result.result(vm.global.vm()));
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
@@ -7014,7 +7117,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return try switch (JSC.ZigConsoleClient.Formatter.Tag.get(value, this.global).tag) {
+                return try switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),
@@ -7032,8 +7135,8 @@ pub const Macro = struct {
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {s} to Bun's AST. Please return a simpler type",
-                            .{@tagName(value.jsType())},
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
+                            .{ value.getClassInfoName() orelse "unknown", @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
                     },
@@ -7043,11 +7146,11 @@ pub const Macro = struct {
             pub fn coerce(
                 this: *Run,
                 value: JSC.JSValue,
-                comptime tag: JSC.ZigConsoleClient.Formatter.Tag,
+                comptime tag: JSC.ConsoleObject.Formatter.Tag,
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
-                        this.macro.vm.runErrorHandler(value, null);
+                        this.macro.vm.onError(this.global, value);
                         return this.caller;
                     },
                     .Undefined => if (this.is_top_level)
@@ -7074,7 +7177,7 @@ pub const Macro = struct {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
                             } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
-                                this.macro.vm.runErrorHandler(value, null);
+                                this.macro.vm.onError(this.global, value);
                                 return error.MacroFailed;
                             }
                         }
@@ -7103,7 +7206,7 @@ pub const Macro = struct {
                     .Boolean => {
                         return Expr{ .data = .{ .e_boolean = .{ .value = value.toBoolean() } }, .loc = this.caller.loc };
                     },
-                    JSC.ZigConsoleClient.Formatter.Tag.Array => {
+                    JSC.ConsoleObject.Formatter.Tag.Array => {
                         this.is_top_level = false;
 
                         const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
@@ -7155,7 +7258,7 @@ pub const Macro = struct {
                         return out;
                     },
                     // TODO: optimize this
-                    JSC.ZigConsoleClient.Formatter.Tag.Object => {
+                    JSC.ConsoleObject.Formatter.Tag.Object => {
                         this.is_top_level = false;
                         const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;
                         if (_entry.found_existing) {
@@ -7169,11 +7272,10 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        const object = value.asObjectRef();
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, object);
+                        }).init(this.global, value);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);
@@ -7222,6 +7324,7 @@ pub const Macro = struct {
                     },
                     .String => {
                         var bun_str = value.toBunString(this.global);
+                        defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly
                         var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
@@ -7250,7 +7353,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            this.macro.vm.runErrorHandler(promise_result, null);
+                            this.macro.vm.onError(this.global, promise_result);
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;
@@ -7372,9 +7475,7 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    stack_allocator: std.heap.StackFallbackAllocator(
-        if (std.mem.page_size > 8096) 8096 else std.mem.page_size,
-    ) = undefined,
+    stack_allocator: std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size)) = undefined,
     bump_allocator: std.mem.Allocator = undefined,
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
@@ -7391,7 +7492,7 @@ pub const ASTMemoryAllocator = struct {
 
     pub fn pop(this: *ASTMemoryAllocator) void {
         const prev = this.previous;
-        std.debug.assert(prev != this);
+        bun.assert(prev != this);
         Stmt.Data.Store.memory_allocator = prev;
         Expr.Data.Store.memory_allocator = prev;
         this.previous = null;

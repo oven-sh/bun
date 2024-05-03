@@ -66,6 +66,7 @@ _napi_get_cb_info
 _napi_get_dataview_info
 _napi_get_date_value
 _napi_get_element
+_napi_delete_element
 _napi_get_global
 _napi_get_instance_data
 _napi_get_last_error_info

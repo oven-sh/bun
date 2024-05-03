@@ -9,6 +9,7 @@ const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
 const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 const bun = @import("root").bun;
+const Path = bun.path;
 
 pub const Resolution = extern struct {
     tag: Tag = .uninitialized,
@@ -25,6 +26,10 @@ pub const Resolution = extern struct {
 
     pub fn isGit(this: *const Resolution) bool {
         return this.tag.isGit();
+    }
+
+    pub fn canEnqueueInstallTask(this: *const Resolution) bool {
+        return this.tag.canEnqueueInstallTask();
     }
 
     pub fn order(
@@ -50,23 +55,6 @@ pub const Resolution = extern struct {
             .gitlab => lhs.value.gitlab.order(&rhs.value.gitlab, lhs_buf, rhs_buf),
             else => .eq,
         };
-    }
-
-    pub fn verify(this: *const Resolution) void {
-        switch (this.tag) {
-            .npm => {
-                this.value.npm.url.assertDefined();
-            },
-            .local_tarball => this.value.local_tarball.assertDefined(),
-            .folder => this.value.folder.assertDefined(),
-            .remote_tarball => this.value.remote_tarball.assertDefined(),
-            .workspace => this.value.workspace.assertDefined(),
-            .symlink => this.value.symlink.assertDefined(),
-            .git => this.value.git.verify(),
-            .github => this.value.github.verify(),
-            .gitlab => this.value.gitlab.verify(),
-            else => {},
-        }
     }
 
     pub fn count(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) void {
@@ -125,8 +113,12 @@ pub const Resolution = extern struct {
         };
     }
 
-    pub fn fmt(this: *const Resolution, string_bytes: []const u8) Formatter {
-        return Formatter{ .resolution = this, .buf = string_bytes };
+    pub fn fmt(this: *const Resolution, string_bytes: []const u8, path_sep: bun.fmt.PathFormatOptions.Sep) Formatter {
+        return Formatter{
+            .resolution = this,
+            .buf = string_bytes,
+            .path_sep = path_sep,
+        };
     }
 
     pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, string_bytes: []const u8) URLFormatter {
@@ -204,17 +196,19 @@ pub const Resolution = extern struct {
         buf: []const u8,
 
         pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const buf = formatter.buf;
+            const value = formatter.resolution.value;
             switch (formatter.resolution.tag) {
-                .npm => try writer.writeAll(formatter.resolution.value.npm.url.slice(formatter.buf)),
-                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
-                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
-                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                .npm => try writer.writeAll(value.npm.url.slice(formatter.buf)),
+                .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = .posix }).format("", {}, writer),
+                .folder => try writer.writeAll(value.folder.slice(formatter.buf)),
+                .remote_tarball => try writer.writeAll(value.remote_tarball.slice(formatter.buf)),
+                .git => try value.git.formatAs("git+", formatter.buf, layout, opts, writer),
+                .github => try value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                .gitlab => try value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{value.workspace.slice(formatter.buf)}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
         }
@@ -223,19 +217,26 @@ pub const Resolution = extern struct {
     pub const Formatter = struct {
         resolution: *const Resolution,
         buf: []const u8,
+        path_sep: bun.fmt.PathFormatOptions.Sep,
 
         pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const buf = formatter.buf;
+            const value = formatter.resolution.value;
             switch (formatter.resolution.tag) {
-                .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
-                .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
-                .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
-                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
+                .npm => try value.npm.version.fmt(buf).format(layout, opts, writer),
+                .local_tarball => try bun.fmt.fmtPath(u8, value.local_tarball.slice(buf), .{ .path_sep = formatter.path_sep }).format("", {}, writer),
+                .folder => try bun.fmt.fmtPath(u8, value.folder.slice(buf), .{ .path_sep = formatter.path_sep }).format("", {}, writer),
+                .remote_tarball => try writer.writeAll(value.remote_tarball.slice(buf)),
+                .git => try value.git.formatAs("git+", buf, layout, opts, writer),
+                .github => try value.github.formatAs("github:", buf, layout, opts, writer),
+                .gitlab => try value.gitlab.formatAs("gitlab:", buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{bun.fmt.fmtPath(u8, value.workspace.slice(buf), .{
+                    .path_sep = formatter.path_sep,
+                })}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{bun.fmt.fmtPath(u8, value.symlink.slice(buf), .{
+                    .path_sep = formatter.path_sep,
+                })}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{value.single_file_module.slice(buf)}),
                 else => {},
             }
         }
@@ -339,6 +340,10 @@ pub const Resolution = extern struct {
 
         pub fn isGit(this: Tag) bool {
             return this == .git or this == .github or this == .gitlab;
+        }
+
+        pub fn canEnqueueInstallTask(this: Tag) bool {
+            return this == .npm or this == .local_tarball or this == .remote_tarball or this == .git or this == .github;
         }
     };
 };

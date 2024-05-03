@@ -1,49 +1,88 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync } from "fs";
-import { readFile } from "fs/promises";
+import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { cpus, hostname, totalmem, userInfo } from "os";
+import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import { join, normalize, posix, relative } from "path";
 import { fileURLToPath } from "url";
+import PQueue from "p-queue";
 
 const run_start = new Date();
+const TIMEOUT_DURATION = 1000 * 60 * 5;
+const SHORT_TIMEOUT_DURATION = Math.ceil(TIMEOUT_DURATION / 5);
 
+function defaultConcurrency() {
+  // This causes instability due to the number of open file descriptors / sockets in some tests
+  // Windows has higher limits
+  if (process.platform !== "win32") {
+    return 1;
+  }
+
+  return Math.min(Math.floor((cpus().length - 2) / 2), 2);
+}
 const windows = process.platform === "win32";
-
 const nativeMemory = totalmem();
 const force_ram_size_input = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
 let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
 if (!(Number.isSafeInteger(force_ram_size_input) && force_ram_size_input > 0)) {
   force_ram_size = force_ram_size_input + "";
 }
+function uncygwinTempDir() {
+  if (process.platform === "win32") {
+    for (let key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
+      let TMPDIR = process.env[key] || "";
+      if (!/^\/[a-zA-Z]\//.test(TMPDIR)) {
+        continue;
+      }
+
+      const driveLetter = TMPDIR[1];
+      TMPDIR = path.win32.normalize(`${driveLetter.toUpperCase()}:` + TMPDIR.substring(2));
+      process.env[key] = TMPDIR;
+    }
+  }
+}
+
+uncygwinTempDir();
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const ci = !!process.env["GITHUB_ACTIONS"];
-const enableProgressBar = !ci;
+const enableProgressBar = false;
 
-function defaultConcurrency() {
-  // Concurrency causes more flaky tests, only enable it by default on windows
-  // See https://github.com/oven-sh/bun/issues/8071
-  if (windows) {
-    return Math.floor((cpus().length - 2) / 2);
-  }
-  return 1;
+const dirPrefix = "bun-test-tmp-" + ((Math.random() * 100_000_0) | 0).toString(36) + "_";
+const run_concurrency = Math.max(Number(process.env["BUN_TEST_CONCURRENCY"] || defaultConcurrency(), 10), 1);
+const queue = new PQueue({ concurrency: run_concurrency });
+
+var prevTmpdir = "";
+function maketemp() {
+  prevTmpdir = join(
+    tmpdir(),
+    dirPrefix + (Date.now() | 0).toString() + "_" + ((Math.random() * 100_000_0) | 0).toString(36),
+  );
+  mkdirSync(prevTmpdir, { recursive: true });
+  return prevTmpdir;
 }
 
-const run_concurrency = Math.max(Number(process.env["BUN_TEST_CONCURRENCY"] || defaultConcurrency(), 10), 1);
-
-const extensions = [".js", ".ts", ".jsx", ".tsx"];
+const extensions = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".mjsx", ".cjsx", ".mtsx", ".ctsx"];
 
 const git_sha =
   process.env["GITHUB_SHA"] ?? spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf-8" }).stdout.trim();
+
+const TEST_FILTER = process.env.BUN_TEST_FILTER;
 
 function isTest(path) {
   if (!basename(path).includes(".test.") || !extensions.some(ext => path.endsWith(ext))) {
     return false;
   }
+
+  if (TEST_FILTER) {
+    if (!path.includes(TEST_FILTER)) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -58,8 +97,15 @@ function* findTests(dir, query) {
   }
 }
 
-// pick the last one, kind of a hack to allow 'bun run test bun-release' to test the release build
-let bunExe = (process.argv.length > 2 ? process.argv[process.argv.length - 1] : null) ?? "bun";
+let bunExe = "bun";
+
+if (process.argv.length > 2) {
+  bunExe = resolve(process.argv.at(-1));
+} else if (process.env.BUN_PATH) {
+  const { BUN_PATH_BASE, BUN_PATH } = process.env;
+  bunExe = resolve(normalize(BUN_PATH_BASE), normalize(BUN_PATH));
+}
+
 const { error, stdout: revision_stdout } = spawnSync(bunExe, ["--revision"], {
   env: { ...process.env, BUN_DEBUG_QUIET_LOGS: 1 },
 });
@@ -98,59 +144,178 @@ function lookupWindowsError(code) {
 
 const failing_tests = [];
 const passing_tests = [];
-const fixes = [];
-const regressions = [];
+let maxFd = -1;
+function getMaxFileDescriptor(path) {
+  if (process.platform === "win32") {
+    return -1;
+  }
 
+  hasInitialMaxFD = true;
+
+  if (process.platform === "linux") {
+    try {
+      readdirSync("/proc/self/fd").forEach(name => {
+        const fd = parseInt(name.trim(), 10);
+        if (Number.isSafeInteger(fd) && fd >= 0) {
+          maxFd = Math.max(maxFd, fd);
+        }
+      });
+
+      return maxFd;
+    } catch {}
+  }
+
+  const devnullfd = openSync("/dev/null", "r");
+  closeSync(devnullfd);
+  maxFd = devnullfd + 1;
+  return maxFd;
+}
+let hasInitialMaxFD = false;
+
+const activeTests = new Map();
+
+let slowTestCount = 0;
+function checkSlowTests() {
+  const now = Date.now();
+  const prevSlowTestCount = slowTestCount;
+  slowTestCount = 0;
+  for (const [path, { start, proc }] of activeTests) {
+    if (proc && now - start >= TIMEOUT_DURATION) {
+      console.error(
+        `\x1b[31merror\x1b[0;2m:\x1b[0m Killing test ${JSON.stringify(path)} after ${Math.ceil((now - start) / 1000)}s`,
+      );
+      proc?.stdout?.destroy?.();
+      proc?.stderr?.destroy?.();
+      proc?.kill?.();
+    } else if (now - start > SHORT_TIMEOUT_DURATION) {
+      console.error(
+        `\x1b[33mwarning\x1b[0;2m:\x1b[0m Test ${JSON.stringify(path)} has been running for ${Math.ceil(
+          (now - start) / 1000,
+        )}s`,
+      );
+      slowTestCount++;
+    }
+  }
+
+  if (slowTestCount > prevSlowTestCount && queue.concurrency > 1) {
+    queue.concurrency += 1;
+  }
+}
+
+setInterval(checkSlowTests, SHORT_TIMEOUT_DURATION).unref();
+var currentTestNumber = 0;
 async function runTest(path) {
-  const name = path.replace(cwd, "").slice(1);
+  const pathOnDisk = resolve(path);
+  const thisTestNumber = currentTestNumber++;
+  const testFileName = posix.normalize(relative(cwd, path).replaceAll("\\", "/"));
   let exitCode, signal, err, output;
-
-  const expected_crash_reason = windows
-    ? await readFile(resolve(path), "utf-8").then(data => {
-        const match = data.match(/@known-failing-on-windows:(.*)\n/);
-        return match ? match[1].trim() : null;
-      })
-    : null;
 
   const start = Date.now();
 
-  await new Promise((done, reject) => {
-    const proc = spawn(bunExe, ["test", resolve(path)], {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 1000 * 60 * 3,
-      env: {
-        ...process.env,
-        FORCE_COLOR: "1",
-        BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-        BUN_JSC_forceRAMSize: force_ram_size,
-        BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-        // reproduce CI results locally
-        GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
-        BUN_DEBUG_QUIET_LOGS: "1",
-      },
-    });
+  const activeTestObject = { start, proc: undefined };
+  activeTests.set(testFileName, activeTestObject);
 
-    const chunks = [];
-    proc.stdout.on("data", chunk => {
-      chunks.push(chunk);
-      if (run_concurrency === 1) process.stdout.write(chunk);
-    });
-    proc.stderr.on("data", chunk => {
-      chunks.push(chunk);
-      if (run_concurrency === 1) process.stderr.write(chunk);
-    });
+  try {
+    await new Promise((finish, reject) => {
+      const chunks = [];
+      process.stderr.write(
+        `
+at ${((start - run_start.getTime()) / 1000).toFixed(2)}s, file ${thisTestNumber
+          .toString()
+          .padStart(total.toString().length, "0")}/${total}, ${failing_tests.length} failing files
+Starting "${testFileName}"
 
-    proc.on("exit", (code_, signal_) => {
-      exitCode = code_;
-      signal = signal_;
-      output = Buffer.concat(chunks).toString();
-      done();
+`,
+      );
+      const TMPDIR = maketemp();
+      const proc = spawn(bunExe, ["test", pathOnDisk], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          FORCE_COLOR: "1",
+          BUN_GARBAGE_COLLECTOR_LEVEL: "1",
+          BUN_JSC_forceRAMSize: force_ram_size,
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+          GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
+          BUN_DEBUG_QUIET_LOGS: "1",
+          BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
+        },
+      });
+      activeTestObject.proc = proc;
+      proc.stdout.once("end", () => {
+        done();
+      });
+
+      let doneCalls = 0;
+      var done = () => {
+        // TODO: wait for stderr as well
+        // spawn.test currently causes it to hang
+        if (doneCalls++ === 1) {
+          actuallyDone();
+        }
+      };
+      var actuallyDone = function () {
+        actuallyDone = done = () => {};
+        proc?.stderr?.unref?.();
+        proc?.stdout?.unref?.();
+        proc?.unref?.();
+        output = Buffer.concat(chunks).toString();
+        finish();
+      };
+
+      // if (!KEEP_TMPDIR)
+      //   proc.once("close", () => {
+      //     rm(TMPDIR, { recursive: true, force: true }).catch(() => {});
+      //   });
+
+      proc.stdout.on("data", chunk => {
+        chunks.push(chunk);
+        if (run_concurrency === 1) process.stdout.write(chunk);
+      });
+      proc.stderr.on("data", chunk => {
+        chunks.push(chunk);
+        if (run_concurrency === 1) process.stderr.write(chunk);
+      });
+
+      proc.once("close", () => {
+        activeTestObject.proc = undefined;
+      });
+
+      proc.once("exit", (code_, signal_) => {
+        activeTestObject.proc = undefined;
+        exitCode = code_;
+        signal = signal_;
+        if (signal || exitCode !== 0) {
+          actuallyDone();
+        } else {
+          done();
+        }
+      });
+      proc.once("error", err_ => {
+        activeTestObject.proc = undefined;
+        err = err_;
+        actuallyDone();
+      });
     });
-    proc.on("error", err_ => {
-      err = err_;
-      done();
-    });
-  });
+  } finally {
+    activeTests.delete(testFileName);
+  }
+
+  if (!hasInitialMaxFD) {
+    getMaxFileDescriptor();
+  } else if (maxFd > 0) {
+    const prevMaxFd = maxFd;
+    maxFd = getMaxFileDescriptor();
+    if (maxFd > prevMaxFd + queue.concurrency * 2) {
+      process.stderr.write(
+        `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${testFileName}, delta: ${
+          maxFd - prevMaxFd
+        }, current: ${maxFd}, previous: ${prevMaxFd}\n`,
+      );
+    }
+  }
 
   const passed = exitCode === 0 && !err && !signal;
 
@@ -196,8 +361,8 @@ async function runTest(path) {
 
   console.log(
     `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
-      passed ? "\x1b[32m✔" : expected_crash_reason ? "\x1b[33m⚠" : "\x1b[31m✖"
-    } ${name}\x1b[0m${reason ? ` (${reason})` : ""}`,
+      passed ? "\x1b[32m✔" : "\x1b[31m✖"
+    } ${testFileName}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
   finished++;
@@ -211,28 +376,17 @@ async function runTest(path) {
   }
 
   if (!passed) {
-    if (reason) {
-      if (windows && !expected_crash_reason) {
-        regressions.push({ path: name, reason, output });
-      }
-    }
-
-    failing_tests.push({ path: name, reason, output, expected_crash_reason });
+    failing_tests.push({ path: testFileName, reason, output });
+    process.exitCode = 1;
     if (err) console.error(err);
   } else {
-    if (windows && expected_crash_reason !== null) {
-      fixes.push({ path: name, output, expected_crash_reason });
-    }
-
-    passing_tests.push(name);
+    passing_tests.push(testFileName);
   }
+
+  return passed;
 }
 
-const queue = [...findTests(resolve(cwd, "test"))];
-let running = 0;
-let total = queue.length;
-let finished = 0;
-let on_entry_finish = null;
+var finished = 0;
 
 function writeProgressBar() {
   const barWidth = Math.min(process.stdout.columns || 40, 80) - 2;
@@ -242,34 +396,23 @@ function writeProgressBar() {
   process.stdout.write(`\r${str1}${" ".repeat(barWidth - str1.length)}]`);
 }
 
-while (queue.length > 0) {
-  if (running >= run_concurrency) {
-    await new Promise(resolve => (on_entry_finish = resolve));
-    continue;
-  }
-
-  const path = queue.shift();
-  running++;
-  runTest(path)
-    .catch(e => {
-      console.error("Bug in bun-internal-test");
-      console.error(e);
-      process.exit(1);
-    })
-    .finally(() => {
-      running--;
-      if (on_entry_finish) {
-        on_entry_finish();
-        on_entry_finish = null;
-      }
-    });
+const allTests = [...findTests(resolve(cwd, "test"))];
+console.log(`Starting ${allTests.length} tests with ${run_concurrency} concurrency...`);
+let total = allTests.length;
+for (const path of allTests) {
+  queue.add(
+    async () =>
+      await runTest(path).catch(e => {
+        console.error("Bug in bun-internal-test");
+        console.error(e);
+        process.exit(1);
+      }),
+  );
 }
-while (running > 0) {
-  await Promise.race([
-    new Promise(resolve => (on_entry_finish = resolve)),
-    new Promise(resolve => setTimeout(resolve, 1000)),
-  ]);
-}
+await queue.onIdle();
+console.log(`
+Completed ${total} tests with ${failing_tests.length} failing tests
+`);
 console.log("\n");
 
 function linkToGH(linkTo) {
@@ -280,10 +423,13 @@ function sectionLink(linkTo) {
   return "#" + linkTo.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
 }
 
+failing_tests.sort((a, b) => a.path.localeCompare(b.path));
+passing_tests.sort((a, b) => a.localeCompare(b));
+
 const failingTestDisplay = failing_tests
-  .filter(({ reason }) => !regressions.some(({ path }) => path === path))
   .map(({ path, reason }) => `- [\`${path}\`](${sectionLink(path)})${reason ? ` ${reason}` : ""}`)
   .join("\n");
+
 // const passingTestDisplay = passing_tests.map(path => `- \`${path}\``).join("\n");
 
 rmSync("report.md", { force: true });
@@ -331,32 +477,8 @@ ${header}
 
 `;
 
-if (fixes.length > 0) {
-  report += `## Fixes\n\n`;
-  report += "The following tests had @known-failing-on-windows but now pass:\n\n";
-  report += fixes
-    .map(
-      ({ path, expected_crash_reason }) => `- [\`${path}\`](${sectionLink(path)}) (before: ${expected_crash_reason})`,
-    )
-    .join("\n");
-  report += "\n\n";
-}
-
-if (regressions.length > 0) {
-  report += `## Regressions\n\n`;
-  report += regressions
-    .map(
-      ({ path, reason, expected_crash_reason }) =>
-        `- [\`${path}\`](${sectionLink(path)}) ${reason}${
-          expected_crash_reason ? ` (expected: ${expected_crash_reason})` : ""
-        }`,
-    )
-    .join("\n");
-  report += "\n\n";
-}
-
 if (failingTestDisplay.length > 0) {
-  report += `## ${windows ? "Known " : ""}Failing tests\n\n`;
+  report += `## Failing tests\n\n`;
   report += failingTestDisplay;
   report += "\n\n";
 }
@@ -369,20 +491,22 @@ if (failingTestDisplay.length > 0) {
 
 if (failing_tests.length) {
   report += `## Failing tests log output\n\n`;
-  for (const { path, output, reason, expected_crash_reason } of failing_tests) {
+  for (const { path, output, reason } of failing_tests) {
     report += `### ${path}\n\n`;
     report += "[Link to file](" + linkToGH(path) + ")\n\n";
-    if (windows && reason !== expected_crash_reason) {
-      report += `To mark this as a known failing test, add this to the start of the file:\n`;
-      report += `\`\`\`ts\n`;
-      report += `// @known-failing-on-windows: ${reason}\n`;
-      report += `\`\`\`\n\n`;
-    } else {
-      report += `${reason}\n\n`;
-    }
+    report += `${reason}\n\n`;
     report += "```\n";
-    report += output.replace(/\x1b\[[0-9;]*m/g, "")
-      .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "")
+
+    let failing_output = output
+      .replace(/\x1b\[[0-9;]*m/g, "")
+      .replace(/^::(group|endgroup|error|warning|set-output|add-matcher|remove-matcher).*$/gm, "");
+
+    if (failing_output.length > 1024 * 64) {
+      failing_output = failing_output.slice(0, 1024 * 64) + `\n\n[truncated output (length: ${failing_output.length})]`;
+    }
+
+    report += failing_output;
+
     report += "```\n\n";
   }
 }
@@ -393,38 +517,96 @@ writeFileSync(
   JSON.stringify({
     failing_tests,
     passing_tests,
-    fixes,
-    regressions,
   }),
 );
 
-console.log("-> test-report.md, test-report.json");
+function mabeCapitalize(str) {
+  str = str.toLowerCase();
+  if (str.includes("arm64") || str.includes("aarch64")) {
+    return str.toUpperCase();
+  }
 
-if (ci) {
-  if (windows) {
-    if (regressions.length > 0) {
-      action.setFailed(`${regressions.length} regressing tests`);
-    }
-    action.setOutput(
-      "regressing_tests",
-      regressions.map(({ path }) => `- \`${path}\``).join("\n"),
-    );
-    action.setOutput("regressing_test_count", regressions.length);
-  } else {
-    if (failing_tests.length > 0) {
-      action.setFailed(`${failing_tests.length} files with failing tests`);
-    }
-    action.setOutput("failing_tests", failingTestDisplay);
-    action.setOutput("failing_tests_count", failing_tests.length);
+  if (str.includes("x64")) {
+    return "x64";
   }
-  action.summary.addRaw(report);
-  await action.summary.write();
-} else {
-  if (windows && (regressions.length > 0 || fixes.length > 0)) {
-    console.log(
-      "\n\x1b[34mnote\x1b[0;2m:\x1b[0m If you would like to update the @known-failing-on-windows annotations, run `bun update-known-failures`",
-    );
+
+  if (str.includes("baseline")) {
+    return str;
   }
+
+  return str[0].toUpperCase() + str.slice(1);
 }
 
-process.exit(failing_tests.length ? 1 : 0);
+console.log("-> test-report.md, test-report.json");
+function linkify(text, url) {
+  if (url?.startsWith?.("https://")) {
+    return `[${text}](${url})`;
+  }
+
+  return text;
+}
+
+if (ci) {
+  if (failing_tests.length > 0) {
+    action.setFailed(`${failing_tests.length} files with failing tests`);
+  }
+  action.setOutput("failing_tests", failingTestDisplay);
+  action.setOutput("failing_tests_count", failing_tests.length);
+  if (failing_tests.length) {
+    const { env } = process;
+    const tag = process.env.BUN_TAG || "unknown";
+    const url = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+
+    let comment = `## ${linkify(`${emojiTag(tag)}${failing_tests.length} failing tests`, url)} ${tag
+      .split("-")
+      .map(mabeCapitalize)
+      .join(" ")}
+
+${failingTestDisplay}
+
+`;
+    writeFileSync("comment.md", comment);
+  }
+  let truncated_report = report;
+  if (truncated_report.length > 512 * 1000) {
+    truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";
+  }
+  action.summary.addRaw(truncated_report);
+  await action.summary.write();
+}
+
+function emojiTag(tag) {
+  let emojiText = "";
+  tag = tag.toLowerCase();
+  if (tag.includes("win32") || tag.includes("windows")) {
+    emojiText += "🪟";
+  }
+
+  if (tag.includes("linux")) {
+    emojiText += "🐧";
+  }
+
+  if (tag.includes("macos") || tag.includes("darwin")) {
+    emojiText += "";
+  }
+
+  if (tag.includes("x86") || tag.includes("x64") || tag.includes("_64") || tag.includes("amd64")) {
+    if (!tag.includes("linux")) {
+      emojiText += "💻";
+    } else {
+      emojiText += "🖥";
+    }
+  }
+
+  if (tag.includes("arm64") || tag.includes("aarch64")) {
+    emojiText += "💪";
+  }
+
+  if (emojiText) {
+    emojiText += " ";
+  }
+
+  return emojiText;
+}
+
+process.exit(failing_tests.length ? 1 : process.exitCode);

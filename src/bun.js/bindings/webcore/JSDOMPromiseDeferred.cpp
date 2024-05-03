@@ -288,16 +288,7 @@ bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDO
 {
     VM& vm = scope.vm();
 
-    auto& scriptExecutionContext = *lexicalGlobalObject.scriptExecutionContext();
-    // if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-    //     auto* scriptController = downcast<WorkerGlobalScope>(scriptExecutionContext).script();
-    //     bool terminatorCausedException = vm.isTerminationException(exception);
-    //     if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution())) {
-    //         scriptController->forbidExecution();
-    //         return true;
-    //     }
-    // }
-    return false;
+    return !!exception && vm.isTerminationException(exception);
 }
 
 void DeferredPromise::handleUncaughtException(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)

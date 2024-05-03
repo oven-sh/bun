@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const toml_lexer = @import("./toml_lexer.zig");
 const Lexer = toml_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
@@ -26,7 +26,7 @@ const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
 const StmtNodeList = js_ast.StmtNodeList;
 const BindingNodeList = js_ast.BindingNodeList;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const LocRef = js_ast.LocRef;
 const S = js_ast.S;
@@ -109,9 +109,9 @@ pub const TOML = struct {
 
         switch (p.lexer.token) {
             .t_string_literal => {
-                const str = p.lexer.toEString();
+                const str = p.lexer.toString(loc);
                 try p.lexer.next();
-                return p.e(str, loc);
+                return str;
             },
             .t_identifier => {
                 const str = E.String{ .data = p.lexer.identifier };
@@ -292,10 +292,9 @@ pub const TOML = struct {
                 }, loc);
             },
             .t_string_literal => {
-                const str: E.String = p.lexer.toEString();
-
+                const result = p.lexer.toString(loc);
                 try p.lexer.next();
-                return p.e(str, loc);
+                return result;
             },
             .t_identifier => {
                 const str: E.String = E.String{ .data = p.lexer.identifier };

@@ -1,3 +1,4 @@
+#pragma once
 /*
  * Authored by Alex Hultman, 2018-2021.
  * Intellectual property of third-party.

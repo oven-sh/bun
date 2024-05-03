@@ -98,10 +98,10 @@ Bun.env.API_TOKEN; // => "secret"
 import.meta.env.API_TOKEN; // => "secret"
 ```
 
-To print all currently-set environment variables to the command line, run `bun run env`. This is useful for debugging.
+To print all currently-set environment variables to the command line, run `bun --print process.env`. This is useful for debugging.
 
 ```sh
-$ bun run env
+$ bun --print process.env
 BAZ=stuff
 FOOBAR=aaaaaa
 <lots more lines>
@@ -160,6 +160,16 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 - `FORCE_COLOR`
 - If `FORCE_COLOR=1`, then ANSI color output is force enabled, even if `NO_COLOR` is set.
+
+---
+
+- `BUN_CONFIG_MAX_HTTP_REQUESTS`
+- Control the maximum number of concurrent HTTP requests sent by fetch and `bun install`. Defaults to `256`. If you are running into rate limits or connection issues, you can reduce this number.
+
+---
+
+- `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD`
+- If `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD=1`, then `bun --watch` will not clear the console on reload
 
 ---
 

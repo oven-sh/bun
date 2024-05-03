@@ -8,8 +8,8 @@
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
  *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,7 +19,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-
+// clang-format off
 #include "libuwebsockets.h"
 #include <string_view>
 #include "App.h"
@@ -389,17 +389,17 @@ extern "C"
                 std::string(domain, domain_length));
         }
     }
-    void uws_app_domain(int ssl, uws_app_t *app, const char *server_name, size_t server_name_length)
+    void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)
     {
         if (ssl)
         {
             uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-            uwsApp->domain(std::string(server_name, server_name_length));
+            uwsApp->domain(server_name);
         }
         else
         {
             uWS::App *uwsApp = (uWS::App *)app;
-            uwsApp->domain(std::string(server_name, server_name_length));
+            uwsApp->domain(server_name);
         }
     }
     void uws_app_destroy(int ssl, uws_app_t *app)
@@ -976,7 +976,7 @@ extern "C"
         return value.length();
     }
 #endif
-    uws_try_end_result_t uws_res_try_end(int ssl, uws_res_t *res, const char *data, size_t length, uintmax_t total_size, bool close_connection)
+    uws_try_end_result_t uws_res_try_end(int ssl, uws_res_t *res, const char *data, size_t length, uint64_t total_size, bool close_connection)
     {
         if (ssl)
         {
@@ -1123,7 +1123,7 @@ extern "C"
         uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
         return uwsRes->write(std::string_view(data, length));
     }
-    uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res)
+    uint64_t uws_res_get_write_offset(int ssl, uws_res_t *res)
     {
         if (ssl)
         {
@@ -1133,7 +1133,7 @@ extern "C"
         uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
         return uwsRes->getWriteOffset();
     }
-    void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset)
+    void uws_res_override_write_offset(int ssl, uws_res_t *res, uint64_t offset)
     {
         if (ssl)
         {
@@ -1157,18 +1157,18 @@ extern "C"
         return uwsRes->hasResponded();
     }
 
-    void uws_res_on_writable(int ssl, uws_res_t *res, bool (*handler)(uws_res_t *res, uintmax_t, void *optional_data), void *optional_data)
+    void uws_res_on_writable(int ssl, uws_res_t *res, bool (*handler)(uws_res_t *res, uint64_t, void *optional_data), void *optional_data)
     {
         if (ssl)
         {
             uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-            uwsRes->onWritable([handler, res, optional_data](uintmax_t a)
+            uwsRes->onWritable([handler, res, optional_data](uint64_t a)
                                { return handler(res, a, optional_data); });
         }
         else
         {
             uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-            uwsRes->onWritable([handler, res, optional_data](uintmax_t a)
+            uwsRes->onWritable([handler, res, optional_data](uint64_t a)
                                { return handler(res, a, optional_data); });
         }
     }

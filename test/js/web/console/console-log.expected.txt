@@ -25,6 +25,11 @@ Symbol(Symbol Description)
   b: 456,
   c: 789,
 }
+1.7976931348623157e+308
+5e-324
+9e+59
+0.3
+0.29999999999999993
 {
   a: {
     b: {
@@ -48,6 +53,7 @@ FooWithProp {
 /FooRegex/
 Is it a bug or a feature that formatting numbers like 123 is colored
 String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
+123456 without space should work
 {
   foo: {
     name: "baz",
@@ -241,3 +247,35 @@ myCustomName {
   "1": 42,
   length: 1,
 }
+{
+  "": "",
+}
+{
+  hello: 2,
+}
+<Revoked Proxy>
+custom inspect
+| 0 | 0 | 132 | -42 | 4 | -8 |
+| NaN | NaN | NaN | 0 | NaN | NaN |
+| 0 | 0 | 132 | -42 | -4 | 8 |
+| NaN | NaN | NaN | 0 | NaN | NaN |
+4
+| 0 | 0.2 | 132.51 | -42.52 | 4.127888538432189e+22 | -8.5e-12 |
+| NaN | Infinity | -Infinity | 0 | NaN | NaN |
+0.5 | 0.005
+0
+504252
+-491952
+8589934592
+-8589934592
+0.0005
+-0.0005
+1.7976931348623157e+308 1
+-1.7976931348623157e+308 1
+5e-324 4
+-5e-324 4
+5e-324 9
+-5e-324 4
+0.30000000000000004
+Hello World 123
+Hello %vWorld 123

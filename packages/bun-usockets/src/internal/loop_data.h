@@ -25,9 +25,11 @@ struct us_internal_loop_data_t {
     struct us_socket_context_t *head;
     struct us_socket_context_t *iterator;
     char *recv_buf;
+    char *send_buf;
     void *ssl_data;
     void (*pre_cb)(struct us_loop_t *);
     void (*post_cb)(struct us_loop_t *);
+    struct us_udp_socket_t *closed_udp_head;
     struct us_socket_t *closed_head;
     struct us_socket_t *low_prio_head;
     int low_prio_budget;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
@@ -52,7 +52,7 @@ const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
 const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
@@ -75,7 +75,7 @@ fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void
 }
 
 pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void {
-    std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+    bun.assert(module_id != 0); // either module_id is forgotten or it should be disabled
     _ = writer.writeAll("$") catch unreachable;
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
@@ -153,12 +153,11 @@ fn ws(comptime str: []const u8) Whitespacer {
         pub const with = str;
 
         pub const without = brk: {
-            var buf = [_]u8{0} ** str.len;
-            var i: usize = 0;
+            var buf = std.mem.zeroes([str.len]u8);
             var buf_i: usize = 0;
-            while (i < str.len) : (i += 1) {
-                if (str[i] != ' ') {
-                    buf[buf_i] = str[i];
+            for (str) |c| {
+                if (c != ' ') {
+                    buf[buf_i] = c;
                     buf_i += 1;
                 }
             }
@@ -172,15 +171,27 @@ fn ws(comptime str: []const u8) Whitespacer {
 
 pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize {
     var remaining = input;
-    var len: u32 = 2; // for quotes
+    var len: usize = 2; // for quotes
 
     while (strings.indexOfNeedsEscape(remaining)) |i| {
         len += i;
         remaining = remaining[i..];
         const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], char_len, i32, 0);
+        const c = strings.decodeWTF8RuneT(
+            &switch (char_len) {
+                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
+                1 => .{ remaining[0], 0, 0, 0 },
+                2 => remaining[0..2].* ++ .{ 0, 0 },
+                3 => remaining[0..3].* ++ .{0},
+                4 => remaining[0..4].*,
+                else => unreachable,
+            },
+            char_len,
+            i32,
+            0,
+        );
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            len += @as(u32, char_len);
+            len += @as(usize, char_len);
         } else if (c <= 0xFFFF) {
             len += 6;
         } else {
@@ -188,7 +199,7 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
         }
         remaining = remaining[char_len..];
     } else {
-        return @as(u32, @truncate(remaining.len)) + 2;
+        return remaining.len + 2;
     }
 
     return len;
@@ -196,18 +207,39 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
 
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
     var bytes = output_;
+    try quoteForJSONBuffer(text, &bytes, ascii_only);
+    return bytes;
+}
+
+pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     try bytes.growIfNeeded(estimateLengthForJSON(text, ascii_only));
     try bytes.appendChar('"');
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
         const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
-        const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
+        const clamped_width = @min(@as(usize, width), n -| i);
+        const c = strings.decodeWTF8RuneT(
+            &switch (clamped_width) {
+                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
+                1 => .{ text[i], 0, 0, 0 },
+                2 => text[i..][0..2].* ++ .{ 0, 0 },
+                3 => text[i..][0..3].* ++ .{0},
+                4 => text[i..][0..4].*,
+                else => unreachable,
+            },
+            width,
+            i32,
+            0,
+        );
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + @as(usize, width) ..];
+            const remain = text[i + clamped_width ..];
             if (strings.indexOfNeedsEscape(remain)) |j| {
-                try bytes.appendSlice(text[i .. i + j + @as(usize, width)]);
-                i += j + @as(usize, width);
+                const text_chunk = text[i .. i + clamped_width];
+                try bytes.appendSlice(text_chunk);
+                i += clamped_width;
+                try bytes.appendSlice(remain[0..j]);
+                i += j;
                 continue;
             } else {
                 try bytes.appendSlice(text[i..]);
@@ -301,7 +333,6 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
         }
     }
     bytes.appendChar('"') catch unreachable;
-    return bytes;
 }
 
 const JSONFormatter = struct {
@@ -443,18 +474,6 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
     try writer.writeAll("\"");
 }
 
-test "quoteForJSON" {
-    const allocator = default_allocator;
-    try std.testing.expectEqualStrings(
-        "\"I don't need any quotes.\"",
-        (try quoteForJSON("I don't need any quotes.", MutableString.init(allocator, 0) catch unreachable, false)).list.items,
-    );
-    try std.testing.expectEqualStrings(
-        "\"I need a quote for \\\"this\\\".\"",
-        (try quoteForJSON("I need a quote for \"this\".", MutableString.init(allocator, 0) catch unreachable, false)).list.items,
-    );
-}
-
 pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,
@@ -488,7 +507,6 @@ pub const Options = struct {
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
-    rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
@@ -1017,7 +1035,7 @@ fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            comptime std.debug.assert(is_bun_platform);
+            comptime bun.assert(is_bun_platform);
 
             switch (p.options.module_type) {
                 .cjs => {
@@ -1377,13 +1395,13 @@ fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
-            std.debug.assert(!ref.isNull());
+            bun.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
         }
         pub fn printClauseAlias(p: *Printer, alias: string) void {
-            std.debug.assert(alias.len > 0);
+            bun.assert(alias.len > 0);
 
             if (!strings.containsNonBmpCodePointOrIsInvalidIdentifier(alias)) {
                 p.printSpaceBeforeIdentifier();
@@ -1853,7 +1871,7 @@ fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(()=>{ throw new Error(`Cannot require module ");
+            p.print("(()=>{throw new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
             p.print("`);})()");
         }
@@ -2029,14 +2047,12 @@ fn NewPrinter(
                     }
                 }
 
-                if (comptime is_bun_platform) {
-                    if (p.options.module_type == .esm) {
-                        p.print("import.meta.require");
-                    } else {
-                        p.print("require");
-                    }
+                if (p.options.module_type == .esm and is_bun_platform) {
+                    p.print("import.meta.require");
+                } else if (p.options.require_ref) |ref| {
+                    p.printSymbol(ref);
                 } else {
-                    p.printSymbol(p.options.require_ref.?);
+                    p.print("require");
                 }
 
                 p.print("(");
@@ -2061,6 +2077,37 @@ fn NewPrinter(
             // Allow it to fail at runtime, if it should
             p.print("import(");
             p.printImportRecordPath(record);
+
+            switch (record.tag) {
+                .with_type_sqlite, .with_type_sqlite_embedded => {
+                    // we do not preserve "embed": "true" since it is not necessary
+                    p.printWhitespacer(ws(", { with: { type: \"sqlite\" } }"));
+                },
+                .with_type_text => {
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
+                    }
+                },
+                .with_type_json => {
+                    // backwards compatibility: previously, we always stripped type json
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
+                    }
+                },
+                .with_type_toml => {
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
+                    }
+                },
+                .with_type_file => {
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) {
+                        p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
+                    }
+                },
+                else => {},
+            }
             p.print(")");
 
             if (leading_interior_comments.len > 0) {
@@ -2250,7 +2297,7 @@ fn NewPrinter(
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
                         if (comptime Environment.allow_assert)
-                            std.debug.assert(p.options.module_type == .cjs);
+                            bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
                     }
@@ -2387,20 +2434,25 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require");
-                    } else {
+                    if (p.options.module_type == .esm and is_bun_platform) {
                         p.print("import.meta.require");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                    } else {
+                        p.print("require");
                     }
                 },
                 .e_require_resolve_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .cjs or !is_bun_platform) {
-                        p.print("require.resolve");
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.resolve");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
                     } else {
-                        p.print("import.meta.resolveSync");
+                        p.print("require.resolve");
                     }
                 },
                 .e_require_string => |e| {
@@ -2409,24 +2461,28 @@ fn NewPrinter(
                     }
                 },
                 .e_require_resolve_string => |e| {
-                    if (p.options.rewrite_require_resolve) {
-                        // require.resolve("../src.js") => "../src.js"
-                        p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    const wrap = level.gte(.new) or flags.contains(.forbid_call);
+                    if (wrap) {
+                        p.print("(");
+                    }
+
+                    p.printSpaceBeforeIdentifier();
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.resolve");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".resolve");
                     } else {
-                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
-                        if (wrap) {
-                            p.print("(");
-                        }
+                        p.print("require.resolve");
+                    }
 
-                        p.printSpaceBeforeIdentifier();
-                        p.print("require.resolve(");
-                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print("(");
+                    p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
+                    p.print(")");
+
+                    if (wrap) {
                         p.print(")");
-
-                        if (wrap) {
-                            p.print(")");
-                        }
                     }
                 },
                 .e_import => |e| {
@@ -2451,6 +2507,26 @@ fn NewPrinter(
                         }
                         p.printExpr(e.expr, .comma, ExprFlag.None());
 
+                        if (comptime is_bun_platform) {
+                            // since we previously stripped type, it is a breaking change to
+                            // enable this for non-bun platforms
+                            switch (e.type_attribute) {
+                                .none => {},
+                                .text => {
+                                    p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
+                                },
+                                .json => {
+                                    p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
+                                },
+                                .toml => {
+                                    p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
+                                },
+                                .file => {
+                                    p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
+                                },
+                            }
+                        }
+
                         if (e.leading_interior_comments.len > 0) {
                             p.printNewline();
                             p.options.unindent();
@@ -2473,7 +2549,7 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
                     } else {
-                        if (flags.contains(.has_non_optional_chain_parent) and e.optional_chain.? == .ccontinue) {
+                        if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
                             p.print("(");
                         }
@@ -2807,6 +2883,10 @@ fn NewPrinter(
                     p.print(c);
                     p.printStringContent(e, c);
                     p.print(c);
+                },
+                .e_utf8_string => |e| {
+                    p.addSourceMapping(expr.loc);
+                    quoteForJSONBuffer(e.data, p.writer.getMutableBuffer(), ascii_only) catch bun.outOfMemory();
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
@@ -3605,7 +3685,7 @@ fn NewPrinter(
             }
 
             if (comptime is_json) {
-                std.debug.assert(item.initializer == null);
+                bun.assert(item.initializer == null);
             }
 
             if (item.initializer) |initial| {
@@ -4234,6 +4314,12 @@ fn NewPrinter(
                         .k_var => {
                             p.printDeclStmt(s.is_export, "var", s.decls.slice());
                         },
+                        .k_using => {
+                            p.printDeclStmt(s.is_export, "using", s.decls.slice());
+                        },
+                        .k_await_using => {
+                            p.printDeclStmt(s.is_export, "await using", s.decls.slice());
+                        },
                     }
                 },
                 .s_if => |s| {
@@ -4444,7 +4530,7 @@ fn NewPrinter(
                     p.needs_semicolon = false;
                 },
                 .s_import => |s| {
-                    std.debug.assert(s.import_record_index < p.import_records.len);
+                    bun.assert(s.import_record_index < p.import_records.len);
 
                     const record: *const ImportRecord = p.importRecord(s.import_record_index);
 
@@ -4703,6 +4789,37 @@ fn NewPrinter(
                     }
 
                     p.printImportRecordPath(record);
+
+                    switch (record.tag) {
+                        .with_type_sqlite, .with_type_sqlite_embedded => {
+                            // we do not preserve "embed": "true" since it is not necessary
+                            p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
+                        },
+                        .with_type_text => {
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"text\" }"));
+                            }
+                        },
+                        .with_type_json => {
+                            // backwards compatibility: previously, we always stripped type json
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"json\" }"));
+                            }
+                        },
+                        .with_type_toml => {
+                            // backwards compatibility: previously, we always stripped type
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"toml\" }"));
+                            }
+                        },
+                        .with_type_file => {
+                            // backwards compatibility: previously, we always stripped type
+                            if (comptime is_bun_platform) {
+                                p.printWhitespacer(ws(" with { type: \"file\" }"));
+                            }
+                        },
+                        else => {},
+                    }
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -4934,7 +5051,7 @@ fn NewPrinter(
                 return;
             }
 
-            @call(.always_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
+            @call(bun.callmod_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4943,26 +5060,13 @@ fn NewPrinter(
         }
 
         inline fn printModuleId(p: *Printer, module_id: u32) void {
-            std.debug.assert(module_id != 0); // either module_id is forgotten or it should be disabled
+            bun.assert(module_id != 0); // either module_id is forgotten or it should be disabled
             p.printModuleIdAssumeEnabled(module_id);
         }
 
         inline fn printModuleIdAssumeEnabled(p: *Printer, module_id: u32) void {
             p.print("$");
             std.fmt.formatInt(module_id, 16, .lower, .{}, p) catch unreachable;
-        }
-
-        pub fn printBundledRequire(p: *Printer, require: E.RequireString) void {
-            if (p.importRecord(require.import_record_index).is_internal) {
-                return;
-            }
-
-            p.printSymbol(p.options.runtime_imports.__require.?.ref);
-
-            // d is for default
-            p.print(".d(");
-            p.printLoadFromBundle(require.import_record_index);
-            p.print(")");
         }
 
         pub fn printBundledRexport(p: *Printer, name: string, import_record_index: u32) void {
@@ -5011,6 +5115,12 @@ fn NewPrinter(
                         },
                         .k_const => {
                             p.printDecls("const", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_using => {
+                            p.printDecls("using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
+                        },
+                        .k_await_using => {
+                            p.printDecls("await using", s.decls.slice(), ExprFlag.Set.init(.{ .forbid_in = true }));
                         },
                     }
                 },
@@ -5372,6 +5482,10 @@ pub fn NewWriter(
             );
         }
 
+        pub fn getMutableBuffer(this: *Self) *MutableString {
+            return this.ctx.getMutableBuffer();
+        }
+
         pub fn slice(this: *Self) string {
             return this.ctx.slice();
         }
@@ -5387,11 +5501,11 @@ pub fn NewWriter(
         }
 
         pub inline fn prevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastByte, .{&writer.ctx});
         }
 
         pub inline fn prevPrevChar(writer: *const Self) u8 {
-            return @call(.always_inline, getLastLastByte, .{&writer.ctx});
+            return @call(bun.callmod_inline, getLastLastByte, .{&writer.ctx});
         }
 
         pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
@@ -5484,6 +5598,10 @@ const FileWriterInternal = struct {
         return &buffer;
     }
 
+    pub fn getMutableBuffer(_: *FileWriterInternal) *MutableString {
+        return &buffer;
+    }
+
     pub fn init(file: std.fs.File) FileWriterInternal {
         if (!has_loaded_buffer) {
             buffer = MutableString.init(default_allocator, 0) catch unreachable;
@@ -5529,7 +5647,7 @@ const FileWriterInternal = struct {
         return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
     pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(buffer.list.items.len + count <= buffer.list.capacity);
+        if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
         if (count >= 2) {
@@ -5596,6 +5714,10 @@ pub const BufferWriter = struct {
     approximate_newline_count: usize = 0,
     last_bytes: [2]u8 = [_]u8{ 0, 0 },
 
+    pub fn getMutableBuffer(this: *BufferWriter) *MutableString {
+        return &this.buffer;
+    }
+
     pub fn getWritten(this: *BufferWriter) []u8 {
         return this.buffer.list.items;
     }
@@ -5644,7 +5766,7 @@ pub const BufferWriter = struct {
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
     pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
-        if (comptime Environment.isDebug) std.debug.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
+        if (comptime Environment.isDebug) bun.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];
 
@@ -6027,7 +6149,8 @@ pub fn printWithWriterAndPlatform(
     comptime generate_source_maps: bool,
 ) PrintResult {
     const PrinterType = NewPrinter(
-        false,
+        // if it's bun, it is also ascii_only
+        is_bun_platform,
         Writer,
         false,
         is_bun_platform,

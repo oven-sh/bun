@@ -1,10 +1,13 @@
-// @known-failing-on-windows: 1 failing
 import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
-import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { spawnSync } from "bun";
-import { bunExe } from "harness";
+import { bunExe, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
+import path from "path";
+
+const tmpbase = tmpdir() + path.sep;
+
 var encode = text => new TextEncoder().encode(text);
 
 it("Database.open", () => {
@@ -18,7 +21,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -26,7 +29,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, { readonly: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readonly: true });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -34,7 +37,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(`/tmp/database-${Math.random()}.sqlite`, { readwrite: true });
+    Database.open(tmpbase + `database-${Math.random()}.sqlite`, { readwrite: true });
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -42,7 +45,7 @@ it("Database.open", () => {
 
   // create works
   {
-    var db = Database.open(`/tmp/database-${Math.random()}.sqlite`, {
+    var db = Database.open(tmpbase + `database-${Math.random()}.sqlite`, {
       create: true,
     });
     db.close();
@@ -424,7 +427,7 @@ it("db.transaction()", () => {
 
 // this bug was fixed by ensuring FinalObject has no more than 64 properties
 it("inlineCapacity #987", async () => {
-  const path = "/tmp/bun-987.db";
+  const path = tmpbase + "bun-987.db";
   if (!existsSync(path)) {
     const arrayBuffer = await (await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")).arrayBuffer();
     writeFileSync(path, arrayBuffer);
@@ -647,7 +650,7 @@ it("syntax error sets the byteOffset", () => {
 
 it("Missing DB throws SQLITE_CANTOPEN", () => {
   try {
-    new Database("/definitely/not/found");
+    new Database("./definitely/not/found");
     expect.unreachable();
   } catch (error) {
     expect(error.code).toBe("SQLITE_CANTOPEN");
@@ -665,4 +668,289 @@ it("empty blob", () => {
       blob: new Uint8Array(),
     },
   ]);
+});
+
+it("multiple statements with a schema change", () => {
+  const db = new Database(":memory:");
+  db.run(
+    `
+    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT); 
+    CREATE TABLE bar (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+
+    INSERT INTO foo (name) VALUES ('foo');
+    INSERT INTO foo (name) VALUES ('bar');
+
+    INSERT INTO bar (name) VALUES ('foo');
+    INSERT INTO bar (name) VALUES ('bar');
+  `,
+  );
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+
+  expect(db.query("SELECT * FROM bar").all()).toEqual([
+    {
+      id: 1,
+      name: "foo",
+    },
+    {
+      id: 2,
+      name: "bar",
+    },
+  ]);
+});
+
+it("multiple statements", () => {
+  const fixtures = [
+    "INSERT INTO foo (name) VALUES ('foo')",
+    "INSERT INTO foo (name) VALUES ('barabc')",
+    "INSERT INTO foo (name) VALUES ('!bazaspdok')",
+  ];
+  for (let separator of [";", ";\n", "\n;", "\r\n;", ";\r\n", ";\t", "\t;", "\r\n;"]) {
+    for (let spaceOffset of [1, 0, -1]) {
+      for (let spacesCount = 0; spacesCount < 8; spacesCount++) {
+        const db = new Database(":memory:");
+        db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+
+        const prefix = spaceOffset < 0 ? " ".repeat(spacesCount) : "";
+        const suffix = spaceOffset > 0 ? " ".repeat(spacesCount) : "";
+        const query = fixtures.join(prefix + separator + suffix);
+        db.run(query);
+
+        expect(db.query("SELECT * FROM foo").all()).toEqual([
+          {
+            id: 1,
+            name: "foo",
+          },
+          {
+            id: 2,
+            name: "barabc",
+          },
+          {
+            id: 3,
+            name: "!bazaspdok",
+          },
+        ]);
+      }
+    }
+  }
+});
+
+it.skipIf(
+  // We use the system version, which may or may not have math functions
+  process.platform === "darwin",
+)("math functions", () => {
+  const db = new Database(":memory:");
+
+  expect(db.prepare("SELECT ABS(-243.5)").all()).toEqual([{ "ABS(-243.5)": 243.5 }]);
+  expect(db.prepare("SELECT ACOS(0.25)").all()).toEqual([{ "ACOS(0.25)": 1.318116071652818 }]);
+  expect(db.prepare("SELECT ASIN(0.25)").all()).toEqual([{ "ASIN(0.25)": 0.25268025514207865 }]);
+  expect(db.prepare("SELECT ATAN(0.25)").all()).toEqual([{ "ATAN(0.25)": 0.24497866312686414 }]);
+  db.exec(
+    `
+    CREATE TABLE num_table (value TEXT NOT NULL);
+    INSERT INTO num_table values (1), (2), (6);
+    `,
+  );
+  expect(db.prepare(`SELECT AVG(value) as value FROM num_table`).all()).toEqual([{ value: 3 }]);
+  expect(db.prepare("SELECT CEILING(0.25)").all()).toEqual([{ "CEILING(0.25)": 1 }]);
+  expect(db.prepare("SELECT COUNT(*) FROM num_table").all()).toEqual([{ "COUNT(*)": 3 }]);
+  expect(db.prepare("SELECT COS(0.25)").all()).toEqual([{ "COS(0.25)": 0.9689124217106447 }]);
+  expect(db.prepare("SELECT DEGREES(0.25)").all()).toEqual([{ "DEGREES(0.25)": 14.32394487827058 }]);
+  expect(db.prepare("SELECT EXP(0.25)").all()).toEqual([{ "EXP(0.25)": 1.2840254166877414 }]);
+  expect(db.prepare("SELECT FLOOR(0.25)").all()).toEqual([{ "FLOOR(0.25)": 0 }]);
+  expect(db.prepare("SELECT LOG10(0.25)").all()).toEqual([{ "LOG10(0.25)": -0.6020599913279624 }]);
+  expect(db.prepare("SELECT PI()").all()).toEqual([{ "PI()": 3.141592653589793 }]);
+  expect(db.prepare("SELECT POWER(0.25, 3)").all()).toEqual([{ "POWER(0.25, 3)": 0.015625 }]);
+  expect(db.prepare("SELECT RADIANS(0.25)").all()).toEqual([{ "RADIANS(0.25)": 0.004363323129985824 }]);
+  expect(db.prepare("SELECT ROUND(0.25)").all()).toEqual([{ "ROUND(0.25)": 0 }]);
+  expect(db.prepare("SELECT SIGN(0.25)").all()).toEqual([{ "SIGN(0.25)": 1 }]);
+  expect(db.prepare("SELECT SIN(0.25)").all()).toEqual([{ "SIN(0.25)": 0.24740395925452294 }]);
+  expect(db.prepare("SELECT SQRT(0.25)").all()).toEqual([{ "SQRT(0.25)": 0.5 }]);
+  expect(db.prepare("SELECT TAN(0.25)").all()).toEqual([{ "TAN(0.25)": 0.25534192122103627 }]);
+});
+
+it("issue#6597", () => {
+  // better-sqlite3 returns the last value of duplicate fields
+  const db = new Database(":memory:");
+  db.run("CREATE TABLE Users (Id INTEGER PRIMARY KEY, Name VARCHAR(255), CreatedAt TIMESTAMP)");
+  db.run(
+    "CREATE TABLE Cars (Id INTEGER PRIMARY KEY, Driver INTEGER, CreatedAt TIMESTAMP, FOREIGN KEY (Driver) REFERENCES Users(Id))",
+  );
+  db.run('INSERT INTO Users (Id, Name, CreatedAt) VALUES (1, "Alice", "2022-01-01");');
+  db.run('INSERT INTO Cars (Id, Driver, CreatedAt) VALUES (2, 1, "2023-01-01");');
+  const result = db.prepare("SELECT * FROM Cars JOIN Users ON Driver=Users.Id").get();
+  expect(result).toStrictEqual({
+    Id: 1,
+    Driver: 1,
+    CreatedAt: "2022-01-01",
+    Name: "Alice",
+  });
+  db.close();
+});
+
+it("issue#6597 with many columns", () => {
+  // better-sqlite3 returns the last value of duplicate fields
+  const db = new Database(":memory:");
+  const count = 100;
+  const columns = Array.from({ length: count }, (_, i) => `col${i}`);
+  const values_foo = Array.from({ length: count }, (_, i) => `'foo${i}'`);
+  const values_bar = Array.from({ length: count }, (_, i) => `'bar${i}'`);
+  values_bar[0] = values_foo[0];
+  db.run(`CREATE TABLE foo (${columns.join(",")})`);
+  db.run(`CREATE TABLE bar (${columns.join(",")})`);
+  db.run(`INSERT INTO foo (${columns.join(",")}) VALUES (${values_foo.join(",")})`);
+  db.run(`INSERT INTO bar (${columns.join(",")}) VALUES (${values_bar.join(",")})`);
+  const result = db.prepare("SELECT * FROM foo JOIN bar ON foo.col0 = bar.col0").get();
+  expect(result.col0).toBe("foo0");
+  for (let i = 1; i < count; i++) {
+    expect(result[`col${i}`]).toBe(`bar${i}`);
+  }
+  db.close();
+});
+
+it("issue#7147", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foos (foo_id INTEGER NOT NULL PRIMARY KEY, foo_a TEXT, foo_b TEXT)");
+  db.exec(
+    "CREATE TABLE bars (bar_id INTEGER NOT NULL PRIMARY KEY, foo_id INTEGER NOT NULL, bar_a INTEGER, bar_b INTEGER, FOREIGN KEY (foo_id) REFERENCES foos (foo_id))",
+  );
+  db.exec("INSERT INTO foos VALUES (1, 'foo_1', 'foo_2')");
+  db.exec("INSERT INTO bars VALUES (1, 1, 'bar_1', 'bar_2')");
+  db.exec("INSERT INTO bars VALUES (2, 1, 'baz_3', 'baz_4')");
+  const query = db.query("SELECT f.*, b.* FROM foos f JOIN bars b ON b.foo_id = f.foo_id");
+  const result = query.all();
+  expect(result).toStrictEqual([
+    {
+      foo_id: 1,
+      foo_a: "foo_1",
+      foo_b: "foo_2",
+      bar_id: 1,
+      bar_a: "bar_1",
+      bar_b: "bar_2",
+    },
+    {
+      foo_id: 1,
+      foo_a: "foo_1",
+      foo_b: "foo_2",
+      bar_id: 2,
+      bar_a: "baz_3",
+      bar_b: "baz_4",
+    },
+  ]);
+  db.close();
+});
+
+it("should close with WAL enabled", () => {
+  const dir = tempDirWithFiles("sqlite-wal-test", { "empty.txt": "" });
+  const file = path.join(dir, "my.db");
+  const db = new Database(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  expect(db.query("SELECT * FROM foo").all()).toEqual([{ id: 1, name: "foo" }]);
+  db.exec("PRAGMA wal_checkpoint(truncate)");
+  db.close();
+  expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
+});
+
+it("close(true) should throw an error if the database is in use", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  const prepared = db.prepare("SELECT * FROM foo");
+  expect(() => db.close(true)).toThrow("database is locked");
+  prepared.finalize();
+  expect(() => db.close(true)).not.toThrow();
+});
+
+it("close() should NOT throw an error if the database is in use", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  const prepared = db.prepare("SELECT * FROM foo");
+  expect(() => db.close()).not.toThrow("database is locked");
+});
+
+it("should dispose AND throw an error if the database is in use", () => {
+  expect(() => {
+    let prepared;
+    {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+      prepared = db.prepare("SELECT * FROM foo");
+    }
+  }).toThrow("database is locked");
+});
+
+it("should dispose", () => {
+  expect(() => {
+    {
+      using db = new Database(":memory:");
+      db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+      db.exec("INSERT INTO foo (name) VALUES ('foo')");
+    }
+  }).not.toThrow();
+});
+
+it("can continue to use existing statements after database has been GC'd", async () => {
+  let called = false;
+  const registry = new FinalizationRegistry(() => {
+    called = true;
+  });
+  function leakTheStatement() {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
+    db.exec("INSERT INTO foo (name) VALUES ('foo')");
+    const prepared = db.prepare("SELECT * FROM foo");
+    registry.register(db);
+    return prepared;
+  }
+
+  const stmt = leakTheStatement();
+  Bun.gc(true);
+  await Bun.sleep(1);
+  Bun.gc(true);
+  expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
+  stmt.finalize();
+  expect(() => stmt.all()).toThrow();
+  if (!isWindows) {
+    // on Windows, FinalizationRegistry is more flaky than on POSIX.
+    expect(called).toBe(true);
+  }
+});
+
+it("statements should be disposable", () => {
+  {
+    using db = new Database("mydb.sqlite");
+    using query = db.query("select 'Hello world' as message;");
+    console.log(query.get()); // => { message: "Hello world" }
+  }
+});
+
+it("query should work if the cached statement was finalized", () => {
+  {
+    let prevQuery;
+    using db = new Database("mydb.sqlite");
+    {
+      using query = db.query("select 'Hello world' as message;");
+      prevQuery = query;
+      query.get();
+    }
+    {
+      using query = db.query("select 'Hello world' as message;");
+      expect(() => query.get()).not.toThrow();
+    }
+    expect(() => prevQuery.get()).toThrow();
+  }
 });

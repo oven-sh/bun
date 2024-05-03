@@ -1,4 +1,0 @@
-# files listed in here will be run on windows
-# currently, not all tests pass on windows, so we will reduce noise
-# eventually, we can move to using a denylist.
-js/node/fs/

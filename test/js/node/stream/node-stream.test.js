@@ -1,11 +1,11 @@
-// @known-failing-on-windows: 1 failing
 import { expect, describe, it } from "bun:test";
-import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
+import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync, isWindows } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -120,8 +120,10 @@ describe("Readable", () => {
     stream.pipe(writable);
   });
   it("should be able to be piped via .pipe with a large file", done => {
-    const length = 128 * 1024;
-    const data = "B".repeat(length);
+    const data = Buffer.allocUnsafe(768 * 1024)
+      .fill("B")
+      .toString();
+    const length = data.length;
     const path = `${tmpdir()}/${Date.now()}.testReadStreamLargeFile.txt`;
     writeFileSync(path, data);
     const stream = createReadStream(path, { start: 0, end: length - 1 });
@@ -183,6 +185,10 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it("should emit readable on end", () => {
+    expect([join(import.meta.dir, "emit-readable-on-end.js")]).toRun();
+  });
 });
 
 describe("Duplex", () => {
@@ -227,6 +233,47 @@ describe("PassThrough", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof PassThrough).toBe(true);
+  });
+});
+
+const processStdInTest = `
+const { Transform } = require("node:stream");
+
+let totalChunkSize = 0;
+const transform = new Transform({
+  transform(chunk, _encoding, callback) {
+    totalChunkSize += chunk.length;
+    callback(null, "");
+  },
+});
+
+process.stdin.pipe(transform).pipe(process.stdout);
+process.stdin.on("end", () => console.log(totalChunkSize));
+`;
+describe("process.stdin", () => {
+  it("should pipe correctly", async () => {
+    const dir = join(tmpdir(), "process-stdin-test");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "process-stdin-test.js"), processStdInTest, {});
+
+    // A sufficiently large input to make at least four chunks
+    const ARRAY_SIZE = 8_388_628;
+    const typedArray = new Uint8Array(ARRAY_SIZE).fill(97);
+
+    const { stdout, exited, stdin } = Bun.spawn({
+      cmd: [bunExe(), "process-stdin-test.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    stdin.write(typedArray);
+    await stdin.end();
+
+    expect(await exited).toBe(0);
+    expect(await new Response(stdout).text()).toBe(`${ARRAY_SIZE}\n`);
   });
 });
 
@@ -319,8 +366,18 @@ describe("TTY", () => {
     expect(process.stdout instanceof tty.WriteStream).toBe(true);
     expect(process.stderr instanceof tty.WriteStream).toBe(true);
     expect(process.stdin.isTTY).toBeUndefined();
-    expect(process.stdout.isTTY).toBeDefined();
-    expect(process.stderr.isTTY).toBeDefined();
+
+    if (tty.isatty(1)) {
+      expect(process.stdout.isTTY).toBeDefined();
+    } else {
+      expect(process.stdout.isTTY).toBeUndefined();
+    }
+
+    if (tty.isatty(2)) {
+      expect(process.stderr.isTTY).toBeDefined();
+    } else {
+      expect(process.stderr.isTTY).toBeUndefined();
+    }
   });
   it("read and write stream prototypes", () => {
     expect(tty.ReadStream.prototype.setRawMode).toBeInstanceOf(Function);
@@ -336,7 +393,7 @@ describe("TTY", () => {
 });
 `;
 
-it("TTY streams", () => {
+it.skipIf(isWindows)("TTY streams", () => {
   mkdirSync(join(tmpdir(), "tty-test"), { recursive: true });
   writeFileSync(join(tmpdir(), "tty-test/tty-streams.test.js"), ttyStreamsTest, {});
 
@@ -389,4 +446,86 @@ it("Readable.fromWeb", async () => {
     chunks.push(chunk);
   }
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});
+
+it("#9242.5 Stream has constructor", () => {
+  const s = new Stream({});
+  expect(s.constructor).toBe(Stream);
+});
+it("#9242.6 Readable has constructor", () => {
+  const r = new Readable({});
+  expect(r.constructor).toBe(Readable);
+});
+it("#9242.7 Writable has constructor", () => {
+  const w = new Writable({});
+  expect(w.constructor).toBe(Writable);
+});
+it("#9242.8 Duplex has constructor", () => {
+  const d = new Duplex({});
+  expect(d.constructor).toBe(Duplex);
+});
+it("#9242.9 Transform has constructor", () => {
+  const t = new Transform({});
+  expect(t.constructor).toBe(Transform);
+});
+it("#9242.10 PassThrough has constructor", () => {
+  const pt = new PassThrough({});
+  expect(pt.constructor).toBe(PassThrough);
+});
+
+it("should send Readable events in the right order", async () => {
+  const package_dir = tmpdirSync("bun-test-node-stream");
+  const fixture_path = join(package_dir, "fixture.js");
+
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    function patchEmitter(emitter, prefix) {
+      var oldEmit = emitter.emit;
+
+      emitter.emit = function () {
+        console.log([prefix, arguments[0]]);
+        oldEmit.apply(emitter, arguments);
+      };
+    }
+
+    const stream = require("node:stream");
+
+    const readable = new stream.Readable({
+      read() {
+        this.push("Hello ");
+        this.push("World!\n");
+        this.push(null);
+      },
+    });
+    patchEmitter(readable, "readable");
+
+    const webReadable = stream.Readable.toWeb(readable);
+
+    const result = await new Response(webReadable).text();
+    console.log([1, result]);
+    `,
+  );
+
+  const { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    `[ "readable", "pause" ]`,
+    // `[ "readable", "resume" ]`,
+    `[ "readable", "data" ]`,
+    `[ "readable", "data" ]`,
+    // `[ "readable", "readable" ]`,
+    `[ "readable", "end" ]`,
+    `[ "readable", "close" ]`,
+    `[ 1, "Hello World!\\n" ]`,
+    ``,
+  ]);
 });

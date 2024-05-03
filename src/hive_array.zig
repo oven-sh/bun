@@ -1,5 +1,5 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const mem = std.mem;
 const testing = std.testing;
 
@@ -135,16 +135,13 @@ test "HiveArray" {
 
     a.available = @TypeOf(a.available).initFull();
     {
-        var i: u63 = 0;
-        while (i < size) {
+        for (0..size) |i| {
             const b = a.get().?;
             try testing.expectEqual(a.indexOf(b), i);
             try testing.expect(a.put(b));
             try testing.expect(a.get().? == b);
-            i = i + 1;
         }
-        i = 0;
-        while (i < size) : (i += 1) {
+        for (0..size) |_| {
             try testing.expect(a.get() == null);
         }
     }

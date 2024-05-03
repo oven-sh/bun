@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 let url = `http://localhost:0`;
 let server;

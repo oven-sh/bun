@@ -47,40 +47,6 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn assertDefined(_: *const String) void {
-        // if (comptime !Environment.allow_assert)
-        //     return;
-
-        // if (this.isUndefined()) {
-        //     @breakpoint();
-        //     @panic("String is undefined");
-        // }
-    }
-
-    pub inline fn init(
-        buf: string,
-        in: string,
-    ) String {
-        if (comptime Environment.allow_assert) {
-            const out = realInit(buf, in);
-            if (out.isInline()) {
-                out.assertDefined();
-            } else {
-                std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
-            }
-
-            return out;
-        } else {
-            return realInit(buf, in);
-        }
-    }
-
-    pub fn isUndefined(this: *const String) bool {
-        const num: u64 = undefined;
-        const bytes = @as(u64, @bitCast(this.bytes));
-        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -90,6 +56,16 @@ pub const String = extern struct {
             try writer.writeAll(str.slice(formatter.buf));
         }
     };
+
+    pub fn Sorter(comptime direction: enum { asc, desc }) type {
+        return struct {
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+            pub fn lessThan(this: @This(), lhs: String, rhs: String) bool {
+                return lhs.order(&rhs, this.lhs_buf, this.rhs_buf) == if (comptime direction == .asc) .lt else .gt;
+            }
+        };
+    }
 
     pub inline fn order(
         lhs: *const String,
@@ -158,7 +134,7 @@ pub const String = extern struct {
         }
     };
 
-    fn realInit(
+    pub fn init(
         buf: string,
         in: string,
     ) String {
@@ -261,7 +237,9 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(bun.isSliceInBuffer(in, buf));
+            if (Environment.allow_assert) {
+                assert(bun.isSliceInBuffer(in, buf));
+            }
 
             return Pointer{
                 .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -276,8 +254,6 @@ pub const String = extern struct {
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
-        this.assertDefined();
-
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
                 // Edgecase: string that starts with a 0 byte will be considered empty.
@@ -312,7 +288,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return bun.Wyhash.hash(0, buf);
+            return bun.Wyhash11.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -339,7 +315,7 @@ pub const String = extern struct {
         }
 
         pub fn append(this: *Builder, comptime Type: type, slice_: string) Type {
-            return @call(.always_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
+            return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
         pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
@@ -358,15 +334,15 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -393,15 +369,15 @@ pub const String = extern struct {
                 }
             }
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -428,8 +404,8 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             const string_entry = this.string_pool.getOrPut(hash) catch unreachable;
@@ -441,7 +417,7 @@ pub const String = extern struct {
                 string_entry.value_ptr.* = String.init(this.allocatedSlice(), final_slice);
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -558,7 +534,7 @@ pub const BigExternalString = extern struct {
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
+        assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
             .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -587,15 +563,15 @@ pub const SlicedString = struct {
 
     pub inline fn external(this: SlicedString) ExternalString {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
-        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash11.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
         if (comptime Environment.allow_assert) {
-            std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
         }
 
         return String.init(this.buf, this.slice);
@@ -969,14 +945,14 @@ pub const Version = extern struct {
                             .pre => {
                                 result.tag.pre = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
                             .build => {
                                 result.tag.build = sliced_string.sub(input[start..i]).external();
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
                                 }
                                 state = State.none;
                             },
@@ -988,9 +964,6 @@ pub const Version = extern struct {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
-                            if (comptime Environment.isDebug) {
-                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                            }
                         }
 
                         if (state != .build) {
@@ -1057,17 +1030,27 @@ pub const Version = extern struct {
 
         var i: usize = 0;
 
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
-        if (i == input.len) {
-            result.valid = false;
-            return result;
+        for (0..input.len) |c| {
+            switch (input[c]) {
+                // newlines & whitespace
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                // version separators
+                'v',
+                '=',
+                => {},
+                else => {
+                    i = c;
+                    break;
+                },
+            }
         }
 
-        if (input[i] == 'v' or input[i] == '=') {
-            i += 1;
-        }
-
-        i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
         if (i == input.len) {
             result.valid = false;
             return result;
@@ -1245,7 +1228,7 @@ pub const Version = extern struct {
         var bytes: [10]u8 = undefined;
         var byte_i: u8 = 0;
 
-        std.debug.assert(input[0] != '.');
+        assert(input[0] != '.');
 
         for (input) |char| {
             switch (char) {
@@ -1396,7 +1379,6 @@ pub const Range = struct {
             version: Version,
             comparator_buf: string,
             version_buf: string,
-            include_pre: bool,
         ) bool {
             const order = version.orderWithoutBuild(comparator.version, version_buf, comparator_buf);
 
@@ -1406,11 +1388,11 @@ pub const Range = struct {
                     else => false,
                 },
                 .gt => switch (comparator.op) {
-                    .gt, .gte => if (!include_pre) false else true,
+                    .gt, .gte => true,
                     else => false,
                 },
                 .lt => switch (comparator.op) {
-                    .lt, .lte => if (!include_pre) false else true,
+                    .lt, .lte => true,
                     else => false,
                 },
             };
@@ -1425,39 +1407,46 @@ pub const Range = struct {
             return true;
         }
 
-        // When the boundaries of a range do not include a pre-release tag on either side,
-        // we should not consider that '7.0.0-rc2' < "7.0.0"
-        // ```
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
-        // true
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
-        // true
-        // ```
-        //
-        // - https://github.com/npm/node-semver#prerelease-tags
-        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
-        var include_pre = true;
-        if (version.tag.hasPre()) {
-            if (!has_right) {
-                if (!range.left.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            } else {
-                if (!range.left.version.tag.hasPre() and !range.right.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            }
-        }
-
-        if (!range.left.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
-        if (has_right and !range.right.satisfies(version, range_buf, version_buf, include_pre)) {
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            assert(version.tag.hasPre());
+        }
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
+
+        if (!has_left) {
+            return true;
+        }
+
+        // If left has prerelease check if major,minor,patch matches with left. If
+        // not, check the same with right if right exists and has prerelease.
+        pre_matched.* = pre_matched.* or
+            (range.left.version.tag.hasPre() and
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
+            (has_right and
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
+
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
@@ -1498,6 +1487,29 @@ pub const Query = struct {
                 list_buf,
                 version_buf,
             ) or (list.next orelse return false).satisfies(
+                version,
+                list_buf,
+                version_buf,
+            );
+        }
+
+        pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            if (comptime Environment.allow_assert) {
+                assert(version.tag.hasPre());
+            }
+
+            // `version` has a prerelease tag:
+            // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
+            // - if it does, also needs to match major, minor, patch with at least one of the other versions
+            //   with a prerelease
+            // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
+            var pre_matched = false;
+            return (list.head.satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+                &pre_matched,
+            ) and pre_matched) or (list.next orelse return false).satisfiesPre(
                 version,
                 list_buf,
                 version_buf,
@@ -1567,7 +1579,7 @@ pub const Query = struct {
                 !range.hasRight())
             {
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(this.tail == null);
+                    assert(this.tail == null);
                 }
                 return range.left.version;
             }
@@ -1602,7 +1614,7 @@ pub const Query = struct {
         }
 
         pub fn toVersion(this: Group) Version {
-            std.debug.assert(this.isExact() or this.head.head.range.left.op == .unset);
+            assert(this.isExact() or this.head.head.range.left.op == .unset);
             return this.head.head.range.left.version;
         }
 
@@ -1649,7 +1661,10 @@ pub const Query = struct {
             group_buf: string,
             version_buf: string,
         ) bool {
-            return group.head.satisfies(version, group_buf, version_buf);
+            return if (version.tag.hasPre())
+                group.head.satisfiesPre(version, group_buf, version_buf)
+            else
+                group.head.satisfies(version, group_buf, version_buf);
         }
     };
 
@@ -1671,6 +1686,23 @@ pub const Query = struct {
             version,
             query_buf,
             version_buf,
+        );
+    }
+
+    pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            assert(version.tag.hasPre());
+        }
+        return query.range.satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
+        ) and (query.next orelse return true).satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
         );
     }
 
@@ -2247,381 +2279,4 @@ pub const SemverObject = struct {
     }
 };
 
-const expect = if (Environment.isTest) struct {
-    pub var counter: usize = 0;
-    pub fn isRangeMatch(input: string, version_str: string) bool {
-        var parsed = Version.parse(SlicedString.init(version_str, version_str));
-        std.debug.assert(parsed.valid);
-        // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
-
-        var list = Query.parse(
-            default_allocator,
-            input,
-            SlicedString.init(input, input),
-        ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
-
-        return list.satisfies(parsed.version.min());
-    }
-
-    pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        if (!isRangeMatch(input, version_str)) {
-            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> to match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                version_str,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-    pub fn notRange(input: string, version_str: string, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        if (isRangeMatch(input, version_str)) {
-            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> NOT match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                version_str,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-
-    pub fn done(src: std.builtin.SourceLocation) void {
-        Output.prettyErrorln("<r><green>{d} passed expectations <d>in {s}<r>", .{ counter, src.fn_name });
-        Output.flush();
-        counter = 0;
-    }
-
-    pub fn version(input: string, v: [3]?u32, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        const result = Version.parse(SlicedString.init(input, input));
-        std.debug.assert(result.valid);
-
-        if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
-            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                v[0],
-                v[1],
-                v[2],
-                result.version.major,
-                result.version.minor,
-                result.version.patch,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-
-    pub fn versionT(input: string, v: Version, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-
-        var result = Version.parse(SlicedString.init(input, input));
-        if (!v.eql(result.version.min())) {
-            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                v.major,
-                v.minor,
-                v.patch,
-                result.version.major,
-                result.version.minor,
-                result.version.patch,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-} else {};
-
-test "Version parsing" {
-    defer expect.done(@src());
-    const X: ?u32 = null;
-
-    expect.version("1.0.0", .{ 1, 0, 0 }, @src());
-    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
-    expect.version("1.1.1", .{ 1, 1, 1 }, @src());
-    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
-    expect.version("0.1.1", .{ 0, 1, 1 }, @src());
-    expect.version("0.0.1", .{ 0, 0, 1 }, @src());
-    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
-
-    expect.version("*", .{ X, X, X }, @src());
-    expect.version("x", .{ X, X, X }, @src());
-    expect.version("0", .{ 0, X, X }, @src());
-    expect.version("0.0", .{ 0, 0, X }, @src());
-    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
-
-    expect.version("1.x", .{ 1, X, X }, @src());
-    expect.version("2.2.x", .{ 2, 2, X }, @src());
-    expect.version("2.x.2", .{ 2, X, 2 }, @src());
-
-    expect.version("1.X", .{ 1, X, X }, @src());
-    expect.version("2.2.X", .{ 2, 2, X }, @src());
-    expect.version("2.X.2", .{ 2, X, 2 }, @src());
-
-    expect.version("1.*", .{ 1, X, X }, @src());
-    expect.version("2.2.*", .{ 2, 2, X }, @src());
-    expect.version("2.*.2", .{ 2, X, 2 }, @src());
-    expect.version("3", .{ 3, X, X }, @src());
-    expect.version("3.x", .{ 3, X, X }, @src());
-    expect.version("3.x.x", .{ 3, X, X }, @src());
-    expect.version("3.*.*", .{ 3, X, X }, @src());
-    expect.version("3.X.x", .{ 3, X, X }, @src());
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-beta";
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0beta";
-        v.tag.pre = SlicedString.init(input, input["1.0.0".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-build101";
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 0,
-            .minor = 21,
-            .patch = 0,
-        };
-        var input: string = "0.21.0-beta-96ca8d915-20211115";
-        v.tag.pre = SlicedString.init(input, input["0.21.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-beta+build101";
-        v.tag.build = SlicedString.init(input, input["1.0.0-beta+".len..]).external();
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..][0..4]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    var buf: [1024]u8 = undefined;
-
-    var triplet = [3]?u32{ null, null, null };
-    var x: u32 = 0;
-    var y: u32 = 0;
-    var z: u32 = 0;
-
-    while (x < 32) : (x += 1) {
-        while (y < 32) : (y += 1) {
-            while (z < 32) : (z += 1) {
-                triplet[0] = x;
-                triplet[1] = y;
-                triplet[2] = z;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ x, y, z }), triplet, @src());
-                triplet[0] = z;
-                triplet[1] = x;
-                triplet[2] = y;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ z, x, y }), triplet, @src());
-
-                triplet[0] = y;
-                triplet[1] = x;
-                triplet[2] = z;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ y, x, z }), triplet, @src());
-            }
-        }
-    }
-}
-
-test "Range parsing" {
-    defer expect.done(@src());
-
-    expect.range("~1.2.3", "1.2.3", @src());
-    expect.range("~1.2", "1.2.0", @src());
-    expect.range("~1", "1.0.0", @src());
-    expect.range("~1", "1.2.0", @src());
-    expect.range("~1", "1.2.999", @src());
-    expect.range("~0.2.3", "0.2.3", @src());
-    expect.range("~0.2", "0.2.0", @src());
-    expect.range("~0.2", "0.2.1", @src());
-
-    expect.range("~0 ", "0.0.0", @src());
-
-    expect.notRange("~1.2.3", "1.3.0", @src());
-    expect.notRange("~1.2", "1.3.0", @src());
-    expect.notRange("~1", "2.0.0", @src());
-    expect.notRange("~0.2.3", "0.3.0", @src());
-    expect.notRange("~0.2.3", "1.0.0", @src());
-    expect.notRange("~0 ", "1.0.0", @src());
-    expect.notRange("~0.2", "0.1.0", @src());
-    expect.notRange("~0.2", "0.3.0", @src());
-
-    expect.notRange("~3.0.5", "3.3.0", @src());
-
-    expect.range("^1.1.4", "1.1.4", @src());
-
-    expect.range(">=3", "3.5.0", @src());
-    expect.notRange(">=3", "2.999.999", @src());
-    expect.range(">=3", "3.5.1", @src());
-    expect.range(">=3", "4", @src());
-
-    expect.range("<6 >= 5", "5.0.0", @src());
-    expect.notRange("<6 >= 5", "4.0.0", @src());
-    expect.notRange("<6 >= 5", "6.0.0", @src());
-    expect.notRange("<6 >= 5", "6.0.1", @src());
-
-    expect.range(">2", "3", @src());
-    expect.notRange(">2", "2.1", @src());
-    expect.notRange(">2", "2", @src());
-    expect.notRange(">2", "1.0", @src());
-    expect.notRange(">1.3", "1.3.1", @src());
-    expect.range(">1.3", "2.0.0", @src());
-    expect.range(">2.1.0", "2.2.0", @src());
-    expect.range("<=2.2.99999", "2.2.0", @src());
-    expect.range(">=2.1.99999", "2.2.0", @src());
-    expect.range("<2.2.99999", "2.2.0", @src());
-    expect.range(">2.1.99999", "2.2.0", @src());
-    expect.range(">1.0.0", "2.0.0", @src());
-    expect.range("1.0.0", "1.0.0", @src());
-    expect.notRange("1.0.0", "2.0.0", @src());
-
-    expect.range("1.0.0 || 2.0.0", "1.0.0", @src());
-    expect.range("2.0.0 || 1.0.0", "1.0.0", @src());
-    expect.range("1.0.0 || 2.0.0", "2.0.0", @src());
-    expect.range("2.0.0 || 1.0.0", "2.0.0", @src());
-    expect.range("2.0.0 || >1.0.0", "2.0.0", @src());
-
-    expect.range(">1.0.0 <2.0.0 <2.0.1 >1.0.1", "1.0.2", @src());
-
-    expect.range("2.x", "2.0.0", @src());
-    expect.range("2.x", "2.1.0", @src());
-    expect.range("2.x", "2.2.0", @src());
-    expect.range("2.x", "2.3.0", @src());
-    expect.range("2.x", "2.1.1", @src());
-    expect.range("2.x", "2.2.2", @src());
-    expect.range("2.x", "2.3.3", @src());
-
-    expect.range("<2.0.1 >1.0.0", "2.0.0", @src());
-    expect.range("<=2.0.1 >=1.0.0", "2.0.0", @src());
-
-    expect.range("^2", "2.0.0", @src());
-    expect.range("^2", "2.9.9", @src());
-    expect.range("~2", "2.0.0", @src());
-    expect.range("~2", "2.1.0", @src());
-    expect.range("~2.2", "2.2.1", @src());
-
-    {
-        const passing = [_]string{ "2.4.0", "2.4.1", "3.0.0", "3.0.1", "3.1.0", "3.2.0", "3.3.0", "3.3.1", "3.4.0", "3.5.0", "3.6.0", "3.7.0", "2.4.2", "3.8.0", "3.9.0", "3.9.1", "3.9.2", "3.9.3", "3.10.0", "3.10.1", "4.0.0", "4.0.1", "4.1.0", "4.2.0", "4.2.1", "4.3.0", "4.4.0", "4.5.0", "4.5.1", "4.6.0", "4.6.1", "4.7.0", "4.8.0", "4.8.1", "4.8.2", "4.9.0", "4.10.0", "4.11.0", "4.11.1", "4.11.2", "4.12.0", "4.13.0", "4.13.1", "4.14.0", "4.14.1", "4.14.2", "4.15.0", "4.16.0", "4.16.1", "4.16.2", "4.16.3", "4.16.4", "4.16.5", "4.16.6", "4.17.0", "4.17.1", "4.17.2", "4.17.3", "4.17.4", "4.17.5", "4.17.9", "4.17.10", "4.17.11", "2.0.0", "2.1.0" };
-
-        for (passing) |item| {
-            expect.range("^2 <2.2 || > 2.3", item, @src());
-            expect.range("> 2.3 || ^2 <2.2", item, @src());
-        }
-
-        const not_passing = [_]string{
-            "0.1.0",
-            "0.10.0",
-            "0.2.0",
-            "0.2.1",
-            "0.2.2",
-            "0.3.0",
-            "0.3.1",
-            "0.3.2",
-            "0.4.0",
-            "0.4.1",
-            "0.4.2",
-            "0.5.0",
-            // "0.5.0-rc.1",
-            "0.5.1",
-            "0.5.2",
-            "0.6.0",
-            "0.6.1",
-            "0.7.0",
-            "0.8.0",
-            "0.8.1",
-            "0.8.2",
-            "0.9.0",
-            "0.9.1",
-            "0.9.2",
-            "1.0.0",
-            "1.0.1",
-            "1.0.2",
-            "1.1.0",
-            "1.1.1",
-            "1.2.0",
-            "1.2.1",
-            "1.3.0",
-            "1.3.1",
-            "2.2.0",
-            "2.2.1",
-            "2.3.0",
-            // "1.0.0-rc.1",
-            // "1.0.0-rc.2",
-            // "1.0.0-rc.3",
-        };
-
-        for (not_passing) |item| {
-            expect.notRange("^2 <2.2 || > 2.3", item, @src());
-            expect.notRange("> 2.3 || ^2 <2.2", item, @src());
-        }
-    }
-    expect.range("2.1.0 || > 2.2 || >3", "2.1.0", @src());
-    expect.range(" > 2.2 || >3 || 2.1.0", "2.1.0", @src());
-    expect.range(" > 2.2 || 2.1.0 || >3", "2.1.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
-    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.1", @src());
-    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "3.0.1", @src());
-    expect.range("~2", "2.0.0", @src());
-    expect.range("~2", "2.1.0", @src());
-
-    expect.range("1.2.0 - 1.3.0", "1.2.2", @src());
-    expect.range("1.2 - 1.3", "1.2.2", @src());
-    expect.range("1 - 1.3", "1.2.2", @src());
-    expect.range("1 - 1.3", "1.3.0", @src());
-    expect.range("1.2 - 1.3", "1.3.1", @src());
-    expect.notRange("1.2 - 1.3", "1.4.0", @src());
-    expect.range("1 - 1.3", "1.3.1", @src());
-
-    expect.notRange("1.2 - 1.3 || 5.0", "6.4.0", @src());
-    expect.range("1.2 - 1.3 || 5.0", "1.2.1", @src());
-    expect.range("5.0 || 1.2 - 1.3", "1.2.1", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3 || >8", "9.0.2", @src());
-}
+const assert = bun.assert;

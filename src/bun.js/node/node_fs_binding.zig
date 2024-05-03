@@ -1,11 +1,12 @@
-const JSC = @import("root").bun.JSC;
+const bun = @import("root").bun;
+const JSC = bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
@@ -138,13 +139,24 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 }
 
 pub const NodeJSFS = struct {
-    node_fs: JSC.Node.NodeFS = undefined,
+    node_fs: JSC.Node.NodeFS = .{},
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
+    pub usingnamespace bun.New(@This());
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
         globalObject.throw("Not a constructor", .{});
         return null;
+    }
+
+    pub fn finalize(this: *JSC.Node.NodeJSFS) callconv(.C) void {
+        if (this.node_fs.vm) |vm| {
+            if (vm.node_fs == &this.node_fs) {
+                return;
+            }
+        }
+
+        this.destroy();
     }
 
     pub const access = call(.access);
@@ -246,3 +258,14 @@ pub const NodeJSFS = struct {
     pub const opendir = notimpl;
     pub const opendirSync = notimpl;
 };
+
+pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    var module = globalObject.allocator().create(NodeJSFS) catch bun.outOfMemory();
+    module.* = .{};
+
+    const vm = globalObject.bunVM();
+    if (vm.standalone_module_graph != null)
+        module.node_fs.vm = vm;
+
+    return module.toJS(globalObject);
+}

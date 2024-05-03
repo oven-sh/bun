@@ -46,7 +46,10 @@ public:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    static void destroy(JSCell*) {}
+    static void destroy(JSCell* thisObject)
+    {
+        static_cast<JSStringDecoder*>(thisObject)->~JSStringDecoder();
+    }
 
     JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
     JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);

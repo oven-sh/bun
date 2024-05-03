@@ -1,3 +1,4 @@
+#pragma once
 /*
  * Authored by Alex Hultman, 2018-2020.
  * Intellectual property of third-party.
@@ -14,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_APP_H
 #define UWS_APP_H
 
@@ -76,6 +77,8 @@ namespace uWS {
         unsigned int secure_options = 0;
         int reject_unauthorized = 0;
         int request_cert = 0;
+        unsigned int client_renegotiation_limit = 3;
+        unsigned int client_renegotiation_window = 600;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {
@@ -100,6 +103,7 @@ private:
 public:
 
     TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree = nullptr;
+
 
     /* Server name */
     TemplatedApp &&addServerName(std::string hostname_pattern, SocketContextOptions options = {}) {
@@ -461,10 +465,8 @@ public:
 
         void *domainRouter = us_socket_context_find_server_name_userdata(SSL, (struct us_socket_context_t *) httpContext, serverName.c_str());
         if (domainRouter) {
-            std::cout << "Browsed to SNI: " << serverName << std::endl;
             httpContextData->currentRouter = (decltype(httpContextData->currentRouter)) domainRouter;
         } else {
-            std::cout << "Cannot browse to SNI: " << serverName << std::endl;
             httpContextData->currentRouter = &httpContextData->router;
         }
     
@@ -574,13 +576,13 @@ public:
 
     /* options, callback, path to unix domain socket */
     TemplatedApp &&listen(int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
-        handler(httpContext ? httpContext->listen(path.c_str(), options) : nullptr);
+        handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
     }
 
     /* callback, path to unix domain socket */
-    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path) {
-        handler(httpContext ? httpContext->listen(path.c_str(), 0) : nullptr);
+    TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string path, int options) {
+        handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
     }
 

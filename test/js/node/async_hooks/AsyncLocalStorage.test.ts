@@ -1,6 +1,6 @@
-// @known-failing-on-windows: 1 failing
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
+import { bunExe, bunEnv } from "harness";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -234,7 +234,8 @@ describe("async context passes through", () => {
       expect(s.getStore()).toBe("value");
 
       const x = Bun.spawn({
-        cmd: ["echo", "hello"],
+        cmd: [bunExe(), "help"],
+        env: bunEnv,
         onExit(subprocess, exitCode, signalCode, error) {
           value = s.getStore()!;
           resolve();

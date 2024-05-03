@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
@@ -34,7 +33,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "bad.test.js"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,
@@ -296,7 +295,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "bad.test.js"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,
@@ -325,7 +324,7 @@ it("invalid syntax counts towards bail", async () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "--bail=3"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,
@@ -638,7 +637,7 @@ describe("empty", () => {
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "test", "empty.test.js"],
       cwd: test_dir,
-      stdout: null,
+      stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
       env: bunEnv,

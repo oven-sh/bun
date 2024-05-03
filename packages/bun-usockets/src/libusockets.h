@@ -16,6 +16,10 @@
  */
 // clang-format off
 
+#ifndef us_calloc
+#define us_calloc calloc
+#endif
+
 #ifndef us_malloc
 #define us_malloc malloc
 #endif
@@ -34,18 +38,23 @@
 
 /* 512kb shared receive buffer */
 #define LIBUS_RECV_BUFFER_LENGTH 524288
+
+/* Small 16KB shared send buffer for UDP packet metadata */
+#define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
 /* 32 byte padding of receive buffer ends */
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
+#define ALLOW_SERVER_RENEGOTIATION 0
 
 /* Define what a socket descriptor is based on platform */
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #define LIBUS_SOCKET_DESCRIPTOR SOCKET
 #else
@@ -96,14 +105,14 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Peeks ECN of received packet */
-int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
+// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Receives a set of packets into specified packet buffer */
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);
 
 void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
 
-int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int num);
+int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num);
 
 /* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
@@ -115,7 +124,9 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+
+void us_udp_socket_close(struct us_udp_socket_t *s);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -190,6 +201,8 @@ struct us_bun_socket_context_options_t {
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;
+    unsigned int client_renegotiation_limit;
+    unsigned int client_renegotiation_window;
 };
 
 /* Return 15-bit timestamp for this context */
@@ -248,7 +261,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     const char *host, int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_socket_context_t *context,
-    const char *path, int options, int socket_ext_size);
+    const char *path, size_t pathlen, int options, int socket_ext_size);
 
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
@@ -258,7 +271,7 @@ struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_
     const char *host, int port, const char *source_host, int options, int socket_ext_size);
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context,
-    const char *server_path, int options, int socket_ext_size);
+    const char *server_path, size_t pathlen, int options, int socket_ext_size);
 
 /* Is this socket established? Can be used to check if a connecting socket has fired the on_open event yet.
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */
@@ -398,6 +411,9 @@ struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_clien
 int us_raw_root_certs(struct us_cert_string_t**out);
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(int ssl, struct us_socket_t *s);
+
+void us_socket_ref(struct us_socket_t *s);
+void us_socket_unref(struct us_socket_t *s);
 
 #ifdef __cplusplus
 }

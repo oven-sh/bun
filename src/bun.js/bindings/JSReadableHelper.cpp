@@ -175,6 +175,7 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue errored = state->m_errored.get();
+
     if (!state->getBool(JSReadableState::destroyed) && !errored.toBoolean(lexicalGlobalObject) && (state->m_length || state->getBool(JSReadableState::ended))) {
         // stream.emit('readable')
         auto clientData = WebCore::clientData(vm);
@@ -197,67 +198,36 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        emitReadable_(lexicalGlobalObject, stream, state);
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-}
-
-EncodedJSValue emitReadable(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
-{
-    VM& vm = lexicalGlobalObject->vm();
-
-    state->setBool(JSReadableState::needReadable, false);
-    if (!state->getBool(JSReadableState::emittedReadable)) {
-        state->setBool(JSReadableState::emittedReadable, true);
-        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-        globalObject->queueMicrotask(JSValue(globalObject->emitReadableNextTickFunction()), JSValue(stream), JSValue(state), JSValue {}, JSValue {});
-    }
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        RELEASE_AND_RETURN(throwScope, emitReadable(lexicalGlobalObject, stream, state));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsReadable_onEofChunk, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        if (state->getBool(JSReadableState::ended))
-            RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-
-    auto decoder = jsDynamicCast<JSStringDecoder*>(state->m_decoder.get());
-    if (decoder) {
-        JSString* chunk = jsDynamicCast<JSString*>(decoder->end(vm, lexicalGlobalObject, nullptr, 0));
-        if (chunk && chunk->length()) {
-            auto buffer = jsDynamicCast<JSBufferList*>(state->m_buffer.get());
-            if (!buffer) {
-                throwTypeError(lexicalGlobalObject, throwScope, "Not buffer on stream"_s);
-                return JSValue::encode(jsUndefined());
-            }
-            buffer->push(vm, JSValue(chunk));
-            state->m_length += state->getBool(JSReadableState::objectMode) ? 1 : chunk->length();
-        }
-    }
-
-    state->setBool(JSReadableState::ended, true);
-
-    if (state->getBool(JSReadableState::sync)) {
-        RELEASE_AND_RETURN(throwScope, emitReadable(lexicalGlobalObject, stream, state));
-    } else {
-        state->setBool(JSReadableState::needReadable, false);
-        state->setBool(JSReadableState::emittedReadable, true);
-        RELEASE_AND_RETURN(throwScope, emitReadable_(lexicalGlobalObject, stream, state));
-    }
+    JSReadableHelper_EXTRACT_STREAM_STATE;
+    RELEASE_AND_RETURN(throwScope, emitReadable_(lexicalGlobalObject, stream, state));
 }
 
 #undef JSReadableHelper_EXTRACT_STREAM_STATE
+
+JSValue createNodeStreamBinding(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* obj = constructEmptyObject(globalObject);
+    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
+    obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "maybeReadMore"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "maybeReadMore"_s, jsReadable_maybeReadMore, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "resume"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "resume"_s, jsReadable_resume, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable, ImplementationVisibility::Public), 0);
+    // obj->putDirect(
+    //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
+    //     JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "EE"_s)),
+        WebCore::JSEventEmitter::getConstructor(vm, globalObject), 0);
+    return obj;
+}
 
 } // namespace WebCore

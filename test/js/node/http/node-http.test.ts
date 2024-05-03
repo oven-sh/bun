@@ -1,4 +1,3 @@
-// @known-failing-on-windows: 1 failing
 // @ts-nocheck
 import {
   createServer,
@@ -22,9 +21,12 @@ import url from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
-import { join as joinPath } from "node:path";
+import * as path from "node:path";
 import { unlinkSync } from "node:fs";
+import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import { bunExe } from "bun:harness";
+import { bunEnv, tmpdirSync } from "harness";
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -138,6 +140,21 @@ describe("node:http", () => {
       listenResponse.close();
     });
 
+    it("listen callback should be bound to server", async () => {
+      const server = createServer();
+      const { resolve, reject, promise } = Promise.withResolvers();
+      server.listen(0, function () {
+        try {
+          expect(this === server).toBeTrue();
+          resolve();
+        } catch (e) {
+          reject();
+        }
+      });
+      await promise;
+      server.close();
+    });
+
     it("option method should be uppercase (#7250)", async () => {
       try {
         var server = createServer((req, res) => {
@@ -175,8 +192,8 @@ describe("node:http", () => {
 
   describe("request", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      var timer;
-      var server = createServer((req, res) => {
+      let timer;
+      const server = createServer((req, res) => {
         if (req.headers.__proto__ !== {}.__proto__) {
           throw new Error("Headers should inherit from Object.prototype");
         }
@@ -188,6 +205,15 @@ describe("node:http", () => {
               Location: `http://localhost:${server.port}/redirected`,
             });
             res.end("Got redirect!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/multi-chunk-response") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            const toWrite = "a".repeat(512);
+            for (let i = 0; i < 4; i++) {
+              res.write(toWrite);
+            }
+            res.end();
             return;
           }
           if (reqUrl.pathname === "/multiple-set-cookie") {
@@ -654,6 +680,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("reassign writeHead method, issue#3585", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
@@ -664,6 +691,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("uploading file by 'formdata/multipart', issue#3116", done => {
       runTest(done, (server, serverPort, done) => {
         const boundary = "----FormBoundary" + Date.now();
@@ -707,6 +735,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("request via http proxy, issue#4295", done => {
       const proxyServer = createServer(function (req, res) {
         let option = url.parse(req.url);
@@ -764,10 +793,40 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    it("should correctly stream a multi-chunk response #5320", async done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+
+        req.on("error", err => done(err));
+
+        req.on("response", async res => {
+          const body = res.pipe(new PassThrough({ highWaterMark: 512 }));
+          const response = new Response(body);
+          const text = await response.text();
+
+          expect(text.length).toBe(2048);
+          done();
+        });
+
+        req.end();
+      });
+    });
+
+    it("should emit a socket event when connecting", async done => {
+      runTest(done, async (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}`, {});
+        req.on("socket", function onRequestSocket(socket) {
+          req.destroy();
+          done();
+        });
+        req.end();
+      });
+    });
   });
 
   describe("signal", () => {
-    it.skip("should abort and close the server", done => {
+    it("should abort and close the server", done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
@@ -1015,8 +1074,8 @@ describe("node:http", () => {
 });
 describe("node https server", async () => {
   const httpsOptions = {
-    key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.key")),
-    cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.pem")),
+    key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),
+    cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
   };
   const createServer = onRequest => {
     return new Promise(resolve => {
@@ -1190,8 +1249,8 @@ describe("server.address should be valid IP", () => {
 it("should not accept untrusted certificates", async () => {
   const server = https.createServer(
     {
-      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.key")),
-      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.crt")),
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.crt")),
       passphrase: "123123123",
     },
     (req, res) => {
@@ -1675,4 +1734,213 @@ it("#4415.4 IncomingMessage es5", () => {
   const im = Object.create(IncomingMessage.prototype);
   IncomingMessage.call(im, { url: "/foo" });
   expect(im.url).toBe("/foo");
+});
+
+it("#9242.1 Server has constructor", () => {
+  const s = new Server();
+  expect(s.constructor).toBe(Server);
+});
+it("#9242.2 IncomingMessage has constructor", () => {
+  const im = new IncomingMessage("http://localhost");
+  expect(im.constructor).toBe(IncomingMessage);
+});
+it("#9242.3 OutgoingMessage has constructor", () => {
+  const om = new OutgoingMessage();
+  expect(om.constructor).toBe(OutgoingMessage);
+});
+it("#9242.4 ServerResponse has constructor", () => {
+  const sr = new ServerResponse({});
+  expect(sr.constructor).toBe(ServerResponse);
+});
+
+// Windows doesnt support SIGUSR1
+if (process.platform !== "win32") {
+  // By not timing out, this test passes.
+  test(".unref() works", async () => {
+    expect([path.join(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+  });
+}
+
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", done => {
+  // x = ascii
+  // á = latin1 supplementary character
+  // 📙 = emoji
+  // 👍🏽 = its a grapheme of 👍 🟤
+  // "\u{1F600}" = utf16
+  const chars = ["x", "á", "📙", "👍🏽", "\u{1F600}"];
+
+  // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
+  // 8Kb = small than cork buffer
+  // 16Kb = cork buffer
+  // 32Kb = large than cork buffer
+  const start_size = 128;
+  const increment_step = 1024;
+  const end_size = 32 * 1024;
+  let expected = "";
+
+  function finish(err) {
+    server.closeAllConnections();
+    Bun.gc(true);
+    done(err);
+  }
+  const server = require("http")
+    .createServer((_, response) => {
+      response.write(expected);
+      response.write("");
+      response.end();
+    })
+    .listen(0, "localhost", async (err, hostname, port) => {
+      expect(err).toBeFalsy();
+      expect(port).toBeGreaterThan(0);
+
+      for (const char of chars) {
+        for (let size = start_size; size <= end_size; size += increment_step) {
+          expected = char + "-".repeat(size) + "x";
+
+          try {
+            const url = `http://${hostname}:${port}`;
+            const count = 20;
+            const all = [];
+            const batchSize = 20;
+            while (all.length < count) {
+              const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
+
+              all.push(...(await Promise.all(batch)));
+            }
+
+            for (const result of all) {
+              expect(result).toBe(expected);
+            }
+          } catch (err) {
+            return finish(err);
+          }
+        }
+      }
+      finish();
+    });
+}, 20_000);
+
+it("should emit events in the right order", async () => {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    `[ "req", "socket" ]`,
+    `[ "req", "prefinish" ]`,
+    `[ "req", "finish" ]`,
+    `[ "req", "response" ]`,
+    "STATUS: 200",
+    // `[ "res", "resume" ]`,
+    // `[ "res", "readable" ]`,
+    // `[ "res", "end" ]`,
+    `[ "req", "close" ]`,
+    `[ "res", Symbol(kConstruct) ]`,
+    // `[ "res", "close" ]`,
+    "",
+  ]);
+});
+
+it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to connect to stripe", async () => {
+  const package_dir = tmpdirSync("bun-test-");
+
+  await Bun.write(
+    path.join(package_dir, "package.json"),
+    JSON.stringify({
+      "dependencies": {
+        "stripe": "^15.4.0",
+      },
+    }),
+  );
+
+  let { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  let err = await new Response(stderr).text();
+  expect(err).not.toContain("panic:");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
+  let out = await new Response(stdout).text();
+
+  // prettier-ignore
+  const [access_token, charge_id, account_id] = process.env.TEST_INFO_STRIPE?.split(",");
+
+  const fixture_path = path.join(package_dir, "index.js");
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    const Stripe = require("stripe");
+    const stripe = Stripe("${access_token}");
+
+    await stripe.charges
+      .retrieve("${charge_id}", {
+        stripeAccount: "${account_id}",
+      })
+      .then((x) => {
+        console.log(x);
+      });
+    `,
+  );
+
+  ({ stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  }));
+  out = await new Response(stdout).text();
+  expect(out).toBeEmpty();
+  err = await new Response(stderr).text();
+  expect(err).toContain(`error: No such charge: '${charge_id}'\n`);
+});
+
+it("destroy should end download", async () => {
+  // just simulate some file that will take forever to download
+  const payload = Buffer.from("X".repeat(16 * 1024));
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      let running = true;
+      req.signal.onabort = () => (running = false);
+      return new Response(async function* () {
+        while (running) {
+          yield payload;
+          await Bun.sleep(10);
+        }
+      });
+    },
+  });
+
+  try {
+    let chunks = 0;
+
+    const { promise, resolve } = Promise.withResolvers();
+    const req = request(server.url, res => {
+      res.on("data", () => {
+        process.nextTick(resolve);
+        chunks++;
+      });
+    });
+    req.end();
+    // wait for the first chunk
+    await promise;
+    // should stop the download
+    req.destroy();
+    await Bun.sleep(200);
+    expect(chunks).toBeLessThanOrEqual(3);
+  } finally {
+    server.stop(true);
+  }
 });

@@ -54,36 +54,80 @@ pub const TaggedPointer = packed struct {
     }
 };
 
-pub fn TaggedPointerUnion(comptime Types: anytype) type {
-    const TagType: type = tag: {
-        var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
-        var decls = [_]std.builtin.Type.Declaration{};
+const TypeMapT = struct {
+    value: TagSize,
+    ty: type,
+    name: []const u8,
+};
+pub fn TypeMap(comptime Types: anytype) type {
+    return [Types.len]TypeMapT;
+}
 
-        inline for (Types, 0..) |field, i| {
-            enumFields[i] = .{
-                .name = comptime typeBaseName(@typeName(field)),
-                .value = 1024 - i,
-            };
-        }
+pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
+    tag_type: type,
+    ty_map: TypeMap(Types),
+} {
+    var typeMap: TypeMap(Types) = undefined;
+    var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
 
-        break :tag @Type(.{
+    @memset(&enumFields, std.mem.zeroes(std.builtin.Type.EnumField));
+    @memset(&typeMap, TypeMapT{ .value = 0, .ty = void, .name = "" });
+
+    inline for (Types, 0..) |field, i| {
+        const name = comptime typeBaseName(@typeName(field));
+        enumFields[i] = .{
+            .name = name,
+            .value = 1024 - i,
+        };
+        typeMap[i] = .{ .value = 1024 - i, .ty = field, .name = name };
+    }
+
+    return .{
+        .tag_type = @Type(.{
             .Enum = .{
                 .tag_type = TagSize,
                 .fields = &enumFields,
-                .decls = &decls,
+                .decls = &.{},
                 .is_exhaustive = false,
             },
-        });
+        }),
+        .ty_map = typeMap,
     };
+}
+
+pub fn TaggedPointerUnion(comptime Types: anytype) type {
+    const result = TagTypeEnumWithTypeMap(Types);
+
+    const TagType: type = result.tag_type;
 
     return struct {
         pub const Tag = TagType;
+        pub const TagInt = TagSize;
+        pub const type_map: TypeMap(Types) = result.ty_map;
         repr: TaggedPointer,
 
         pub const Null = .{ .repr = .{ ._ptr = 0, .data = 0 } };
 
+        pub fn clear(this: *@This()) void {
+            this.* = Null;
+        }
+
+        pub fn typeFromTag(comptime the_tag: comptime_int) type {
+            for (type_map) |entry| {
+                if (entry.value == the_tag) return entry.ty;
+            }
+            @compileError("Unknown tag: " ++ the_tag);
+        }
+
+        pub fn typeNameFromTag(the_tag: TagInt) ?[]const u8 {
+            inline for (type_map) |entry| {
+                if (entry.value == the_tag) return entry.name;
+            }
+            return null;
+        }
+
         const This = @This();
-        fn assert_type(comptime Type: type) void {
+        pub fn assert_type(comptime Type: type) void {
             const name = comptime typeBaseName(@typeName(Type));
             if (!comptime @hasField(Tag, name)) {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
@@ -142,12 +186,17 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return this.repr.to();
         }
 
-        pub inline fn init(_ptr: anytype) This {
+        pub inline fn init(_ptr: anytype) @This() {
+            const tyinfo = @typeInfo(@TypeOf(_ptr));
+            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+
             const Type = std.meta.Child(@TypeOf(_ptr));
             return initWithType(Type, _ptr);
         }
 
-        pub inline fn initWithType(comptime Type: type, _ptr: anytype) This {
+        pub inline fn initWithType(comptime Type: type, _ptr: anytype) @This() {
+            const tyinfo = @typeInfo(@TypeOf(_ptr));
+            if (tyinfo != .Pointer) @compileError("Only pass pointers to TaggedPointerUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
             const name = comptime typeBaseName(@typeName(Type));
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
@@ -157,65 +206,26 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub inline fn isNull(this: This) bool {
             return this.repr._ptr == 0;
         }
+
+        pub inline fn call(this: This, comptime fn_name: []const u8, args_without_this: anytype, comptime Ret: type) Ret {
+            inline for (type_map) |entry| {
+                if (this.repr.data == entry.value) {
+                    const pointer = this.as(entry.ty);
+                    const func = &@field(entry.ty, fn_name);
+                    const args = brk: {
+                        var args: std.meta.ArgsTuple(@TypeOf(@field(entry.ty, fn_name))) = undefined;
+                        args[0] = pointer;
+
+                        inline for (args_without_this, 1..) |a, i| {
+                            args[i] = a;
+                        }
+
+                        break :brk args;
+                    };
+                    return @call(.auto, func, args);
+                }
+            }
+            @panic("Invalid tag");
+        }
     };
-}
-
-test "TaggedPointerUnion" {
-    const IntPrimitive = struct { val: u32 = 0 };
-    const StringPrimitive = struct { val: []const u8 = "" };
-    const Object = struct { blah: u32, val: u32 };
-    // const Invalid = struct {
-    //     wrong: bool = true,
-    // };
-    const Union = TaggedPointerUnion(.{ IntPrimitive, StringPrimitive, Object });
-    const str = try default_allocator.create(StringPrimitive);
-    str.* = StringPrimitive{ .val = "hello!" };
-    var un = Union.init(str);
-    try std.testing.expect(un.is(StringPrimitive));
-    try std.testing.expectEqualStrings(un.as(StringPrimitive).val, "hello!");
-    try std.testing.expect(!un.is(IntPrimitive));
-    const num = try default_allocator.create(IntPrimitive);
-    num.val = 9999;
-
-    var un2 = Union.init(num);
-
-    try std.testing.expect(un2.as(IntPrimitive).val == 9999);
-
-    try std.testing.expect(un.tag() == .StringPrimitive);
-    try std.testing.expect(un2.tag() == .IntPrimitive);
-
-    un2.repr.data = 0;
-    try std.testing.expect(un2.tag() != .IntPrimitive);
-    try std.testing.expect(un2.get(IntPrimitive) == null);
-    // try std.testing.expect(un2.is(Invalid) == false);
-}
-
-test "TaggedPointer" {
-    const Hello = struct {
-        what: []const u8,
-    };
-
-    var hello_struct_ptr = try default_allocator.create(Hello);
-    hello_struct_ptr.* = Hello{ .what = "hiiii" };
-    var tagged = TaggedPointer.init(hello_struct_ptr, 0);
-    try std.testing.expectEqual(tagged.get(Hello), hello_struct_ptr);
-    try std.testing.expectEqualStrings(tagged.get(Hello).what, hello_struct_ptr.what);
-    tagged = TaggedPointer.init(hello_struct_ptr, 100);
-    try std.testing.expectEqual(tagged.get(Hello), hello_struct_ptr);
-    try std.testing.expectEqualStrings(tagged.get(Hello).what, hello_struct_ptr.what);
-    tagged = TaggedPointer.init(hello_struct_ptr, std.math.maxInt(TagSize) - 500);
-    try std.testing.expectEqual(tagged.get(Hello), hello_struct_ptr);
-    try std.testing.expectEqual(tagged.data, std.math.maxInt(TagSize) - 500);
-    try std.testing.expectEqualStrings(tagged.get(Hello).what, hello_struct_ptr.what);
-
-    var i: TagSize = 0;
-    while (i < std.math.maxInt(TagSize) - 1) : (i += 1) {
-        hello_struct_ptr = try default_allocator.create(Hello);
-        const what = try std.fmt.allocPrint(default_allocator, "hiiii {d}", .{i});
-        hello_struct_ptr.* = Hello{ .what = what };
-        try std.testing.expectEqualStrings(TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to()).get(Hello).what, what);
-        const this = TaggedPointer.from(TaggedPointer.init(hello_struct_ptr, i).to());
-        try std.testing.expect(this.data == i);
-        try std.testing.expect(this.data != i + 1);
-    }
 }

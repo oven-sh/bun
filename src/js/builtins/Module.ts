@@ -5,14 +5,15 @@ export function main() {
 
 $visibility = "Private";
 export function require(this: CommonJSModuleRecord, id: string) {
-  return $overridableRequire.$call(this, id);
+  // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
+  return $overridableRequire.$apply(this, arguments);
 }
 
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: CommonJSModuleRecord, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.path, false)));
+  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.id, false)));
   if (existing) {
     // Scenario where this is necessary:
     //
@@ -50,7 +51,15 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
   // clear the module from the map.
   //
-  var out = this.$require(id, mod);
+  var out = this.$require(
+    id,
+    mod,
+    // did they pass a { type } object?
+    $argumentCount(),
+    // the object containing a "type" attribute, if they passed one
+    // maybe this will be "paths" in the future too.
+    arguments[1],
+  );
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
@@ -78,8 +87,8 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
 }
 
 $visibility = "Private";
-export function requireResolve(this: string | { path: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.path, false);
+export function requireResolve(this: string | { id: string }, id: string) {
+  return $resolveSync(id, typeof this === "string" ? this : this?.id, false);
 }
 
 $visibility = "Private";

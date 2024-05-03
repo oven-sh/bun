@@ -1,3 +1,4 @@
+import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { test, expect, afterEach } from "bun:test";
 
 const origPrepareStackTrace = Error.prepareStackTrace;
@@ -131,13 +132,16 @@ test("capture stack trace limit", () => {
     captureStackTrace();
   }
 
+  var originalLimit = Error.stackTraceLimit;
   function captureStackTrace() {
     let e1 = {};
     Error.captureStackTrace(e1);
+
     expect(e1.stack.split("\n").length).toBe(11);
 
     let e2 = new Error();
     Error.captureStackTrace(e2);
+
     expect(e2.stack.split("\n").length).toBe(11);
 
     let e3 = {};
@@ -158,8 +162,11 @@ test("capture stack trace limit", () => {
     Error.captureStackTrace(e6);
     expect(e6.stack.split("\n").length).toBe(13);
   }
-
-  f1();
+  try {
+    f1();
+  } finally {
+    Error.stackTraceLimit = originalLimit;
+  }
 });
 
 test("prepare stack trace", () => {
@@ -443,9 +450,12 @@ test("CallFrame.p.isNative", () => {
   Error.prepareStackTrace = (e, s) => {
     expect(s[0].isNative()).toBe(false);
     expect(s[1].isNative()).toBe(true);
+    expect(s[2].isNative()).toBe(false);
   };
-  [1, 2].sort(() => {
-    Error.captureStackTrace(new Error(""));
+
+  nativeFrameForTesting(() => {
+    const err = new Error("");
+    Error.captureStackTrace(err);
     return 0;
   });
   Error.prepareStackTrace = prevPrepareStackTrace;
@@ -469,6 +479,7 @@ test("CallFrame.p.toString", () => {
   expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
 });
 
+// TODO: line numbers are wrong in a release build
 test.todo("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
@@ -492,9 +503,9 @@ test.todo("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(491);
+  expect(lineNumber).toBe(391);
   // TODO: this is wrong
-  expect(parentLineNumber).toBe(499);
+  expect(parentLineNumber).toBe(394);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -531,4 +542,20 @@ test("Error.captureStackTrace inside error constructor works", () => {
   expect(() => {
     throw new AnotherError();
   }).toThrow();
+});
+
+import "harness";
+import { join } from "path";
+
+test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", () => {
+  expect([join(import.meta.dirname, "error-prepare-stack-default-fixture.js")]).toRun();
+});
+
+test("Error.prepareStackTrace returns a CallSite object", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    return stack;
+  };
+  const error = new Error();
+  expect(error.stack[0]).not.toBeString();
+  expect(error.stack[0][Symbol.toStringTag]).toBe("CallSite");
 });

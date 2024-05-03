@@ -214,16 +214,12 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
-
-// TODO: figure out why the test fails after JSC upgrade and re-enable this!
-// constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::Heap, JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
-// constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::SideState, JSC::DFG::Absolute, JSC::DFG::JSCell_structureID, JSC::DFG::HeapObjectCount };
-
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
     jsTextEncoderEncodeWithoutTypeCheck,
     JSTextEncoder::info(),
-    JSC::DOMJIT::Effect::forReadWriteKinds(heapKinds, heapKinds),
+    // https://github.com/oven-sh/bun/issues/9226
+    // It's not totally clear what the correct side effects are for this function, so we just make it conservative for now.
+    JSC::DOMJIT::Effect {},
     DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
 
@@ -266,10 +262,10 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValu
         }
 
         str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode8(lexicalGlobalObject, str.characters8(), str.length());
+        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
     } else {
         str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode16(lexicalGlobalObject, str.characters16(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
     }
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
@@ -290,9 +286,9 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeChe
     auto source = sourceStr->value(lexicalGlobalObject);
     size_t res = 0;
     if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->byteLength());
+        res = TextEncoder__encodeInto16(source.span16().data(), source.length(), destination->vector(), destination->byteLength());
     } else {
-        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->byteLength());
+        res = TextEncoder__encodeInto8(source.span8().data(), source.length(), destination->vector(), destination->byteLength());
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -393,10 +389,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
         }
 
         str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode8(lexicalGlobalObject, str.characters8(), str.length());
+        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
     } else {
         str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode16(lexicalGlobalObject, str.characters16(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
     }
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
@@ -430,9 +426,11 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
 
     size_t res = 0;
     if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->byteLength());
+        const auto span = source.span16();
+        res = TextEncoder__encodeInto16(span.data(), span.size(), destination->vector(), destination->byteLength());
     } else {
-        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->byteLength());
+        const auto span = source.span8();
+        res = TextEncoder__encodeInto8(span.data(), span.size(), destination->vector(), destination->byteLength());
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -468,7 +466,7 @@ void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSTextEncoderOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSTextEncoderOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);

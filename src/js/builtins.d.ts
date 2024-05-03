@@ -23,7 +23,7 @@ declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
-declare var $visibility: "Public" | "Private";
+declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 /** ??? */
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
@@ -90,6 +90,7 @@ declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
 declare function $isObject(obj: unknown): obj is object;
+declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
 declare function $isConstructor(fn: unknown): fn is { new (...args: any[]): any };
 declare function $isJSArray(obj: unknown): obj is any[];
@@ -107,7 +108,7 @@ declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
 declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
 declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
-declare function $tailCallForwardArguments(): TODO;
+declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
  * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin
  * @deprecated
@@ -228,6 +229,7 @@ declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined
 declare var $_events: TODO;
 declare function $abortAlgorithm(): TODO;
 declare function $abortSteps(): TODO;
+declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
 declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
@@ -254,7 +256,6 @@ declare function $closedPromise(): TODO;
 declare function $closedPromiseCapability(): TODO;
 declare function $code(): TODO;
 declare function $connect(): TODO;
-declare function $consumeReadableStream(): TODO;
 declare function $controlledReadableStream(): TODO;
 declare function $controller(): TODO;
 declare function $cork(): TODO;
@@ -368,6 +369,7 @@ declare function $readableStreamToArray(): TODO;
 declare function $reader(): TODO;
 declare function $readyPromise(): TODO;
 declare function $readyPromiseCapability(): TODO;
+declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmIdentifier: number): TODO;
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $releaseLock(): TODO;
@@ -465,8 +467,8 @@ type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReaction
 type PromiseFieldToValue<X extends PromiseFieldType, V> = X extends typeof $promiseFieldFlags
   ? number
   : X extends typeof $promiseFieldReactionsOrResult
-  ? V | any
-  : any;
+    ? V | any
+    : any;
 type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals
@@ -480,8 +482,7 @@ declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConst
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
-  $bunNativeType?: number;
-  $bunNativePtr?: number;
+  $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
 }
 

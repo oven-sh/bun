@@ -43,7 +43,7 @@ Let's build our first bundle. You have the following two files, which implement 
 import * as ReactDOM from 'react-dom/client';
 import {Component} from "./Component"
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const root = ReactDOM.createRoot(document.getElementById('root')!);
 root.render(<Component message="Sup!" />)
 ```
 
@@ -155,8 +155,8 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 
 ---
 
-- `.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx`
-- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms, including dead code elimination, tree shaking, and environment variable inlining. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
+- `.js` `.jsx`, `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx`
+- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms including dead code elimination and tree shaking. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
 
 ---
 

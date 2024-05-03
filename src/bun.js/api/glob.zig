@@ -8,8 +8,8 @@ const Syscall = @import("../../sys.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const bun = @import("../../bun.zig");
-const BunString = @import("../../bun.zig").String;
+const bun = @import("root").bun;
+const BunString = bun.String;
 const string = bun.string;
 const JSC = bun.JSC;
 const JSArray = @import("../bindings/bindings.zig").JSArray;
@@ -40,48 +40,7 @@ const ScanOpts = struct {
     error_on_broken_symlinks: bool,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: JSC.JSValue, absolute: bool, comptime fnName: string) ?[]const u8 {
-        const cwd_str_raw = cwd_str_raw: {
-            // Windows wants utf-16
-            if (comptime bun.Environment.isWindows) {
-                const cwd_zig_str = cwdVal.getZigString(globalThis);
-                // Dupe if already utf-16
-                if (cwd_zig_str.is16Bit()) {
-                    const duped = allocator.dupe(u8, cwd_zig_str.slice()) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-
-                    break :cwd_str_raw ZigString.Slice.from(duped, allocator);
-                }
-
-                // Conver to utf-16
-                const utf16 = (bun.strings.toUTF16Alloc(
-                    allocator,
-                    cwd_zig_str.slice(),
-                    // Let windows APIs handle errors with invalid surrogate pairs, etc.
-                    false,
-                ) catch {
-                    globalThis.throwOutOfMemory();
-                    return null;
-                }) orelse brk: {
-                    // All ascii
-                    const output = allocator.alloc(u16, cwd_zig_str.len) catch {
-                        globalThis.throwOutOfMemory();
-                        return null;
-                    };
-
-                    bun.strings.copyU8IntoU16(output, cwd_zig_str.slice());
-                    break :brk output;
-                };
-
-                const ptr: [*]u8 = @ptrCast(utf16.ptr);
-                break :cwd_str_raw ZigString.Slice.from(ptr[0 .. utf16.len * 2], allocator);
-            }
-
-            // `.toSlice()` internally converts to WTF-8
-            break :cwd_str_raw cwdVal.toSlice(globalThis, allocator);
-        };
-
+        const cwd_str_raw = cwdVal.toSlice(globalThis, allocator);
         if (cwd_str_raw.len == 0) return "";
 
         const cwd_str = cwd_str: {
@@ -105,7 +64,6 @@ const ScanOpts = struct {
             }
 
             // Convert to an absolute path
-
             var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
@@ -273,12 +231,11 @@ pub const WalkTask = struct {
 };
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
-    // if (globWalk.matchedPaths.items.len >= 0) {
-    if (globWalk.matchedPaths.items.len == 0) {
-        return JSC.JSArray.from(globalThis, &[_]JSC.JSValue{});
+    if (globWalk.matchedPaths.keys().len == 0) {
+        return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
 
-    return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
+    return BunString.toJSArray(globalThis, globWalk.matchedPaths.keys());
 }
 
 /// The reference to the arena is not used after the scope because it is copied
@@ -376,7 +333,7 @@ pub fn constructor(
         return null;
     }
 
-    const pat_str: []u8 = pat_arg.toBunString(globalThis).toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return null).slice());
 
     const all_ascii = isAllAscii(pat_str);
 
@@ -529,8 +486,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
 pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
     const iter = CodepointIterator.init(pattern);
     var cursor = CodepointIterator.Cursor{};
-    var i: u32 = 0;
-    while (iter.next(&cursor)) : (i += 1) {
+    while (iter.next(&cursor)) {
         try codepoints.append(@intCast(cursor.c));
     }
 }

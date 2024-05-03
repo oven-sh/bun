@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const assert = std.debug.assert;
+const assert = @import("root").bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
@@ -653,8 +653,7 @@ test "basic usage" {
     try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
 
     // Add 6 more things to force a capacity increase.
-    var i: usize = 0;
-    while (i < 6) : (i += 1) {
+    for (0..6) |i| {
         try list.append(ally, .{
             .a = @as(u32, @intCast(4 + i)),
             .b = "whatever",
@@ -906,7 +905,7 @@ test "sorting a span" {
         }
     }{ .chars = sliced.items(.chr) });
 
-    var i: u32 = undefined;
+    var i: u32 = 0;
     var j: u32 = 6;
     var c: u8 = 'a';
 

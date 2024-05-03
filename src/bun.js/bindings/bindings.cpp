@@ -4332,9 +4332,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     String sourceURL = frame.sourceURL.toString();
                     current.function_name = Bun::toStringRef(functionName);
                     current.source_url = Bun::toStringRef(sourceURL);
-                    current.position.line = frame.lineNumber.oneBasedInt();
-                    current.position.column_start = frame.columnNumber.oneBasedInt();
-                    current.position.column_stop = frame.columnNumber.oneBasedInt();
+                    current.position.line = frame.lineNumber.zeroBasedInt();
+                    current.position.column_start = frame.columnNumber.zeroBasedInt();
+                    current.position.column_stop = frame.columnNumber.zeroBasedInt();
 
                     current.remapped = true;
 

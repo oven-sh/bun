@@ -7,11 +7,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for submitting a crash report. It helps make Bun better.
+        Thank you so much for submitting a crash report. You're helping us make Bun more reliable for everyone!
   - type: textarea
     attributes:
       label: How can we reproduce the crash?
       description: Please provide instructions on how to reproduce the crash.
+  - type: textarea
+    id: code
+    attributes:
+      label: JavaScript/TypeScript code that reproduces the crash?
+      description: If this crash happened in the Bun runtime, can you paste code we can run to reproduce the crash?
+      render: shell
   - type: textarea
     id: logs
     attributes:

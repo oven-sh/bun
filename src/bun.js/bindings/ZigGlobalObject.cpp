@@ -386,7 +386,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
                 // "".test(/[a-0]/);
                 auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                ZigStackFrame remappedFrame;
+                ZigStackFrame remappedFrame = {};
                 memset(&remappedFrame, 0, sizeof(ZigStackFrame));
 
                 remappedFrame.position.line = originalLine.zeroBasedInt() + 1;
@@ -467,7 +467,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
             LineColumn lineColumn = frame.computeLineAndColumn();
             thisLine = lineColumn.line;
             thisColumn = lineColumn.column;
-            ZigStackFrame remappedFrame;
+            ZigStackFrame remappedFrame = {};
             remappedFrame.position.line = thisLine;
             remappedFrame.position.column_start = thisColumn;
 
@@ -565,6 +565,7 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
         size_t framesCount = stackTrace.size();
         ZigStackFrame remappedFrames[framesCount];
         for (int i = 0; i < framesCount; i++) {
+            remappedFrames[i] = {};
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
                 remappedFrames[i].position.line = sourcePositions->line.oneBasedInt();

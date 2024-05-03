@@ -13,12 +13,12 @@ async function tempDirToBuildIn() {
     ".eslintrc.json",
     "bun.lockb",
     "next.config.js",
-    "next.config.js",
     "package.json",
     "postcss.config.js",
     "public",
     "src",
     "tailwind.config.ts",
+    "bunfig.toml",
   ];
   await Promise.all(copy.map(x => cp(join(root, x), join(dir, x), { recursive: true })));
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));

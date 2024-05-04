@@ -333,10 +333,8 @@ pub const BlobOrStringOrBuffer = union(enum) {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
         return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
@@ -349,10 +347,8 @@ pub const BlobOrStringOrBuffer = union(enum) {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
         return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
@@ -544,7 +540,6 @@ pub const StringOrBuffer = union(enum) {
                 break :brk .utf8;
             break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
-
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
     }
 };

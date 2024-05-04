@@ -134,4 +134,19 @@ describe("zlib.brotli", () => {
     const roundtrip = await util.promisify(zlib.brotliDecompress)(compressed);
     expect(roundtrip.toString()).toEqual(input);
   });
+
+  it("can compress streaming big", () => {
+    const encoder = zlib.createBrotliCompress();
+    // prettier-ignore
+    for (const chunk of window(inputString+inputString+inputString+inputString, 65)) {
+      encoder._transform(chunk, undefined, (err, data) => {
+        expect(err).toBeUndefined();
+        expect(data).toBeUndefined();
+      });
+    }
+    encoder._flush((err, data) => {
+      expect(err).toBeUndefined();
+      expect(data.length).toBeGreaterThan(0);
+    });
+  });
 });

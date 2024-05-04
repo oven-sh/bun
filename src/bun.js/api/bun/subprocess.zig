@@ -581,7 +581,14 @@ pub const Subprocess = struct {
     ) callconv(.C) JSValue {
         _ = call_frame; // dispose accepts no arguments
 
-        switch (this.tryKill(9)) {
+        // unref self and streams so that this disposed process will not prevent
+        // the process from exiting causing a hang
+        this.unref();
+        this.stdin.unref();
+        this.stdout.unref();
+        this.stderr.unref();
+
+        switch (this.tryKill(SignalCode.default)) {
             .result => {},
             .err => |err| {
                 // Signal 9 should always be fine, but just in case that somehow fails.

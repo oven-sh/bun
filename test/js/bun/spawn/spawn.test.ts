@@ -795,5 +795,5 @@ it("dispose keyword works", async () => {
   await Bun.sleep(0);
   expect(captured.killed).toBe(true);
   expect(captured.exitCode).toBe(null);
-  expect(captured.signalCode).toBe("SIGKILL");
+  expect(captured.signalCode).toBe("SIGTERM");
 });

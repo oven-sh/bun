@@ -122,11 +122,10 @@ pub const BrotliReaderArrayList = struct {
             );
 
             const bytes_written = unused_capacity.len -| out_remaining;
-            // const bytes_read = next_in.len -| in_remaining;
+            const bytes_read = next_in.len -| in_remaining;
 
             this.list.items.len += bytes_written;
-            // TODO: calling this in a state where 'this.total_in' is not the full data raises error.ShortRead in many cases; look into this
-            // this.total_in += bytes_read;
+            this.total_in += bytes_read;
 
             switch (result) {
                 .success => {

@@ -7,7 +7,7 @@ permissions:
 on:
   workflow_run:
     workflows:
-      - Lint Cpp
+      - CI
     types:
       - completed
 
@@ -29,6 +29,12 @@ jobs:
           name: pr-number.txt
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
+      - name: PR Number
+        uses: actions/download-artifact@v4
+        with:
+          name: did_fail.txt
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
       - name: Setup Environment
         id: env
         shell: bash
@@ -36,6 +42,7 @@ jobs:
           # Copy to outputs
           echo "pr-number=$(<pr-number.txt)" >> $GITHUB_OUTPUT
           echo "text_output=$(<format.log)" >> $GITHUB_OUTPUT
+          echo "did_fail=$(<did_fail.txt)" >> $GITHUB_OUTPUT
 
       - name: Find Comment
         id: comment
@@ -46,7 +53,7 @@ jobs:
           body-includes: <!-- generated-comment workflow=${{ github.workflow }} -->
       - name: Update Comment
         uses: peter-evans/create-or-update-comment@v4
-        if: github.event.workflow_run.conclusion != 'success'
+        if: steps.env.outputs.did_fail != '0'
         with:
           comment-id: ${{ steps.comment.outputs.comment-id }}
           issue-number: ${{ steps.env.outputs.pr-number }}
@@ -62,7 +69,7 @@ jobs:
           edit-mode: replace
       - name: Update Previous Comment
         uses: peter-evans/create-or-update-comment@v4
-        if: github.event.workflow_run.conclusion == 'success' && steps.comment.outputs.comment-id != ''
+        if: steps.env.outputs.did_fail == '0' && steps.comment.outputs.comment-id != ''
         with:
           comment-id: ${{ steps.comment.outputs.comment-id }}
           issue-number: ${{ steps.env.outputs.pr-number }}

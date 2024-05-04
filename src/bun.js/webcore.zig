@@ -129,8 +129,6 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
             };
             if(next_byte == '\n'){
                 return .false;
-            }else{
-                continue;
             }
         },
         'y', 'Y' => {

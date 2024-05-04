@@ -42,6 +42,11 @@ jobs:
     name: Lint
     uses: ./.github/workflows/run-lint.yml
     secrets: inherit
+  lint-cpp:
+    if: ${{ !inputs.run-id }}
+    name: Lint Cpp
+    uses: ./.github/workflows/run-lint-cpp.yml
+    secrets: inherit
   linux-x64:
     if: ${{ !inputs.run-id }}
     name: Build linux-x64

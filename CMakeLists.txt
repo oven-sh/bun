@@ -318,7 +318,7 @@ option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
-option(BUN_TIDY_EXTRA "Only run clang-tidy, with extra checks for local development" OFF)
+option(BUN_TIDY_ONLY_EXTRA "Only run clang-tidy, with extra checks for local development" OFF)
 
 if(NOT ZIG_LIB_DIR)
     cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
@@ -416,7 +416,7 @@ if(ZIG_COMPILER)
     find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
     set(ZIG_COMPILER "${ZIG_COMPILER_}")
     message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
-elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_EXTRA)
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_ONLY_EXTRA)
     execute_process(
         COMMAND "${SHELL}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
@@ -918,7 +918,9 @@ if(WIN32)
 endif()
 
 # -- The Buntime™️ ---
-if(NOT BUN_CPP_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_EXTRA)
+if(BUN_TIDY_ONLY OR BUN_TIDY_ONLY_EXTRA)
+    add_library(${bun} OBJECT "${BUN_SOURCES}")
+elseif(NOT BUN_CPP_ONLY)
     add_executable(${bun} "${BUN_SOURCES}" "${BUN_ZIG_OBJ}")
 else()
     add_executable(${bun} "${BUN_SOURCES}")
@@ -1441,7 +1443,7 @@ if(BUN_TIDY_ONLY)
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()
 
-if (BUN_TIDY_EXTRA)
+if (BUN_TIDY_ONLY_EXTRA)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
     set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")

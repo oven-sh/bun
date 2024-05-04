@@ -71,6 +71,12 @@ jobs:
         with:
           name: pr-number.txt
           path: pr-number.txt
+      - name: Upload PR
+        if: steps.format.outputs.did_fail == '1'
+        uses: actions/upload-artifact@v2
+        with:
+          name: did_fail.txt
+          path: did_fail.txt
       - name: Fail the build
         if: steps.format.outputs.did_fail == '1'
         run: exit 1

@@ -121,7 +121,18 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
     // *  Not relevant in a server context.
 
     switch (first_byte) {
-        '\n', '\r' => return .false,
+        '\n' => return .false,
+        '\r' => {
+            const next_byte = reader.readByte() catch {
+                // They may have said yes, but the stdin is invalid.
+                return .false;
+            };
+            if(next_byte == '\n'){
+                return .false;
+            }else{
+                continue;
+            }
+        },
         'y', 'Y' => {
             const next_byte = reader.readByte() catch {
                 // They may have said yes, but the stdin is invalid.

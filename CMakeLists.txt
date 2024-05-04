@@ -1118,6 +1118,7 @@ else()
         -fno-rtti
         -fno-omit-frame-pointer
     )
+    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()
 
 if(APPLE)

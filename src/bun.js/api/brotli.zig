@@ -87,12 +87,9 @@ pub const BrotliEncoder = struct {
         this.freelist.discard(to_free.len);
     }
 
-    fn collectOutputValue(this: *BrotliEncoder) ?JSC.JSValue {
+    fn collectOutputValue(this: *BrotliEncoder) JSC.JSValue {
         this.output_lock.lock();
         defer this.output_lock.unlock();
-
-        if (this.output.items.len == 0)
-            return null;
 
         if (this.output.items.len > 16 * 1024) {
             defer this.output.items = "";
@@ -117,7 +114,7 @@ pub const BrotliEncoder = struct {
                 this.globalThis.createErrorInstance("BrotliError", .{})
             else
                 JSC.JSValue.null,
-            this.collectOutputValue() orelse return,
+            this.collectOutputValue(),
         });
 
         if (result.toError()) |err| {
@@ -288,7 +285,10 @@ pub const BrotliEncoder = struct {
         if (is_last)
             this.has_called_end = true;
 
-        var task = EncodeJob.new(.{ .encoder = this, .is_async = false });
+        var task = EncodeJob.new(.{
+            .encoder = this,
+            .is_async = false,
+        });
 
         {
             this.input_lock.lock();
@@ -297,7 +297,7 @@ pub const BrotliEncoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return this.collectOutputValue() orelse .undefined;
+        return if (!is_last) .undefined else this.collectOutputValue();
     }
 
     pub fn end(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -389,12 +389,9 @@ pub const BrotliDecoder = struct {
         this.deinit();
     }
 
-    fn collectOutputValue(this: *BrotliDecoder) ?JSC.JSValue {
+    fn collectOutputValue(this: *BrotliDecoder) JSC.JSValue {
         this.output_lock.lock();
         defer this.output_lock.unlock();
-
-        if (this.output.items.len == 0)
-            return null;
 
         if (this.output.items.len > 16 * 1024) {
             defer this.output.clearRetainingCapacity();
@@ -417,7 +414,7 @@ pub const BrotliDecoder = struct {
                 this.globalThis.createErrorInstance("BrotliError", .{})
             else
                 JSC.JSValue.null,
-            this.collectOutputValue() orelse return,
+            this.collectOutputValue(),
         });
 
         if (result.toError()) |err| {
@@ -515,7 +512,7 @@ pub const BrotliDecoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return if (!is_last) .undefined else this.collectOutputValue() orelse .undefined;
+        return if (!is_last) .undefined else this.collectOutputValue();
     }
 
     // We can only run one decode job at a time
@@ -570,7 +567,7 @@ pub const BrotliDecoder = struct {
                         this.decoder.output_lock.lock();
                         defer this.decoder.output_lock.unlock();
 
-                        const input = if (pending.len == 1) pending[0].slice() else input_list.items;
+                        const input = if (pending.len <= 1) pending[0].slice() else input_list.items;
                         this.decoder.stream.input = input;
                         this.decoder.stream.readAll(false) catch {
                             _ = this.decoder.pending_decode_job_count.fetchSub(1, .Monotonic);

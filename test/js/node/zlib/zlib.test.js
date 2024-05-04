@@ -127,4 +127,11 @@ describe("zlib.brotli", () => {
       expect(data).toEqual(Buffer.from(inputString));
     });
   });
+
+  it("can roundtrip an empty string", async () => {
+    const input = "";
+    const compressed = await util.promisify(zlib.brotliCompress)(input);
+    const roundtrip = await util.promisify(zlib.brotliDecompress)(compressed);
+    expect(roundtrip.toString()).toEqual(input);
+  });
 });

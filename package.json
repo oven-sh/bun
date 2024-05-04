@@ -37,6 +37,7 @@
   },
   "workspaces": [
     "./bench",
-    "./bench/*"
+    "./bench/*",
+    "./examples/*"
   ]
 }

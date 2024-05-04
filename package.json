@@ -38,6 +38,7 @@
   "workspaces": [
     "./bench",
     "./bench/*",
-    "./examples/*"
+    "./examples/*",
+    "./misctools"
   ]
 }

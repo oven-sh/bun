@@ -51,7 +51,7 @@ jobs:
         env:
           CPU_TARGET: native
         run: |
-          ./run-tidy.sh
+          sh ./run-tidy.sh
       - name: Upload format.log
         if: steps.format.outputs.did_fail == '1'
         uses: actions/upload-artifact@v2

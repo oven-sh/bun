@@ -62,7 +62,7 @@ jobs:
           version: ${{ inputs.zig-version }}
       - name: Install Dependencies
         run: |
-          bun install
+          bun install && apt update && apt install -y ninja-build cmake build-essential clang-16
       - name: Format
         run: |
           bun build:tidy

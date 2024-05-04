@@ -44,7 +44,7 @@ jobs:
     secrets: inherit
   lint-cpp:
     if: ${{ !inputs.run-id }}
-    name: Lint Cpp
+    name: Lint C++
     uses: ./.github/workflows/run-lint-cpp.yml
     secrets: inherit
     with:

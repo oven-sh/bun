@@ -1,4 +1,4 @@
-name: Lint Cpp
+name: Lint C++
 
 permissions:
   contents: read
@@ -15,7 +15,7 @@ on:
 
 jobs:
   lint-cpp:
-    name: Lint Cpp
+    name: Lint C++
     runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
     steps:
       - name: Checkout

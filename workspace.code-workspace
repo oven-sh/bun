@@ -1,9 +1,9 @@
 {
   "folders": [
-	{
-		"path": "."
-	}
-],
+    {
+      "path": "."
+    }
+  ],
   "settings": {
     "git.autoRepositoryDetection": "openEditors",
     "search.quickOpen.includeSymbols": false,
@@ -91,6 +91,7 @@
       "__memory": "cpp",
       "memory_resource": "cpp"
     },
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "typescript.tsserver.experimental.enableProjectDiagnostics": true
   }
 }

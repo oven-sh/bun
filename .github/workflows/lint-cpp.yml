@@ -53,7 +53,7 @@ jobs:
           # Upload format.log as github artifact for the workflow
           echo "text_output=$(cat format.log || echo 0)" >> $GITHUB_OUTPUT
           echo "did_fail=$(cat did_fail || echo 0)" >> $GITHUB_OUTPUT
-          echo "${{github.event.action.inputs.pr_number}}" > pr-number.txt
+          echo ${{github.event.action.inputs.pr_number}} > pr-number.txt
       - name: Upload format.log
         if: steps.format.outputs.did_fail == '1'
         uses: actions/upload-artifact@v2

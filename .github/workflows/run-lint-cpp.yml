@@ -58,7 +58,7 @@ jobs:
           echo "text_output=$(cat format.log || echo 0)" >> $GITHUB_OUTPUT
           echo "did_fail=$(cat did_fail || echo 0)" >> $GITHUB_OUTPUT
           echo "${{ inputs.pr-number }}" > pr-number.txt
-          echo "did_fail" > pr-number.txt
+          echo "did_fail" > did_fail.txt
       - name: Upload format.log
         if: steps.format.outputs.did_fail == '1'
         uses: actions/upload-artifact@v2

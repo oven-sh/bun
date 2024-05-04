@@ -29,7 +29,7 @@ jobs:
           name: pr-number.txt
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
-      - name: PR Number
+      - name: Did Fail
         uses: actions/download-artifact@v4
         with:
           name: did_fail.txt

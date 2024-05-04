@@ -35,10 +35,16 @@
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",
     "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun"
   },
-  "workspaces": [
-    "./bench",
-    "./bench/*",
-    "./examples/*",
-    "./misctools"
-  ]
+  "workspaces": {
+    "packages": [
+      "./bench",
+      "./bench/*",
+      "./examples/*",
+      "./misctools",
+      "./packages/*"
+    ],
+    "nohoist": [
+      "./packages/bun-types"
+    ]
+  }
 }

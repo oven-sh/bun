@@ -8,10 +8,14 @@ env:
 
 on:
   workflow_call:
+    inputs:
+      pr-number:
+        required: true
+        type: number
 
 jobs:
   lint-cpp:
-    name: Lint C++
+    name: Lint Cpp
     runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
     steps:
       - name: Checkout
@@ -53,7 +57,7 @@ jobs:
           # Upload format.log as github artifact for the workflow
           echo "text_output=$(cat format.log || echo 0)" >> $GITHUB_OUTPUT
           echo "did_fail=$(cat did_fail || echo 0)" >> $GITHUB_OUTPUT
-          echo ${{ github.event.number }}" > pr-number.txt
+          echo "${{ inputs.pr-number }}" > pr-number.txt
       - name: Upload format.log
         if: steps.format.outputs.did_fail == '1'
         uses: actions/upload-artifact@v2

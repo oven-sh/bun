@@ -38,10 +38,6 @@ $ proto install bun
 
 ### Windows
 
-{% callout %}
-Bun requires a minimum of Windows 10 version 1809
-{% /callout %}
-
 To install, paste this into a terminal:
 
 {% codetabs %}
@@ -59,6 +55,10 @@ To install, paste this into a terminal:
 ```
 
 {% /codetabs %}
+
+{% callout %}
+Bun requires a minimum of Windows 10 version 1809
+{% /callout %}
 
 For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
 

@@ -106,6 +106,10 @@ class JSCallback {
       closeCallback(ctx);
     }
   }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
 }
 
 class CString extends String {

@@ -5119,6 +5119,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         } = .{},
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
+        pub const dispose = JSC.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
         pub const doUpgrade = JSC.wrapInstanceMethod(ThisServer, "onUpgrade", false);
         pub const doPublish = JSC.wrapInstanceMethod(ThisServer, "publish", false);
         pub const doReload = onReload;
@@ -5539,6 +5540,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
                 this.stop(abrupt);
+            }
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
+            if (this.listener != null) {
+                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject = JSC.JSValue.jsUndefined();
+                this.stop(true);
             }
 
             return JSC.JSValue.jsUndefined();

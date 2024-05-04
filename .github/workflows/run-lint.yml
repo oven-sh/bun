@@ -2,6 +2,7 @@ name: Lint
 
 permissions:
   contents: read
+  actions: write
 
 env:
   LLVM_VERSION: 16
@@ -64,11 +65,60 @@ jobs:
         run: |
           bun install
       - name: Format
+        id: format
         env:
           CPU_TARGET: native
         run: |
-          bun build:tidy
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
+          rm -f did_fail format.log
+          echo 'wow such fail' > format.log
+          echo 1 > did_fail
+          # bun build:tidy &2>1 | tee format.log || echo 1 > did_fail
+          # Upload format.log as github artifact for the workflow
+          echo "text_output=$(cat format.log || echo 0)" >> $GITHUB_OUTPUT
+          echo "did_fail=$(cat did_fail || echo 0)" >> $GITHUB_OUTPUT
+      - name: Find Comment
+        id: comment
+        uses: peter-evans/find-comment@v3
         with:
-          commit_message: Apply formatting changes
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: Linty the Linter
+          body-includes: <!-- generated-comment workflow=${{ github.workflow }} -->
+      - name: Update Comment
+        uses: peter-evans/create-or-update-comment@v4
+        if: steps.format.outputs.did_fail == '1'
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            @${{ github.actor }}, C++ linting failed!
+
+            Logs:
+            ```cpp
+            ${{ steps.format.outputs.text_output }}
+            ```
+          edit-mode: replace
+      - name: Update Previous Comment
+        uses: peter-evans/create-or-update-comment@v4
+        if: steps.format.outputs.did_fail == '0' && steps.comment.outputs.comment-id != ''
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            @${{ github.actor }}, C++ lint errors fixed! Thank you.
+          edit-mode: replace
+      - name: Update Discord
+        uses: sarisia/actions-status-discord@v1
+        if: steps.format.outputs.did_fail == '1'
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          nodetail: true
+          color: "#FF0000"
+          title: ""
+          description: |
+            ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
+
+            @${{ github.actor }}, C++ linting failed!
+
+            ```cpp
+            ${{steps.format.outputs.text_output}}
+            ```

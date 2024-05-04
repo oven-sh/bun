@@ -3,8 +3,7 @@ name: Lint
 permissions:
   contents: read
   actions: write
-  pull-requests: write
-
+  issues: write
 env:
   LLVM_VERSION: 16
 

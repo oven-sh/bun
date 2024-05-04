@@ -1,4 +1,5 @@
 {
+  "name": "install",
   "private": true,
   "sideEffects": false,
   "scripts": {

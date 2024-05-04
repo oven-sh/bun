@@ -97,6 +97,8 @@ jobs:
             ```cpp
             ${{ steps.format.outputs.text_output }}
             ```
+
+            <!-- generated-comment workflow=${{ github.workflow }} -->
           edit-mode: replace
       - name: Update Previous Comment
         uses: peter-evans/create-or-update-comment@v4
@@ -106,6 +108,8 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           body: |
             @${{ github.actor }}, C++ lint errors fixed! Thank you.
+
+            <!-- generated-comment workflow=${{ github.workflow }} -->
           edit-mode: replace
       - name: Update Discord
         uses: sarisia/actions-status-discord@v1
@@ -123,3 +127,4 @@ jobs:
             ```cpp
             ${{steps.format.outputs.text_output}}
             ```
+ 

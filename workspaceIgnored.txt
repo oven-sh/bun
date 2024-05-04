@@ -1,1 +1,3 @@
     "./bench/hot-module-reloading/css-stress-test" => ignored for having broken peer dependencies and post installs.
+    The registry in the test folder and some third party ones.
+    "./test/js/third_party/*"

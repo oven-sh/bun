@@ -42,7 +42,9 @@
       "./examples/*",
       "./misctools",
       "./packages/*",
-      "./src/*"
+      "./src/*",
+      "./test",
+      "./test/*"
     ],
     "nohoist": [
       "./packages/bun-types"

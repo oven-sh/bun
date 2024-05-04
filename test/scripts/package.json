@@ -1,4 +1,5 @@
 {
+  "name": "test_scripts",
   "dependencies": {
     "puppeteer": "^10.4.0"
   }

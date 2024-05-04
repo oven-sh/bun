@@ -1,4 +1,5 @@
 {
+  "name": "test_node.js",
   "private": true,
   "scripts": {
     "test": "node runner.mjs --exec-path $(which bun-debug || which bun)"

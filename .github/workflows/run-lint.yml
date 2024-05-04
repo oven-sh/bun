@@ -127,4 +127,6 @@ jobs:
             ```cpp
             ${{steps.format.outputs.text_output}}
             ```
- 
+      - name: Fail the build
+        if: steps.format.outputs.did_fail == '1'
+        run: exit 1

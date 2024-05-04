@@ -5,11 +5,6 @@ const brotli = bun.brotli;
 
 const Queue = std.fifo.LinearFifo(JSC.Node.BlobOrStringOrBuffer, .Dynamic);
 
-fn ConcurrentByteProcessor(comptime Processor: type) type {
-    _ = Processor; // autofix
-    return struct {};
-}
-
 pub const BrotliEncoder = struct {
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBrotliEncoder;
@@ -144,7 +139,6 @@ pub const BrotliEncoder = struct {
         pub fn run(this: *EncodeJob) void {
             defer {
                 _ = this.encoder.has_pending_activity.fetchSub(1, .Monotonic);
-                // _ = this.encoder.has_pending_activity.fetchSub(1, .Monotonic);
                 this.destroy();
             }
 
@@ -263,7 +257,6 @@ pub const BrotliEncoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -303,7 +296,6 @@ pub const BrotliEncoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         task.run();
         return this.collectOutputValue() orelse .undefined;
     }
@@ -480,7 +472,6 @@ pub const BrotliDecoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         JSC.WorkPool.schedule(&task.task);
 
         return .undefined;
@@ -523,7 +514,6 @@ pub const BrotliDecoder = struct {
 
             this.input.writeItem(input_to_queue) catch unreachable;
         }
-        // _ = this.has_pending_activity.fetchAdd(1, .Monotonic);
         task.run();
         return this.collectOutputValue() orelse .undefined;
     }
@@ -547,7 +537,6 @@ pub const BrotliDecoder = struct {
         pub fn run(this: *DecodeJob) void {
             defer {
                 _ = this.decoder.has_pending_activity.fetchSub(1, .Monotonic);
-                // _ = this.decoder.has_pending_activity.fetchSub(1, .Monotonic);
                 this.destroy();
             }
 

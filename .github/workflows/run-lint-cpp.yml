@@ -52,6 +52,7 @@ jobs:
         run: |
           rm -f did_fail format.log
           # bun build:tidy &2>1 | tee format.log && echo 0 > did_succeed.txt
+          echo "testing" > format.log
           # Upload format.log as github artifact for the workflow
           echo "text_output=$(cat format.log || echo 0)" >> $GITHUB_OUTPUT
           if [ -f did_succeed.txt ]; then

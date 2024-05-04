@@ -539,11 +539,10 @@ pub const BrotliDecoder = struct {
             var any = false;
 
             if (true) {
-                var is_last = false;
+                const is_last = this.decoder.has_called_end;
                 while (true) {
                     this.decoder.input_lock.lock();
                     defer this.decoder.input_lock.unlock();
-                    is_last = this.decoder.has_called_end;
                     if (!is_last) break;
                     const readable = this.decoder.input.readableSlice(0);
                     const pending = readable;

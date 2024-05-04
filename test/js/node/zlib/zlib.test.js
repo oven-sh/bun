@@ -31,6 +31,8 @@ import * as zlib from "node:zlib";
 import * as fs from "node:fs";
 import * as buffer from "node:buffer";
 import * as util from "node:util";
+import { resolve } from "node:path";
+import { tmpdirSync } from "harness";
 
 function* window(buffer, size, advance = size) {
   let i = 0;
@@ -148,5 +150,35 @@ describe("zlib.brotli", () => {
       expect(err).toBeUndefined();
       expect(data.length).toBeGreaterThan(0);
     });
+  });
+
+  it("fully works as a stream.Transform", async () => {
+    const x_dir = tmpdirSync("bun.test.");
+    const out_path_c = resolve(x_dir, "this.js.br");
+    const out_path_d = resolve(x_dir, "this.js");
+
+    {
+      const { resolve, promise } = Promise.withResolvers();
+      const readStream = fs.createReadStream(import.meta.filename);
+      const writeStream = fs.createWriteStream(out_path_c);
+      const brStream = zlib.createBrotliCompress();
+      const the_stream = readStream.pipe(brStream).pipe(writeStream);
+      the_stream.on("finish", resolve);
+      await promise;
+    }
+    {
+      const { resolve, promise } = Promise.withResolvers();
+      const readStream = fs.createReadStream(out_path_c);
+      const writeStream = fs.createWriteStream(out_path_d);
+      const brStream = zlib.createBrotliDecompress();
+      const the_stream = readStream.pipe(brStream).pipe(writeStream);
+      the_stream.on("finish", resolve);
+      await promise;
+    }
+    {
+      const expected = await Bun.file(import.meta.filename).text();
+      const actual = await Bun.file(out_path_d).text();
+      expect(actual).toEqual(expected);
+    }
   });
 });

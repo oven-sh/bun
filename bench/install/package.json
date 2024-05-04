@@ -1,5 +1,5 @@
 {
-  "name": "install",
+  "name": "bench-install",
   "private": true,
   "sideEffects": false,
   "scripts": {

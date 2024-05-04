@@ -1,5 +1,5 @@
 {
-  "name": "scan",
+  "name": "bench-scan",
   "dependencies": {
     "esbuild": "^0.14.11"
   }

@@ -1,5 +1,5 @@
 {
-  "name": "expect-to-equal",
+  "name": "bench-expect-to-equal",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {

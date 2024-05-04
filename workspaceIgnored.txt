@@ -1,0 +1,1 @@
+    "./bench/hot-module-reloading/css-stress-test" => ignored for having broken peer dependencies and post installs.

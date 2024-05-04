@@ -1,5 +1,5 @@
 {
-  "name": "simple-react",
+  "name": "bench-hot-module-reloading-css-stress-test-simple-react",
   "version": "1.0.0",
   "license": "MIT",
   "dependencies": {

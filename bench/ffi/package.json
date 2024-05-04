@@ -1,5 +1,5 @@
 {
-  "name": "bench",
+  "name": "bench-ffi",
   "scripts": {
     "bench:bun": "$BUN bun.js",
     "bench:node": "$NODE node.mjs",

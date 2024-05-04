@@ -1,5 +1,9 @@
 // Hardcoded module "node:zlib"
 
+const stream = require("node:stream");
+
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
 const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
 const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
 
@@ -32,6 +36,46 @@ function brotliDecompressSync(buffer, opts) {
   const decoder = createBrotliDecoder(opts, {}, null);
   return decoder.decodeSync(buffer, undefined, true);
 }
+
+function createBrotliCompress(opts) {
+  return new BrotliCompress(opts);
+}
+
+const kHandle = Symbol("kHandle");
+
+function BrotliCompress(opts) {
+  if (!new.target) return new BrotliCompress(opts);
+  this[kHandle] = createBrotliEncoder(opts, {}, null);
+  stream.Transform.$call(this);
+}
+BrotliCompress.prototype = {};
+ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);
+
+BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
+  callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
+};
+BrotliCompress.prototype._flush = function _flush(callback) {
+  callback(undefined, this[kHandle].encodeSync("", undefined, true));
+};
+
+function createBrotliDecompress(opts) {
+  return new BrotliDecompress(opts);
+}
+
+function BrotliDecompress(opts) {
+  if (!new.target) return new BrotliDecompress(opts);
+  this[kHandle] = createBrotliDecoder(opts, {}, null);
+  stream.Transform.$call(this);
+}
+BrotliDecompress.prototype = {};
+ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);
+
+BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
+  callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
+};
+BrotliDecompress.prototype._flush = function (callback) {
+  callback(undefined, this[kHandle].decodeSync("", undefined, true));
+};
 
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!
@@ -4187,22 +4231,12 @@ var require_lib = __commonJS({
       return zlibBufferSync(new InflateRaw(opts), buffer);
     };
 
-    // not implemented, stubs
-    for (const method of [
-      // prettier-ignore
-      "BrotliCompress",
-      "BrotliDecompress",
-      "createBrotliCompress",
-      "createBrotliDecompress",
-    ]) {
-      exports[method] = function (buffer, opts, callback) {
-        throw new Error(`zlib.${method} is not implemented`);
-      };
-    }
     exports.brotliCompress = brotliCompress;
     exports.brotliDecompress = brotliDecompress;
     exports.brotliCompressSync = brotliCompressSync;
     exports.brotliDecompressSync = brotliDecompressSync;
+    exports.createBrotliCompress = createBrotliCompress;
+    exports.createBrotliDecompress = createBrotliDecompress;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];

@@ -173,7 +173,7 @@ Some methods are not optimized yet.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-Missing `BrotliCompress` `BrotliDecompress` `createBrotliCompress` `createBrotliDecompress`. Unoptimized.
+🟡 Unoptimized.
 
 ## Globals
 

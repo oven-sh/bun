@@ -32,6 +32,14 @@ import * as fs from "node:fs";
 import * as buffer from "node:buffer";
 import * as util from "node:util";
 
+function* window(buffer, size, advance = size) {
+  let i = 0;
+  while (i <= buffer.length) {
+    yield buffer.slice(i, i + size);
+    i += advance;
+  }
+}
+
 describe("zlib.gunzip", () => {
   it("should be able to unzip a Buffer and return an unzipped Buffer", async () => {
     const content = fs.readFileSync(import.meta.dir + "/fixture.html.gz");
@@ -50,18 +58,6 @@ describe("zlib.gunzip", () => {
 });
 
 describe("zlib.brotli", () => {
-  it("returns stub", () => {
-    for (const method of [
-      // prettier-ignore
-      "BrotliCompress",
-      "BrotliDecompress",
-      "createBrotliCompress",
-      "createBrotliDecompress",
-    ]) {
-      expect(() => zlib[method]()).toThrow(new Error(`zlib.${method} is not implemented`));
-    }
-  });
-
   const inputString =
     "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
     "t. Morbi faucibus, purus at gravida dictum, libero arcu " +
@@ -102,5 +98,33 @@ describe("zlib.brotli", () => {
   it("brotliDecompressSync", () => {
     const roundtrip = zlib.brotliDecompressSync(compressedBuffer);
     expect(roundtrip.toString()).toEqual(inputString);
+  });
+
+  it("can compress streaming", () => {
+    const encoder = zlib.createBrotliCompress();
+    for (const chunk of window(inputString, 55)) {
+      encoder._transform(chunk, undefined, (err, data) => {
+        expect(err).toBeUndefined();
+        expect(data).toBeUndefined();
+      });
+    }
+    encoder._flush((err, data) => {
+      expect(err).toBeUndefined();
+      expect(data).toEqual(compressedBuffer);
+    });
+  });
+
+  it("can decompress streaming", () => {
+    const decoder = zlib.createBrotliDecompress();
+    for (const chunk of window(compressedBuffer, 10)) {
+      decoder._transform(chunk, undefined, (err, data) => {
+        expect(err).toBeUndefined();
+        expect(data).toBeUndefined();
+      });
+    }
+    decoder._flush((err, data) => {
+      expect(err).toBeUndefined();
+      expect(data).toEqual(Buffer.from(inputString));
+    });
   });
 });

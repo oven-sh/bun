@@ -515,7 +515,7 @@ pub const BrotliDecoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return this.collectOutputValue() orelse .undefined;
+        return if (!is_last) .undefined else this.collectOutputValue() orelse .undefined;
     }
 
     // We can only run one decode job at a time
@@ -542,30 +542,36 @@ pub const BrotliDecoder = struct {
 
             var any = false;
 
-            if (this.decoder.pending_decode_job_count.fetchAdd(1, .Monotonic) == 0) {
+            if (true) {
                 var is_last = false;
                 while (true) {
-                    const pending: []bun.JSC.Node.BlobOrStringOrBuffer = brk: {
-                        this.decoder.input_lock.lock();
-                        defer this.decoder.input_lock.unlock();
-                        is_last = this.decoder.has_called_end;
-                        const readable = this.decoder.input.readableSlice(0);
-                        const out = bun.default_allocator.dupe(std.meta.Child(@TypeOf(readable)), readable) catch bun.outOfMemory();
-                        this.decoder.input.discard(readable.len);
-                        break :brk out;
-                    };
-                    defer bun.default_allocator.free(pending);
+                    this.decoder.input_lock.lock();
+                    defer this.decoder.input_lock.unlock();
+                    is_last = this.decoder.has_called_end;
+                    if (!is_last) break;
+                    const readable = this.decoder.input.readableSlice(0);
+                    const pending = readable;
 
                     defer {
                         this.decoder.freelist_write_lock.lock();
                         this.decoder.freelist.write(pending) catch unreachable;
                         this.decoder.freelist_write_lock.unlock();
                     }
-                    for (pending) |input| {
+
+                    var input_list = std.ArrayListUnmanaged(u8){};
+                    defer input_list.deinit(bun.default_allocator);
+                    if (pending.len > 1) {
+                        for (pending) |input| {
+                            input_list.appendSlice(bun.default_allocator, input.slice()) catch bun.outOfMemory();
+                        }
+                    }
+
+                    {
                         this.decoder.output_lock.lock();
                         defer this.decoder.output_lock.unlock();
 
-                        this.decoder.stream.input = input.slice();
+                        const input = if (pending.len == 1) pending[0].slice() else input_list.items;
+                        this.decoder.stream.input = input;
                         this.decoder.stream.readAll(false) catch {
                             _ = this.decoder.pending_decode_job_count.fetchSub(1, .Monotonic);
                             this.decoder.write_failed = true;

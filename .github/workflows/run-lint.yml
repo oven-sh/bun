@@ -3,6 +3,7 @@ name: Lint
 permissions:
   contents: read
   actions: write
+  pull-requests: write
 
 env:
   LLVM_VERSION: 16
@@ -81,7 +82,7 @@ jobs:
         uses: peter-evans/find-comment@v3
         with:
           issue-number: ${{ github.event.pull_request.number }}
-          comment-author: Linty the Linter
+          comment-author: github-actions[bot]
           body-includes: <!-- generated-comment workflow=${{ github.workflow }} -->
       - name: Update Comment
         uses: peter-evans/create-or-update-comment@v4

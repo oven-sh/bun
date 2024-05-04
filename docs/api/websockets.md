@@ -356,7 +356,7 @@ type Compressor =
   | `"256KB"`;
 
 interface Server {
-  pendingWebsockets: number;
+  pendingWebSockets: number;
   publish(
     topic: string,
     data: string | ArrayBufferView | ArrayBuffer,

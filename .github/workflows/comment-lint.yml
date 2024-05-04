@@ -36,7 +36,6 @@ jobs:
           # Copy to outputs
           echo "pr-number=$(<pr-number.txt)" >> $GITHUB_OUTPUT
           echo "text_output=$(<format.log)" >> $GITHUB_OUTPUT
-          if
 
       - name: Find Comment
         id: comment

@@ -637,7 +637,7 @@ pub fn updatePosixSegfaultHandler(act: ?*std.os.Sigaction) !void {
     if (act) |act_| {
         if (!did_register_sigaltstack) {
             var stack: std.c.stack_t = .{
-                .flags = if (bun.Environment.isLinux) std.os.linux.SS_AUTODISARM else 0,
+                .flags = 0,
                 .size = sigaltstack.len,
                 .sp = &sigaltstack,
             };

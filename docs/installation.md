@@ -190,7 +190,7 @@ $ iex "& {$(irm https://bun.sh/install.ps1)} -Version 1.1.6"
 
 To download Bun binaries directly, you can visit the [releases page](https://github.com/oven-sh/bun/releases) page on GitHub.
 
-For convenience, here are the direct download links for the latest version:
+For convenience, here are download links for the latest version:
 
 - [`bun-linux-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip)
 - [`bun-linux-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-baseline.zip)

@@ -581,7 +581,7 @@ pub const Subprocess = struct {
     ) callconv(.C) JSValue {
         _ = call_frame; // dispose accepts no arguments
 
-        // unref self and streams so that this disposed process will not prevent
+        // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang
         this.stdin.unref();
         this.stdout.unref();

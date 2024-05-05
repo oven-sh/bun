@@ -580,8 +580,8 @@ pub const Subprocess = struct {
         _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         if (this.process.hasExited()) {
-           // rely on GC to clean everything up in this case
-           return .undefined;
+            // rely on GC to clean everything up in this case
+            return .undefined;
         }
 
         // unref streams so that this disposed process will not prevent

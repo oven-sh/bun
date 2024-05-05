@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "docs/**"
+      - "CONTRIBUTING.md"
     branches:
       - main
 

@@ -579,7 +579,10 @@ pub const Subprocess = struct {
         global: *JSGlobalObject,
         call_frame: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        _ = call_frame; // dispose accepts no arguments
+        if (this.process.hasExited()) {
+           // rely on GC to clean everything up in this case
+           return .undefined;
+        }
 
         // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang

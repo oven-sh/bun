@@ -47,6 +47,8 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 
+pub const glob = @import("./glob.zig");
+
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
     pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
@@ -66,6 +68,7 @@ else if (Environment.isWindows)
 else
     std.os.fd_t;
 
+pub const FD = FileDescriptor;
 pub const FileDescriptor = enum(FileDescriptorInt) {
     /// Zero is used in old filesystem code to indicate "no file descriptor"
     /// This is problematic because on POSIX, this is ambiguous with stdin being 0.

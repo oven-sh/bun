@@ -55,4 +55,4 @@ Open [localhost:3000](http://localhost:3000). Any changes you make to `src/route
 
 ---
 
-Refer to the [SolidStart website](start.solidjs.com/getting-started/what-is-solidstart) for complete framework documentation.
+Refer to the [SolidStart website](https://start.solidjs.com/getting-started/what-is-solidstart) for complete framework documentation.

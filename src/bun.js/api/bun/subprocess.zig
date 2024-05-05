@@ -577,7 +577,7 @@ pub const Subprocess = struct {
     pub fn asyncDispose(
         this: *Subprocess,
         global: *JSGlobalObject,
-        call_frame: *JSC.CallFrame,
+        _: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         if (this.process.hasExited()) {
            // rely on GC to clean everything up in this case

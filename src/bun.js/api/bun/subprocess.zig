@@ -583,7 +583,6 @@ pub const Subprocess = struct {
 
         // unref self and streams so that this disposed process will not prevent
         // the process from exiting causing a hang
-        this.unref();
         this.stdin.unref();
         this.stdout.unref();
         this.stderr.unref();

@@ -314,7 +314,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     enumerable: false,
   });
   function Socket(options) {
-    return new InternalTLSSocket(options);
+    return new InternalTLSSocket(options.socket, options);
   }
   Socket.prototype = InternalTLSSocket.prototype;
   return Object.defineProperty(Socket, Symbol.hasInstance, {
@@ -655,6 +655,34 @@ class Server extends NetServer {
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
+
+// we gotta handle the different signatures that nodejs tls.connect accepts
+// tls.connect(options[, callback])
+// tls.connect(path[, options][, callback])
+// tls.connect(port[, host][, options][, callback])
+function normalizeArgs(args) {
+  if (args.length === 0) {
+    return [{}, null];
+  }
+
+  const [arg0, arg1] = args;
+  let options = {} as any;
+  if (typeof arg0 === "object" && arg0 !== null) {
+    options = arg0;
+  } else if (typeof arg0 === "string") {
+    options.path = arg0;
+  } else {
+    options.port = arg0;
+    if (typeof arg1 === "string") {
+      options.host = arg1;
+    }
+  }
+
+  const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
+
+  return [options, callback];
+}
+
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
@@ -674,7 +702,35 @@ const DEFAULT_ECDH_CURVE = "auto",
     // port is path or host, let connect handle this
     return new TLSSocket().connect(port, host, connectListener);
   },
-  connect = createConnection;
+  connect = (...args) => {
+    let [options, callback] = normalizeArgs(args);
+    if (options.ALPNProtocols) {
+      convertALPNProtocols(options.ALPNProtocols, options);
+    }
+
+    options = {
+      rejectUnauthorized: rejectUnauthorizedDefault,
+      ciphers: DEFAULT_CIPHERS,
+      checkServerIdentity,
+      minDHSize: 1024,
+      ...options,
+    };
+
+    // @ts-ignore
+    const tlsSocket = new TLSSocket(options);
+
+    // Node.js connects the socket right away if no options.socket is provided. For compatibility, I guess we should do the same.
+    if (!options.socket) {
+      console.log("connecting now1");
+      tlsSocket.connect(options.port, options.host, callback);
+    }
+
+    if (options.servername && !net.isIP(options.servername)) {
+      tlsSocket.setServername(options.servername);
+    }
+
+    return tlsSocket;
+  };
 
 function getCiphers() {
   return DEFAULT_CIPHERS.split(":");

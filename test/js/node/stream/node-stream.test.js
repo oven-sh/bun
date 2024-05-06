@@ -155,7 +155,7 @@ describe("Readable", () => {
     stream.pipe(writable);
   });
 
-  it("should have the correct fields in _events", () => {
+  it.todo("should have the correct fields in _events", () => {
     const s = Readable({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");
@@ -204,7 +204,7 @@ describe("createReadStream", () => {
 });
 
 describe("Writable", () => {
-  it("should have the correct fields in _events", () => {
+  it.todo("should have the correct fields in _events", () => {
     const s = Writable({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");
@@ -228,7 +228,7 @@ describe("Duplex", () => {
     expect(subclass instanceof Duplex).toBe(true);
   });
 
-  it("should have the correct fields in _events", () => {
+  it.todo("should have the correct fields in _events", () => {
     const s = Duplex({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");

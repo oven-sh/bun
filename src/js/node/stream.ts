@@ -2271,13 +2271,13 @@ var require_readable = __commonJS({
       if (!(this instanceof Readable)) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
 
-      this._events ??= {
-        close: undefined,
-        error: undefined,
-        prefinish: undefined,
-        finish: undefined,
-        drain: undefined,
-      };
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      // };
 
       this._readableState = new ReadableState(options, this, isDuplex);
       if (options) {
@@ -3478,13 +3478,13 @@ var require_writable = __commonJS({
       const isDuplex = this instanceof require_duplex();
       if (!isDuplex && !FunctionPrototypeSymbolHasInstance(Writable, this)) return new Writable(options);
 
-      this._events ??= {
-        close: undefined,
-        error: undefined,
-        prefinish: undefined,
-        finish: undefined,
-        drain: undefined,
-      };
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      // };
 
       this._writableState = new WritableState(options, this, isDuplex);
       if (options) {
@@ -4450,16 +4450,16 @@ var require_duplex = __commonJS({
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
 
-      this._events ??= {
-        close: undefined,
-        error: undefined,
-        prefinish: undefined,
-        finish: undefined,
-        drain: undefined,
-        data: undefined,
-        end: undefined,
-        readable: undefined,
-      };
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      //   data: undefined,
+      //   end: undefined,
+      //   readable: undefined,
+      // };
 
       Readable.$call(this, options);
       Writable.$call(this, options);

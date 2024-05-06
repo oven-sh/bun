@@ -2823,10 +2823,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .Invalid => {
                                 this.readable_stream_ref.deinit();
                             },
-                            // toBlobIfPossible should've caught this
-                            .Blob, .File => unreachable,
-
-                            .JavaScript, .Direct => {
+                            // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
+                            .Blob,
+                            .File,
+                            // These are the common scenario:
+                            .JavaScript,
+                            .Direct,
+                            => {
                                 if (this.resp) |resp| {
                                     var pair = StreamPair{ .stream = stream, .this = this };
                                     resp.runCorkedWithType(*StreamPair, doRenderStream, &pair);

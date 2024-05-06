@@ -18,6 +18,8 @@ Bun.serve({
 });
 ```
 
+### `fetch` request handler
+
 The `fetch` handler handles incoming requests. It receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and returns a [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) or `Promise<Response>`.
 
 ```ts
@@ -31,7 +33,46 @@ Bun.serve({
 });
 ```
 
-To configure which port and hostname the server will listen on:
+The `fetch` handler supports async/await:
+
+```ts
+import { sleep, serve } from "bun";
+serve({
+  async fetch(req) {
+    const start = performance.now();
+    await sleep(10);
+    const end = performance.now();
+    return new Response(`Slept for ${end - start}ms`);
+  },
+});
+```
+
+Promise-based responses are also supported:
+
+```ts
+Bun.serve({
+  fetch(req) {
+    // Forward the request to another server.
+    return fetch("https://example.com");
+  },
+});
+```
+
+You can also access the `Server` object from the `fetch` handler. It's the second argument passed to the `fetch` function.
+
+```ts
+// `server` is passed in as the second argument to `fetch`.
+const server = Bun.serve({
+  fetch(req, server) {
+    const ip = server.requestIP(req);
+    return new Response(`Your IP is ${ip}`);
+  },
+});
+```
+
+### Changing the `port` and `hostname`
+
+To configure which port and hostname the server will listen on, set `port` and `hostname` in the options object.
 
 ```ts
 Bun.serve({
@@ -43,7 +84,58 @@ Bun.serve({
 });
 ```
 
-To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket):
+To randomly select an available port, set `port` to `0`.
+
+```ts
+const server = Bun.serve({
+  port: 0, // random port
+  fetch(req) {
+    return new Response("404!");
+  },
+});
+
+// server.port is the randomly selected port
+console.log(server.port);
+```
+
+You can view the chosen port by accessing the `port` property on the server object, or by accessing the `url` property.
+
+```ts
+console.log(server.port); // 3000
+console.log(server.url); // http://localhost:3000
+```
+
+#### Configuring a default port
+
+Bun supports several options and environment variables to configure the default port. The default port is used when the `port` option is not set.
+
+- `--port` CLI flag
+
+```sh
+$ bun --port=4002 server.ts
+```
+
+- `BUN_PORT` environment variable
+
+```sh
+$ BUN_PORT=4002 bun server.ts
+```
+
+- `PORT` environment variable
+
+```sh
+$ PORT=4002 bun server.ts
+```
+
+- `NODE_PORT` environment variable
+
+```sh
+$ NODE_PORT=4002 bun server.ts
+```
+
+### Unix domain sockets
+
+To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_socket), pass the `unix` option with the path to the socket.
 
 ```ts
 Bun.serve({
@@ -54,9 +146,24 @@ Bun.serve({
 });
 ```
 
+### Abstract namespace sockets
+
+Bun supports Linux abstract namespace sockets. To use an abstract namespace socket, prefix the `unix` path with a null byte.
+
+```ts
+Bun.serve({
+  unix: "\0my-abstract-socket", // abstract namespace socket
+  fetch(req) {
+    return new Response(`404!`);
+  },
+});
+```
+
+Unlike unix domain sockets, abstract namespace sockets are not bound to the filesystem and are automatically removed when the last reference to the socket is closed.
+
 ## Error handling
 
-To activate development mode, set `development: true`. By default, development mode is _enabled_ unless `NODE_ENV` is `production`.
+To activate development mode, set `development: true`.
 
 ```ts
 Bun.serve({
@@ -70,6 +177,8 @@ Bun.serve({
 In development mode, Bun will surface errors in-browser with a built-in error page.
 
 {% image src="/images/exception_page.png" caption="Bun's built-in 500 page" /%}
+
+### `error` callback
 
 To handle server-side errors, implement an `error` handler. This function should return a `Response` to serve to the client when an error occurs. This response will supersede Bun's default error page in `development` mode.
 
@@ -180,6 +289,40 @@ Bun.serve({
     // other config
     dhParamsFile: "/path/to/dhparams.pem", // path to Diffie Hellman parameters
   },
+});
+```
+
+### Sever name indication (SNI)
+
+To configure the server name indication (SNI) for the server, set the `serverName` field in the `tls` object.
+
+```ts
+Bun.serve({
+  // ...
+  tls: {
+    // ... other config
+    serverName: "my-server.com", // SNI
+  },
+});
+```
+
+To allow multiple server names, pass an array of objects to `tls`, each with a `serverName` field.
+
+```ts
+Bun.serve({
+  // ...
+  tls: [
+    {
+      key: Bun.file("./key1.pem"),
+      cert: Bun.file("./cert1.pem"),
+      serverName: "my-server1.com",
+    },
+    {
+      key: Bun.file("./key2.pem"),
+      cert: Bun.file("./cert2.pem"),
+      serverName: "my-server2.com",
+    },
+  ],
 });
 ```
 
@@ -294,7 +437,9 @@ The `Bun.serve` server can handle roughly 2.5x more requests per second than Nod
 interface Bun {
   serve(options: {
     development?: boolean;
-    error?: (request: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    error?: (
+      request: ErrorLike,
+    ) => Response | Promise<Response> | undefined | Promise<undefined>;
     fetch(request: Request, server: Server): Response | Promise<Response>;
     hostname?: string;
     id?: string | null;
@@ -309,9 +454,19 @@ interface Bun {
 
 interface TLSOptions {
   ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
-  cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  cert?:
+    | string
+    | Buffer
+    | BunFile
+    | Array<string | Buffer | BunFile>
+    | undefined;
   dhParamsFile?: string;
-  key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+  key?:
+    | string
+    | Buffer
+    | BunFile
+    | Array<string | Buffer | BunFile>
+    | undefined;
   lowMemoryMode?: boolean;
   passphrase?: string;
   secureOptions?: number | undefined;
@@ -320,12 +475,19 @@ interface TLSOptions {
 
 interface WebSocketHandler<T = undefined> {
   backpressureLimit?: number;
-  close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
+  close?(
+    ws: ServerWebSocket<T>,
+    code: number,
+    reason: string,
+  ): void | Promise<void>;
   closeOnBackpressureLimit?: boolean;
   drain?(ws: ServerWebSocket<T>): void | Promise<void>;
   idleTimeout?: number;
   maxPayloadLength?: number;
-  message(ws: ServerWebSocket<T>, message: string | Buffer): void | Promise<void>;
+  message(
+    ws: ServerWebSocket<T>,
+    message: string | Buffer,
+  ): void | Promise<void>;
   open?(ws: ServerWebSocket<T>): void | Promise<void>;
   perMessageDeflate?:
     | boolean

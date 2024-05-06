@@ -2130,7 +2130,7 @@ pub const Expect = struct {
             }
 
             // If it's not an object, we are going to crash here.
-            std.debug.assert(expected_value.isObject());
+            assert(expected_value.isObject());
 
             if (expected_value.get(globalObject, "message")) |expected_message| {
                 if (_received_message) |received_message| {
@@ -2380,7 +2380,7 @@ pub const Expect = struct {
                         .skip_empty_name = false,
 
                         .include_value = true,
-                    }).init(globalObject, value.asObjectRef());
+                    }).init(globalObject, value);
                     defer props_iter.deinit();
                     pass = props_iter.len == 0;
                 }
@@ -4042,12 +4042,12 @@ pub const Expect = struct {
         const matchers_to_register = args[0];
         {
             var iter = JSC.JSPropertyIterator(.{
-                .skip_empty_name = true,
+                .skip_empty_name = false,
                 .include_value = true,
-            }).init(globalObject, matchers_to_register.asObjectRef());
+            }).init(globalObject, matchers_to_register);
             defer iter.deinit();
 
-            while (iter.next()) |matcher_name| {
+            while (iter.next()) |*matcher_name| {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
@@ -4060,11 +4060,11 @@ pub const Expect = struct {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
+                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
 
-                expect_proto.put(globalObject, &matcher_name, wrapper_fn);
-                expect_constructor.put(globalObject, &matcher_name, wrapper_fn);
-                expect_static_proto.put(globalObject, &matcher_name, wrapper_fn);
+                expect_proto.put(globalObject, matcher_name, wrapper_fn);
+                expect_constructor.put(globalObject, matcher_name, wrapper_fn);
+                expect_static_proto.put(globalObject, matcher_name, wrapper_fn);
             }
         }
 
@@ -4155,7 +4155,7 @@ pub const Expect = struct {
 
         // call the custom matcher implementation
         var result = matcher_fn.callWithThis(globalObject, matcher_context_jsvalue, args);
-        std.debug.assert(!result.isEmpty());
+        assert(!result.isEmpty());
         if (result.toError()) |err| {
             globalObject.throwValue(err);
             return false;
@@ -4177,13 +4177,13 @@ pub const Expect = struct {
             }
             result = promise.result(vm);
             result.ensureStillAlive();
-            std.debug.assert(!result.isEmpty());
+            assert(!result.isEmpty());
             switch (promise.status(vm)) {
                 .Pending => unreachable,
                 .Fulfilled => {},
                 .Rejected => {
-                    // TODO throw the actual rejection error
-                    globalObject.bunVM().runErrorHandler(result, null);
+                    // TODO: rewrite this code to use .then() instead of blocking the event loop
+                    JSC.VirtualMachine.get().runErrorHandler(result, null);
                     globalObject.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
                     return false;
                 },
@@ -4231,10 +4231,10 @@ pub const Expect = struct {
             message_text = message.toBunString(globalObject);
         } else {
             if (comptime Environment.allow_assert)
-                std.debug.assert(message.isCallable(globalObject.vm())); // checked above
+                assert(message.isCallable(globalObject.vm())); // checked above
 
             var message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
-            std.debug.assert(!message_result.isEmpty());
+            assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalObject.throwValue(err);
                 return false;
@@ -4319,7 +4319,9 @@ pub const Expect = struct {
         for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
 
         // call the matcher, which will throw a js exception when failed
-        _ = executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
+        if (!executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false) or globalObject.hasException()) {
+            return .zero;
+        }
 
         return thisValue;
     }
@@ -4977,7 +4979,7 @@ pub const ExpectMatcherContext = struct {
             return .zero;
         }
         const args = arguments.slice();
-        return JSValue.jsBoolean(args[0].deepEquals(args[1], globalObject));
+        return JSValue.jsBoolean(args[0].jestDeepEquals(args[1], globalObject));
     }
 };
 
@@ -5136,7 +5138,7 @@ extern fn JSMockFunction__getCalls(JSValue) JSValue;
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getReturns(JSValue) JSValue;
 
-extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const ZigString, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
+extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const bun.String, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
 extern fn Bun__JSWrappingFunction__getWrappedFunction(this: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSValue;
 
 extern fn ExpectMatcherUtils__getSingleton(globalObject: *JSC.JSGlobalObject) JSC.JSValue;
@@ -5153,3 +5155,5 @@ comptime {
 fn incrementExpectCallCounter() void {
     active_test_expectation_counter.actual += 1;
 }
+
+const assert = bun.assert;

@@ -1,9 +1,8 @@
-// @known-failing-on-windows: 1 failing
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, ospath } from "harness";
 import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, appendFile } from "fs/promises";
-import { join, relative, normalize, win32 } from "path";
+import { join, relative } from "path";
 import { tmpdir } from "os";
 import {
   dummyAfterAll,
@@ -38,7 +37,6 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(async () => {
-  await rm(add_dir, { force: true, recursive: true });
   await dummyAfterEach();
 });
 
@@ -70,13 +68,14 @@ it("should add existing package", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("bun add");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${add_path}`,
+    ` installed foo@${add_path.replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);
@@ -87,7 +86,7 @@ it("should add existing package", async () => {
         name: "bar",
         version: "0.0.2",
         dependencies: {
-          foo: dep.replace(/\\\\/g, "\\"),
+          foo: dep.replace(/\\\\/g, "/"),
         },
       },
       null,
@@ -118,7 +117,7 @@ it("should reject missing package", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("bun add");
   expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occured while resolving ${dep}`);
+  expect(err).toContain(`note: error occured while resolving file:${add_path}`);
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -132,7 +131,58 @@ it("should reject missing package", async () => {
   );
 });
 
-it("should reject invalid path without segfault", async () => {
+for (const pathType of ["absolute", "relative"]) {
+  it.each(["file:///", "file://", "file:/", "file:", "", "//////"])(
+    `should accept ${pathType} file protocol with prefix "%s"`,
+    async protocolPrefix => {
+      await writeFile(
+        join(add_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.2.3",
+        }),
+      );
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "2.3.4",
+        }),
+      );
+
+      const add_path_rel = relative(package_dir, add_dir);
+      const add_path_abs = add_dir;
+
+      const add_dep = `${protocolPrefix}${pathType == "relative" && protocolPrefix != "//////" ? add_path_rel : add_path_abs}`;
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "add", add_dep],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("panic:");
+      expect(err).toContain("Saved lockfile");
+      expect(stdout).toBeDefined();
+      const out = await new Response(stdout).text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        ` installed foo@${add_path_rel.replace(/\\/g, "/")}`,
+        "",
+        " 1 package installed",
+      ]);
+      expect(await exited).toBe(0);
+    },
+  );
+}
+
+it.each(["fileblah://"])("should reject invalid path without segfault: %s", async protocolPrefix => {
   await writeFile(
     join(add_dir, "package.json"),
     JSON.stringify({
@@ -147,8 +197,8 @@ it("should reject invalid path without segfault", async () => {
       version: "0.0.2",
     }),
   );
-  const add_path = relative(package_dir, add_dir);
-  const dep = `file://${add_path}`.replace(/\\/g, "\\\\");
+  const add_path = relative(package_dir, add_dir).replace(/\\/g, "\\\\");
+  const dep = `${protocolPrefix}${add_path}`;
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: package_dir,
@@ -160,8 +210,11 @@ it("should reject invalid path without segfault", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).toContain("bun add");
-  expect(err).toContain("error: MissingPackageJSON");
-  expect(err).toContain(`note: error occured while resolving ${dep}`);
+  if (protocolPrefix === "file:///") {
+    expect(err).toContain("error: MissingPackageJSON");
+  } else {
+    expect(err).toContain(`error: unrecognised dependency format: ${dep.replace(/\\\\/g, "/")}`);
+  }
 
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -282,6 +335,7 @@ it("should add dependency with capital letters", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -337,6 +391,7 @@ it("should add exact version with --exact", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -393,6 +448,7 @@ it("should add exact version with install.exact", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -510,6 +566,7 @@ it("should add dependency with specified semver", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -571,6 +628,7 @@ it("should add dependency (GitHub)", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -658,12 +716,13 @@ it("should add dependency alongside workspaces", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ospath(" + bar@workspace:packages/bar"),
+    " + bar@workspace:packages/bar",
     "",
     " installed baz@0.0.3 with binaries:",
     "  - baz-run",
@@ -732,6 +791,7 @@ it("should add aliased dependency (npm)", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -793,6 +853,7 @@ it("should add aliased dependency (GitHub)", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1256,6 +1317,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1316,6 +1378,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
@@ -1612,7 +1675,7 @@ it("should add dependencies to workspaces directly", async () => {
   );
   await writeFile(join(package_dir, "moo", "bunfig.toml"), await file(join(package_dir, "bunfig.toml")).text());
   const add_path = relative(join(package_dir, "moo"), add_dir);
-  const dep = `file:${add_path}`.replace(/\\/g, "\\\\");
+  const dep = `file:${add_path}`.replace(/\\/g, "/");
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "add", dep],
     cwd: join(package_dir, "moo"),
@@ -1624,12 +1687,13 @@ it("should add dependencies to workspaces directly", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${relative(package_dir, add_dir)}`,
+    ` installed foo@${relative(package_dir, add_dir).replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);
@@ -1647,7 +1711,7 @@ it("should add dependencies to workspaces directly", async () => {
     name: "moo",
     version: "0.3.0",
     dependencies: {
-      foo: `file:${add_path}`,
+      foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "foo"]);
@@ -1687,13 +1751,14 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("bun add");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed foo@${add_path}`,
+    ` installed foo@${add_path.replace(/\\/g, "/")}`,
     "",
     " 1 package installed",
   ]);
@@ -1724,6 +1789,7 @@ it("should add dependency alongside peerDependencies", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();

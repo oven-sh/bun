@@ -369,11 +369,8 @@ pub const AddrInfo = extern struct {
 
     pub fn toJSArray(
         addr_info: *AddrInfo,
-        parent_allocator: std.mem.Allocator,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
         var node = addr_info.node.?;
         const array = JSC.JSValue.createEmptyArray(
             globalThis,
@@ -381,16 +378,13 @@ pub const AddrInfo = extern struct {
         );
 
         {
-            defer arena.deinit();
-
-            const allocator = arena.allocator();
             var j: u32 = 0;
             var current: ?*AddrInfo_node = addr_info.node;
             while (current) |this_node| : (current = this_node.next) {
                 array.putIndex(
                     globalThis,
                     j,
-                    bun.JSC.DNS.GetAddrInfo.Result.toJS(
+                    GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
                                 std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
@@ -400,7 +394,6 @@ pub const AddrInfo = extern struct {
                             .ttl = this_node.ttl,
                         },
                         globalThis,
-                        allocator,
                     ),
                 );
                 j += 1;
@@ -473,8 +466,8 @@ pub const Channel = opaque {
         opts.flags = ARES_FLAG_NOCHECKRESP;
         opts.sock_state_cb = &SockStateWrap.onSockState;
         opts.sock_state_cb_data = @as(*anyopaque, @ptrCast(this));
-        opts.timeout = 1000;
-        opts.tries = 3;
+        opts.timeout = -1;
+        opts.tries = 4;
 
         const optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS |
@@ -548,9 +541,6 @@ pub const Channel = opaque {
         var host_buf: [1024]u8 = undefined;
         var port_buf: [52]u8 = undefined;
         const host_ptr: ?[*:0]const u8 = brk: {
-            if (!(host.len > 0 and !bun.strings.eqlComptime(host, "0.0.0.0") and !bun.strings.eqlComptime(host, "::0"))) {
-                break :brk null;
-            }
             const len = @min(host.len, host_buf.len - 1);
             @memcpy(host_buf[0..len], host[0..len]);
             host_buf[len] = 0;
@@ -736,7 +726,7 @@ pub const struct_ares_caa_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+        var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -814,7 +804,7 @@ pub const struct_ares_srv_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+        var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -897,7 +887,7 @@ pub const struct_ares_mx_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+        var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -971,7 +961,7 @@ pub const struct_ares_txt_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+        var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1051,7 +1041,7 @@ pub const struct_ares_naptr_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+        var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1143,7 +1133,7 @@ pub const struct_ares_soa_reply = extern struct {
 
     pub fn toJSResponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
-        var arena = @import("root").bun.ArenaAllocator.init(stack.get());
+        var arena = bun.ArenaAllocator.init(stack.get());
         defer arena.deinit();
 
         const allocator = arena.allocator();
@@ -1605,3 +1595,4 @@ comptime {
         _ = Bun__canonicalizeIP;
     }
 }
+const GetAddrInfo = bun.dns.GetAddrInfo;

@@ -180,6 +180,9 @@ export default {
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
     }),
+    page("cli/filter", "Filter", {
+      description: "Run scripts in multiple packages in parallel",
+    }),
     page("install/lockfile", "Lockfile", {
       description:
         "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
@@ -306,6 +309,9 @@ export default {
     page("api/tcp", "TCP sockets", {
       description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
     }), // "`Bun.{listen|connect}`")
+    page("api/udp", "UDP sockets", {
+      description: `Bun's native API implements fast and flexible UDP sockets.`,
+    }), // "`Bun.udpSocket`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),

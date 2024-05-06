@@ -240,7 +240,7 @@ it("process.binding", () => {
 
 it("process.argv in testing", () => {
   expect(process.argv).toBeInstanceOf(Array);
-  expect(process.argv[0]).toBe(bunExe());
+  expect(process.argv[0]).toBe(process.execPath);
 
   // assert we aren't creating a new process.argv each call
   expect(process.argv).toBe(process.argv);
@@ -531,6 +531,20 @@ it("dlopen args parsing", () => {
   expect(() => process.dlopen({ module: Symbol() }, "/tmp/not-found.so")).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
+});
+
+it("dlopen accepts file: URLs", () => {
+  const mod = { exports: {} };
+  try {
+    process.dlopen(mod, import.meta.url);
+    throw "Expected error";
+  } catch (e) {
+    expect(e.message).not.toContain("file:");
+  }
+
+  expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
+    "invalid file: URL passed to dlopen",
+  );
 });
 
 it("process.constrainedMemory()", () => {

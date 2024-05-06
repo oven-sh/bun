@@ -8,6 +8,7 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "wtf/URL.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
@@ -96,7 +97,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
     std::string_view fullURLStdStr = request->getFullUrl();
-    String fullURL = String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length());
+    String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length() });
 
     {
         PutPropertySlot slot(objectValue, false);
@@ -186,7 +187,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         }
 
         if (methodString.isNull()) {
-            methodString = String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(methodView.data()), methodView.length());
+            methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(methodView.data()), methodView.length() });
         }
         objectValue->put(objectValue, globalObject, builtinNames.methodPublicName(), jsString(vm, methodString), slot);
         RETURN_IF_EXCEPTION(scope, {});
@@ -207,7 +208,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
-        StringView nameView = StringView(reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length());
+        StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
         LChar* data = nullptr;
         auto value = String::createUninitialized(pair.second.length(), data);
         if (pair.second.length() > 0)
@@ -221,7 +222,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
         } else {
-            nameString = String(nameView.characters8(), nameView.length());
+            nameString = nameView.toString();
             lowercasedNameString = nameString.convertToASCIILowercase();
         }
 
@@ -401,4 +402,21 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
     return JSValue::encode(jsUndefined());
 }
+
+JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
+{
+    auto* obj = constructEmptyObject(globalObject);
+    VM& vm = globalObject->vm();
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), NoIntrinsic);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), NoIntrinsic);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), NoIntrinsic);
+    return obj;
 }
+
+} // namespace Bun

@@ -12,7 +12,7 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -46,11 +46,10 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
-const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const PackageManager = @import("./install/install.zig").PackageManager;
 
 pub fn MacroJSValueType_() type {
@@ -520,7 +519,7 @@ pub const Bundler = struct {
         bundler.configureLinkerWithAutoJSX(true);
     }
 
-    pub fn runEnvLoader(this: *Bundler) !void {
+    pub fn runEnvLoader(this: *Bundler, skip_default_env: bool) !void {
         switch (this.options.env.behavior) {
             .prefix, .load_all, .load_all_without_inlining => {
                 // Step 1. Load the project root.
@@ -541,11 +540,11 @@ pub const Bundler = struct {
                 }
 
                 if (this.options.isTest() or this.env.isTest()) {
-                    try this.env.load(dir, this.options.env.files, .@"test");
+                    try this.env.load(dir, this.options.env.files, .@"test", skip_default_env);
                 } else if (this.options.production) {
-                    try this.env.load(dir, this.options.env.files, .production);
+                    try this.env.load(dir, this.options.env.files, .production, skip_default_env);
                 } else {
-                    try this.env.load(dir, this.options.env.files, .development);
+                    try this.env.load(dir, this.options.env.files, .development, skip_default_env);
                 }
             },
             .disable => {
@@ -557,20 +556,9 @@ pub const Bundler = struct {
             else => {},
         }
 
-        if (this.env.get("DO_NOT_TRACK")) |dnt| {
-            // https://do-not-track.dev/
-            if (strings.eqlComptime(dnt, "1")) {
-                Analytics.disabled = true;
-            }
-        }
-
-        Analytics.is_ci = Analytics.is_ci or this.env.isCI();
-
         if (strings.eqlComptime(this.env.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
             this.options.disable_transpilation = true;
         }
-
-        Analytics.disabled = Analytics.disabled or this.env.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
     }
 
     // This must be run after a framework is configured, if a framework is enabled
@@ -584,7 +572,7 @@ pub const Bundler = struct {
             this.options.env.prefix = "BUN_";
         }
 
-        try this.runEnvLoader();
+        try this.runEnvLoader(false);
 
         this.options.jsx.setProduction(this.env.isProduction());
 
@@ -1284,6 +1272,8 @@ pub const Bundler = struct {
         allow_commonjs: bool = false,
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+        keep_json_and_toml_as_one_statement: bool = false,
     };
 
     pub fn parse(
@@ -1497,6 +1487,14 @@ pub const Bundler = struct {
                 var symbols: []js_ast.Symbol = &.{};
 
                 const parts = brk: {
+                    if (this_parse.keep_json_and_toml_as_one_statement) {
+                        var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                        stmts[0] = js_ast.Stmt.allocate(allocator, js_ast.S.SExpr, js_ast.S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
+                        var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                        parts_[0] = js_ast.Part{ .stmts = stmts };
+                        break :brk parts_;
+                    }
+
                     if (expr.data == .e_object) {
                         const properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
                         if (properties.len > 0) {
@@ -1609,7 +1607,7 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
+                const expr = js_ast.Expr.init(js_ast.E.UTF8String, js_ast.E.UTF8String{
                     .data = source.contents,
                 }, logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
@@ -1719,7 +1717,7 @@ pub const Bundler = struct {
                     bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
                     len += absolute_pathname.ext.len;
 
-                    if (comptime Environment.allow_assert) std.debug.assert(len > 0);
+                    if (comptime Environment.allow_assert) bun.assert(len > 0);
 
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
                     break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);

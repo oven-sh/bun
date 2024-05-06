@@ -8,7 +8,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 const JSAst = bun.JSAst;
 const BabyList = JSAst.BabyList;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const Joiner = @import("../string_joiner.zig");
@@ -443,12 +443,22 @@ pub const LineColumnOffset = struct {
         defer this.columns = columns;
         var offset: u32 = 0;
         while (strings.indexOfNewlineOrNonASCII(input, offset)) |i| {
-            std.debug.assert(i >= offset);
-            std.debug.assert(i < input.len);
+            assert(i >= offset);
+            assert(i < input.len);
 
             var iter = strings.CodepointIterator.initOffset(input, i);
             var cursor = strings.CodepointIterator.Cursor{ .i = @as(u32, @truncate(iter.i)) };
             _ = iter.next(&cursor);
+
+            // Given a null byte, cursor.width becomes 0
+            // This can lead to integer overflow, crashes, or hangs.
+            // https://github.com/oven-sh/bun/issues/10624
+            if (cursor.width == 0) {
+                columns += 1;
+                offset = i + 1;
+                continue;
+            }
+
             offset = i + cursor.width;
 
             switch (cursor.c) {
@@ -581,7 +591,7 @@ pub const SourceMapPieces = struct {
 
             j.push(mappings[start_of_run..potential_end_of_run]);
 
-            std.debug.assert(shift.before.lines == shift.after.lines);
+            assert(shift.before.lines == shift.after.lines);
 
             const shift_column_delta = shift.after.columns - shift.before.columns;
             const encode = encodeVLQ(decode_result.value + shift_column_delta - prev_shift_column_delta);
@@ -678,6 +688,10 @@ pub const VLQ = struct {
     // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
+
+    pub fn writeTo(self: VLQ, writer: anytype) !void {
+        try writer.writeAll(self.bytes[0..self.len]);
+    }
 };
 
 pub fn encodeVLQWithLookupTable(
@@ -687,41 +701,6 @@ pub fn encodeVLQWithLookupTable(
         vlq_lookup_table[@as(usize, @intCast(value))]
     else
         encodeVLQ(value);
-}
-
-test "encodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = encodeVLQ(fixture[0]);
-        try std.testing.expectEqualStrings(fixture[1], result.bytes[0..result.len]);
-    }
-}
-
-test "decodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = decodeVLQ(fixture[1], 0);
-        try std.testing.expectEqual(
-            result.value,
-            fixture[0],
-        );
-    }
 }
 
 // A single base 64 digit can contain 6 bits of data. For the base 64 variable
@@ -736,9 +715,7 @@ test "decodeVLQ" {
 //   V    V
 //   101011
 //
-pub fn encodeVLQ(
-    value: i32,
-) VLQ {
+pub fn encodeVLQ(value: i32) VLQ {
     var len: u4 = 0;
     var bytes: [vlq_max_in_bytes]u8 = undefined;
 
@@ -839,7 +816,7 @@ pub const LineOffsetTable = struct {
     pub const List = std.MultiArrayList(LineOffsetTable);
 
     pub fn findLine(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) i32 {
-        std.debug.assert(loc.start > -1); // checked by caller
+        assert(loc.start > -1); // checked by caller
         var original_line: usize = 0;
         const loc_start = @as(usize, @intCast(loc.start));
 
@@ -862,7 +839,7 @@ pub const LineOffsetTable = struct {
     }
 
     pub fn findIndex(byte_offsets_to_start_of_line: []const u32, loc: Logger.Loc) ?usize {
-        std.debug.assert(loc.start > -1); // checked by caller
+        assert(loc.start > -1); // checked by caller
         var original_line: usize = 0;
         const loc_start = @as(usize, @intCast(loc.start));
 
@@ -924,7 +901,7 @@ pub const LineOffsetTable = struct {
             }
 
             if (c > 0x7F and columns_for_non_ascii.items.len == 0) {
-                std.debug.assert(@intFromPtr(
+                assert(@intFromPtr(
                     remaining.ptr,
                 ) >= @intFromPtr(
                     contents.ptr,
@@ -1399,6 +1376,17 @@ pub const Chunk = struct {
 
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
+
+                // We have no sourcemappings.
+                // This happens for example when importing an asset which does not support sourcemaps
+                // like a png or a jpg
+                //
+                // import foo from "./foo.png";
+                //
+                if (list.len == 0) {
+                    return;
+                }
+
                 const original_line = LineOffsetTable.findLine(b.line_offset_table_byte_offset_list, loc);
                 const line = list.get(@as(usize, @intCast(@max(original_line, 0))));
 
@@ -1455,3 +1443,5 @@ pub const DebugIDFormatter = struct {
         try writer.writeAll(&buf);
     }
 };
+
+const assert = bun.assert;

@@ -202,11 +202,16 @@ declare module "bun:test" {
      */
     skipIf(condition: boolean): (label: string, fn: () => void) => void;
     /**
+     * Marks this group of tests as to be written or to be fixed, if `condition` is true.
+     *
+     * @param condition if these tests should be skipped
+     */
+    todoIf(condition: boolean): (label: string, fn: () => void) => void;
+    /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
     ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
@@ -408,6 +413,18 @@ declare module "bun:test" {
      * @param condition if the test should be skipped
      */
     skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Marks this test as to be written or to be fixed, if `condition` is true.
+     *
+     * @param condition if the test should be marked TODO
+     */
+    todoIf(
       condition: boolean,
     ): (
       label: string,
@@ -1128,6 +1145,27 @@ declare module "bun:test" {
      */
     toThrow(expected?: unknown): void;
     /**
+     * Asserts that a function throws an error.
+     *
+     * - If expected is a `string` or `RegExp`, it will check the `message` property.
+     * - If expected is an `Error` object, it will check the `name` and `message` properties.
+     * - If expected is an `Error` constructor, it will check the class of the `Error`.
+     * - If expected is not provided, it will check if anything as thrown.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowError("Oops!");
+     * expect(fail).toThrowError(/oops/i);
+     * expect(fail).toThrowError(Error);
+     * expect(fail).toThrowError();
+     *
+     * @param expected the expected error, error message, or error pattern
+     * @alias toThrow
+     */
+    toThrowError(expected?: unknown): void;
+    /**
      * Asserts that a value matches a regular expression or includes a substring.
      *
      * @example
@@ -1412,20 +1450,45 @@ declare module "bun:test" {
     toHaveBeenCalled(): void;
     /**
      * Ensures that a mock function is called an exact number of times.
+     * @alias toHaveBeenCalled
+     */
+    toBeCalled(): void;
+    /**
+     * Ensures that a mock function is called an exact number of times.
      */
     toHaveBeenCalledTimes(expected: number): void;
     /**
      * Ensure that a mock function is called with specific arguments.
+     * @alias toHaveBeenCalledTimes
+     */
+    toBeCalledTimes(expected: number): void;
+    /**
+     * Ensure that a mock function is called with specific arguments.
      */
     toHaveBeenCalledWith(...expected: unknown[]): void;
+    /**
+     * Ensure that a mock function is called with specific arguments.
+     * @alias toHaveBeenCalledWith
+     */
+    toBeCalledWith(...expected: unknown[]): void;
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      */
     toHaveBeenLastCalledWith(...expected: unknown[]): void;
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
+     * @alias toHaveBeenCalledWith
+     */
+    lastCalledWith(...expected: unknown[]): void;
+    /**
+     * Ensure that a mock function is called with specific arguments for the nth call.
      */
     toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): void;
+    /**
+     * Ensure that a mock function is called with specific arguments for the nth call.
+     * @alias toHaveBeenCalledWith
+     */
+    nthCalledWith(n: number, ...expected: unknown[]): void;
   }
 
   /**

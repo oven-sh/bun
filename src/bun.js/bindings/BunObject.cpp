@@ -247,20 +247,6 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, BunObject_callback_braces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
-    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
-    // auto mainShellFunc = JSFunction::create(vm, globalObject, 2, String("$"_s), BunObject_callback_$, ImplementationVisibility::Public);
-    // auto mainShellFunc = shellShellCodeGenerator;
-    if (has_bun_garbage_collector_flag_enabled) {
-        auto parseIdent
-            = Identifier::fromString(vm, String("parse"_s));
-        auto parseFunc = JSFunction::create(vm, globalObject, 2, String("shellParse"_s), BunObject_callback_shellParse, ImplementationVisibility::Private);
-        bunShell->putDirect(vm, parseIdent, parseFunc);
-
-        auto lexIdent = Identifier::fromString(vm, String("lex"_s));
-        auto lexFunc = JSFunction::create(vm, globalObject, 2, String("lex"_s), BunObject_callback_shellLex, ImplementationVisibility::Private);
-        bunShell->putDirect(vm, lexIdent, lexFunc);
-    }
-
     return bunShell;
 }
 
@@ -369,25 +355,6 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 extern "C" JSC::EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const LChar* ptr, size_t length);
 extern "C" JSC::EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, JSC::EncodedJSValue input, const UChar* ptr, size_t length);
 
-// JSC_DEFINE_JIT_OPERATION(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSObject* castedglobalObject, JSString* string))
-// {
-//     JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
-//     IGNORE_WARNINGS_BEGIN("frame-address")
-//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-//     IGNORE_WARNINGS_END
-//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-//     size_t length = string->length();
-//     if (!length)
-//         return JSValue::encode(string);
-
-//     auto resolvedString = string->value(lexicalGlobalObject);
-//     if (!resolvedString.is8Bit()) {
-//         return Bun__escapeHTML16(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters16(), length);
-//     } else {
-//         return Bun__escapeHTML8(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters8(), length);
-//     }
-// }
-
 JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
@@ -407,9 +374,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     auto resolvedString = string->value(lexicalGlobalObject);
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
     if (!resolvedString.is8Bit()) {
-        RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, resolvedString.characters16(), length));
+        const auto span = resolvedString.span16();
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, span.data(), span.size()));
     } else {
-        RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, resolvedString.characters8(), length));
+        const auto span = resolvedString.span8();
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, span.data(), span.size()));
     }
 }
 
@@ -535,25 +504,11 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     return JSC::JSValue::encode(JSC::jsString(vm, fileSystemPath));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionHashCode,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    JSC::JSValue stringToHash = callFrame->argument(0);
-    JSC::JSString* str = stringToHash.toStringOrNull(globalObject);
-    if (!str) {
-        return JSC::JSValue::encode(jsNumber(0));
-    }
-
-    auto view = str->value(globalObject);
-    return JSC::JSValue::encode(jsNumber(view.hash()));
-}
-
 /* Source for BunObject.lut.h
 @begin bunObjectTable
     $                                              constructBunShell                                                   ReadOnly|DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
-    DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump  BunObject_callback_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump    DontEnum|DontDelete|Function 1
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_getter_wrap_FileSystemRouter                              DontDelete|PropertyCallback
     Glob                                           BunObject_getter_wrap_Glob                                          DontDelete|PropertyCallback
@@ -567,11 +522,8 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     SHA512_256                                     BunObject_getter_wrap_SHA512_256                                    DontDelete|PropertyCallback
     TOML                                           BunObject_getter_wrap_TOML                                          DontDelete|PropertyCallback
     Transpiler                                     BunObject_getter_wrap_Transpiler                                    DontDelete|PropertyCallback
-    _Os                                            BunObject_callback__Os                                              DontEnum|DontDelete|Function 1
-    _Path                                          BunObject_callback__Path                                            DontEnum|DontDelete|Function 1
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
-    assetPrefix                                    BunObject_getter_wrap_assetPrefix                                   DontEnum|DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 1
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
@@ -586,10 +538,8 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     fetch                                          Bun__fetch                                                          ReadOnly|DontDelete|Function 1
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
-    fs                                             BunObject_callback_fs                                               DontEnum|DontDelete|Function 1
     gc                                             BunObject_callback_gc                                               DontDelete|Function 1
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
-    getImportedStyles                              BunObject_callback_getImportedStyles                                DontEnum|DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_getter_wrap_hash                                          DontDelete|PropertyCallback
@@ -599,6 +549,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
+    udpSocket                                        BunObject_callback_udpSocket                                          DontDelete|Function 1
     main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
@@ -629,7 +580,6 @@ JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     stderr                                         BunObject_getter_wrap_stderr                                        DontDelete|PropertyCallback
     stdin                                          BunObject_getter_wrap_stdin                                         DontDelete|PropertyCallback
     stdout                                         BunObject_getter_wrap_stdout                                        DontDelete|PropertyCallback
-    stringHashCode                                 functionHashCode                                                    DontDelete|Function 1
     stringWidth                                    BunObject_callback_stringWidth                                      DontDelete|Function 2
     unsafe                                         BunObject_getter_wrap_unsafe                                        DontDelete|PropertyCallback
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback

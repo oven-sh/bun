@@ -1,6 +1,5 @@
-// GENERATED CODE - DO NOT MODIFY BY HAND
-
-const bindings = @import("root").bun.JSC;
+const bun = @import("root").bun;
+const bindings = bun.JSC;
 pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;
@@ -71,7 +70,7 @@ pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
 pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
 pub const WebSocketClient = bindings.WebSocketClient;
 pub const WebSocketClientTLS = bindings.WebSocketClientTLS;
-pub const BunString = @import("root").bun.String;
+pub const BunString = bun.String;
 pub const JSC__JSString = bJSC__JSString;
 pub const JSC__JSPromise = bJSC__JSPromise;
 pub const JSC__VM = bJSC__VM;
@@ -287,7 +286,6 @@ pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__keys(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSValue__makeWithNameAndPrototype(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, arg2: ?*anyopaque, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__push(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSValue__put(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;
@@ -361,7 +359,6 @@ pub extern fn Reader__intptr__put(arg0: *bindings.JSGlobalObject, JSValue1: JSC_
 pub extern fn Zig__GlobalObject__create(arg0: ?*anyopaque, arg1: i32, arg2: bool, arg3: bool, arg4: ?*anyopaque) *bindings.JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: *bindings.JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque) bool;
-pub extern fn Bun__Path__create(arg0: *bindings.JSGlobalObject, arg1: bool) JSC__JSValue;
 pub extern fn ArrayBufferSink__assignToStream(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
 pub extern fn ArrayBufferSink__createObject(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, onDestroyPtrTag: usize) JSC__JSValue;
 pub extern fn ArrayBufferSink__detachPtr(JSValue0: JSC__JSValue) void;

@@ -4,32 +4,63 @@ $visibility = "Private";
 export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
   var loader = Loader;
   var queue = $createFIFO();
-  var key = resolvedSpecifier;
+  let key = resolvedSpecifier;
+  const registry = loader.registry;
+
   while (key) {
     // we need to explicitly check because state could be $ModuleFetch
     // it will throw this error if we do not:
     //    $throwTypeError("Requested module is already fetched.");
-    var entry = loader.registry.$get(key)!;
+    let entry = registry.$get(key)!,
+      moduleRecordPromise,
+      state = 0,
+      // entry.fetch is a Promise<SourceCode>
+      // SourceCode is not a string, it's a JSC::SourceCode object
+      fetch: Promise<SourceCode> | undefined;
 
-    if ((entry?.state ?? 0) <= $ModuleFetch) {
-      $fulfillModuleSync(key);
-      entry = loader.registry.$get(key)!;
+    if (entry) {
+      ({ state, fetch } = entry);
     }
 
-    // entry.fetch is a Promise<SourceCode>
-    // SourceCode is not a string, it's a JSC::SourceCode object
-    // this pulls it out of the promise without delaying by a tick
-    // the promise is already fullfilled by $fullfillModuleSync
-    var sourceCodeObject = $getPromiseInternalField(entry.fetch, $promiseFieldReactionsOrResult);
-    // parseModule() returns a Promise, but the value is already fulfilled
-    // so we just pull it out of the promise here once again
-    // But, this time we do it a little more carefully because this is a JSC function call and not bun source code
-    var moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
-    var mod = entry.module;
+    if (
+      !entry ||
+      // if we need to fetch it
+      (state <= $ModuleFetch &&
+        // either:
+        // - we've never fetched it
+        // - a fetch is in progress
+        (!$isPromise(fetch) ||
+          ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
+    ) {
+      // force it to be no longer pending
+      $fulfillModuleSync(key);
+
+      entry = registry.$get(key)!;
+
+      // the state can transition here
+      // https://github.com/oven-sh/bun/issues/8965
+      if (entry) {
+        ({ state = 0, fetch } = entry);
+      }
+    }
+
+    if (state < $ModuleLink && $isPromise(fetch)) {
+      // This will probably never happen, but just in case
+      if (($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending) {
+        throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
+      }
+
+      // this pulls it out of the promise without delaying by a tick
+      // the promise is already fullfilled by $fullfillModuleSync
+      const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
+      moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
+    }
+    let mod = entry?.module;
+
     if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
-      var reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
-      var flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
-      var state = flags & $promiseStateMask;
+      let reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
+      let flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
+      let state = flags & $promiseStateMask;
       // this branch should never happen, but just to be safe
       if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
@@ -51,15 +82,15 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
 
     // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
     $setStateToMax(entry, $ModuleLink);
-    var dependenciesMap = mod.dependenciesMap;
-    var requestedModules = loader.requestedModules(mod);
-    var dependencies = $newArrayWithSize<string>(requestedModules.length);
+    const dependenciesMap = mod.dependenciesMap;
+    const requestedModules = loader.requestedModules(mod);
+    const dependencies = $newArrayWithSize<string>(requestedModules.length);
     for (var i = 0, length = requestedModules.length; i < length; ++i) {
-      var depName = requestedModules[i];
+      const depName = requestedModules[i];
       // optimization: if it starts with a slash then it's an absolute path
       // we don't need to run the resolver a 2nd time
-      var depKey = depName[0] === "/" ? depName : loader.resolve(depName, key);
-      var depEntry = loader.ensureRegistered(depKey);
+      const depKey = depName[0] === "/" ? depName : loader.resolve(depName, key);
+      const depEntry = loader.ensureRegistered(depKey);
 
       if (depEntry.state < $ModuleLink) {
         queue.push(depKey);
@@ -76,7 +107,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
     entry.isSatisfied = true;
 
     key = queue.shift();
-    while (key && (loader.registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
+    while (key && (registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
       key = queue.shift();
     }
   }
@@ -90,7 +121,7 @@ export function loadCJS2ESM(this: ImportMetaObject, resolvedSpecifier: string) {
     );
   }
 
-  return loader.registry.$get(resolvedSpecifier);
+  return registry.$get(resolvedSpecifier);
 }
 
 $visibility = "Private";
@@ -118,7 +149,7 @@ export function internalRequire(this: ImportMetaObject, id) {
   }
 
   // TODO: remove this hardcoding
-  if (last5 === ".json") {
+  if (last5 === ".json" && !id.endsWith?.("package.json")) {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(id, "utf8"));
     $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));

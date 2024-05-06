@@ -96,6 +96,7 @@ typedef struct ResolvedSource {
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
+    JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool needsDeref;
 } ResolvedSource;
@@ -311,7 +312,7 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     const BunString* specifier);
 
-extern "C" void* Bun__transpileFile(
+extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,

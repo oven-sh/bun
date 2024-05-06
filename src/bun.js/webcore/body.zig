@@ -3,20 +3,20 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
-const JSC = @import("root").bun.JSC;
+const HTTPClient = bun.http;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -36,9 +36,9 @@ const NullableAllocator = @import("../../nullable_allocator.zig").NullableAlloca
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 const Blob = JSC.WebCore.Blob;
 // const InlineBlob = JSC.WebCore.InlineBlob;
@@ -506,7 +506,7 @@ pub const Body = struct {
                     };
                 }
 
-                std.debug.assert(str.tag == .WTFStringImpl);
+                assert(str.tag == .WTFStringImpl);
 
                 return Body.Value{
                     .WTFStringImpl = str.value.WTFStringImpl,
@@ -703,7 +703,7 @@ pub const Body = struct {
             switch (this.*) {
                 .Blob => {
                     const new_blob = this.Blob;
-                    std.debug.assert(new_blob.allocator == null); // owned by Body
+                    assert(new_blob.allocator == null); // owned by Body
                     this.* = .{ .Used = {} };
                     return new_blob;
                 },
@@ -828,6 +828,7 @@ pub const Body = struct {
         }
 
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
+            error_instance.ensureStillAlive();
             if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
@@ -842,7 +843,7 @@ pub const Body = struct {
                 }
 
                 if (locked.readable.get()) |readable| {
-                    readable.done(global);
+                    readable.abort(global);
                     locked.readable.deinit();
                 }
                 // will be unprotected by body value deinit
@@ -943,7 +944,7 @@ pub const Body = struct {
 
         body.value = Value.fromJS(globalThis, value) orelse return null;
         if (body.value == .Blob)
-            std.debug.assert(body.value.Blob.allocator == null); // owned by Body
+            assert(body.value.Blob.allocator == null); // owned by Body
 
         return body;
     }
@@ -1348,7 +1349,7 @@ pub const BodyValueBufferer = struct {
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
         signal.clear();
-        std.debug.assert(signal.isDead());
+        assert(signal.isDead());
 
         const assignment_result: JSValue = ArrayBufferSink.JSSink.assignToStream(
             globalThis,
@@ -1360,7 +1361,7 @@ pub const BodyValueBufferer = struct {
         assignment_result.ensureStillAlive();
 
         // assert that it was updated
-        std.debug.assert(!signal.isDead());
+        assert(!signal.isDead());
 
         if (assignment_result.isError()) {
             return error.PipeFailed;
@@ -1398,7 +1399,7 @@ pub const BodyValueBufferer = struct {
     }
 
     fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
-        std.debug.assert(value.* == .Locked);
+        assert(value.* == .Locked);
         const locked = &value.Locked;
         if (locked.readable.get()) |stream| {
             // keep the stream alive until we're done with it
@@ -1421,8 +1422,8 @@ pub const BodyValueBufferer = struct {
                     return error.UnsupportedStreamType;
                 },
                 .Bytes => |byte_stream| {
-                    std.debug.assert(byte_stream.pipe.ctx == null);
-                    std.debug.assert(sink.byte_stream == null);
+                    assert(byte_stream.pipe.ctx == null);
+                    assert(sink.byte_stream == null);
 
                     const bytes = byte_stream.buffer.items;
                     // If we've received the complete body by the time this function is called
@@ -1496,3 +1497,5 @@ pub const BodyValueBufferer = struct {
         }
     }
 };
+
+const assert = bun.assert;

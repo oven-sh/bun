@@ -59,6 +59,7 @@ const ErrorCode = enum(u32) {
     ENHANCE_YOUR_CALM = 0xb,
     INADEQUATE_SECURITY = 0xc,
     HTTP_1_1_REQUIRED = 0xd,
+    _, // we can have unsupported extension/custom error codes types
 };
 
 const SettingsType = enum(u16) {
@@ -68,6 +69,11 @@ const SettingsType = enum(u16) {
     SETTINGS_INITIAL_WINDOW_SIZE = 0x4,
     SETTINGS_MAX_FRAME_SIZE = 0x5,
     SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
+
+    // non standard extension settings here (we still dont support this ones)
+    SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x8,
+    SETTINGS_NO_RFC7540_PRIORITIES = 0x9,
+    _, // we can have more unsupported extension settings types
 };
 
 const UInt31WithReserved = packed struct(u32) {
@@ -162,18 +168,19 @@ const FullSettingsPayload = packed struct(u288) {
     maxFrameSize: u32 = 16384,
     _maxHeaderListSizeType: u16 = @intFromEnum(SettingsType.SETTINGS_MAX_HEADER_LIST_SIZE),
     maxHeaderListSize: u32 = 65535,
-
     pub const byteSize: usize = 36;
     pub fn toJS(this: *FullSettingsPayload, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        var result = JSValue.createEmptyObject(globalObject, 6);
+        var result = JSValue.createEmptyObject(globalObject, 8);
         result.put(globalObject, JSC.ZigString.static("headerTableSize"), JSC.JSValue.jsNumber(this.headerTableSize));
-        result.put(globalObject, JSC.ZigString.static("enablePush"), JSC.JSValue.jsBoolean(this.enablePush == 1));
+        result.put(globalObject, JSC.ZigString.static("enablePush"), JSC.JSValue.jsBoolean(this.enablePush > 0));
         result.put(globalObject, JSC.ZigString.static("maxConcurrentStreams"), JSC.JSValue.jsNumber(this.maxConcurrentStreams));
         result.put(globalObject, JSC.ZigString.static("initialWindowSize"), JSC.JSValue.jsNumber(this.initialWindowSize));
         result.put(globalObject, JSC.ZigString.static("maxFrameSize"), JSC.JSValue.jsNumber(this.maxFrameSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderListSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
         result.put(globalObject, JSC.ZigString.static("maxHeaderSize"), JSC.JSValue.jsNumber(this.maxHeaderListSize));
-
+        // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
+        // we should also support customSettings
+        result.put(globalObject, JSC.ZigString.static("enableConnectProtocol"), JSC.JSValue.jsBoolean(false));
         return result;
     }
 
@@ -185,6 +192,7 @@ const FullSettingsPayload = packed struct(u288) {
             .SETTINGS_INITIAL_WINDOW_SIZE => this.initialWindowSize = option.value,
             .SETTINGS_MAX_FRAME_SIZE => this.maxFrameSize = option.value,
             .SETTINGS_MAX_HEADER_LIST_SIZE => this.maxHeaderListSize = option.value,
+            else => {}, // we ignore unknown/unsupportd settings its not relevant if we dont apply them
         }
     }
     pub fn write(this: *FullSettingsPayload, comptime Writer: type, writer: Writer) void {
@@ -253,7 +261,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -288,7 +296,7 @@ pub export fn BUN__HTTP2__getUnpackedSettings(globalObject: *JSC.JSGlobalObject,
     }
 }
 
-pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
 
@@ -398,11 +406,6 @@ pub export fn BUN__HTTP2_getPackedSettings(globalObject: *JSC.JSGlobalObject, ca
     const bytes = std.mem.asBytes(&settings)[0..FullSettingsPayload.byteSize];
     const binary_type: BinaryType = .Buffer;
     return binary_type.toJS(bytes, globalObject);
-}
-
-comptime {
-    _ = BUN__HTTP2__getUnpackedSettings;
-    _ = BUN__HTTP2_getPackedSettings;
 }
 
 const Handlers = struct {
@@ -1978,16 +1981,15 @@ pub const H2FrameParser = struct {
 
         var encoded_size: usize = 0;
 
-        const headers_obj = headers_arg.asObjectRef();
         var iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_obj);
+        }).init(globalObject, headers_arg);
         defer iter.deinit();
 
         // TODO: support CONTINUE for more headers if headers are too big
         while (iter.next()) |header_name| {
-            const name_slice = header_name.toSlice(bun.default_allocator);
+            const name_slice = header_name.toUTF8(bun.default_allocator);
             defer name_slice.deinit();
             const name = name_slice.slice();
 
@@ -2179,19 +2181,17 @@ pub const H2FrameParser = struct {
             return JSC.JSValue.jsNumber(-1);
         }
 
-        const headers_obj = headers_arg.asObjectRef();
-
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         var iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
-        }).init(globalObject, headers_obj);
+        }).init(globalObject, headers_arg);
         defer iter.deinit();
         for (0..2) |ignore_pseudo_headers| {
             iter.reset();
 
             while (iter.next()) |header_name| {
-                const name_slice = header_name.toSlice(bun.default_allocator);
+                const name_slice = header_name.toUTF8(bun.default_allocator);
                 defer name_slice.deinit();
                 const name = name_slice.slice();
 
@@ -2533,3 +2533,11 @@ pub const H2FrameParser = struct {
         this.deinit();
     }
 };
+
+pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    return JSC.JSArray.create(global, &.{
+        H2FrameParser.getConstructor(global),
+        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
+        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),
+    });
+}

@@ -1,5 +1,7 @@
+#include "mimalloc.h"
 #include "root.h"
 
+#include "JavaScriptCore/JSDestructibleObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/Identifier.h"
 
@@ -22,6 +24,35 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+
+#endif
+
+#if OS(WINDOWS)
+
+extern "C" int Source__setRawModeStdin(bool raw);
+
+namespace UV {
+
+class TTY {
+public:
+    uv_tty_t handle {};
+
+    uv_tty_t* tty() { return &handle; }
+
+    void close()
+    {
+        uv_close((uv_handle_t*)(tty()), [](uv_handle_t* handle) -> void {
+            uv_tty_t* ttyHandle = (uv_tty_t*)handle;
+            ptrdiff_t offset = offsetof(UV::TTY, handle);
+
+            UV::TTY* tty = (UV::TTY*)((char*)ttyHandle - offset);
+            delete tty;
+        });
+    }
+};
+
+}
+
 #endif
 
 namespace Bun {
@@ -72,14 +103,17 @@ static bool getWindowSize(int fd, size_t* width, size_t* height)
 #endif
 }
 
-class TTYWrapObject final : public JSC::JSNonFinalObject {
+class TTYWrapObject final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static TTYWrapObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, int fd)
     {
+
         TTYWrapObject* object = new (NotNull, JSC::allocateCell<TTYWrapObject>(vm)) TTYWrapObject(vm, structure, fd);
         object->finishCreation(vm);
+
         return object;
     }
 
@@ -103,13 +137,35 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<TTYWrapObject*>(cell)->TTYWrapObject::~TTYWrapObject();
+    }
+
+    ~TTYWrapObject()
+    {
+#if OS(WINDOWS)
+        if (handle) {
+            handle->close();
+        }
+#endif
+    }
+
     int fd = -1;
+
+#if OS(WINDOWS)
+    UV::TTY* handle;
+#endif
 
 private:
     TTYWrapObject(JSC::VM& vm, JSC::Structure* structure, const int fd)
         : Base(vm, structure)
         , fd(fd)
+
     {
+#if OS(WINDOWS)
+        handle = nullptr;
+#endif
     }
 
     void finishCreation(JSC::VM& vm)
@@ -119,6 +175,10 @@ private:
         ASSERT(inherits(info()));
     }
 };
+
+#if OS(WINDOWS)
+extern "C" void Bun__setCTRLHandler(BOOL add);
+#endif
 
 const ClassInfo TTYWrapObject::s_info = {
     "LibuvStreamWrap"_s,
@@ -132,6 +192,15 @@ extern "C" int Bun__ttySetMode(int fd, int mode);
 
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+#if OS(WINDOWS)
+    ASSERT(callFrame->argumentCount() == 1);
+    auto flag = callFrame->argument(0);
+    bool raw = flag.asBoolean();
+
+    Zig::GlobalObject* global = jsCast<Zig::GlobalObject*>(globalObject);
+
+    return Source__setRawModeStdin(raw);
+#else
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -147,14 +216,14 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     }
 
     JSValue mode = callFrame->argument(1);
-    if (!mode.isNumber()) {
-        throwTypeError(globalObject, scope, "mode must be a number"_s);
-        return JSValue::encode(jsUndefined());
-    }
+
+    auto fdToUse = fd.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd.asNumber(), mode.toInt32(globalObject));
+    int err = Bun__ttySetMode(fdToUse, mode.toInt32(globalObject));
     return JSValue::encode(jsNumber(err));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
@@ -181,8 +250,16 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
         return JSValue::encode(jsUndefined());
     }
 
+#if OS(WINDOWS)
+    if (mode.toInt32(globalObject) == 0) {
+        Bun__setCTRLHandler(1);
+    }
+
+    int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
+#else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int err = Bun__ttySetMode(fd, mode.toInt32(globalObject));
+#endif
     return JSValue::encode(jsNumber(err));
 }
 
@@ -284,9 +361,6 @@ public:
     {
         Base::finishCreation(vm);
 
-        auto* clientData = WebCore::clientData(vm);
-        auto& builtinNames = clientData->builtinNames();
-
         reifyStaticProperties(vm, TTYWrapObject::info(), TTYWrapPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     }
@@ -299,7 +373,6 @@ public:
 
 const ClassInfo TTYWrapPrototype::s_info = {
     "LibuvStreamWrap"_s,
-
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapPrototype)
 };
 
@@ -372,8 +445,30 @@ public:
             return {};
         }
 
+#if OS(WINDOWS)
+        auto* handle = new UV::TTY();
+        memset(handle, 0, sizeof(UV::TTY));
+        int rc = uv_tty_init(jsCast<Zig::GlobalObject*>(globalObject)->uvLoop(), handle->tty(), fd, 0);
+        if (rc < 0) {
+            delete handle;
+            throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
+            return {};
+        }
+        ASSERT(handle->tty()->loop);
+#else
+        if (!isatty(fd)) {
+            throwTypeError(globalObject, scope, makeString("fd"_s, fd, " is not a tty"_s));
+            return {};
+        }
+#endif
+
         auto* structure = TTYWrapObject::createStructure(vm, globalObject, prototypeValue.getObject());
         auto* object = TTYWrapObject::create(vm, globalObject, structure, fd);
+
+#if OS(WINDOWS)
+        object->handle = handle;
+#endif
+
         return JSValue::encode(object);
     }
 
@@ -394,12 +489,12 @@ private:
 
 const ClassInfo TTYWrapConstructor::s_info = { "TTY"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapConstructor) };
 
-JSValue createBunTTYFunctions(JSC::JSGlobalObject* globalObject)
+JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
 
@@ -422,5 +517,4 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
 
     return obj;
 }
-
 }

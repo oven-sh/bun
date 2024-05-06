@@ -121,7 +121,7 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string | Buffer>;
+  files: Record<string, string | Buffer | Blob>;
   /** Files to be written only after the bundle is done. */
   runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
@@ -813,6 +813,9 @@ function expectBundled(
 
             return testRef(id, opts);
           }
+          if (allErrors.length === 0) {
+            throw new Error("Bundle Failed\ncode: " + exitCode + "\nstdout: " + stdout + "\nstderr: " + stderr);
+          }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
           throw new Error("Bundle Failed\n" + stderr?.toUnixString());
@@ -1291,6 +1294,8 @@ for (const [key, blob] of build.outputs) {
             const lines = stderr!
               .toUnixString()
               .split("\n")
+              // remove `Bun v1.0.0...` line
+              .slice(0, -2)
               .filter(Boolean)
               .map(x => x.trim())
               .reverse();

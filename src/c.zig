@@ -158,7 +158,19 @@ pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_di
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
     if (comptime Environment.isWindows) {
-        @panic("TODO windows");
+        var buf0: bun.WPathBuffer = undefined;
+        var buf1: bun.WPathBuffer = undefined;
+
+        const dest = try bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0).unwrap();
+        const src_len = bun.windows.GetFinalPathNameByHandleW(in_handle.cast(), &buf1, buf1.len, 0);
+        if (src_len == 0) {
+            return error.EBUSY;
+        } else if (src_len >= buf1.len) {
+            return error.ENAMETOOLONG;
+        }
+        const src = buf1[0..src_len :0];
+        try bun.copyFile(src, dest);
+        return;
     }
 
     const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
@@ -464,3 +476,9 @@ pub fn dlopen(filename: [:0]const u8, flags: i32) ?*anyopaque {
 }
 
 pub extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int) c_int;
+
+pub extern "C" fn bun_initialize_process() void;
+pub extern "C" fn bun_restore_stdio() void;
+pub extern "C" fn open_as_nonblocking_tty(i32, i32) i32;
+
+pub extern fn strlen(ptr: [*c]const u8) usize;

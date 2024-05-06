@@ -5,14 +5,14 @@ const initializeStore = @import("../install.zig").initializeStore;
 const json_parser = bun.JSON;
 const PackageManager = @import("../install.zig").PackageManager;
 const Npm = @import("../npm.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const FileSystem = @import("../../fs.zig").FileSystem;
 const JSAst = bun.JSAst;
 const string = bun.string;
 const stringZ = bun.stringZ;
 const Features = @import("../install.zig").Features;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const Resolution = @import("../resolution.zig").Resolution;
 const String = @import("../semver.zig").String;
 const Semver = @import("../semver.zig");
@@ -105,12 +105,14 @@ pub const FolderResolution = union(Tag) {
         abs: stringZ,
         rel: string,
     };
-    fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *[bun.MAX_PATH_BYTES]u8, non_normalized_path: string) Paths {
+    fn normalizePackageJSONPath(global_or_relative: GlobalOrRelative, joined: *bun.PathBuffer, non_normalized_path: string) Paths {
         var abs: string = "";
         var rel: string = "";
         // We consider it valid if there is a package.json in the folder
         const normalized = if (non_normalized_path.len == 1 and non_normalized_path[0] == '.')
             non_normalized_path
+        else if (std.fs.path.isAbsolute(non_normalized_path))
+            std.mem.trimRight(u8, non_normalized_path, std.fs.path.sep_str)
         else
             std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
 
@@ -140,14 +142,14 @@ pub const FolderResolution = union(Tag) {
                         }
                     }
                 },
-                else => {},
+                .relative => {},
             }
             bun.copy(u8, remain, normalized);
             remain[normalized.len..][0.."/package.json".len].* = (std.fs.path.sep_str ++ "package.json").*;
             remain = remain[normalized.len + "/package.json".len ..];
             abs = joined[0 .. joined.len - remain.len];
             // We store the folder name without package.json
-            rel = abs[0 .. abs.len - "/package.json".len];
+            rel = FileSystem.instance.relative(FileSystem.instance.top_level_dir, abs[0 .. abs.len - "/package.json".len]);
         }
         joined[abs.len] = 0;
 
@@ -165,19 +167,24 @@ pub const FolderResolution = union(Tag) {
         comptime ResolverType: type,
         resolver: ResolverType,
     ) !Lockfile.Package {
-        var package_json: std.fs.File = try std.fs.cwd().openFileZ(abs, .{ .mode = .read_only });
-        defer package_json.close();
-        var package = Lockfile.Package{};
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
-        const len = try package_json.getEndPos();
 
-        body.data.reset();
-        body.data.inflate(@max(len, 2048)) catch unreachable;
-        body.data.list.expandToCapacity();
-        const source_buf = try package_json.readAll(body.data.list.items);
+        const source = brk: {
+            var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, std.os.O.RDONLY, 0).unwrap());
+            defer file.close();
 
-        const source = logger.Source.initPathString(abs, body.data.list.items[0..source_buf]);
+            {
+                body.data.reset();
+                var man = body.data.list.toManaged(manager.allocator);
+                defer body.data.list = man.moveToUnmanaged();
+                _ = try file.readToEndWithArrayList(&man).unwrap();
+            }
+
+            break :brk logger.Source.initPathString(abs, body.data.list.items);
+        };
+
+        var package = Lockfile.Package{};
 
         try package.parse(
             manager.lockfile,
@@ -222,7 +229,14 @@ pub const FolderResolution = union(Tag) {
         const abs = paths.abs;
         const rel = paths.rel;
 
-        const entry = manager.folders.getOrPut(manager.allocator, hash(abs)) catch unreachable;
+        // replace before getting hash. rel may or may not be contained in abs
+        if (comptime bun.Environment.isWindows) {
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(abs));
+            bun.path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel));
+        }
+        const abs_hash = hash(abs);
+
+        const entry = manager.folders.getOrPut(manager.allocator, abs_hash) catch unreachable;
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {
@@ -266,7 +280,7 @@ pub const FolderResolution = union(Tag) {
                 CacheFolderResolver{ .version = version.value.npm.version.toVersion() },
             ),
         } catch |err| {
-            if (err == error.FileNotFound) {
+            if (err == error.FileNotFound or err == error.ENOENT) {
                 entry.value_ptr.* = .{ .err = error.MissingPackageJSON };
             } else {
                 entry.value_ptr.* = .{ .err = err };

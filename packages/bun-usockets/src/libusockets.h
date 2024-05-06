@@ -38,12 +38,16 @@
 
 /* 512kb shared receive buffer */
 #define LIBUS_RECV_BUFFER_LENGTH 524288
+
+/* Small 16KB shared send buffer for UDP packet metadata */
+#define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
 /* 32 byte padding of receive buffer ends */
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
+#define ALLOW_SERVER_RENEGOTIATION 0
 
 /* Define what a socket descriptor is based on platform */
 #ifdef _WIN32
@@ -101,14 +105,14 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Peeks ECN of received packet */
-int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
+// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Receives a set of packets into specified packet buffer */
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);
 
 void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
 
-int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int num);
+int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num);
 
 /* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
@@ -120,7 +124,9 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+
+void us_udp_socket_close(struct us_udp_socket_t *s);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -195,6 +201,8 @@ struct us_bun_socket_context_options_t {
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;
+    unsigned int client_renegotiation_limit;
+    unsigned int client_renegotiation_window;
 };
 
 /* Return 15-bit timestamp for this context */

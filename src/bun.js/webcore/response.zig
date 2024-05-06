@@ -3,21 +3,21 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const http = @import("root").bun.http;
+const http = bun.http;
 const FetchRedirect = http.FetchRedirect;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -38,9 +38,9 @@ const DataURL = @import("../../resolver/data_url.zig").DataURL;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 const StringJoiner = @import("../../string_joiner.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Mutex = @import("../../lock.zig").Lock;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
@@ -470,7 +470,7 @@ pub const Response = struct {
                         break :brk Init.init(bun.default_allocator, globalThis, arguments[1]) catch null;
                     }
 
-                    std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
+                    bun.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
                     const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
                     globalThis.throwValue(err);
@@ -529,7 +529,7 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(_: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
 
             if (!response_init.isCell())
@@ -538,7 +538,7 @@ pub const Response = struct {
             if (response_init.jsType() == .DOMWrapper) {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
-                if (response_init.as(Request)) |req| {
+                if (response_init.asDirect(Request)) |req| {
                     if (req.headers) |headers| {
                         if (!headers.isEmpty()) {
                             result.headers = headers.cloneThis(ctx);
@@ -549,7 +549,7 @@ pub const Response = struct {
                     return result;
                 }
 
-                if (response_init.as(Response)) |resp| {
+                if (response_init.asDirect(Response)) |resp| {
                     return resp.init.clone(ctx);
                 }
             }
@@ -580,10 +580,8 @@ pub const Response = struct {
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {
-                var method_str = method_value.toSlice(ctx, allocator);
-                defer method_str.deinit();
-                if (method_str.len > 0) {
-                    result.method = Method.which(method_str.slice()) orelse .GET;
+                if (Method.fromJS(ctx, method_value)) |method| {
+                    result.method = method;
                 }
             }
 
@@ -1204,7 +1202,7 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
-            std.debug.assert(this.result.fail != null);
+            bun.assert(this.result.fail != null);
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
@@ -1304,7 +1302,11 @@ pub const Fetch = struct {
                     error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
                     error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                     error.UNKKNOW_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
-                    else => bun.String.static("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
+
+                    else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
+                        @errorName(e),
+                        path,
+                    }) catch bun.outOfMemory(),
                 },
                 .path = path,
             };
@@ -1402,7 +1404,7 @@ pub const Fetch = struct {
 
         fn toResponse(this: *FetchTasklet) Response {
             log("toResponse", .{});
-            std.debug.assert(this.metadata != null);
+            bun.assert(this.metadata != null);
             // at this point we always should have metadata
             const metadata = this.metadata.?;
             const http_response = metadata.response;
@@ -1535,8 +1537,8 @@ pub const Fetch = struct {
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
-                std.debug.assert(fetch_options.url.isHTTP());
-                std.debug.assert(fetch_options.proxy == null);
+                bun.assert(fetch_options.url.isHTTP());
+                bun.assert(fetch_options.proxy == null);
                 fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
             }
 
@@ -1614,7 +1616,7 @@ pub const Fetch = struct {
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {
                 log("added callback metadata", .{});
-                std.debug.assert(task.metadata == null);
+                bun.assert(task.metadata == null);
                 task.metadata = metadata;
             }
             task.body_size = result.body_size;
@@ -1683,6 +1685,7 @@ pub const Fetch = struct {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
+        bun.Analytics.Features.fetch += 1;
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;
@@ -1750,9 +1753,25 @@ pub const Fetch = struct {
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone
         if (first_arg.as(Request)) |request| {
+            const can_use_fast_getters = first_arg.asDirect(Request) == request;
+            const slow_getters: ?JSC.JSValue = if (can_use_fast_getters) null else first_arg;
             request.ensureURL() catch unreachable;
 
-            if (request.url.isEmpty()) {
+            var url_str = request.url;
+            var need_to_deinit_url_str = false;
+            defer if (need_to_deinit_url_str) url_str.deref();
+
+            if (!can_use_fast_getters) {
+                if (first_arg.fastGet(globalThis, .url)) |url_value| {
+                    url_str = url_value.toBunString(globalThis);
+                    need_to_deinit_url_str = true;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                }
+            }
+
+            if (url_str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1763,8 +1782,8 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            if (request.url.hasPrefixComptime("data:")) {
-                var url_slice = request.url.toUTF8WithoutRef(allocator);
+            if (url_str.hasPrefixComptime("data:")) {
+                var url_slice = url_str.toUTF8WithoutRef(allocator);
                 defer url_slice.deinit();
 
                 var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
@@ -1772,11 +1791,11 @@ pub const Fetch = struct {
                     return JSPromise.rejectedPromiseValue(globalThis, err);
                 };
 
-                data_url.url = request.url;
+                data_url.url = url_str;
                 return dataURLResponse(data_url, globalThis, allocator);
             }
 
-            url = ZigURL.fromString(allocator, request.url) catch {
+            url = ZigURL.fromString(allocator, url_str) catch {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1794,15 +1813,17 @@ pub const Fetch = struct {
             if (!is_file_url) {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
-                        if (options.fastGet(ctx.ptr(), .method)) |method_| {
-                            var slice_ = method_.toSlice(ctx.ptr(), allocator);
-                            defer slice_.deinit();
-                            method = Method.which(slice_.slice()) orelse .GET;
-                        } else {
+                        if (options.fastGetOrElse(ctx.ptr(), .method, slow_getters)) |method_| {
+                            method = Method.fromJS(ctx, method_) orelse .GET;
+                        } else if (can_use_fast_getters) {
                             method = request.method;
                         }
 
-                        if (options.fastGet(ctx.ptr(), .body)) |body__| {
+                        if (options.fastGetOrElse(
+                            ctx.ptr(),
+                            .body,
+                            slow_getters,
+                        )) |body__| {
                             if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
                                 var body_value = body_const;
                                 // TODO: buffer ReadableStream?
@@ -1821,7 +1842,7 @@ pub const Fetch = struct {
                             body = request.body.value.useAsAnyBlob();
                         }
 
-                        if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
+                        if (options.fastGetOrElse(ctx.ptr(), .headers, slow_getters)) |headers_| {
                             if (headers_.as(FetchHeaders)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                                     if (hostname) |host| {
@@ -1949,7 +1970,11 @@ pub const Fetch = struct {
                         }
                     }
                 } else {
-                    method = request.method;
+                    if (can_use_fast_getters) {
+                        method = request.method;
+                    } else if (first_arg.fastGet(globalThis, .method)) |method_value| {
+                        method = Method.fromJS(globalThis, method_value) orelse .GET;
+                    }
 
                     if (request.body.value == .Locked) {
                         if (request.body.value.Locked.readable.get()) |stream| {
@@ -2023,9 +2048,10 @@ pub const Fetch = struct {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
                         if (options.fastGet(ctx.ptr(), .method)) |method_| {
-                            var slice_ = method_.toSlice(ctx.ptr(), allocator);
-                            defer slice_.deinit();
-                            method = Method.which(slice_.slice()) orelse .GET;
+                            method = Method.fromJS(ctx, method_) orelse .GET;
+                            if (globalThis.hasException()) {
+                                return .zero;
+                            }
                         }
 
                         if (options.fastGet(ctx.ptr(), .body)) |body__| {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_ast = bun.JSAst;
 
 const bun = @import("root").bun;
@@ -63,6 +63,7 @@ pub const Lexer = struct {
     number: f64 = 0.0,
     prev_error_loc: logger.Loc = logger.Loc.Empty,
     string_literal_slice: string = "",
+    string_literal_is_ascii: bool = true,
     line_number: u32 = 0,
     token: T = T.t_end_of_file,
     allow_double_bracket: bool = true,
@@ -618,6 +619,7 @@ pub const Lexer = struct {
                 // unescaped string
                 '\'' => {
                     lexer.step();
+                    lexer.string_literal_is_ascii = true;
                     const start = lexer.end;
                     var is_multiline_string_literal = false;
 
@@ -682,6 +684,7 @@ pub const Lexer = struct {
                     var needs_slow_pass = false;
                     const start = lexer.end;
                     var is_multiline_string_literal = false;
+                    lexer.string_literal_is_ascii = true;
 
                     if (lexer.code_point == '"') {
                         lexer.step();
@@ -769,6 +772,7 @@ pub const Lexer = struct {
                             try lexer.decodeEscapeSequences(start, text, false, @TypeOf(array_list), &array_list);
                         }
                         lexer.string_literal_slice = try array_list.toOwnedSlice();
+                        lexer.string_literal_is_ascii = false;
                     }
 
                     lexer.token = T.t_string_literal;
@@ -801,7 +805,7 @@ pub const Lexer = struct {
         var buf = buf_.*;
         defer buf_.* = buf;
 
-        const iterator = strings.CodepointIterator{ .bytes = text[start..], .i = 0 };
+        const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
         var iter = strings.CodepointIterator.Cursor{};
         while (iterator.next(&iter)) {
             const width = iter.width;
@@ -1159,8 +1163,16 @@ pub const Lexer = struct {
         return lex;
     }
 
-    pub inline fn toEString(lexer: *Lexer) js_ast.E.String {
-        return js_ast.E.String{ .data = lexer.string_literal_slice };
+    pub inline fn toString(lexer: *Lexer, loc_: logger.Loc) js_ast.Expr {
+        if (lexer.string_literal_is_ascii) {
+            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = lexer.string_literal_slice }, loc_);
+        }
+
+        return js_ast.Expr.init(
+            js_ast.E.UTF8String,
+            .{ .data = lexer.string_literal_slice },
+            loc_,
+        );
     }
 
     pub fn raw(self: *Lexer) []const u8 {

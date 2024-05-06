@@ -1,5 +1,5 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
@@ -48,8 +48,8 @@ pub const StatWatcherScheduler = struct {
 
     pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
         log("append new watcher {s}", .{watcher.path});
-        std.debug.assert(watcher.closed == false);
-        std.debug.assert(watcher.next == null);
+        bun.assert(watcher.closed == false);
+        bun.assert(watcher.next == null);
 
         if (this.head.swap(watcher, .Monotonic)) |head| {
             watcher.next = head;
@@ -173,7 +173,7 @@ pub const StatWatcher = struct {
 
     pub fn deinit(this: *StatWatcher) void {
         log("deinit\n", .{});
-        std.debug.assert(!this.hasPendingActivity());
+        bun.assert(!this.hasPendingActivity());
 
         if (this.persistent) {
             this.persistent = false;
@@ -385,7 +385,7 @@ pub const StatWatcher = struct {
 
         const vm = this.globalThis.bunVM();
         if (result.isAnyError()) {
-            vm.onUnhandledError(this.globalThis, result);
+            vm.onError(this.globalThis, result);
         }
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
@@ -421,7 +421,7 @@ pub const StatWatcher = struct {
         );
         if (result.isAnyError()) {
             const vm = this.globalThis.bunVM();
-            vm.onUnhandledError(this.globalThis, result);
+            vm.onError(this.globalThis, result);
         }
     }
 

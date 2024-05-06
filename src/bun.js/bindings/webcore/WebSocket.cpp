@@ -260,19 +260,6 @@ ExceptionOr<void> WebSocket::connect(const String& url, const String& protocol)
     return connect(url, Vector<String> { 1, protocol }, std::nullopt);
 }
 
-void WebSocket::failAsynchronously()
-{
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this] {
-    // We must block this connection. Instead of throwing an exception, we indicate this
-    // using the error event. But since this code executes as part of the WebSocket's
-    // constructor, we have to wait until the constructor has completed before firing the
-    // event; otherwise, users can't connect to the event.
-    this->dispatchErrorEventIfNeeded();
-    // this->();
-    // this->stop();
-    // });
-}
-
 static String resourceName(const URL& url)
 {
     auto path = url.path();
@@ -304,7 +291,6 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     m_url = URL { url };
 
     ASSERT(scriptExecutionContext());
-    auto& context = *scriptExecutionContext();
 
     if (!m_url.isValid()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
@@ -440,16 +426,15 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     headerNames.clear();
 
     if (this->m_upgradeClient == nullptr) {
-        // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-
-        context.postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            ASSERT(scriptExecutionContext());
-            protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
-            protectedThis->dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
-            protectedThis->decPendingActivityCount();
-        });
-
+        if (auto* context = scriptExecutionContext()) {
+            context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+                protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+                protectedThis->dispatchEvent(CloseEvent::create(false, 1006, "Failed to connect"_s));
+                protectedThis->decPendingActivityCount();
+            });
+        }
         return {};
     }
 
@@ -1131,7 +1116,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
             this->incPendingActivityCount();
 
-            context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
                 JSUint8Array* uint8array = JSUint8Array::create(
@@ -1158,15 +1143,19 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
-void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason)
+void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTFMove(reason)] {
     if (m_state == CLOSED)
         return;
+    const bool wasConnecting = m_state == CONNECTING;
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
+        if (wasConnecting && isConnectionError) {
+            dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        }
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));
         this->decPendingActivityCount();
@@ -1236,29 +1225,6 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
 
     // m_pendingActivity = nullptr;
     // });
-}
-
-// void WebSocket::didUpgradeURL()
-// {
-//     ASSERT(m_url.protocolIs("ws"));
-//     m_url.setProtocol("wss");
-// }
-
-void WebSocket::dispatchErrorEventIfNeeded()
-{
-    if (m_dispatchedErrorEvent)
-        return;
-
-    m_dispatchedErrorEvent = true;
-
-    if (auto* context = scriptExecutionContext()) {
-        this->incPendingActivityCount();
-        context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            ASSERT(scriptExecutionContext());
-            protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
-            protectedThis->decPendingActivityCount();
-        });
-    }
 }
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
@@ -1379,7 +1345,7 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     // failed_to_connect
     case 15: {
         static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("Failed to connect");
-        didReceiveClose(CleanStatus::NotClean, 1006, message);
+        didReceiveClose(CleanStatus::NotClean, 1006, message, true);
         break;
     }
     // headers_too_large
@@ -1449,10 +1415,16 @@ void WebSocket::didFailWithErrorCode(int32_t code)
         didReceiveClose(CleanStatus::NotClean, 1003, message);
         break;
     }
+    // tls_handshake_failed
+    case 27: {
+        static NeverDestroyed<String> message = MAKE_STATIC_STRING_IMPL("TLS handshake failed");
+        didReceiveClose(CleanStatus::NotClean, 1015, message);
+        break;
+    }
     }
 
     m_state = CLOSED;
-    scriptExecutionContext()->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+    scriptExecutionContext()->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->decPendingActivityCount();
     });
 }

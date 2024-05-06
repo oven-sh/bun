@@ -10,7 +10,7 @@ const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
-let [_workerData, _threadId, _receiveMessageOnPort] = $lazy("worker_threads");
+const { 0: _workerData, 1: _threadId, 2: _receiveMessageOnPort } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding");
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -124,9 +124,10 @@ function fakeParentPort() {
     },
   });
 
+  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return self.postMessage(...args);
+      return postMessage(...args);
     },
   });
 
@@ -317,6 +318,7 @@ class Worker extends EventEmitter {
     throwNotImplemented("worker_threads.Worker.getHeapSnapshot");
   }
 }
+
 export default {
   Worker,
   workerData,

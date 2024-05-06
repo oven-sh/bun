@@ -1,4 +1,4 @@
-Bun ships as a single executable that can be installed a few different ways.
+Bun ships as a single executable with no dependencies that can be installed a few different ways.
 
 ## Installing
 
@@ -38,28 +38,27 @@ $ proto install bun
 
 ### Windows
 
-{% callout %}
-Bun requires a minimum of Windows 10 version 1809
-{% /callout %}
-
-Bun provides a _limited, experimental_ native build for Windows. It is recommended to use Bun within [Windows Subsystem for Linux](https://learn.microsoft.com/en-us/windows/wsl/install) and follow the above instructions. To help catch bugs, the experimental build enables many debugging assertions, which will make the binary slower than what the stable version will be.
-
 To install, paste this into a terminal:
 
 {% codetabs %}
 
 ```powershell#PowerShell/cmd.exe
-# WARNING: No stability is guaranteed on the experimental Windows builds
-powershell -c "irm bun.sh/install.ps1|iex"
+> powershell -c "irm bun.sh/install.ps1|iex"
+```
+
+```powershell#npm
+> npm install -g bun # the last `npm` command you'll ever need
 ```
 
 ```powershell#Scoop
-# WARNING: No stability is guaranteed on the experimental Windows builds
-scoop bucket add versions
-scoop install bun-canary
+> scoop install bun
 ```
 
 {% /codetabs %}
+
+{% callout %}
+Bun requires a minimum of Windows 10 version 1809
+{% /callout %}
 
 For support and discussion, please join the [#windows channel on our Discord](http://bun.sh/discord).
 
@@ -145,8 +144,12 @@ $ bun upgrade
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
 
+**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
+
 **proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
+
+## Canary builds
 
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:
 
@@ -154,11 +157,51 @@ Bun automatically releases an (untested) canary build on every commit to `main`.
 $ bun upgrade --canary
 ```
 
+The canary build is useful for testing new features and bug fixes before they're released in a stable build. To help the Bun team fix bugs faster, canary builds automatically upload crash reports to Bun's team.
+
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
 
 {% callout %}
-**Note** — To switch back to a stable release from canary, run `bun upgrade` again with no flags.
+**Note** — To switch back to a stable release from canary, run `bun upgrade` again with no flags.
 {% /callout %}
+
+## Installing older versions of Bun
+
+Since Bun is a single binary, you can install older versions of Bun by re-running the installer script with a specific version.
+
+### Installing a specific version of Bun on Linux/Mac
+
+To install a specific version of Bun, you can pass the git tag of the version you want to install to the install script, such as `bun-v1.1.6` or `bun-v1.1.1`.
+
+```sh
+$ curl -fsSL https://bun.sh/install | bash -s "bun-v1.1.6"
+```
+
+### Installing a specific version of Bun on Windows
+
+On Windows, you can install a specific version of Bun by passing the version number to the Powershell install script.
+
+```sh
+# PowerShell:
+$ iex "& {$(irm https://bun.sh/install.ps1)} -Version 1.1.6"
+```
+
+## Downloading Bun binaries directly
+
+To download Bun binaries directly, you can visit the [releases page](https://github.com/oven-sh/bun/releases) page on GitHub.
+
+For convenience, here are download links for the latest version:
+
+- [`bun-linux-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip)
+- [`bun-linux-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-baseline.zip)
+- [`bun-windows-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip)
+- [`bun-windows-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64-baseline.zip)
+- [`bun-darwin-aarch64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip)
+- [`bun-linux-aarch64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64.zip)
+- [`bun-darwin-x64.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip)
+- [`bun-darwin-x64-baseline.zip`](https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64-baseline.zip)
+
+The `baseline` binaries are built for older CPUs which may not support AVX2 instructions. If you run into an "Illegal Instruction" error when running Bun, try using the `baseline` binaries instead. Bun's install scripts automatically choose the correct binary for your system which helps avoid this issue. Baseline builds are slower than regular builds, so use them only if necessary.
 
 <!--
 ## Native
@@ -232,11 +275,15 @@ If you need to remove Bun from your system, use the following commands.
 $ rm -rf ~/.bun # for macOS, Linux, and WSL
 ```
 
-```bash#Windows
-$ Remove-Item ~\.bun -Recurse
+```powershell#Windows
+> powershell -c ~\.bun\uninstall.ps1
 ```
 
-```bash#NPM
+```powershell#Scoop
+> scoop uninstall bun
+```
+
+```bash#npm
 $ npm uninstall -g bun
 ```
 

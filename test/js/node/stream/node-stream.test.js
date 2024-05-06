@@ -2,12 +2,10 @@ import { expect, describe, it } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync, isWindows } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
-
-const isWindows = process.platform === "win32";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -368,8 +366,18 @@ describe("TTY", () => {
     expect(process.stdout instanceof tty.WriteStream).toBe(true);
     expect(process.stderr instanceof tty.WriteStream).toBe(true);
     expect(process.stdin.isTTY).toBeUndefined();
-    expect(process.stdout.isTTY).toBeDefined();
-    expect(process.stderr.isTTY).toBeDefined();
+
+    if (tty.isatty(1)) {
+      expect(process.stdout.isTTY).toBeDefined();
+    } else {
+      expect(process.stdout.isTTY).toBeUndefined();
+    }
+
+    if (tty.isatty(2)) {
+      expect(process.stderr.isTTY).toBeDefined();
+    } else {
+      expect(process.stderr.isTTY).toBeUndefined();
+    }
   });
   it("read and write stream prototypes", () => {
     expect(tty.ReadStream.prototype.setRawMode).toBeInstanceOf(Function);
@@ -463,4 +471,61 @@ it("#9242.9 Transform has constructor", () => {
 it("#9242.10 PassThrough has constructor", () => {
   const pt = new PassThrough({});
   expect(pt.constructor).toBe(PassThrough);
+});
+
+it("should send Readable events in the right order", async () => {
+  const package_dir = tmpdirSync("bun-test-node-stream");
+  const fixture_path = join(package_dir, "fixture.js");
+
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    function patchEmitter(emitter, prefix) {
+      var oldEmit = emitter.emit;
+
+      emitter.emit = function () {
+        console.log([prefix, arguments[0]]);
+        oldEmit.apply(emitter, arguments);
+      };
+    }
+
+    const stream = require("node:stream");
+
+    const readable = new stream.Readable({
+      read() {
+        this.push("Hello ");
+        this.push("World!\n");
+        this.push(null);
+      },
+    });
+    patchEmitter(readable, "readable");
+
+    const webReadable = stream.Readable.toWeb(readable);
+
+    const result = await new Response(webReadable).text();
+    console.log([1, result]);
+    `,
+  );
+
+  const { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    `[ "readable", "pause" ]`,
+    // `[ "readable", "resume" ]`,
+    `[ "readable", "data" ]`,
+    `[ "readable", "data" ]`,
+    // `[ "readable", "readable" ]`,
+    `[ "readable", "end" ]`,
+    `[ "readable", "close" ]`,
+    `[ 1, "Hello World!\\n" ]`,
+    ``,
+  ]);
 });

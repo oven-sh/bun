@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "isolatedModules": true,
     "noEmit": true,
@@ -12,15 +12,14 @@
   },
   "include": [
     //
-    "node",
-    "bun",
-    "builtins",
-    "functions",
-    "internal",
-    "thirdparty",
-    "_codegen",
-    "builtins.d.ts",
-    "private.d.ts",
-    "../../packages/bun-types/index.d.ts"
+    "./node",
+    "./bun",
+    "./builtins",
+    "./functions",
+    "./internal",
+    "./thirdparty",
+    "./builtins.d.ts",
+    "./private.d.ts",
+    "../../build/codegen/WebCoreJSBuiltins.d.ts"
   ]
 }

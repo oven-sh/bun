@@ -22,7 +22,7 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-const { cleanupLater, setAsyncHooksEnabled } = $lazy("async_hooks");
+const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -308,9 +308,13 @@ function createWarning(message) {
   var wrapped = function () {
     if (warned) return;
 
-    // zx does not need createHook to function
-    const isFromZX = new Error().stack!.includes("zx/build/core.js");
-    if (isFromZX) return;
+    const known_supported_modules = [
+      // the following do not actually need async_hooks to work properly
+      "zx/build/core.js",
+      "datadog-core/src/storage/async_resource.js",
+    ];
+    const e = new Error().stack!;
+    if (known_supported_modules.some(m => e.includes(m))) return;
 
     warned = true;
     console.warn("[bun] Warning:", message);

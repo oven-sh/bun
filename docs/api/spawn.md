@@ -5,13 +5,14 @@ Spawn child processes with `Bun.spawn` or `Bun.spawnSync`.
 Provide a command as an array of strings. The result of `Bun.spawn()` is a `Bun.Subprocess` object.
 
 ```ts
-Bun.spawn(["echo", "hello"]);
+const proc = Bun.spawn(["bun", "--version"]);
+console.log(await proc.exited); // 0
 ```
 
 The second argument to `Bun.spawn` is a parameters object that can be used to configure the subprocess.
 
 ```ts
-const proc = Bun.spawn(["echo", "hello"], {
+const proc = Bun.spawn(["bun", "--version"], {
   cwd: "./path/to/subdir", // specify a working directory
   env: { ...process.env, FOO: "bar" }, // specify environment variables
   onExit(proc, exitCode, signalCode, error) {
@@ -107,9 +108,9 @@ proc.stdin.end();
 You can read results from the subprocess via the `stdout` and `stderr` properties. By default these are instances of `ReadableStream`.
 
 ```ts
-const proc = Bun.spawn(["echo", "hello"]);
+const proc = Bun.spawn(["bun", "--version"]);
 const text = await new Response(proc.stdout).text();
-console.log(text); // => "hello"
+console.log(text); // => "1.1.7"
 ```
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:
@@ -148,7 +149,7 @@ Configure the output stream by passing one of the following values to `stdout/st
 Use the `onExit` callback to listen for the process exiting or being killed.
 
 ```ts
-const proc = Bun.spawn(["echo", "hello"], {
+const proc = Bun.spawn(["bun", "--version"], {
   onExit(proc, exitCode, signalCode, error) {
     // exit handler
   },
@@ -158,7 +159,7 @@ const proc = Bun.spawn(["echo", "hello"], {
 For convenience, the `exited` property is a `Promise` that resolves when the process exits.
 
 ```ts
-const proc = Bun.spawn(["echo", "hello"]);
+const proc = Bun.spawn(["bun", "--version"]);
 
 await proc.exited; // resolves when process exit
 proc.killed; // boolean — was the process killed?
@@ -169,7 +170,7 @@ proc.signalCode; // null | "SIGABRT" | "SIGALRM" | ...
 To kill a process:
 
 ```ts
-const proc = Bun.spawn(["echo", "hello"]);
+const proc = Bun.spawn(["bun", "--version"]);
 proc.kill();
 proc.killed; // true
 
@@ -179,16 +180,13 @@ proc.kill(); // specify an exit code
 The parent `bun` process will not terminate until all child processes have exited. Use `proc.unref()` to detach the child process from the parent.
 
 ```
-const proc = Bun.spawn(["echo", "hello"]);
+const proc = Bun.spawn(["bun", "--version"]);
 proc.unref();
 ```
 
 ## Inter-process communication (IPC)
 
 Bun supports direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
-{%callout%}
-**Note** — This API is only compatible with other `bun` processes. Use `process.execPath` to get a path to the currently running `bun` executable.
-{%/callout%}
 
 ```ts#parent.ts
 const child = Bun.spawn(["bun", "child.ts"], {
@@ -227,14 +225,45 @@ process.on("message", (message) => {
 });
 ```
 
-All messages are serialized using the JSC `serialize` API, which allows for the same set of [transferrable types](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) supported by `postMessage` and `structuredClone`, including strings, typed arrays, streams, and objects.
-
 ```ts#child.ts
 // send a string
 process.send("Hello from child as string");
 
 // send an object
 process.send({ message: "Hello from child as object" });
+```
+
+The `ipcMode` option controls the underlying communication format between the two processes:
+
+- `advanced`: (default) Messages are serialized using the JSC `serialize` API, which supports cloning [everything `structuredClone` supports](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm). This does not support transferring ownership of objects.
+- `json`: Messages are serialized using `JSON.stringify` and `JSON.parse`, which does not support as many object types as `advanced` does.
+
+### IPC between Bun & Node.js
+
+To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.
+
+```js#bun-node-ipc.js
+if (typeof Bun !== "undefined") {
+  const prefix = `[bun ${process.versions.bun} 🐇]`;
+  const node = Bun.spawn({
+    cmd: ["node", __filename],
+    ipc({ message }) {
+      console.log(message);
+      node.send({ message: `${prefix} 👋 hey node` });
+      node.kill();
+    },
+    stdio: ["inherit", "inherit", "inherit"],
+    serialization: "json",
+  });
+
+  node.send({ message: `${prefix} 👋 hey node` });
+} else {
+  const prefix = `[node ${process.version}]`;
+  process.on("message", ({ message }) => {
+    console.log(message);
+    process.send({ message: `${prefix} 👋 hey bun` });
+  });
+}
 ```
 
 ## Blocking API (`Bun.spawnSync()`)

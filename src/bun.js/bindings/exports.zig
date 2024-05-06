@@ -1,4 +1,4 @@
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Fs = @import("../../fs.zig");
 const CAPI = JSC.C;
 const JS = @import("../javascript.zig");
@@ -8,7 +8,7 @@ const Api = @import("../../api/schema.zig").Api;
 const bun = @import("root").bun;
 const std = @import("std");
 const Shimmer = @import("./shimmer.zig").Shimmer;
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const NewGlobalObject = JSC.NewGlobalObject;
 const JSGlobalObject = JSC.JSGlobalObject;
@@ -25,7 +25,6 @@ const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
-const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
@@ -49,7 +48,6 @@ pub const ZigGlobalObject = extern struct {
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
-        Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
 
@@ -116,6 +114,10 @@ pub const ErrorCode = enum(ErrorCodeInt) {
         return @as(ErrorCode, @enumFromInt(@intFromError(code)));
     }
 
+    pub inline fn toError(self: ErrorCode) anyerror {
+        return @errorFromInt(@intFromEnum(self));
+    }
+
     pub const ParserError = @intFromEnum(ErrorCode.from(error.ParserError));
     pub const JSErrorObject = @intFromEnum(ErrorCode.from(error.JSErrorObject));
 
@@ -156,6 +158,14 @@ pub fn Errorable(comptime Type: type) type {
             err: ZigErrorType,
         };
 
+        pub fn unwrap(errorable: @This()) !Type {
+            if (errorable.success) {
+                return errorable.result.value;
+            } else {
+                return errorable.result.err.code.toError();
+            }
+        }
+
         pub fn value(val: Type) @This() {
             return @This(){ .result = .{ .value = val }, .success = true };
         }
@@ -184,18 +194,30 @@ pub const ResolvedSource = extern struct {
     pub const name = "ResolvedSource";
     pub const namespace = shim.namespace;
 
+    /// Specifier's lifetime is the caller from C++
+    /// https://github.com/oven-sh/bun/issues/9521
     specifier: bun.String = bun.String.empty,
     source_code: bun.String = bun.String.empty,
+
+    /// source_url is eventually deref'd on success
     source_url: bun.String = bun.String.empty,
+
+    // this pointer is unused and shouldn't exist
     commonjs_exports: ?[*]ZigString = null,
+
+    // This field is used to indicate whether it's a CommonJS module or ESM
     commonjs_exports_len: u32 = 0,
 
     hash: u32 = 0,
 
     allocator: ?*anyopaque = null,
 
+    jsvalue_for_export: JSC.JSValue = .zero,
+
     tag: Tag = Tag.javascript,
-    needs_deref: bool = true,
+
+    /// This is for source_code
+    source_code_needs_deref: bool = true,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -206,7 +228,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
     var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
     var ptr = ZigString.init(raw[0..len]).slice().ptr;
     if (comptime Environment.allow_assert) {
-        std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
+        bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     const str = ptr[0..len];
 
@@ -216,7 +238,7 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
     const untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
     if (comptime Environment.allow_assert) {
-        std.debug.assert(Mimalloc.mi_is_in_heap_region(ptr));
+        bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     // we must untag the string pointer
     Mimalloc.mi_free(untagged);
@@ -950,4 +972,61 @@ pub export fn Bun__LoadLibraryBunString(str: *bun.String) ?*anyopaque {
     buf[data.len] = 0;
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
     return bun.windows.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+// https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
+pub export fn NodeModuleModule__findPath(
+    global: *JSGlobalObject,
+    request_bun_str: bun.String,
+    paths_maybe: ?*JSC.JSArray,
+) JSValue {
+    var stack_buf = std.heap.stackFallback(8192, default_allocator);
+    const alloc = stack_buf.get();
+
+    const request_slice = request_bun_str.toUTF8(alloc);
+    defer request_slice.deinit();
+    const request = request_slice.slice();
+
+    const absolute_request = std.fs.path.isAbsolute(request);
+    if (!absolute_request and paths_maybe == null) {
+        return .false;
+    }
+
+    // for each path
+    const found = if (paths_maybe) |paths| found: {
+        var iter = paths.iterator(global);
+        while (iter.next()) |path| {
+            const cur_path = bun.String.tryFromJS(path, global) orelse continue;
+            defer cur_path.deref();
+
+            if (findPathInner(request_bun_str, cur_path, global)) |found| {
+                break :found found;
+            }
+        }
+
+        break :found null;
+    } else findPathInner(request_bun_str, bun.String.static(""), global);
+
+    if (found) |str| {
+        return str.toJS(global);
+    }
+
+    return .false;
+}
+
+fn findPathInner(
+    request: bun.String,
+    cur_path: bun.String,
+    global: *JSGlobalObject,
+) ?bun.String {
+    var errorable: ErrorableString = undefined;
+    JSC.VirtualMachine.resolve(
+        &errorable,
+        global,
+        request,
+        cur_path,
+        null,
+        false,
+    );
+    return errorable.unwrap() catch null;
 }

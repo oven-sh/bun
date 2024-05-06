@@ -257,14 +257,16 @@ pub const FilePoll = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
-        std.debug.assert(this.flags.contains(.has_incremented_poll_count));
+        bun.assert(this.flags.contains(.has_incremented_poll_count));
         loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
+        log("deactivate - {d}", .{loop.active_handles});
         this.flags.remove(.has_incremented_poll_count);
     }
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn activate(this: *FilePoll, loop: *Loop) void {
         loop.active_handles += @as(u32, @intFromBool(!this.flags.contains(.closed) and !this.flags.contains(.has_incremented_poll_count)));
+        log("activate - {d}", .{loop.active_handles});
         this.flags.insert(.has_incremented_poll_count);
     }
 
@@ -344,22 +346,22 @@ pub const FilePoll = struct {
                 return;
             }
 
-            std.debug.assert(poll.next_to_free == null);
+            bun.assert(poll.next_to_free == null);
 
             if (this.pending_free_tail) |tail| {
-                std.debug.assert(this.pending_free_head != null);
-                std.debug.assert(tail.next_to_free == null);
+                bun.assert(this.pending_free_head != null);
+                bun.assert(tail.next_to_free == null);
                 tail.next_to_free = poll;
             }
 
             if (this.pending_free_head == null) {
                 this.pending_free_head = poll;
-                std.debug.assert(this.pending_free_tail == null);
+                bun.assert(this.pending_free_tail == null);
             }
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            std.debug.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
             vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
             vm.after_event_loop_callback_ctx = this;
         }
@@ -396,19 +398,19 @@ pub const Closer = struct {
 
     pub fn close(fd: uv.uv_file, loop: *uv.Loop) void {
         var closer = Closer.new(.{});
-
-        if (uv.uv_fs_close(loop, &closer.io_request, fd, &onClose).errEnum()) |err| {
+        // data is not overridden by libuv when calling uv_fs_close, its ok to set it here
+        closer.io_request.data = closer;
+        if (uv.uv_fs_close(loop, &closer.io_request, fd, onClose).errEnum()) |err| {
             Output.debugWarn("libuv close() failed = {}", .{err});
             closer.destroy();
+            return;
         }
-
-        closer.io_request.data = closer;
     }
 
     fn onClose(req: *uv.fs_t) callconv(.C) void {
         var closer = @fieldParentPtr(Closer, "io_request", req);
-        std.debug.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
-        bun.sys.syslog("uv_fs_close() = {}", .{req.result});
+        bun.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
+        bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.toFD(req.file.fd), req.result });
 
         if (comptime Environment.allow_assert) {
             if (closer.io_request.result.errEnum()) |err| {
@@ -416,7 +418,7 @@ pub const Closer = struct {
             }
         }
 
-        uv.uv_fs_req_cleanup(req);
+        req.deinit();
         closer.destroy();
     }
 };

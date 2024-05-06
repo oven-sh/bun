@@ -1,3 +1,5 @@
+#pragma once
+
 #include "BunClientData.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "_NativeModule.h"
@@ -32,7 +34,7 @@ using namespace JSC;
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsExternal,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callframe)) {
-  GET_FIRST_CELL
+  GET_FIRST_VALUE
   return JSValue::encode(jsBoolean(value.inherits<Bun::NapiExternal>()));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDate, (JSC::JSGlobalObject * globalObject,

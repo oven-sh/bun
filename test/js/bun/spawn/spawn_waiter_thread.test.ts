@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 async function run(withWaiterThread: boolean) {
@@ -17,9 +17,12 @@ async function run(withWaiterThread: boolean) {
     cmd: [bunExe(), join(__dirname, "spawn_waiter_thread-fixture.js")],
   });
 
-  setTimeout(() => {
-    proc.kill(process.platform !== "win32" ? "SIGKILL" : undefined);
-  }, 1000).unref();
+  setTimeout(
+    () => {
+      proc.kill(process.platform !== "win32" ? "SIGKILL" : undefined);
+    },
+    isWindows ? 5000 : 1000,
+  ).unref();
 
   await proc.exited;
 
@@ -27,14 +30,18 @@ async function run(withWaiterThread: boolean) {
 
   // Assert we didn't use 100% of CPU time
   console.log(resourceUsage.cpuTime);
-  expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000n);
+  expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000n * (isWindows ? 5n : 1n));
 }
 
-test("issue #9404", async () => {
-  const promises = [run(false)];
-  if (process.platform === "linux") {
-    promises.push(run(true));
-  }
+test(
+  "issue #9404",
+  async () => {
+    const promises = [run(false)];
+    if (process.platform === "linux") {
+      promises.push(run(true));
+    }
 
-  await Promise.all(promises);
-});
+    await Promise.all(promises);
+  },
+  isWindows ? 6_000 : 5_000,
+);

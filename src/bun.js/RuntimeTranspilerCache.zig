@@ -203,7 +203,7 @@ pub const RuntimeTranspilerCache = struct {
                         var metadata_stream2 = std.io.fixedBufferStream(metadata_buf[0..Metadata.size]);
                         var metadata2 = Metadata{};
                         metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not rountrip encode -> decode  successfully: {s}", .{@errorName(err)});
-                        std.debug.assert(std.meta.eql(metadata, metadata2));
+                        bun.assert(std.meta.eql(metadata, metadata2));
                     }
 
                     break :brk metadata_buf[0..metadata_stream.pos];
@@ -228,16 +228,16 @@ pub const RuntimeTranspilerCache = struct {
                     var total: usize = 0;
                     for (vecs) |v| {
                         if (comptime bun.Environment.isWindows) {
-                            std.debug.assert(v.len > 0);
+                            bun.assert(v.len > 0);
                             total += v.len;
                         } else {
-                            std.debug.assert(v.iov_len > 0);
+                            bun.assert(v.iov_len > 0);
                             total += v.iov_len;
                         }
                     }
-                    std.debug.assert(end_position == total);
+                    bun.assert(end_position == total);
                 }
-                std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
+                bun.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
                 bun.C.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {
@@ -264,7 +264,7 @@ pub const RuntimeTranspilerCache = struct {
                 return error.MissingData;
             }
 
-            std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
+            bun.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
             this.output_code = if (this.metadata.output_byte_length == 0)
                 .{ .string = bun.String.empty }
@@ -456,7 +456,7 @@ pub const RuntimeTranspilerCache = struct {
 
         var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
-        std.debug.assert(cache_file_path.len > 0);
+        bun.assert(cache_file_path.len > 0);
         return fromFileWithCacheFilePath(
             bun.PathString.init(cache_file_path),
             input_hash,
@@ -543,14 +543,15 @@ pub const RuntimeTranspilerCache = struct {
 
         const cache_dir_fd = brk: {
             if (std.fs.path.dirname(cache_file_path)) |dirname| {
-                const dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
-                break :brk bun.toLibUVOwnedFD(dir.fd);
+                var dir = try std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true });
+                errdefer dir.close();
+                break :brk try bun.toLibUVOwnedFD(dir.fd);
             }
 
-            break :brk bun.toFD(std.fs.cwd().fd);
+            break :brk bun.FD.cwd();
         };
         defer {
-            if (cache_dir_fd != bun.toFD(std.fs.cwd().fd)) _ = bun.sys.close(cache_dir_fd);
+            if (cache_dir_fd != bun.FD.cwd()) _ = bun.sys.close(cache_dir_fd);
         }
 
         try Entry.save(
@@ -597,16 +598,16 @@ pub const RuntimeTranspilerCache = struct {
             debug("get(\"{s}\") = {s}", .{ source.path.text, @errorName(err) });
             return false;
         };
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             if (bun_debug_restore_from_cache) {
                 debug("get(\"{s}\") = {d} bytes, restored", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
             } else {
                 debug("get(\"{s}\") = {d} bytes, ignored for debug build", .{ source.path.text, this.entry.?.output_code.byteSlice().len });
             }
         }
-        bun.Analytics.Features.transpiler_cache = true;
+        bun.Analytics.Features.transpiler_cache += 1;
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             if (!bun_debug_restore_from_cache) {
                 if (this.entry) |*entry| {
                     entry.deinit(this.sourcemap_allocator, this.output_code_allocator);
@@ -625,7 +626,7 @@ pub const RuntimeTranspilerCache = struct {
         if (this.input_hash == null or is_disabled) {
             return;
         }
-        std.debug.assert(this.entry == null);
+        bun.assert(this.entry == null);
         const output_code = bun.String.createLatin1(output_code_bytes);
         this.output_code = output_code;
 

@@ -41,7 +41,6 @@ class InternalModuleRegistry;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
-#include "ProcessBindingConstants.h"
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
@@ -54,6 +53,11 @@ class EventTarget;
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 extern "C" void Bun__reportUnhandledError(JSC__JSGlobalObject*, JSC::EncodedJSValue);
+
+#if OS(WINDOWS)
+#include <uv.h>
+extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
+#endif
 
 namespace Zig {
 
@@ -249,6 +253,7 @@ public:
     JSC::JSFunction* performMicrotaskFunction() const { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
+    JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
@@ -300,6 +305,12 @@ public:
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
+#if OS(WINDOWS)
+    uv_loop_t* uvLoop() const
+    {
+        return Bun__ZigGlobalObject__uvLoop(m_bunVM);
+    }
+#endif
     bool isThreadLocalDefaultGlobalObject = false;
 
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
@@ -310,6 +321,8 @@ public:
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Bun::GlobalScope& globalEventScope;
+
+    void resetOnEachMicrotaskTick();
 
     enum class PromiseFunctions : uint8_t {
         Bun__HTTPRequestContext__onReject,
@@ -522,6 +535,7 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
+    LazyProperty<JSGlobalObject, Structure> m_utilInspectOptionsStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;

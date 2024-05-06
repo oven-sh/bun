@@ -29,6 +29,18 @@ function generate(ssl) {
         fn: "getCipher",
         length: 0,
       },
+      renegotiate: {
+        fn: "renegotiate",
+        length: 0,
+      },
+      disableRenegotiation: {
+        fn: "disableRenegotiation",
+        length: 0,
+      },
+      setVerifyMode: {
+        fn: "setVerifyMode",
+        length: 2,
+      },
       getSession: {
         fn: "getSession",
         length: 0,
@@ -147,6 +159,10 @@ function generate(ssl) {
         fn: "setServername",
         length: 1,
       },
+      getServername: {
+        fn: "getServername",
+        length: 0,
+      },
     },
     finalize: true,
     construct: true,
@@ -188,7 +204,6 @@ export default [
         fn: "reload",
         length: 1,
       },
-
       hostname: {
         getter: "getHostname",
         cache: true,
@@ -201,6 +216,65 @@ export default [
     },
     finalize: true,
     construct: true,
+    klass: {},
+  }),
+
+  define({
+    name: "UDPSocket",
+    noConstructor: true,
+    JSType: "0b11101110",
+    finalize: true,
+    construct: true,
+    hasPendingActivity: true,
+    proto: {
+      send: {
+        fn: "send",
+        length: 3,
+      },
+      sendMany: {
+        fn: "sendMany",
+        length: 3,
+      },
+      close: {
+        fn: "close",
+        length: 0,
+      },
+      reload: {
+        fn: "reload",
+        length: 1,
+      },
+      ref: {
+        fn: "ref",
+        length: 0,
+      },
+      unref: {
+        fn: "unref",
+        length: 0,
+      },
+      hostname: {
+        getter: "getHostname",
+        cache: true,
+      },
+      port: {
+        getter: "getPort",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
+        cache: true,
+      },
+      remoteAddress: {
+        getter: "getRemoteAddress",
+        cache: true,
+      },
+      binaryType: {
+        getter: "getBinaryType",
+        cache: true,
+      },
+      closed: {
+        getter: "getClosed",
+      },
+    },
     klass: {},
   }),
 ];

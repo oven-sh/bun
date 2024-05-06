@@ -38,7 +38,7 @@ const INotify = struct {
         name_len: u32,
 
         pub fn name(this: *const INotifyEvent) [:0]u8 {
-            if (comptime Environment.allow_assert) std.debug.assert(this.name_len > 0);
+            if (comptime Environment.allow_assert) bun.assert(this.name_len > 0);
 
             // the name_len field is wrong
             // it includes alignment / padding
@@ -48,30 +48,62 @@ const INotify = struct {
         }
     };
 
-    pub fn watchPath(this: *INotify, pathname: [:0]const u8) !EventListIndex {
-        std.debug.assert(this.loaded_inotify);
+    pub fn watchPath(this: *INotify, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+        bun.assert(this.loaded_inotify);
         const old_count = this.watch_count.fetchAdd(1, .Release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
         const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
-        return std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask);
+        return .{
+            .result = std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask) catch |err| return .{
+                .err = .{
+                    .errno = @truncate(@intFromEnum(switch (err) {
+                        error.FileNotFound => bun.C.E.NOENT,
+                        error.AccessDenied => bun.C.E.ACCES,
+                        error.SystemResources => bun.C.E.NOMEM,
+                        error.Unexpected => bun.C.E.INVAL,
+                        error.NotDir => bun.C.E.NOTDIR,
+                        error.NameTooLong => bun.C.E.NAMETOOLONG,
+                        error.UserResourceLimitReached => bun.C.E.MFILE,
+                        error.WatchAlreadyExists => bun.C.E.EXIST,
+                    })),
+                    .syscall = .watch,
+                },
+            },
+        };
     }
 
-    pub fn watchDir(this: *INotify, pathname: [:0]const u8) !EventListIndex {
-        std.debug.assert(this.loaded_inotify);
+    pub fn watchDir(this: *INotify, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
+        bun.assert(this.loaded_inotify);
         const old_count = this.watch_count.fetchAdd(1, .Release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
         const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
-        return std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask);
+        return .{
+            .result = std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask) catch |err| return .{
+                .err = .{
+                    .errno = @truncate(@intFromEnum(switch (err) {
+                        error.FileNotFound => bun.C.E.NOENT,
+                        error.AccessDenied => bun.C.E.ACCES,
+                        error.SystemResources => bun.C.E.NOMEM,
+                        error.Unexpected => bun.C.E.INVAL,
+                        error.NotDir => bun.C.E.NOTDIR,
+                        error.NameTooLong => bun.C.E.NAMETOOLONG,
+                        error.UserResourceLimitReached => bun.C.E.MFILE,
+                        error.WatchAlreadyExists => bun.C.E.EXIST,
+                    })),
+                    .syscall = .watch,
+                },
+            },
+        };
     }
 
     pub fn unwatch(this: *INotify, wd: EventListIndex) void {
-        std.debug.assert(this.loaded_inotify);
+        bun.assert(this.loaded_inotify);
         _ = this.watch_count.fetchSub(1, .Release);
         std.os.inotify_rm_watch(this.inotify_fd, wd);
     }
 
     pub fn init(this: *INotify, _: []const u8) !void {
-        std.debug.assert(!this.loaded_inotify);
+        bun.assert(!this.loaded_inotify);
         this.loaded_inotify = true;
 
         if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
@@ -81,22 +113,26 @@ const INotify = struct {
         this.inotify_fd = try std.os.inotify_init1(std.os.linux.IN.CLOEXEC);
     }
 
-    pub fn read(this: *INotify) ![]*const INotifyEvent {
-        std.debug.assert(this.loaded_inotify);
+    pub fn read(this: *INotify) bun.JSC.Maybe([]*const INotifyEvent) {
+        bun.assert(this.loaded_inotify);
 
         restart: while (true) {
-            Futex.wait(&this.watch_count, 0, null) catch unreachable;
+            Futex.wait(&this.watch_count, 0, null) catch |err| switch (err) {
+                error.TimedOut => unreachable, // timeout is infinite
+            };
+
             const rc = std.os.system.read(
                 this.inotify_fd,
                 @as([*]u8, @ptrCast(@alignCast(&this.eventlist))),
                 @sizeOf(EventListBuffer),
             );
 
-            switch (std.os.errno(rc)) {
+            const errno = std.os.errno(rc);
+            switch (errno) {
                 .SUCCESS => {
                     var len = @as(usize, @intCast(rc));
 
-                    if (len == 0) return &[_]*INotifyEvent{};
+                    if (len == 0) return .{ .result = &[_]*INotifyEvent{} };
 
                     // IN_MODIFY is very noisy
                     // we do a 0.1ms sleep to try to coalesce events better
@@ -114,15 +150,17 @@ const INotify = struct {
                                     @as([*]u8, @ptrCast(@alignCast(&this.eventlist))) + len,
                                     @sizeOf(EventListBuffer) - len,
                                 );
-                                switch (std.os.errno(new_rc)) {
+                                const e = std.os.errno(new_rc);
+                                switch (e) {
                                     .SUCCESS => {
                                         len += @as(usize, @intCast(new_rc));
                                     },
                                     .AGAIN => continue,
                                     .INTR => continue,
-                                    .INVAL => return error.ShortRead,
-                                    .BADF => return error.INotifyFailedToStart,
-                                    else => unreachable,
+                                    else => return .{ .err = .{
+                                        .errno = @truncate(@intFromEnum(e)),
+                                        .syscall = .read,
+                                    } },
                                 }
                                 break;
                             }
@@ -150,16 +188,15 @@ const INotify = struct {
                         count += 1;
                     }
 
-                    return this.eventlist_ptrs[0..count];
+                    return .{ .result = this.eventlist_ptrs[0..count] };
                 },
                 .AGAIN => continue :restart,
-                .INVAL => return error.ShortRead,
-                .BADF => return error.INotifyFailedToStart,
-
-                else => unreachable,
+                else => return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(errno)),
+                    .syscall = .read,
+                } },
             }
         }
-        unreachable;
     }
 
     pub fn stop(this: *INotify) void {
@@ -182,18 +219,19 @@ const DarwinWatcher = struct {
     eventlist: [WATCHER_MAX_LIST]KEvent = undefined,
     eventlist_index: EventListIndex = 0,
 
-    fd: i32 = 0,
+    fd: bun.FileDescriptor = bun.invalid_fd,
 
     pub fn init(this: *DarwinWatcher, _: []const u8) !void {
-        this.fd = try std.os.kqueue();
-        if (this.fd == 0) return error.KQueueError;
+        const fd = try std.os.kqueue();
+        if (fd == 0) return error.KQueueError;
+        this.fd = bun.toFD(fd);
     }
 
     pub fn stop(this: *DarwinWatcher) void {
-        if (this.fd != 0) {
+        if (this.fd.isValid()) {
             _ = bun.sys.close(this.fd);
+            this.fd = bun.invalid_fd;
         }
-        this.fd = 0;
     }
 };
 
@@ -233,13 +271,17 @@ const WindowsWatcher = struct {
         dirHandle: w.HANDLE,
 
         // invalidates any EventIterators
-        fn prepare(this: *DirWatcher) Error!void {
+        fn prepare(this: *DirWatcher) bun.JSC.Maybe(void) {
             const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
             if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
                 const err = w.kernel32.GetLastError();
                 log("failed to start watching directory: {s}", .{@tagName(err)});
-                return Error.ReadDirectoryChangesFailed;
+                return .{ .err = .{
+                    .errno = @intFromEnum(bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EINVAL),
+                    .syscall = .watch,
+                } };
             }
+            return .{ .result = {} };
         }
     };
 
@@ -323,8 +365,11 @@ const WindowsWatcher = struct {
     };
 
     // wait until new events are available
-    pub fn next(this: *WindowsWatcher, timeout: Timeout) !?EventIterator {
-        try this.watcher.prepare();
+    pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterator) {
+        switch (this.watcher.prepare()) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
 
         var nbytes: w.DWORD = 0;
         var key: w.ULONG_PTR = 0;
@@ -334,10 +379,13 @@ const WindowsWatcher = struct {
             if (rc == 0) {
                 const err = w.kernel32.GetLastError();
                 if (err == w.Win32Error.IMEOUT) {
-                    return null;
+                    return .{ .result = null };
                 } else {
                     log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
-                    return Error.IocpFailed;
+                    return .{ .err = .{
+                        .errno = @intFromEnum(bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EINVAL),
+                        .syscall = .watch,
+                    } };
                 }
             }
 
@@ -349,12 +397,18 @@ const WindowsWatcher = struct {
                 if (nbytes == 0) {
                     // shutdown notification
                     // TODO close handles?
-                    return Error.IocpFailed;
+                    return .{ .err = .{
+                        .errno = @intFromEnum(bun.C.SystemErrno.ESHUTDOWN),
+                        .syscall = .watch,
+                    } };
                 }
-                return EventIterator{ .watcher = &this.watcher };
+                return .{ .result = EventIterator{ .watcher = &this.watcher } };
             } else {
                 log("GetQueuedCompletionStatus returned no overlapped event", .{});
-                return Error.IocpFailed;
+                return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(bun.C.E.INVAL)),
+                    .syscall = .watch,
+                } };
             }
         }
     }
@@ -524,7 +578,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn start(this: *Watcher) !void {
-            std.debug.assert(this.watchloop_handle == null);
+            bun.assert(this.watchloop_handle == null);
             this.thread = try std.Thread.spawn(.{}, Watcher.watchLoop, .{this});
         }
 
@@ -558,13 +612,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
             defer Output.flush();
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});
 
-            this._watchLoop() catch |err| {
-                this.watchloop_handle = null;
-                this.platform.stop();
-                if (this.running) {
-                    this.ctx.onError(err);
-                }
-            };
+            switch (this._watchLoop()) {
+                .err => |err| {
+                    this.watchloop_handle = null;
+                    this.platform.stop();
+                    if (this.running) {
+                        this.ctx.onError(err);
+                    }
+                },
+                .result => {},
+            }
 
             // deinit and close descriptors if needed
             if (this.close_descriptors) {
@@ -618,9 +675,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
         }
 
-        fn _watchLoop(this: *Watcher) !void {
+        fn _watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
             if (Environment.isMac) {
-                std.debug.assert(this.platform.fd > 0);
+                bun.assert(this.platform.fd.isValid());
                 const KEvent = std.c.Kevent;
 
                 var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
@@ -629,7 +686,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     defer Output.flush();
 
                     var count_ = std.os.system.kevent(
-                        this.platform.fd,
+                        this.platform.fd.cast(),
                         @as([*]KEvent, changelist),
                         0,
                         @as([*]KEvent, changelist),
@@ -643,7 +700,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         const remain = 128 - count_;
                         var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
                         const extra = std.os.system.kevent(
-                            this.platform.fd,
+                            this.platform.fd.cast(),
                             @as([*]KEvent, changelist[@as(usize, @intCast(count_))..].ptr),
                             0,
                             @as([*]KEvent, changelist[@as(usize, @intCast(count_))..].ptr),
@@ -690,7 +747,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 restart: while (true) {
                     defer Output.flush();
 
-                    var events = try this.platform.read();
+                    var events = switch (this.platform.read()) {
+                        .result => |result| result,
+                        .err => |err| return .{ .err = err },
+                    };
                     if (events.len == 0) continue :restart;
 
                     // TODO: is this thread safe?
@@ -776,7 +836,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
                     var timeout = WindowsWatcher.Timeout.infinite;
                     while (true) {
-                        var iter = try this.platform.next(timeout) orelse break;
+                        var iter = switch (this.platform.next(timeout)) {
+                            .err => |err| return .{ .err = err },
+                            .result => |iter| iter orelse break,
+                        };
                         // after the first wait, we want to coalesce further events but don't want to wait for them
                         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
                         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
@@ -849,6 +912,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     this.ctx.onFileUpdate(all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
                 }
             }
+
+            return .{ .result = {} };
         }
 
         fn appendFileAssumeCapacity(
@@ -860,20 +925,20 @@ pub fn NewWatcher(comptime ContextType: type) type {
             parent_hash: HashType,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
-        ) !void {
+        ) bun.JSC.Maybe(void) {
             if (comptime Environment.isWindows) {
                 // on windows we can only watch items that are in the directory tree of the top level dir
                 const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
                 if (rel == .unrelated) {
                     Output.warn("File {s} is not in the project directory and will not be watched\n", .{file_path});
-                    return;
+                    return .{ .result = {} };
                 }
             }
 
             const watchlist_id = this.watchlist.len;
 
             const file_path_: string = if (comptime copy_file_path)
-                bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
+                bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
             else
                 file_path;
 
@@ -912,7 +977,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
-                    this.platform.fd,
+                    this.platform.fd.cast(),
                     @as([]KEvent, events[0..1]).ptr,
                     1,
                     @as([]KEvent, events[0..1]).ptr,
@@ -926,10 +991,14 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
                 const slice: [:0]const u8 = buf[0..file_path_.len :0];
-                item.eventlist_index = try this.platform.watchPath(slice);
+                item.eventlist_index = switch (this.platform.watchPath(slice)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |r| r,
+                };
             }
 
             this.watchlist.appendAssumeCapacity(item);
+            return .{ .result = {} };
         }
 
         fn appendDirectoryAssumeCapacity(
@@ -938,26 +1007,28 @@ pub fn NewWatcher(comptime ContextType: type) type {
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
-        ) !WatchItemIndex {
+        ) bun.JSC.Maybe(WatchItemIndex) {
             if (comptime Environment.isWindows) {
                 // on windows we can only watch items that are in the directory tree of the top level dir
                 const rel = bun.path.isParentOrEqual(this.fs.top_level_dir, file_path);
                 if (rel == .unrelated) {
                     Output.warn("Directory {s} is not in the project directory and will not be watched\n", .{file_path});
-                    return no_watch_item;
+                    return .{ .result = no_watch_item };
                 }
             }
 
             const fd = brk: {
                 if (stored_fd != .zero) break :brk stored_fd;
-                const dir = try std.fs.cwd().openDir(file_path, .{});
-                break :brk bun.toFD(dir.fd);
+                break :brk switch (bun.sys.openA(file_path, 0, 0)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |fd| fd,
+                };
             };
 
             const parent_hash = getHash(bun.fs.PathName.init(file_path).dirWithTrailingSlash());
 
             const file_path_: string = if (comptime copy_file_path)
-                bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
+                bun.asByteSlice(this.allocator.dupeZ(u8, file_path) catch bun.outOfMemory())
             else
                 file_path;
 
@@ -1002,7 +1073,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
-                    this.platform.fd,
+                    this.platform.fd.cast(),
                     @as([]KEvent, events[0..1]).ptr,
                     1,
                     @as([]KEvent, events[0..1]).ptr,
@@ -1015,11 +1086,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 bun.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
-                item.eventlist_index = try this.platform.watchDir(slice);
+                item.eventlist_index = switch (this.platform.watchDir(slice)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |r| r,
+                };
             }
 
             this.watchlist.appendAssumeCapacity(item);
-            return @as(WatchItemIndex, @truncate(this.watchlist.len - 1));
+            return .{
+                .result = @as(WatchItemIndex, @truncate(this.watchlist.len - 1)),
+            };
         }
 
         // Below is platform-independent
@@ -1034,10 +1110,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
             comptime lock: bool,
-        ) !void {
+        ) bun.JSC.Maybe(void) {
             if (comptime lock) this.mutex.lock();
             defer if (comptime lock) this.mutex.unlock();
-            std.debug.assert(file_path.len > 1);
+            bun.assert(file_path.len > 1);
             const pathname = bun.fs.PathName.init(file_path);
 
             const parent_dir = pathname.dirWithTrailingSlash();
@@ -1062,13 +1138,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             }
-            try this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null))));
+            this.watchlist.ensureUnusedCapacity(this.allocator, 1 + @as(usize, @intCast(@intFromBool(parent_watch_item == null)))) catch bun.outOfMemory();
 
             if (autowatch_parent_dir) {
-                parent_watch_item = parent_watch_item orelse try this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path);
+                parent_watch_item = parent_watch_item orelse switch (this.appendDirectoryAssumeCapacity(dir_fd, parent_dir, parent_dir_hash, copy_file_path)) {
+                    .err => |err| return .{ .err = err },
+                    .result => |r| r,
+                };
             }
 
-            try this.appendFileAssumeCapacity(
+            switch (this.appendFileAssumeCapacity(
                 fd,
                 file_path,
                 hash,
@@ -1076,7 +1155,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 parent_dir_hash,
                 package_json,
                 copy_file_path,
-            );
+            )) {
+                .err => |err| return .{ .err = err },
+                .result => {},
+            }
 
             if (comptime FeatureFlags.verbose_watcher) {
                 if (strings.indexOf(file_path, this.cwd)) |i| {
@@ -1085,6 +1167,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
                 }
             }
+
+            return .{ .result = {} };
         }
 
         inline fn isEligibleDirectory(this: *Watcher, dir: string) bool {
@@ -1100,7 +1184,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             dir_fd: bun.FileDescriptor,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
-        ) !void {
+        ) bun.JSC.Maybe(void) {
             return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, true);
         }
 
@@ -1110,17 +1194,20 @@ pub fn NewWatcher(comptime ContextType: type) type {
             file_path: string,
             hash: HashType,
             comptime copy_file_path: bool,
-        ) !void {
+        ) bun.JSC.Maybe(void) {
             this.mutex.lock();
             defer this.mutex.unlock();
 
             if (this.indexOf(hash) != null) {
-                return;
+                return .{ .result = {} };
             }
 
-            try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
+            this.watchlist.ensureUnusedCapacity(this.allocator, 1) catch bun.outOfMemory();
 
-            _ = try this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
+            return switch (this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path)) {
+                .err => |err| .{ .err = err },
+                .result => .{ .result = {} },
+            };
         }
 
         pub fn addFile(
@@ -1132,7 +1219,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             dir_fd: bun.FileDescriptor,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
-        ) !void {
+        ) bun.JSC.Maybe(void) {
             // This must lock due to concurrent transpiler
             this.mutex.lock();
             defer this.mutex.unlock();
@@ -1145,10 +1232,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         fds[index] = fd;
                     }
                 }
-                return;
+                return .{ .result = {} };
             }
 
-            try this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, false);
+            return this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, false);
         }
 
         pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
@@ -1169,7 +1256,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn removeAtIndex(this: *Watcher, index: WatchItemIndex, hash: HashType, parents: []HashType, comptime kind: WatchItem.Kind) void {
-            std.debug.assert(index != no_watch_item);
+            bun.assert(index != no_watch_item);
 
             this.evict_list[this.evict_list_i] = index;
             this.evict_list_i += 1;

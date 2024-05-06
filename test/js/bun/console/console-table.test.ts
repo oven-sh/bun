@@ -214,3 +214,20 @@ test.skip("console.table character widths", () => {
 
   console.log(actualOutput);
 });
+
+test("console.table repeat 50", () => {
+  const expected = `┌───┬───┐
+│   │ n │
+├───┼───┤
+│ 0 │ 8 │
+└───┴───┘
+`;
+  const { stdout } = spawnSync({
+    cmd: [bunExe(), `${import.meta.dir}/console-table-repeat-50.ts`],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe(expected.repeat(50));
+});

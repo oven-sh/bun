@@ -18,6 +18,8 @@ Bun.serve({
 });
 ```
 
+### `fetch` request handler
+
 The `fetch` handler handles incoming requests. It receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and returns a [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) or `Promise<Response>`.
 
 ```ts
@@ -27,6 +29,44 @@ Bun.serve({
     if (url.pathname === "/") return new Response("Home page!");
     if (url.pathname === "/blog") return new Response("Blog!");
     return new Response("404!");
+  },
+});
+```
+
+The `fetch` handler supports async/await:
+
+```ts
+import { sleep, serve } from "bun";
+serve({
+  async fetch(req) {
+    const start = performance.now();
+    await sleep(10);
+    const end = performance.now();
+    return new Response(`Slept for ${end - start}ms`);
+  },
+});
+```
+
+Promise-based responses are also supported:
+
+```ts
+Bun.serve({
+  fetch(req) {
+    // Forward the request to another server.
+    return fetch("https://example.com");
+  },
+});
+```
+
+Optionally, you can also access the `Server` object from the `fetch` handler.
+
+```ts
+// `server` is passed in as the second argument to `fetch`.
+const server = Bun.serve({
+  fetch(req, server) {
+    const ip = server.requestIP(req);
+
+    return new Response(`Your IP is ${ip}`);
   },
 });
 ```

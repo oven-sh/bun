@@ -144,15 +144,11 @@ pub const BrotliEncoder = struct {
             if (this.encoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) {
                 const is_last = this.encoder.has_called_end;
                 while (true) {
-                    const pending: []bun.JSC.Node.BlobOrStringOrBuffer = brk: {
-                        this.encoder.input_lock.lock();
-                        defer this.encoder.input_lock.unlock();
-                        const readable = this.encoder.input.readableSlice(0);
-                        const out = bun.default_allocator.dupe(std.meta.Child(@TypeOf(readable)), readable) catch bun.outOfMemory();
-                        this.encoder.input.discard(readable.len);
-                        break :brk out;
-                    };
-                    defer bun.default_allocator.free(pending);
+                    this.encoder.input_lock.lock();
+                    defer this.encoder.input_lock.unlock();
+                    const readable = this.encoder.input.readableSlice(0);
+                    defer this.encoder.input.discard(readable.len);
+                    const pending = readable;
                     const Writer = struct {
                         encoder: *BrotliEncoder,
 

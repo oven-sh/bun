@@ -721,7 +721,6 @@ const DEFAULT_ECDH_CURVE = "auto",
 
     // Node.js connects the socket right away if no options.socket is provided. For compatibility, I guess we should do the same.
     if (!options.socket) {
-      console.log("connecting now1");
       tlsSocket.connect(options.port, options.host, callback);
     }
 

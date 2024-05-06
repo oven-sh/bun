@@ -222,12 +222,13 @@ test("console.table repeat 50", () => {
 │ 0 │ 8 │
 └───┴───┘
 `;
-  const { stdout } = spawnSync({
+  const { stdout, stderr } = spawnSync({
     cmd: [bunExe(), `${import.meta.dir}/console-table-repeat-50.ts`],
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
     env: bunEnv,
   });
 
   expect(stdout.toString()).toBe(expected.repeat(50));
+  expect(stderr.toString()).toBe("");
 });

@@ -58,14 +58,13 @@ Bun.serve({
 });
 ```
 
-Optionally, you can also access the `Server` object from the `fetch` handler.
+You can also access the `Server` object from the `fetch` handler. It's the second argument passed to the `fetch` function.
 
 ```ts
 // `server` is passed in as the second argument to `fetch`.
 const server = Bun.serve({
   fetch(req, server) {
     const ip = server.requestIP(req);
-
     return new Response(`Your IP is ${ip}`);
   },
 });

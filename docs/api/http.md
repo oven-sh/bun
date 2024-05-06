@@ -70,25 +70,25 @@ console.log(server.url); // http://localhost:3000
 
 Bun supports several options and environment variables to configure the default port. The default port is used when the `port` option is not set.
 
-1. `--port` CLI flag
+- `--port` CLI flag
 
 ```sh
 $ bun --port=4002 server.ts
 ```
 
-2. `BUN_PORT` environment variable
+- `BUN_PORT` environment variable
 
 ```sh
 $ BUN_PORT=4002 bun server.ts
 ```
 
-3. `PORT` environment variable
+- `PORT` environment variable
 
 ```sh
 $ PORT=4002 bun server.ts
 ```
 
-4. `NODE_PORT` environment variable
+- `NODE_PORT` environment variable
 
 ```sh
 $ NODE_PORT=4002 bun server.ts

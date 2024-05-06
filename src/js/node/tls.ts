@@ -678,6 +678,12 @@ function normalizeArgs(args) {
     }
   }
 
+  if (args[1] !== null && typeof args[1] === "object") {
+    Object.assign(options, args[1]);
+  } else if (args[2] !== null && typeof args[2] === "object") {
+    Object.assign(options, args[2]);
+  }
+
   const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
 
   return [options, callback];

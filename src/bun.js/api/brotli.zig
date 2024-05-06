@@ -149,6 +149,7 @@ pub const BrotliEncoder = struct {
                     const readable = this.encoder.input.readableSlice(0);
                     defer this.encoder.input.discard(readable.len);
                     const pending = readable;
+
                     const Writer = struct {
                         encoder: *BrotliEncoder,
 
@@ -534,7 +535,7 @@ pub const BrotliDecoder = struct {
 
             var any = false;
 
-            if (true) {
+            if (this.decoder.pending_decode_job_count.fetchAdd(1, .Monotonic) >= 0) {
                 const is_last = this.decoder.has_called_end;
                 while (true) {
                     this.decoder.input_lock.lock();

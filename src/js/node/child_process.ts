@@ -995,6 +995,12 @@ class ChildProcess extends EventEmitter {
   pid;
   channel;
 
+  [Symbol.dispose]() {
+    if (!this.killed) {
+      this.kill();
+    }
+  }
+
   get killed() {
     if (this.#handle == null) return false;
   }
@@ -1310,7 +1316,7 @@ class ChildProcess extends EventEmitter {
     this.#handle.disconnect();
   }
 
-  kill(sig) {
+  kill(sig?) {
     const signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
 
     if (this.#handle) {

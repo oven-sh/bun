@@ -1513,3 +1513,18 @@ it("should resolve pending promise if requested ended with pending read", async 
     },
   );
 });
+
+it("should work with dispose keyword", async () => {
+  let url: string;
+  {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+    url = server.url;
+    expect((await fetch(url)).status).toBe(200);
+  }
+  expect(fetch(url)).rejects.toThrow();
+});

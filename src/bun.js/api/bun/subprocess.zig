@@ -574,6 +574,34 @@ pub const Subprocess = struct {
         return this.stdout.toJS(globalThis, this.hasExited());
     }
 
+    pub fn asyncDispose(
+        this: *Subprocess,
+        global: *JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        if (this.process.hasExited()) {
+            // rely on GC to clean everything up in this case
+            return .undefined;
+        }
+
+        // unref streams so that this disposed process will not prevent
+        // the process from exiting causing a hang
+        this.stdin.unref();
+        this.stdout.unref();
+        this.stderr.unref();
+
+        switch (this.tryKill(SignalCode.default)) {
+            .result => {},
+            .err => |err| {
+                // Signal 9 should always be fine, but just in case that somehow fails.
+                global.throwValue(err.toJSC(global));
+                return .zero;
+            },
+        }
+
+        return this.getExited(global);
+    }
+
     pub fn kill(
         this: *Subprocess,
         globalThis: *JSGlobalObject,

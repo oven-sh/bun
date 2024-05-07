@@ -782,3 +782,18 @@ describe("close handling", () => {
     }
   }
 });
+
+it("dispose keyword works", async () => {
+  let captured;
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "await Bun.sleep(100000)"],
+    });
+    captured = proc;
+    await Bun.sleep(100);
+  }
+  await Bun.sleep(0);
+  expect(captured.killed).toBe(true);
+  expect(captured.exitCode).toBe(null);
+  expect(captured.signalCode).toBe("SIGTERM");
+});

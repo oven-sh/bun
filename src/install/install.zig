@@ -10545,20 +10545,16 @@ pub const PackageManager = struct {
                             builder,
                         );
 
-                        {
-                            // Copy over new workspace paths or update existing ones that have been changed
-                            // TODO: is this correct, what else do we need to do?
-                            var iter = lockfile.workspace_paths.iterator();
-                            while (iter.next()) |entry| {
-                                const gop = try manager.lockfile.workspace_paths.getOrPut(manager.lockfile.allocator, entry.key_ptr.*);
-                                const do_copy = !gop.found_existing or !bun.strings.eql(gop.value_ptr.slice(manager.lockfile.buffers.string_bytes.items), entry.value_ptr.slice(lockfile.buffers.string_bytes.items));
-                                if (do_copy) {
-                                    const str = entry.value_ptr.slice(lockfile.buffers.string_bytes.items);
-                                    builder.count(str);
-                                    const new_value = builder.append(String, str);
-                                    gop.value_ptr.* = new_value;
-                                }
-                            }
+                        // Copy over new workspace paths or update existing ones that have been changed
+                        // TODO: is this correct, what else do we need to do?
+                        manager.lockfile.workspace_paths.deinit(manager.lockfile.allocator);
+                        manager.lockfile.workspace_paths = try lockfile.workspace_paths.clone(manager.lockfile.allocator);
+                        const disk_lockfile_paths = manager.lockfile.workspace_paths.values();
+                        const parsed_lockfile_paths = lockfile.workspace_paths.values();
+                        for (disk_lockfile_paths, parsed_lockfile_paths) |*disk_path, parsed_path| {
+                            const str = parsed_path.slice(lockfile.buffers.string_bytes.items);
+                            builder.count(str);
+                            disk_path.* = builder.append(String, str);
                         }
 
                         builder.clamp();

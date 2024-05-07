@@ -49,6 +49,8 @@ pub const API = struct {
     pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
+    pub const BrotliEncoder = @import("./bun.js/api/brotli.zig").BrotliEncoder;
+    pub const BrotliDecoder = @import("./bun.js/api/brotli.zig").BrotliDecoder;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;

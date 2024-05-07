@@ -120,6 +120,9 @@ pub fn crashHandler(
                 // Use an raw unbuffered writer to stderr to avoid losing information on
                 // panic in a panic. There is also a possibility that `Output` related code
                 // is not configured correctly, so that would also mask the message.
+                //
+                // Output.errorWriter() is not used here because it may not be configured
+                // if the program crashes immediatly at startup.
                 const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug

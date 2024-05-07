@@ -16,7 +16,7 @@ const SystemTimer = @import("./system_timer.zig").Timer;
 
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;
-pub threadlocal var source_set: bool = false;
+threadlocal var source_set: bool = false;
 
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
 var stderr_stream: Source.StreamType = undefined;

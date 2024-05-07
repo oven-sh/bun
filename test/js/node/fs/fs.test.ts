@@ -1816,19 +1816,23 @@ describe("createReadStream", () => {
     });
   });
 
-  it("correctly handles file descriptors with an offset", done => {
-    const path = `${tmpdir()}/bun-fs-createReadStream-${Date.now()}.txt`;
-    const fd = fs.openSync(path, "w+");
+  it(
+    "correctly handles file descriptors with an offset",
+    done => {
+      const path = `${tmpdir()}/bun-fs-createReadStream-${Date.now()}.txt`;
+      const fd = fs.openSync(path, "w+");
 
-    const stream = fs.createReadStream("", { fd: fd, start: 2 });
-    stream.on('data', chunk => {
-      expect(chunk.toString()).toBe("llo, world!");
-      done();
-    })
-    stream.on('error', done);
+      const stream = fs.createReadStream("", { fd: fd, start: 2 });
+      stream.on("data", chunk => {
+        expect(chunk.toString()).toBe("llo, world!");
+        done();
+      });
+      stream.on("error", done);
 
-    fs.writeSync(fd, "Hello, world!");
-  }, { timeout: 100 })
+      fs.writeSync(fd, "Hello, world!");
+    },
+    { timeout: 100 },
+  );
 });
 
 describe("fs.WriteStream", () => {

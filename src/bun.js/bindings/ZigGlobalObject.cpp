@@ -213,11 +213,15 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     if (has_loaded_jsc)
         return;
     has_loaded_jsc = true;
+    printf("1: a\n");
     JSC::Config::enableRestrictedOptions();
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+    printf("1: a\n");
     WTF::initializeMainThread();
+    printf("1: b\n");
     JSC::initialize();
+    printf("1: c\n");
     {
         JSC::Options::AllowUnfinalizedAccessScope scope;
 
@@ -257,6 +261,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
         JSC::Options::assertOptionsAreCoherent();
     }
+    printf("1: d\n");
 }
 
 extern "C" void* Bun__getVM();

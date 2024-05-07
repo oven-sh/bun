@@ -16,7 +16,7 @@ const SystemTimer = @import("./system_timer.zig").Timer;
 
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;
-threadlocal var source_set: bool = false;
+pub threadlocal var source_set: bool = false;
 
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
 var stderr_stream: Source.StreamType = undefined;
@@ -610,6 +610,7 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
         pub fn log(comptime fmt: string, args: anytype) void {
+            if (!source_set) return;
             if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
                 return log(fmt ++ "\n", args);
             }

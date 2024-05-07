@@ -261,7 +261,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
         JSC::Options::assertOptionsAreCoherent();
     }
-    printf("1: d\n");
 }
 
 extern "C" void* Bun__getVM();

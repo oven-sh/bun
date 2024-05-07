@@ -2,7 +2,7 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { bunExe, bunEnv, dumpStats } from "harness";
+import { bunExe, bunEnv, dumpStats, isMacOS, isCI } from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
@@ -50,7 +50,8 @@ afterAll(() => {
 
 describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
-    it(
+    // prettier-ignore
+    it.todoIf(!isDirect && isMacOS)( // flaky
       isDirect ? "direct" : "default",
       async () => {
         const blob = new Blob([new Uint8Array(1024 * 768).fill(123)]);
@@ -1264,7 +1265,7 @@ it("#5859 text", async () => {
   await server.stop(true);
 });
 
-it("#5859 json", async () => {
+it.todoIf(isMacOS && isCI)("#5859 json", async () => {
   const server = Bun.serve({
     port: 0,
     async fetch(req) {

@@ -4124,7 +4124,47 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
         inlined: Inlined,
         heap: ByteList,
 
+        const This = @This();
         const ByteList = bun.BabyList(T);
+
+        pub const Iter = struct {
+            i: u32 = 0,
+            list: *const This,
+
+            pub fn next(this: *Iter) ?*T {
+                if (this.i >= this.list.len()) return null;
+                const item = this.list.get(this.i);
+                this.i += 1;
+                return item;
+            }
+        };
+
+        pub fn withItem(item: T) @This() {
+            var this: @This() = @This().zeroes;
+            this.inlined.items[0] = item;
+            this.inlined.len += 1;
+            return this;
+        }
+
+        pub fn iter(this: *const @This()) Iter {
+            return .{ .list = this };
+        }
+
+        pub fn clone(this: *const @This()) @This() {
+            switch (this.*) {
+                .heap => return .{ .heap = this.heap.clone() },
+                .inlined => return .{
+                    .inlined = this.inlined,
+                },
+            }
+        }
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.*) {
+                .heap => this.heap.deinit(),
+                .inlined => {},
+            }
+        }
 
         pub fn initWith(val: T) @This() {
             var this: @This() = @This().zeroes;
@@ -4268,6 +4308,35 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             };
         }
 
+        pub inline fn getNoRef(this: *@This(), idx: usize) T {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    return this.inlined.items[idx];
+                },
+                .heap => this.heap.ptr[idx],
+            };
+        }
+
+        pub inline fn update(this: *@This(), idx: usize, value: T) void {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    this.inlined.items[idx] = value;
+                },
+                .heap => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    this.heap.ptr[idx] = value;
+                },
+            };
+        }
+
         pub inline fn get(this: *@This(), idx: usize) *T {
             return switch (this.*) {
                 .inlined => {
@@ -4330,6 +4399,10 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
         pub fn lastUncheckedConst(this: *const @This()) *const T {
             return this.getConst(this.len() - 1);
+        }
+
+        pub fn lastUncheckedNoRef(this: *@This()) T {
+            return this.getNoRef(this.len() - 1);
         }
     };
 }

@@ -426,13 +426,19 @@ pub fn GlobWalker_(
                 path: [bun.MAX_PATH_BYTES]u8,
                 dir_path: [:0]const u8,
 
-                component_idx: u32,
+                component_idx: ComponentIndexList = ComponentIndexList.zeroes,
                 pattern: *Component,
-                next_pattern: ?*Component,
                 is_last: bool,
 
                 iter_closed: bool = false,
                 at_cwd: bool = false,
+
+                pub inline fn getComponentIdx(this: *const Directory) u32 {
+                    return switch (this.component_idx) {
+                        .inlined => this.component_idx.inlined.items[0],
+                        .heap => this.component_idx.heap.ptr[0],
+                    };
+                }
             };
         };
 
@@ -456,7 +462,7 @@ pub fn GlobWalker_(
                         break :is_absolute std.fs.path.isAbsolutePosix(this.walker.pattern);
                     };
 
-                    if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, 0, .directory);
+                    if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, ComponentIndexList.withItem(0), .directory);
 
                     was_absolute = true;
 
@@ -489,7 +495,7 @@ pub fn GlobWalker_(
 
                     break :brk WorkItem.new(
                         path_without_special_syntax,
-                        component_idx,
+                        ComponentIndexList.withItem(component_idx),
                         .directory,
                     );
                 };
@@ -570,18 +576,18 @@ pub fn GlobWalker_(
 
             fn transitionToDirIterState(
                 this: *Iterator,
-                work_item: WorkItem,
+                work_item_: WorkItem,
                 comptime root: bool,
             ) !Maybe(void) {
+                var work_item = work_item_;
                 log("transition => {s}", .{work_item.path});
                 this.iter_state = .{ .directory = .{
                     .fd = Accessor.Handle.zero,
                     .iter = undefined,
                     .path = undefined,
                     .dir_path = undefined,
-                    .component_idx = 0,
+                    .component_idx = ComponentIndexList.withItem(0),
                     .pattern = undefined,
-                    .next_pattern = null,
                     .is_last = false,
                     .iter_closed = false,
                     .at_cwd = false,
@@ -601,7 +607,18 @@ pub fn GlobWalker_(
                 };
 
                 var had_dot_dot = false;
-                const component_idx = this.walker.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
+                const component_idx = this.walker.skipSpecialComponents(
+                    switch (work_item.indices) {
+                        .inlined => work_item.indices.inlined.items[0],
+                        .heap => work_item.indices.heap.ptr[0],
+                    },
+                    &dir_path,
+                    &this.iter_state.directory.path,
+                    &had_dot_dot,
+                );
+                {
+                    work_item.indices.update(0, component_idx);
+                }
 
                 const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
@@ -676,10 +693,8 @@ pub fn GlobWalker_(
                 }
 
                 this.iter_state.directory.dir_path = dir_path;
-                this.iter_state.directory.component_idx = component_idx;
+                this.iter_state.directory.component_idx = work_item.indices;
                 this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
-                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
-                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
                 this.iter_state.directory.at_cwd = false;
                 this.iter_state.directory.fd = Accessor.Handle.zero;
 
@@ -703,7 +718,7 @@ pub fn GlobWalker_(
                         .get_next => {
                             // Done
                             if (this.walker.workbuf.items.len == 0) return .{ .result = null };
-                            const work_item = this.walker.workbuf.pop();
+                            var work_item = this.walker.workbuf.pop();
                             switch (work_item.kind) {
                                 .directory => {
                                     switch (try this.transitionToDirIterState(work_item, false)) {
@@ -720,12 +735,22 @@ pub fn GlobWalker_(
                                     const entry_name = symlink_full_path_z[work_item.entry_start..symlink_full_path_z.len];
 
                                     var has_dot_dot = false;
-                                    const component_idx = this.walker.skipSpecialComponents(work_item.idx, &symlink_full_path_z, scratch_path_buf, &has_dot_dot);
-                                    var pattern = this.walker.patternComponents.items[component_idx];
+                                    const component_idx: u32 = brk: {
+                                        const first_idx = switch (work_item.indices) {
+                                            .inlined => work_item.indices.inlined.items[0],
+                                            .heap => work_item.indices.heap.ptr[0],
+                                        };
+                                        const skipped_component_idx = this.walker.skipSpecialComponents(first_idx, &symlink_full_path_z, scratch_path_buf, &has_dot_dot);
+                                        work_item.indices.update(0, skipped_component_idx);
+                                        break :brk skipped_component_idx;
+                                    };
+                                    const pattern = this.walker.patternComponents.items[component_idx];
                                     const next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
+                                    // Try to open as a directory first with O_DIRECTORY, potentially using the returned error
+                                    // codes to disambiguate the type of the entry
                                     const maybe_dir_fd: ?Accessor.Handle = switch (try Accessor.openat(this.cwd_fd, symlink_full_path_z)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
@@ -772,29 +797,51 @@ pub fn GlobWalker_(
                                         continue;
                                     };
 
+                                    var iter = work_item.indices.iter();
+                                    var i: usize = 0;
                                     var add_dir: bool = false;
-                                    // TODO this function calls `matchPatternImpl(pattern,
-                                    // entry_name)` which is redundant because we already called
-                                    // that when we first encountered the symlink
-                                    const recursion_idx_bump_ = this.walker.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
+                                    var do_recursion: bool = false;
 
-                                    if (recursion_idx_bump_) |recursion_idx_bump| {
-                                        if (recursion_idx_bump == 2) {
-                                            try this.walker.workbuf.append(
-                                                this.walker.arena.allocator(),
-                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
-                                            );
-                                            try this.walker.workbuf.append(
-                                                this.walker.arena.allocator(),
-                                                WorkItem.newWithFd(work_item.path, component_idx, .directory, dir_fd),
-                                            );
-                                        } else {
-                                            try this.walker.workbuf.append(
-                                                this.walker.arena.allocator(),
-                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
-                                            );
+                                    while (iter.next()) |idx_| : (i += 1) {
+                                        const idx = idx_.*;
+                                        const this_idx_is_last = idx == this.walker.patternComponents.items.len -| 1;
+
+                                        // TODO this function calls `matchPatternImpl(pattern,
+                                        // entry_name)` which is redundant because we already called
+                                        // that when we first encountered the symlink
+                                        const dir_result = this.walker.matchPatternDir(
+                                            &this.walker.patternComponents.items[idx],
+                                            if (is_last)
+                                                &this.walker.patternComponents.items[idx + 1]
+                                            else
+                                                null,
+                                            entry_name,
+                                            idx,
+                                            this_idx_is_last,
+                                        );
+
+                                        add_dir = if (i == 0) dir_result.add else add_dir;
+
+                                        if (dir_result.recursion_bump) |bump| {
+                                            switch (bump) {
+                                                .@"0", .@"1" => {
+                                                    work_item.indices.update(i, idx + bump.toNum());
+                                                },
+                                                .@"2" => {
+                                                    work_item.indices.update(i, idx + bump.toNum());
+                                                    work_item.indices.append(idx);
+                                                    do_recursion = true;
+                                                },
+                                            }
                                         }
                                     }
+
+                                    try this.walker.workbuf.append(
+                                        this.walker.arena.allocator(),
+                                        // it's okay to not close the `dir_fd` here because we are pushing it directly to the top of the
+                                        // workbuf stack so it will be processed next
+                                        WorkItem.newWithFd(entry_name, work_item.indices, .directory, dir_fd),
+                                    );
 
                                     if (add_dir and !this.walker.only_files) {
                                         return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
@@ -815,6 +862,7 @@ pub fn GlobWalker_(
                             } orelse {
                                 if (!dir.at_cwd) this.closeDisallowingCwd(dir.fd);
                                 dir.iter_closed = true;
+                                dir.component_idx.deinit();
                                 this.iter_state = .get_next;
                                 continue;
                             };
@@ -825,7 +873,18 @@ pub fn GlobWalker_(
                             const entry_name = entry.name.slice();
                             switch (entry.kind) {
                                 .file => {
-                                    const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
+                                    const component_idx = dir_iter_state.getComponentIdx();
+                                    const is_last = component_idx == this.walker.patternComponents.items.len - 1;
+                                    const matches = this.walker.matchPatternFile(
+                                        entry_name,
+                                        component_idx,
+                                        is_last,
+                                        &this.walker.patternComponents.items[component_idx],
+                                        if (!is_last)
+                                            &this.walker.patternComponents.items[component_idx + 1]
+                                        else
+                                            null,
+                                    );
                                     if (matches) {
                                         const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared };
@@ -834,31 +893,65 @@ pub fn GlobWalker_(
                                 },
                                 .directory => {
                                     var add_dir: bool = false;
-                                    const recursion_idx_bump_ = this.walker.matchPatternDir(dir_iter_state.pattern, dir_iter_state.next_pattern, entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, &add_dir);
+                                    // TODO: Make this copy-on-write, cloning each time is extremely inefficient
+                                    var new_list: ComponentIndexList = dir_iter_state.component_idx.clone();
+                                    var do_recursion: bool = false;
 
-                                    if (recursion_idx_bump_) |recursion_idx_bump| {
+                                    var iter = dir_iter_state.component_idx.iter();
+
+                                    var i: usize = 0;
+                                    while (iter.next()) |idx_| : (i += 1) {
+                                        const idx = idx_.*;
+                                        const is_last = idx == this.walker.patternComponents.items.len -| 1;
+                                        const dir_result = this.walker.matchPatternDir(
+                                            &this.walker.patternComponents.items[idx],
+                                            if (is_last)
+                                                &this.walker.patternComponents.items[idx + 1]
+                                            else
+                                                null,
+                                            entry_name,
+                                            idx,
+                                            is_last,
+                                        );
+
+                                        add_dir = if (i == 0) dir_result.add else add_dir;
+
+                                        if (dir_result.recursion_bump) |bump| {
+                                            switch (bump) {
+                                                .@"0", .@"1" => {
+                                                    new_list.update(i, idx + bump.toNum());
+                                                },
+                                                // If we reach this codepath it means that the current component is a double asterisk,
+                                                // and the entry matches the _next_ component after it:
+                                                // src/**/foo/bar
+                                                //     ^  ^  ^
+                                                //     |  |  |
+                                                //     |  |  +-- bump == component_idx + 2
+                                                //     |  +----- match(component_idx + 1, entry.name) == true
+                                                //     +-------- component_idx
+                                                //
+                                                // We need to process the pattern at component_idx + 2, but also at component_idx because
+                                                // of the recursion.
+                                                .@"2" => {
+                                                    new_list.update(i, idx + bump.toNum());
+                                                    new_list.append(idx);
+                                                    do_recursion = true;
+                                                },
+                                            }
+                                        }
+                                    }
+
+                                    if (do_recursion) {
                                         const subdir_parts: []const []const u8 = &[_][]const u8{
                                             dir.dir_path[0..dir.dir_path.len],
                                             entry_name,
                                         };
 
                                         const subdir_entry_name = try this.walker.join(subdir_parts);
-
-                                        if (recursion_idx_bump == 2) {
-                                            try this.walker.workbuf.append(
-                                                this.walker.arena.allocator(),
-                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
-                                            );
-                                            try this.walker.workbuf.append(
-                                                this.walker.arena.allocator(),
-                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx, .directory),
-                                            );
-                                        } else {
-                                            try this.walker.workbuf.append(
-                                                this.walker.arena.allocator(),
-                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
-                                            );
-                                        }
+                                        this.walker.workbuf.append(
+                                            this.walker.arena.allocator(),
+                                            WorkItem.new(subdir_entry_name, new_list, .directory),
+                                        );
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
@@ -873,21 +966,28 @@ pub fn GlobWalker_(
                                         // Following a symlink requires additional syscalls, so
                                         // we first try it against our "catch-all" pattern match
                                         // function
-                                        const matches = this.walker.matchPatternImpl(dir_iter_state.pattern, entry_name);
-                                        if (!matches) continue;
+                                        var had_match: bool = false;
+                                        var iter = dir_iter_state.component_idx.iter();
+                                        while (iter.next()) |idx_| {
+                                            const idx = idx_.*;
+                                            const pattern = &this.walker.patternComponents.items[idx];
+                                            if (this.walker.matchPatternImpl(pattern, entry_name)) {
+                                                had_match = true;
+                                                break;
+                                            }
+                                        }
+                                        if (!had_match) continue;
 
                                         const subdir_parts: []const []const u8 = &[_][]const u8{
                                             dir.dir_path[0..dir.dir_path.len],
                                             entry_name,
                                         };
                                         const entry_start: u32 = @intCast(if (dir.dir_path.len == 0) 0 else dir.dir_path.len + 1);
-
-                                        // const subdir_entry_name = try this.arena.allocator().dupe(u8, ResolvePath.join(subdir_parts, .auto));
                                         const subdir_entry_name = try this.walker.join(subdir_parts);
 
                                         try this.walker.workbuf.append(
                                             this.walker.arena.allocator(),
-                                            WorkItem.newSymlink(subdir_entry_name, dir_iter_state.component_idx, entry_start),
+                                            WorkItem.newSymlink(subdir_entry_name, dir_iter_state.component_idx.clone(), entry_start),
                                         );
 
                                         continue;
@@ -895,7 +995,19 @@ pub fn GlobWalker_(
 
                                     if (this.walker.only_files) continue;
 
-                                    const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
+                                    const component_idx = dir_iter_state.getComponentIdx();
+                                    const is_last = component_idx == this.walker.patternComponents.items.len - 1;
+                                    const matches = this.walker.matchPatternFile(
+                                        entry_name,
+                                        component_idx,
+                                        is_last,
+                                        &this.walker.patternComponents.items[component_idx],
+                                        if (!is_last)
+                                            &this.walker.patternComponents.items[component_idx + 1]
+                                        else
+                                            null,
+                                    );
+
                                     if (matches) {
                                         const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
@@ -911,9 +1023,15 @@ pub fn GlobWalker_(
             }
         };
 
+        /// Invariants to uphold:
+        /// - there is always at least one component index
+        /// - the first component index in the list is always the largest component index
+        /// - no other ordering is guaranteed
+        /// - no duplicates allowed
+        const ComponentIndexList = bun.shell.SmolList(u32, 2);
         const WorkItem = struct {
             path: []const u8,
-            idx: u32,
+            indices: ComponentIndexList = ComponentIndexList.zeroes,
             kind: Kind,
             entry_start: u32 = 0,
             fd: ?Accessor.Handle = null,
@@ -923,27 +1041,33 @@ pub fn GlobWalker_(
                 symlink,
             };
 
-            fn new(path: []const u8, idx: u32, kind: Kind) WorkItem {
+            pub fn takeIndices(this: *WorkItem) ComponentIndexList {
+                const out = this.indices;
+                this.indices = .{};
+                return out;
+            }
+
+            fn new(path: []const u8, indices: ComponentIndexList, kind: Kind) WorkItem {
                 return .{
                     .path = path,
-                    .idx = idx,
+                    .indices = indices,
                     .kind = kind,
                 };
             }
 
-            fn newWithFd(path: []const u8, idx: u32, kind: Kind, fd: Accessor.Handle) WorkItem {
+            fn newWithFd(path: []const u8, indices: ComponentIndexList, kind: Kind, fd: Accessor.Handle) WorkItem {
                 return .{
                     .path = path,
-                    .idx = idx,
+                    .indices = indices,
                     .kind = kind,
                     .fd = fd,
                 };
             }
 
-            fn newSymlink(path: []const u8, idx: u32, entry_start: u32) WorkItem {
+            fn newSymlink(path: []const u8, indices: ComponentIndexList, entry_start: u32) WorkItem {
                 return .{
                     .path = path,
-                    .idx = idx,
+                    .indices = indices,
                     .kind = .symlink,
                     .entry_start = entry_start,
                 };
@@ -1227,6 +1351,16 @@ pub fn GlobWalker_(
             return component_idx;
         }
 
+        const RecursionBump = enum(u2) {
+            @"0" = 0,
+            @"1" = 1,
+            @"2" = 2,
+
+            pub inline fn toNum(this: RecursionBump) u2 {
+                return @intFromEnum(this);
+            }
+        };
+
         fn matchPatternDir(
             this: *GlobWalker,
             pattern: *Component,
@@ -1234,10 +1368,9 @@ pub fn GlobWalker_(
             entry_name: []const u8,
             component_idx: u32,
             is_last: bool,
-            add: *bool,
-        ) ?u32 {
-            if (!this.dot and GlobWalker.startsWithDot(entry_name)) return null;
-            if (is_ignored(entry_name)) return null;
+        ) struct { add: bool = false, recursion_bump: ?RecursionBump = null } {
+            if (!this.dot and GlobWalker.startsWithDot(entry_name)) return .{};
+            if (is_ignored(entry_name)) return .{};
 
             // Handle double wildcard `**`, this could possibly
             // propagate the `**` to the directory's children
@@ -1252,36 +1385,30 @@ pub fn GlobWalker_(
                     // double wildcard recursion to the directory's
                     // children
                     if (component_idx + 1 == this.patternComponents.items.len - 1) {
-                        add.* = true;
-                        return 0;
+                        return .{ .add = true, .recursion_bump = .@"1" };
                     }
-
                     // In the normal case skip over the next pattern
                     // since we matched it, example:
                     // BEFORE: src/**/node_modules/**/*.js
                     //              ^
                     //  AFTER: src/**/node_modules/**/*.js
                     //                             ^
-                    return 2;
+                    return .{ .recursion_bump = .@"2" };
                 }
 
-                if (is_last) {
-                    add.* = true;
-                }
-
-                return 0;
+                // I fthe double wildcard is the last component, we should
+                // match it and propagate the double wildcard recursion to
+                // the directory's children
+                return .{ .add = is_last, .recursion_bump = .@"0" };
             }
 
             const matches = this.matchPatternImpl(pattern, entry_name);
             if (matches) {
-                if (is_last) {
-                    add.* = true;
-                    return null;
-                }
-                return 1;
+                if (is_last) return .{ .add = true, .recursion_bump = null };
+                return .{ .recursion_bump = .@"1" };
             }
 
-            return null;
+            return .{};
         }
 
         /// A file can only match if:

@@ -7039,7 +7039,7 @@ pub const Macro = struct {
         var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            vm.onError(vm.global, loaded_result.result(vm.global.vm()));
+            _ = vm.unhandledRejection(vm.global, loaded_result.result(vm.global.vm()), loaded_result.asValue());
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
@@ -7150,7 +7150,7 @@ pub const Macro = struct {
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
-                        this.macro.vm.onError(this.global, value);
+                        _ = this.macro.vm.uncaughtException(this.global, value, JSC.JSValue.null);
                         return this.caller;
                     },
                     .Undefined => if (this.is_top_level)
@@ -7177,7 +7177,7 @@ pub const Macro = struct {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
                             } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
-                                this.macro.vm.onError(this.global, value);
+                                _ = this.macro.vm.uncaughtException(this.global, value, JSC.JSValue.null);
                                 return error.MacroFailed;
                             }
                         }
@@ -7337,15 +7337,11 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var promise_result = JSC.JSValue.zero;
-                        var rejected = false;
-                        if (value.asAnyPromise()) |promise| {
-                            this.macro.vm.waitForPromise(promise);
-                            promise_result = promise.result(this.global.vm());
-                            rejected = promise.status(this.global.vm()) == .Rejected;
-                        } else {
-                            @panic("Unexpected promise type");
-                        }
+                        const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
+
+                        this.macro.vm.waitForPromise(promise);
+                        const promise_result = promise.result(this.global.vm());
+                        const rejected = promise.status(this.global.vm()) == .Rejected;
 
                         if (promise_result.isUndefined() and this.is_top_level) {
                             this.is_top_level = false;
@@ -7353,7 +7349,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            this.macro.vm.onError(this.global, promise_result);
+                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue(this.global));
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;

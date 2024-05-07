@@ -606,7 +606,7 @@ pub const FSWatcher = struct {
         );
 
         if (err.toError()) |value| {
-            JSC.VirtualMachine.get().onError(globalObject, value);
+            _ = JSC.VirtualMachine.get().uncaughtException(globalObject, value, JSC.JSValue.null);
         }
     }
 

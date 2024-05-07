@@ -1042,7 +1042,7 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.onError(vm.global, promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
@@ -1127,7 +1127,7 @@ pub const TestCommand = struct {
         if (is_last) {
             if (jest.Jest.runner != null) {
                 if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
-                    vm.onError(vm.global, err);
+                    _ = vm.uncaughtException(vm.global, err, JSC.JSValue.null);
                 }
             }
         }

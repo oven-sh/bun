@@ -3,6 +3,7 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
@@ -746,6 +747,40 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     });
 };
 
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, JSC::JSValue origin)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    MarkedArgumentBuffer args;
+    args.append(exception);
+    args.append(origin);
+    auto eventType = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
+    auto& wrapped = process->wrapped();
+    if (wrapped.listenerCount(eventType) > 0) {
+        wrapped.emit(eventType, args);
+        return true;
+    } else {
+        return false;
+    }
+}
+
+extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
+{
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    MarkedArgumentBuffer args;
+    args.append(reason);
+    args.append(promise);
+    auto eventType = Identifier::fromString(globalObject->vm(), "unhandledRejection"_s);
+    auto& wrapped = process->wrapped();
+    if (wrapped.listenerCount(eventType) > 0) {
+        wrapped.emit(eventType, args);
+        return true;
+    } else {
+        return false;
+    }
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (eventEmitter.scriptExecutionContext()->isMainThread()) {
@@ -765,6 +800,12 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 }
             }
             return;
+        }
+
+        if (eventName.string() == "uncaughtException"_s) {
+            if (isAdded) {
+
+            }
         }
 
         // Signal Handlers

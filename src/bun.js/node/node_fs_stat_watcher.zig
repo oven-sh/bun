@@ -385,7 +385,7 @@ pub const StatWatcher = struct {
 
         const vm = this.globalThis.bunVM();
         if (result.isAnyError()) {
-            vm.onError(this.globalThis, result);
+            _ = vm.uncaughtException(this.globalThis, result, JSC.JSValue.null);
         }
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
@@ -421,7 +421,7 @@ pub const StatWatcher = struct {
         );
         if (result.isAnyError()) {
             const vm = this.globalThis.bunVM();
-            vm.onError(this.globalThis, result);
+            _ = vm.uncaughtException(this.globalThis, result, JSC.JSValue.null);
         }
     }
 

@@ -272,7 +272,8 @@ pub const WebWorker = struct {
         };
 
         if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.onError(vm.global, promise.result(vm.global.vm()));
+            // TODO check if we need to do something else here if the promise was handled
+            _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
 
             vm.exit_handler.exit_code = 1;
             this.exitAndDeinit();

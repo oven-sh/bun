@@ -3930,7 +3930,7 @@ pub const ServerWebSocket = struct {
             }
 
             if (error_handler.isEmptyOrUndefinedOrNull()) {
-                vm.onError(globalObject, err_value);
+                _ = vm.uncaughtException(globalObject, err_value, JSC.JSValue.null);
             } else {
                 const corky = [_]JSValue{err_value};
                 corker.args = &corky;
@@ -3997,7 +3997,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err_value| {
             if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                vm.onError(globalObject, err_value);
+                _ = vm.uncaughtException(globalObject, err_value, JSC.JSValue.null);
             } else {
                 const args = [_]JSValue{err_value};
                 corker.args = &args;
@@ -4049,7 +4049,7 @@ pub const ServerWebSocket = struct {
 
             if (result.toError()) |err_value| {
                 if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                    vm.onError(globalObject, err_value);
+                    _ = vm.uncaughtException(globalObject, err_value, JSC.JSValue.null);
                 } else {
                     const args = [_]JSValue{err_value};
                     corker.args = &args;

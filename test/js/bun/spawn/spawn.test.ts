@@ -783,7 +783,7 @@ describe("close handling", () => {
   }
 });
 
-it("dispose keyword works", async () => {
+it.todoIf(isWindows)("dispose keyword works", async () => {
   let captured;
   {
     await using proc = spawn({

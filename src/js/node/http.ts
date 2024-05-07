@@ -1412,6 +1412,10 @@ class ClientRequest extends OutgoingMessage {
     return this.#protocol;
   }
 
+  get agent() {
+    return this.#agent;
+  }
+
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];

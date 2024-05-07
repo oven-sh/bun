@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.7")
-set(WEBKIT_TAG f0fbde91399d504266064d8845628bf29a9e834d)
+set(Bun_VERSION "1.1.8")
+set(WEBKIT_TAG 18eaec2ddf9062a76e911c6fbb9c469a6e442ad7)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -1112,6 +1112,7 @@ else()
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
+        -mno-omit-leaf-frame-pointer
     )
 endif()
 

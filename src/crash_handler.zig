@@ -308,6 +308,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         error.InvalidArgument,
         error.@"Invalid Bunfig",
+        error.InstallFailed,
         => if (!show_trace) Global.exit(1),
 
         error.SyntaxError => {
@@ -629,7 +630,25 @@ fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyop
     );
 }
 
-pub fn updatePosixSegfaultHandler(act: ?*const std.os.Sigaction) !void {
+var did_register_sigaltstack = false;
+var sigaltstack: [512 * 1024]u8 = undefined;
+
+pub fn updatePosixSegfaultHandler(act: ?*std.os.Sigaction) !void {
+    if (act) |act_| {
+        if (!did_register_sigaltstack) {
+            var stack: std.c.stack_t = .{
+                .flags = 0,
+                .size = sigaltstack.len,
+                .sp = &sigaltstack,
+            };
+
+            if (std.c.sigaltstack(&stack, null) == 0) {
+                act_.flags |= std.os.SA.ONSTACK;
+                did_register_sigaltstack = true;
+            }
+        }
+    }
+
     try std.os.sigaction(std.os.SIG.SEGV, act, null);
     try std.os.sigaction(std.os.SIG.ILL, act, null);
     try std.os.sigaction(std.os.SIG.BUS, act, null);
@@ -645,7 +664,7 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            const act = std.os.Sigaction{
+            var act = std.os.Sigaction{
                 .handler = .{ .sigaction = handleSegfaultPosix },
                 .mask = std.os.empty_sigset,
                 .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
@@ -666,7 +685,7 @@ pub fn resetSegfaultHandler() void {
         return;
     }
 
-    const act = std.os.Sigaction{
+    var act = std.os.Sigaction{
         .handler = .{ .handler = std.os.SIG.DFL },
         .mask = std.os.empty_sigset,
         .flags = 0,

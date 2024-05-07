@@ -7389,15 +7389,35 @@ pub const PackageManager = struct {
     }
 
     pub inline fn update(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .update, .update);
+        try updatePackageJSONAndInstallCatchError(ctx, .update, .update);
     }
 
     pub inline fn add(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .add, .add);
+        try updatePackageJSONAndInstallCatchError(ctx, .add, .add);
     }
 
     pub inline fn remove(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .remove, .remove);
+        try updatePackageJSONAndInstallCatchError(ctx, .remove, .remove);
+    }
+
+    pub fn updatePackageJSONAndInstallCatchError(
+        ctx: Command.Context,
+        comptime op: Lockfile.Package.Diff.Op,
+        comptime subcommand: Subcommand,
+    ) !void {
+        updatePackageJSONAndInstall(ctx, op, subcommand) catch |err| {
+            switch (err) {
+                error.InstallFailed,
+                error.InvalidPackageJSON,
+                => {
+                    const log = &bun.CLI.Cli.log_;
+                    log.printForLogLevel(bun.Output.errorWriter()) catch {};
+                    bun.Global.exit(1);
+                    return;
+                },
+                else => return err,
+            }
+        };
     }
 
     pub inline fn link(ctx: Command.Context) !void {

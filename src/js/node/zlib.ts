@@ -4236,7 +4236,9 @@ var require_lib = __commonJS({
     exports.brotliCompressSync = brotliCompressSync;
     exports.brotliDecompressSync = brotliDecompressSync;
     exports.createBrotliCompress = createBrotliCompress;
+    exports.BrotliCompress = BrotliCompress;
     exports.createBrotliDecompress = createBrotliDecompress;
+    exports.BrotliDecompress = BrotliDecompress;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];

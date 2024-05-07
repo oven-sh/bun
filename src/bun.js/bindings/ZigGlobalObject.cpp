@@ -221,7 +221,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     WTF::initializeMainThread();
     printf("1: b\n");
     JSC::initialize();
-    printf("1: c\n");
     {
         JSC::Options::AllowUnfinalizedAccessScope scope;
 

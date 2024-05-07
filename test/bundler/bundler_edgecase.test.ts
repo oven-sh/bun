@@ -1038,7 +1038,24 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/UsingWithSixImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Database } from 'bun:sqlite';
 
+        import 'bun';
+        import 'bun:ffi';
+        import 'bun:jsc';
+        import 'node:assert';
+        import 'bun:test';
+
+        using a = new Database();
+
+        export { a };
+      `,
+    },
+    target: "bun",
+  });
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node

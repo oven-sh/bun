@@ -1,5 +1,14 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isLinux, isWindows, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  toBeValidBin,
+  toHaveBins,
+  writeShebangScript,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -40,7 +49,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(

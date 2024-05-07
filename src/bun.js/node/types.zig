@@ -333,23 +333,23 @@ pub const BlobOrStringOrBuffer = union(enum) {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
         return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
-        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
 
@@ -532,6 +532,15 @@ pub const StringOrBuffer = union(enum) {
         };
 
         return fromJSWithEncoding(global, allocator, value, encoding);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) ?StringOrBuffer {
+        const encoding: Encoding = brk: {
+            if (!encoding_value.isCell())
+                break :brk .utf8;
+            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
+        };
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
     }
 };
 

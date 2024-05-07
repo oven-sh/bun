@@ -2270,6 +2270,15 @@ var require_readable = __commonJS({
     function Readable(options) {
       if (!(this instanceof Readable)) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
+
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      // };
+
       this._readableState = new ReadableState(options, this, isDuplex);
       if (options) {
         const { read, destroy, construct, signal } = options;
@@ -3430,6 +3439,7 @@ var require_readable = __commonJS({
     };
   },
 });
+const Readable = require_readable();
 
 // node_modules/readable-stream/lib/internal/streams/writable.js
 var errorOrDestroy;
@@ -3467,6 +3477,15 @@ var require_writable = __commonJS({
     function Writable(options = {}) {
       const isDuplex = this instanceof require_duplex();
       if (!isDuplex && !FunctionPrototypeSymbolHasInstance(Writable, this)) return new Writable(options);
+
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      // };
+
       this._writableState = new WritableState(options, this, isDuplex);
       if (options) {
         if (typeof options.write === "function") this._write = options.write;
@@ -4071,6 +4090,7 @@ var require_writable = __commonJS({
     };
   },
 });
+const Writable = require_writable();
 
 // node_modules/readable-stream/lib/internal/streams/duplexify.js
 var require_duplexify = __commonJS({
@@ -4429,6 +4449,18 @@ var require_duplex = __commonJS({
 
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
+
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      //   data: undefined,
+      //   end: undefined,
+      //   readable: undefined,
+      // };
+
       Readable.$call(this, options);
       Writable.$call(this, options);
 
@@ -4506,6 +4538,7 @@ var require_duplex = __commonJS({
     };
   },
 });
+const Duplex = require_duplex();
 
 // node_modules/readable-stream/lib/internal/streams/transform.js
 var require_transform = __commonJS({
@@ -4515,6 +4548,7 @@ var require_transform = __commonJS({
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
+
       Duplex.$call(this, options);
 
       this._readableState.sync = false;
@@ -4523,6 +4557,8 @@ var require_transform = __commonJS({
       if (options) {
         if (typeof options.transform === "function") this._transform = options.transform;
         if (typeof options.flush === "function") this._flush = options.flush;
+      } else {
+        this.allowHalfOpen = true;
       }
 
       this.on("prefinish", prefinish.bind(this));
@@ -5505,9 +5541,6 @@ function getNativeReadableStream(Readable, stream, options) {
 }
 
 /** --- Bun native stream wrapper ---  */
-var Readable = require_readable();
-var Writable = require_writable();
-var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
 const { fileSinkSymbol: _fileSink } = require("internal/shared");

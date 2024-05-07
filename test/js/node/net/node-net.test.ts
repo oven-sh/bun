@@ -393,8 +393,6 @@ describe("net.Socket write", () => {
     });
 
     const socket = new Socket();
-    socket.on("data", data => console.log(data.toString()));
-    socket.on("error", err => console.error(err));
 
     async function run() {
       return new Promise((resolve, reject) => {
@@ -418,7 +416,7 @@ it("should handle connection error", done => {
   let errored = false;
 
   // @ts-ignore
-  const socket = connect(55555, () => {
+  const socket = connect(55555, "localhost", () => {
     done(new Error("Should not have connected"));
   });
 

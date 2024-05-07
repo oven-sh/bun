@@ -656,39 +656,6 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
-// we gotta handle the different signatures that nodejs tls.connect accepts
-// tls.connect(options[, callback])
-// tls.connect(path[, options][, callback])
-// tls.connect(port[, host][, options][, callback])
-function normalizeArgs(args) {
-  if (args.length === 0) {
-    return [{}, null];
-  }
-
-  const [arg0, arg1] = args;
-  let options = {} as any;
-  if (typeof arg0 === "object" && arg0 !== null) {
-    options = arg0;
-  } else if (typeof arg0 === "string") {
-    options.path = arg0;
-  } else {
-    options.port = arg0;
-    if (typeof arg1 === "string") {
-      options.host = arg1;
-    }
-  }
-
-  if (args[1] !== null && typeof args[1] === "object") {
-    Object.assign(options, args[1]);
-  } else if (args[2] !== null && typeof args[2] === "object") {
-    Object.assign(options, args[2]);
-  }
-
-  const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
-
-  return [options, callback];
-}
-
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
@@ -709,7 +676,7 @@ const DEFAULT_ECDH_CURVE = "auto",
     return new TLSSocket().connect(port, host, connectListener);
   },
   connect = (...args) => {
-    let [options, callback] = normalizeArgs(args);
+    let [options, callback] = net._normalizeArgs(args);
     if (options.ALPNProtocols) {
       convertALPNProtocols(options.ALPNProtocols, options);
     }
@@ -718,7 +685,6 @@ const DEFAULT_ECDH_CURVE = "auto",
       rejectUnauthorized: rejectUnauthorizedDefault,
       ciphers: DEFAULT_CIPHERS,
       checkServerIdentity,
-      minDHSize: 1024,
       ...options,
     };
 
@@ -727,7 +693,7 @@ const DEFAULT_ECDH_CURVE = "auto",
 
     // Node.js connects the socket right away if no options.socket is provided. For compatibility, I guess we should do the same.
     if (!options.socket) {
-      tlsSocket.connect(options.port, options.host, callback);
+      tlsSocket.connect(options, callback);
     }
 
     if (options.servername && !net.isIP(options.servername)) {

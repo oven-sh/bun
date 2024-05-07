@@ -422,66 +422,49 @@ const Socket = (function (InternalSocket) {
       process.nextTick(closeNT, connection);
     }
 
-    connect(port, host, connectListener) {
-      var path;
+    connect(...args) {
+      const [options, callback] = normalizeArgs(args);
       var connection = this.#socket;
       var _checkServerIdentity = undefined;
-      if (typeof port === "string") {
-        path = port;
-        port = undefined;
 
-        if (typeof host === "function") {
-          connectListener = host;
-          host = undefined;
-        }
-      } else if (typeof host == "function") {
-        if (typeof port === "string") {
-          path = port;
-          port = undefined;
-        }
+      var {
+        fd,
+        port,
+        host,
+        path,
+        socket,
+        // TODOs
+        localAddress,
+        localPort,
+        family,
+        hints,
+        lookup,
+        noDelay,
+        keepAlive,
+        keepAliveInitialDelay,
+        requestCert,
+        rejectUnauthorized,
+        pauseOnConnect,
+        servername,
+        checkServerIdentity,
+        session,
+      } = options;
 
-        connectListener = host;
-        host = undefined;
+      _checkServerIdentity = checkServerIdentity;
+      this.servername = servername;
+      if (socket) {
+        connection = socket;
       }
-      if (typeof port == "object") {
-        var {
+      if (fd) {
+        bunConnect({
+          data: this,
           fd,
-          port,
-          host,
-          path,
-          socket,
-          // TODOs
-          localAddress,
-          localPort,
-          family,
-          hints,
-          lookup,
-          noDelay,
-          keepAlive,
-          keepAliveInitialDelay,
-          requestCert,
-          rejectUnauthorized,
-          pauseOnConnect,
-          servername,
-          checkServerIdentity,
-          session,
-        } = port;
-        _checkServerIdentity = checkServerIdentity;
-        this.servername = servername;
-        if (socket) {
-          connection = socket;
-        }
-        if (fd) {
-          bunConnect({
-            data: this,
-            fd,
-            socket: this.#handlers,
-            tls,
-          }).catch(error => {
-            this.emit("error", error);
-            this.emit("close");
-          });
-        }
+          socket: this.#handlers,
+          tls,
+        }).catch(error => {
+          this.emit("error", error);
+          this.emit("close");
+        });
       }
 
       this.pauseOnConnect = pauseOnConnect;
@@ -536,8 +519,8 @@ const Socket = (function (InternalSocket) {
         this._secureEstablished = false;
         this._securePending = true;
 
-        if (connectListener) this.on("secureConnect", connectListener);
-      } else if (connectListener) this.on("connect", connectListener);
+        if (callback) this.on("secureConnect", callback);
+      } else if (callback) this.on("connect", callback);
 
       // start using existing connection
       try {
@@ -740,13 +723,42 @@ const Socket = (function (InternalSocket) {
   },
 );
 
-function createConnection(port, host, connectListener) {
-  if (typeof port === "object") {
-    // port is option pass Socket options and let connect handle connection options
-    return new Socket(port).connect(port, host, connectListener);
+// we gotta handle the different signatures that nodejs tls.connect accepts
+// connect(options[, callback])
+// connect(path[, options][, callback])
+// connect(port[, host][, options][, callback])
+function normalizeArgs(args) {
+  if (args.length === 0) {
+    return [{}, null];
   }
-  // port is path or host, let connect handle this
-  return new Socket().connect(port, host, connectListener);
+
+  const [arg0, arg1] = args;
+  let options = {} as any;
+  if (typeof arg0 === "object" && arg0 !== null) {
+    options = arg0;
+  } else if (typeof arg0 === "string") {
+    options.path = arg0;
+  } else {
+    options.port = arg0;
+    if (typeof arg1 === "string") {
+      options.host = arg1;
+    }
+  }
+
+  if (args[1] !== null && typeof args[1] === "object") {
+    Object.assign(options, args[1]);
+  } else if (args[2] !== null && typeof args[2] === "object") {
+    Object.assign(options, args[2]);
+  }
+
+  const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
+
+  return [options, callback];
+}
+
+function createConnection(...args) {
+  const [options, callback] = normalizeArgs(args);
+  return new Socket(options).connect(options, callback);
 }
 
 const connect = createConnection;
@@ -1027,7 +1039,7 @@ export default {
   isIPv6,
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
-
+  _normalizeArgs: normalizeArgs,
   getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
   setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
   getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),

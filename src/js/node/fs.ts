@@ -674,9 +674,8 @@ ReadStream = (function (InternalReadStream) {
       this._readableState.autoClose = autoDestroy = autoClose;
       this._readableState.highWaterMark = highWaterMark;
 
-      if (start !== undefined) {
-        this.pos = start;
-      }
+      this.pos = start || 0;
+      this.bytesRead = start || 0;
 
       $assert(overridden_fs);
       this.#fs = overridden_fs;
@@ -742,14 +741,20 @@ ReadStream = (function (InternalReadStream) {
     }
 
     push(chunk) {
-      var bytesRead = chunk?.length ?? 0;
-      this.bytesRead += bytesRead;
-      if (this.end !== undefined && this.bytesRead > this.end) {
-        const newLen = bytesRead - (this.bytesRead - this.end);
-        chunk = chunk.slice(0, newLen > 0 ? newLen : 0);
-        const [_, ...args] = arguments;
-        return super.push(chunk, ...args);
+      let bytesRead = chunk?.length ?? 0;
+      if (bytesRead > 0) {
+        this.bytesRead += bytesRead;
+        let end = this.end;
+        // truncate the chunk if we go past the end
+        if (end !== undefined && this.bytesRead > end) {
+          chunk = chunk.slice(0, end - this.pos + 1);
+          var [_, ...rest] = arguments;
+          this.pos = this.bytesRead;
+          return super.push(chunk, ...rest);
+        }
+        this.pos = this.bytesRead;
       }
+
       return super.push(...arguments);
     }
 

@@ -1067,8 +1067,9 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "/OPT:ICF=10")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL /Gw /Gy /GF /GL /GA)
-        target_link_options(${bun} PUBLIC /DEBUG:FULL ${LTO_LINK_FLAG}
+        target_compile_options(${bun} PUBLIC /DEBUG /O2 ${LTO_FLAG} /Gy /Gw /GF /GL /GA)
+        target_link_options(${bun} PUBLIC /DEBUG ${LTO_LINK_FLAG}
+            /Gy
             /OPT:REF
             /OPT:ICF
             /OPT:ICF=10

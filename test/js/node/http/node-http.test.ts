@@ -1944,3 +1944,28 @@ it("destroy should end download", async () => {
     server.stop(true);
   }
 });
+
+it("ServerResponse ClientRequest field exposes agent getter", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.end("world");
+    });
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      try {
+        expect(res.req.agent.protocol).toBe("http:");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});

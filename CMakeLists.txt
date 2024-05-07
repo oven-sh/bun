@@ -1069,7 +1069,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
         target_compile_options(${bun} PUBLIC /DEBUG /O2 ${LTO_FLAG} /Gy /Gw /GF /GL /GA)
         target_link_options(${bun} PUBLIC /DEBUG ${LTO_LINK_FLAG}
-            /Gy
             /OPT:REF
             /OPT:ICF
             /OPT:ICF=10

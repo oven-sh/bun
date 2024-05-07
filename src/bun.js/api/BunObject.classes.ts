@@ -96,6 +96,10 @@ export default [
         fn: "kill",
         length: 1,
       },
+      "@@asyncDispose": {
+        fn: "asyncDispose",
+        length: 1,
+      },
 
       killed: {
         getter: "getKilled",

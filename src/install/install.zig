@@ -10462,8 +10462,9 @@ pub const PackageManager = struct {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
-                        lockfile.overrides.count(&lockfile, builder);
+                        for (lockfile.workspace_paths.values()) |path| builder.count(path.slice(lockfile.buffers.string_bytes.items));
 
+                        lockfile.overrides.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -10553,10 +10554,8 @@ pub const PackageManager = struct {
                         const parsed_lockfile_paths = lockfile.workspace_paths.values();
                         for (disk_lockfile_paths, parsed_lockfile_paths) |*disk_path, parsed_path| {
                             const str = parsed_path.slice(lockfile.buffers.string_bytes.items);
-                            builder.count(str);
                             disk_path.* = builder.append(String, str);
                         }
-
                         builder.clamp();
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers

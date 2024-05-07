@@ -537,6 +537,8 @@ var defaultReadStreamOptions = {
 
 let kHandle = Symbol("kHandle");
 
+const blobToStreamWithOffset = $newZigFunction("blob.zig", "Blob.toStreamWithOffset", 1);
+
 var ReadStreamClass;
 
 ReadStream = (function (InternalReadStream) {
@@ -633,7 +635,7 @@ ReadStream = (function (InternalReadStream) {
 
       // Get the stream controller
       // We need the pointer to the underlying stream controller for the NativeReadable
-      var stream = fileRef.stream();
+      const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
       var ptr = stream.$bunNativePtr;
       if (!ptr) {
         throw new Error("Failed to get internal stream controller. This is a bug in Bun");
@@ -740,50 +742,16 @@ ReadStream = (function (InternalReadStream) {
     }
 
     push(chunk) {
-      // Is it even possible for this to be less than 1?
       var bytesRead = chunk?.length ?? 0;
-      if (bytesRead > 0) {
-        this.bytesRead += bytesRead;
-        var currPos = this.pos;
-        // Handle case of going through bytes before pos if bytesRead is less than pos
-        // If pos is undefined, we are reading through the whole file
-        // Otherwise we started from somewhere in the middle of the file
-        if (currPos !== undefined) {
-          // At this point we still haven't hit our `start` point
-          // We should discard this chunk and exit
-          if (this.bytesRead < currPos) {
-            return true;
-          }
-          // At this point, bytes read is greater than our starting position
-          // If the current position is still the starting position, that means
-          // this is the first chunk where we care about the bytes read
-          // and we need to subtract the bytes read from the start position (n) and slice the last n bytes
-          if (currPos === this.start) {
-            var n = this.bytesRead - currPos;
-            chunk = chunk.slice(-n);
-            var [_, ...rest] = arguments;
-            this.pos = this.bytesRead;
-            if (this.end !== undefined && this.bytesRead > this.end) {
-              chunk = chunk.slice(0, this.end - this.start + 1);
-            }
-            return super.push(chunk, ...rest);
-          }
-          var end = this.end;
-          // This is multi-chunk read case where we go passed the end of the what we want to read in the last chunk
-          if (end !== undefined && this.bytesRead > end) {
-            chunk = chunk.slice(0, end - currPos + 1);
-            var [_, ...rest] = arguments;
-            this.pos = this.bytesRead;
-            return super.push(chunk, ...rest);
-          }
-          this.pos = this.bytesRead;
-        }
+      this.bytesRead += bytesRead;
+      if (this.end !== undefined && this.bytesRead > this.end) {
+        const newLen = bytesRead - (this.bytesRead - this.end);
+        chunk = chunk.slice(0, newLen > 0 ? newLen : 0);
+        const [_, ...args] = arguments;
+        return super.push(chunk, ...args);
       }
-
       return super.push(...arguments);
     }
-
-    // #
 
     // n should be the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
     #internalRead(n) {

@@ -44,7 +44,7 @@ function createBrotliCompress(opts) {
 const kHandle = Symbol("kHandle");
 
 function BrotliCompress(opts) {
-  if (!new.target) return new BrotliCompress(opts);
+  if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
   this[kHandle] = createBrotliEncoder(opts, {}, null);
   stream.Transform.$call(this);
 }
@@ -63,7 +63,7 @@ function createBrotliDecompress(opts) {
 }
 
 function BrotliDecompress(opts) {
-  if (!new.target) return new BrotliDecompress(opts);
+  if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
   this[kHandle] = createBrotliDecoder(opts, {}, null);
   stream.Transform.$call(this);
 }

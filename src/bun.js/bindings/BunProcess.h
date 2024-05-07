@@ -20,6 +20,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
+    // LazyProperty<Process, JSFunction> m_uncaughtExceptionCaptureCallback;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -74,6 +75,7 @@ public:
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
+    // inline JSFunction* uncaughtExceptionCaptureCallback() { return m_uncaughtExceptionCaptureCallback.getInitializedOnMainThread(this); }
 };
 
 } // namespace Bun

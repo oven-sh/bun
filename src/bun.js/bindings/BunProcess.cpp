@@ -751,13 +751,29 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = jsCast<Process*>(globalObject->processObject());
+    auto& wrapped = process->wrapped();
+
     MarkedArgumentBuffer args;
     args.append(exception);
     args.append(origin);
-    auto eventType = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
-    auto& wrapped = process->wrapped();
-    if (wrapped.listenerCount(eventType) > 0) {
-        wrapped.emit(eventType, args);
+
+    auto uncaughtExceptionMonitor = Identifier::fromString(globalObject->vm(), "uncaughtExceptionMonitor"_s);
+    if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
+        wrapped.emit(uncaughtExceptionMonitor, args);
+    }
+
+    // TODO figure this stuff out
+    /*
+    auto capture = process->uncaughtExceptionCaptureCallback();
+    if (capture)
+        capture.call(globalObject, exception, origin);
+        return true;
+    }
+    */
+
+    auto uncaughtException = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
+    if (wrapped.listenerCount(uncaughtException) > 0) {
+        wrapped.emit(uncaughtException, args);
         return true;
     } else {
         return false;

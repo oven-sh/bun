@@ -65,7 +65,7 @@ function createBrotliDecompress(opts) {
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
   this[kHandle] = createBrotliDecoder(opts, {}, null);
-  stream.Transform.$call(this);
+  stream.Transform.$apply(this, arguments);
 }
 BrotliDecompress.prototype = {};
 ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);

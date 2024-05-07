@@ -216,7 +216,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     JSC::Config::enableRestrictedOptions();
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
-    printf("1: a\n");
     WTF::initializeMainThread();
     printf("1: b\n");
     JSC::initialize();

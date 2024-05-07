@@ -8,7 +8,6 @@ const JSC = bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;
 pub const OS = struct {
@@ -76,7 +75,8 @@ pub const OS = struct {
         const values = JSC.JSValue.createEmptyArray(globalThis, 0);
         var num_cpus: u32 = 0;
 
-        var file_buf = std.ArrayList(u8).init(bun.default_allocator);
+        var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
+        var file_buf = std.ArrayList(u8).init(stack_fallback.get());
         defer file_buf.deinit();
 
         // Read /proc/stat to get number of CPUs and times

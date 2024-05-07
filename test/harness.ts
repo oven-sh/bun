@@ -269,7 +269,7 @@ export function randomPort(): number {
 }
 
 expect.extend({
-  toRun(cmds: string[]) {
+  toRun(cmds: string[], optionalStdout?: string) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
@@ -280,6 +280,14 @@ expect.extend({
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+      };
+    }
+
+    if (optionalStdout) {
+      return {
+        pass: result.stdout.toString("utf-8") === optionalStdout,
+        message: () =>
+          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
       };
     }
 

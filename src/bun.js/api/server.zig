@@ -560,13 +560,25 @@ pub const ServerConfig = struct {
             }
 
             if (obj.getTruthy(global, "requestCert")) |request_cert| {
-                result.request_cert = if (request_cert.asBoolean()) 1 else 0;
-                any = true;
+                if (request_cert.isBoolean()) {
+                    result.request_cert = if (request_cert.asBoolean()) 1 else 0;
+                    any = true;
+                } else {
+                    global.throw("Expected requestCert to be a boolean", .{});
+                    result.deinit();
+                    return null;
+                }
             }
 
             if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
-                result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
-                any = true;
+                if (reject_unauthorized.isBoolean()) {
+                    result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
+                    any = true;
+                } else {
+                    global.throw("Expected rejectUnauthorized to be a boolean", .{});
+                    result.deinit();
+                    return null;
+                }
             }
 
             if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
@@ -720,8 +732,14 @@ pub const ServerConfig = struct {
                 }
 
                 if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
-                    result.low_memory_mode = low_memory_mode.toBoolean();
-                    any = true;
+                    if (low_memory_mode.isBoolean() or low_memory_mode.isUndefined()) {
+                        result.low_memory_mode = low_memory_mode.toBoolean();
+                        any = true;
+                    } else {
+                        global.throw("Expected lowMemoryMode to be a boolean", .{});
+                        result.deinit();
+                        return null;
+                    }
                 }
             }
 
@@ -1828,10 +1846,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.request_body) |body| {
                 ctxLog("finalizeWithoutDeinit: request_body != null", .{});
+                // Case 1:
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.value == .Locked and body.value.Locked.hasPendingPromise()) {
+                // Case 2:
+                // User ignored the body and the connection was aborted or ended
+                // Case 3:
+                // Stream was not consumed and the connection was aborted or ended
+                if (body.value == .Locked) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }
@@ -2800,10 +2823,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .Invalid => {
                                 this.readable_stream_ref.deinit();
                             },
-                            // toBlobIfPossible should've caught this
-                            .Blob, .File => unreachable,
-
-                            .JavaScript, .Direct => {
+                            // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
+                            .Blob,
+                            .File,
+                            // These are the common scenario:
+                            .JavaScript,
+                            .Direct,
+                            => {
                                 if (this.resp) |resp| {
                                     var pair = StreamPair{ .stream = stream, .this = this };
                                     resp.runCorkedWithType(*StreamPair, doRenderStream, &pair);
@@ -4191,6 +4217,11 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("publish expects compress to be a boolean", .{});
+            return .zero;
+        }
+
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
@@ -4268,6 +4299,11 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
 
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("publishText expects compress to be a boolean", .{});
+            return .zero;
+        }
+
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
@@ -4326,6 +4362,11 @@ pub const ServerWebSocket = struct {
         defer topic_slice.deinit();
         if (topic_slice.len == 0) {
             globalThis.throw("publishBinary requires a non-empty topic", .{});
+            return .zero;
+        }
+
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("publishBinary expects compress to be a boolean", .{});
             return .zero;
         }
 
@@ -4497,6 +4538,11 @@ pub const ServerWebSocket = struct {
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
 
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("send expects compress to be a boolean", .{});
+            return .zero;
+        }
+
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
@@ -4565,6 +4611,11 @@ pub const ServerWebSocket = struct {
 
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
+
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("sendText expects compress to be a boolean", .{});
+            return .zero;
+        }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
@@ -4644,6 +4695,11 @@ pub const ServerWebSocket = struct {
 
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
+
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("sendBinary expects compress to be a boolean", .{});
+            return .zero;
+        }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 

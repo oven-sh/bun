@@ -18,7 +18,7 @@ class MessagePortChannelProviderImpl;
 class GlobalScope : public RefCounted<GlobalScope>, public EventTargetWithInlineData {
     WTF_MAKE_ISO_ALLOCATED(GlobalScope);
 
-    uint32_t m_messageEventCount;
+    uint32_t m_messageEventCount{0};
 
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 

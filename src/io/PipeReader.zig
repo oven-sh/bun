@@ -423,7 +423,7 @@ pub fn WindowsPipeReader(
                                     source.setData(this);
                                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                                     file.iov = uv.uv_buf_t.init(buf);
-                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) this._offset else -1, onFileRead).toError(.write)) |err| {
+                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
                                         this.flags.is_paused = true;
                                         // we should inform the error if we are unable to keep reading
                                         this.onRead(.{ .err = err }, "", .progress);
@@ -461,7 +461,7 @@ pub fn WindowsPipeReader(
                     source.setData(this);
                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                     file.iov = uv.uv_buf_t.init(buf);
-                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) this._offset else -1, onFileRead).toError(.write)) |err| {
+                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
                         return .{ .err = err };
                     }
                 },

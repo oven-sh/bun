@@ -1,5 +1,11 @@
 import { describe, it, expect } from "bun:test";
 import { gzipSync, deflateSync, inflateSync, gunzipSync } from "bun";
+import * as zlib from "node:zlib";
+import * as fs from "node:fs";
+import * as buffer from "node:buffer";
+import * as util from "node:util";
+import { resolve } from "node:path";
+import { tmpdirSync } from "harness";
 
 describe("zlib", () => {
   it("should be able to deflate and inflate", () => {
@@ -26,13 +32,6 @@ describe("zlib", () => {
     expect(() => gunzipSync(data)).toThrow(new Error("incorrect header check"));
   });
 });
-
-import * as zlib from "node:zlib";
-import * as fs from "node:fs";
-import * as buffer from "node:buffer";
-import * as util from "node:util";
-import { resolve } from "node:path";
-import { tmpdirSync } from "harness";
 
 function* window(buffer, size, advance = size) {
   let i = 0;

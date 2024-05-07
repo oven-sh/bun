@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
 import {
@@ -15,6 +15,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry.js";
+import { version } from "yargs";
 
 expect.extend({
   toBeWorkspaceLink,
@@ -232,6 +233,76 @@ registry = "http://${server.hostname}:${server.port}/"
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
+});
+
+it("should work when moving workspace packages", async () => {
+  const package_dir = tempDirWithFiles("lol", {
+    "package.json": JSON.stringify({
+      "name": "my-workspace",
+      private: "true",
+      version: "0.0.1",
+      "devDependencies": {
+        "@repo/eslint-config": "*",
+        "@repo/typescript-config": "*",
+      },
+      workspaces: ["packages/*"],
+    }),
+    packages: {
+      "eslint-config": {
+        "package.json": JSON.stringify({
+          name: "@repo/eslint-config",
+          "version": "0.0.0",
+          private: "true",
+        }),
+      },
+      "typescript-config": {
+        "package.json": JSON.stringify({
+          "name": "@repo/typescript-config",
+          "version": "0.0.0",
+          private: "true",
+        }),
+      },
+      "ui": {
+        "package.json": JSON.stringify({
+          name: "@repo/ui",
+          private: "true",
+          devDependencies: {
+            "@repo/eslint-config": "*",
+            "@repo/typescript-config": "*",
+          },
+        }),
+      },
+    },
+  });
+
+  console.log("Cwd", package_dir);
+
+  await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
+
+  await Bun.$/* sh */ `
+  mkdir config
+
+  # change workspaces from "packages/*" to "config/*"
+  echo ${JSON.stringify({
+    "name": "my-workspace",
+    version: "0.0.1",
+    workspaces: ["config/*"],
+    "devDependencies": {
+      "@repo/eslint-config": "*",
+      "@repo/typescript-config": "*",
+    },
+  })} > package.json
+
+  mv packages/typescript-config config/
+  mv packages/eslint-config config/
+
+  rm -rf packages
+  rm -rf apps
+  `
+    .env(bunEnv)
+    .cwd(package_dir);
+
+  await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 });
 
 it("should handle missing package", async () => {

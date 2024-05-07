@@ -10553,7 +10553,9 @@ pub const PackageManager = struct {
                                 const gop = try manager.lockfile.workspace_paths.getOrPut(manager.lockfile.allocator, entry.key_ptr.*);
                                 const do_copy = !gop.found_existing or !bun.strings.eql(gop.value_ptr.slice(manager.lockfile.buffers.string_bytes.items), entry.value_ptr.slice(lockfile.buffers.string_bytes.items));
                                 if (do_copy) {
-                                    const new_value = builder.append(String, entry.value_ptr.slice(lockfile.buffers.string_bytes.items));
+                                    const str = entry.value_ptr.slice(lockfile.buffers.string_bytes.items);
+                                    builder.count(str);
+                                    const new_value = builder.append(String, str);
                                     gop.value_ptr.* = new_value;
                                 }
                             }

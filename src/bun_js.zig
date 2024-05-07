@@ -274,10 +274,9 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
-                // TODO if the exception was handled we may want to continue
-                _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), .null);
 
-                if (vm.hot_reload != .none) {
+                if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {

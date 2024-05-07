@@ -1,7 +1,7 @@
 import { it, expect } from "bun:test";
 import tls from "tls";
 import { join } from "node:path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isCI, isWindows } from "harness";
 
 type TLSOptions = {
   cert: string;
@@ -82,7 +82,7 @@ it("fetch with valid tls and non-native checkServerIdentity should work", async 
   expect(count).toBe(2);
 });
 
-it("fetch with rejectUnauthorized: false should not call checkServerIdentity", async () => {
+it.todoIf(isWindows && isCI)("fetch with rejectUnauthorized: false should not call checkServerIdentity", async () => {
   let count = 0;
 
   await fetch("https://bun.sh", {

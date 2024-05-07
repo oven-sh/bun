@@ -463,7 +463,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
-                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
                         \\
                         \\<d>Current limit: {d}<r>
                         \\
@@ -508,14 +508,14 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     }
                 } else {
                     Output.errGeneric(
-                        "An unknown error ocurred <d>(<red>{s}<r><d>)<r>",
+                        "An unknown error occurred <d>(<red>{s}<r><d>)<r>",
                         .{@errorName(err)},
                     );
                     show_trace = true;
                 }
             } else {
                 Output.errGeneric(
-                    \\An unknown error ocurred <d>(<red>{s}<r><d>)<r>
+                    \\An unknown error occurred <d>(<red>{s}<r><d>)<r>
                 ,
                     .{@errorName(err)},
                 );
@@ -544,7 +544,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (bun.Environment.isDebug)
                     "'main' returned <red>error.{s}<r>"
                 else
-                    "An internal error ocurred (<red>{s}<r>)",
+                    "An internal error occurred (<red>{s}<r>)",
                 .{@errorName(err)},
             );
             show_trace = true;

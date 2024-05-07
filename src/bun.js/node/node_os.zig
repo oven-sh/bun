@@ -76,25 +76,25 @@ pub const OS = struct {
         const values = JSC.JSValue.createEmptyArray(globalThis, 0);
         var num_cpus: u32 = 0;
 
-        // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
-        var line_buffer: [1024 * 8]u8 = undefined;
+        var file_buf = std.ArrayList(u8).init(bun.default_allocator);
+        defer file_buf.deinit();
 
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
-            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
-            // is extremely slow and should rarely ever be used in Bun until
-            // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
-            var reader = buffered_reader.reader();
+
+            file_buf.ensureTotalCapacity(try file.getEndPos());
+            file_buf.items.len = try file.readAll(file_buf.items);
+            defer file_buf.clearRetainingCapacity();
+
+            const contents = file_buf.items;
+            var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             // Skip the first line (aggregate of all CPUs)
-            // TODO: use indexOfNewline
-            try reader.skipUntilDelimiterOrEof('\n');
+            _ = line_iter.next();
 
             // Read each CPU line
-            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-
+            while (line_iter.next()) |line| {
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
                 var toks = std.mem.tokenize(u8, line, " \t");
                 const cpu_name = toks.next();
@@ -125,18 +125,20 @@ pub const OS = struct {
         // Read /proc/cpuinfo to get model information (optional)
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
             defer file.close();
-            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
-            // is extremely slow and should rarely ever be used in Bun until
-            // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
-            var reader = buffered_reader.reader();
+
+            file_buf.ensureTotalCapacity(try file.getEndPos());
+            file_buf.items.len = try file.readAll(file_buf.items);
+            defer file_buf.clearRetainingCapacity();
+
+            const contents = file_buf.items;
+            var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
             var has_model_name = true;
-            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+            while (line_iter.next()) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
                     if (!has_model_name) {
                         const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
@@ -176,8 +178,11 @@ pub const OS = struct {
             if (std.fs.openFileAbsolute(path, .{})) |file| {
                 defer file.close();
 
-                const bytes_read = try file.readAll(&line_buffer);
-                const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
+                file_buf.ensureTotalCapacity(try file.getEndPos());
+                file_buf.items.len = try file.readAll(file_buf.items);
+                defer file_buf.clearRetainingCapacity();
+
+                const digits = std.mem.trim(u8, file_buf.items, " \n");
                 const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
                 cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));

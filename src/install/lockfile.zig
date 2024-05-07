@@ -1890,7 +1890,7 @@ pub const StringBuilder = struct {
     inline fn assertNotAllocated(this: *const StringBuilder) void {
         if (comptime Environment.allow_assert) {
             if (this.ptr != null) {
-                Output.panic("StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before appending strings.", .{});
+                Output.panic("StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before allocating.", .{});
             }
         }
     }

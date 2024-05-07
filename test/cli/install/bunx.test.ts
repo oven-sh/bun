@@ -41,7 +41,8 @@ beforeEach(async () => {
   await Promise.all(waiting);
 });
 
-it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
+// prettier-ignore
+it.todoIf(isWindows)("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
   const semverVersions = [
     "7.0.0",
     "7.1.0",

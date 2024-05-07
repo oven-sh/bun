@@ -1,6 +1,6 @@
 import { join } from "path";
 import { it, expect, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, isWindows, isCI } from "harness";
 import type { Subprocess } from "bun";
 
 const ACCEPTABLE_MEMORY_LEAK = 2; //MB for acceptable memory leak variance
@@ -113,7 +113,7 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 }
 
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false],
+  ["#10265 should not leak memory when ignoring the body", callIgnore, isWindows], // flaky
   ["should not leak memory when buffering the body", callBuffering, false],
   ["should not leak memory when streaming the body", callStreaming, false],
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, true],

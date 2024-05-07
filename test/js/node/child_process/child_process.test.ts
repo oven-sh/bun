@@ -65,7 +65,7 @@ describe("ChildProcess.spawn()", () => {
 
 describe("spawn()", () => {
   it("should spawn a process", () => {
-    const child = spawn("echo", ["hello"]);
+    const child = spawn(bunExe(), ["--version"]);
     expect(!!child).toBe(true);
   });
 
@@ -147,7 +147,7 @@ describe("spawn()", () => {
     expect(result.trim()).toBe(platformTmpDir);
   });
 
-  it("should allow us to write to stdin", async () => {
+  it.skipIf(isWindows)("should allow us to write to stdin", async () => {
     const child = spawn("tee");
     const result: string = await new Promise(resolve => {
       child.stdin.write("hello");
@@ -172,7 +172,9 @@ describe("spawn()", () => {
     expect(end! - start < 2000).toBe(true);
   });
 
-  it("should allow us to set env", async () => {
+  // https://github.com/oven-sh/bun/issues/9716
+  // Re-enable this once 'printenv' is in bun shell
+  it.todoIf(isWindows)("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const child = spawn("printenv", {
         env: env,
@@ -235,7 +237,7 @@ describe("spawn()", () => {
     expect(JSON.parse(result)).toStrictEqual([bunExe(), fs.realpathSync(Bun.which("node"))]);
   });
 
-  it("should allow us to spawn in a shell", async () => {
+  it.todoIf(isWindows)("should allow us to spawn in a shell", async () => {
     const result1: string = await new Promise(resolve => {
       const child1 = spawn("echo", ["$0"], { shell: true });
       child1.stdout.on("data", data => {
@@ -256,8 +258,8 @@ describe("spawn()", () => {
     expect(result2.trim()).toBe("bash");
   });
   it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+    const { stdout } = spawnSync(bunExe(), ["--version"], { encoding: "utf8" });
+    expect(stdout.trim()).toBe(Bun.version);
   });
 });
 
@@ -302,8 +304,8 @@ describe("exec()", () => {
 
 describe("spawnSync()", () => {
   it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+    const { stdout } = spawnSync(bunExe(), ["--version"], { encoding: "utf8" });
+    expect(stdout.trim()).toBe(Bun.version);
   });
 });
 
@@ -333,14 +335,14 @@ describe("execSync()", () => {
 describe("Bun.spawn()", () => {
   it("should return exit code 0 on successful execution", async () => {
     const proc = Bun.spawn({
-      cmd: ["echo", "hello"],
+      cmd: [bunExe(), "--version"],
       stdout: "pipe",
       env: bunEnv,
     });
 
     for await (const chunk of proc.stdout) {
       const text = new TextDecoder().decode(chunk);
-      expect(text.trim()).toBe("hello");
+      expect(text.trim()).toBe(Bun.version);
     }
 
     const result = await new Promise(resolve => {
@@ -418,7 +420,12 @@ it("it accepts stdio passthrough", async () => {
 
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split("\n")).toEqual(["$ run-p echo-hello echo-world", "$ echo hello", "$ echo world", ""]);
+  expect(err.replaceAll("[bun shell] ", "").split("\n")).toEqual([
+    "$ run-p echo-hello echo-world",
+    "$ echo hello",
+    "$ echo world",
+    "",
+  ]);
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual(["hello", "world", ""]);

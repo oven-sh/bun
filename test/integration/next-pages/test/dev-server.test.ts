@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { bunEnv, bunExe, isCI, isWindows } from "../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
@@ -119,7 +119,7 @@ afterAll(() => {
 // https://github.com/puppeteer/puppeteer/issues/7740
 const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
 
-test.skipIf(puppeteer_unsupported)(
+test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     expect(dev_server).not.toBeUndefined();

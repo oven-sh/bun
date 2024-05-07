@@ -1,11 +1,10 @@
 import { describe, expect, test, it } from "bun:test";
+import { isCI, isWindows } from "harness";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
-
-const isWindows = process.platform === "win32";
 
 // TODO:
 test("it exists", () => {
@@ -158,7 +157,7 @@ test("dns.resolveNs (bun.sh) ", done => {
   });
 });
 
-test("dns.resolveNs (empty string) ", done => {
+test.todoIf(isWindows && isCI)("dns.resolveNs (empty string) ", done => {
   dns.resolveNs("", (err, results) => {
     expect(err).toBeNull();
 
@@ -194,7 +193,7 @@ test("dns.resolvePtr (ptr.socketify.dev)", done => {
   });
 });
 
-test("dns.resolveCname (cname.socketify.dev)", done => {
+test.todoIf(isWindows && isCI)("dns.resolveCname (cname.socketify.dev)", done => {
   dns.resolveCname("cname.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);

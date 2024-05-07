@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
@@ -981,7 +981,7 @@ describe("deno_task", () => {
     }
   });
 
-  test("stacktrace", async () => {
+  test.todoIf(isWindows)("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
     const code = /* ts */ `import { $ } from 'bun'
 

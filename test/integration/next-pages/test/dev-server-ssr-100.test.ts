@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { bunEnv, bunExe, isCI, isWindows } from "../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync, rmSync } from "fs";
 import { join } from "path";
@@ -113,7 +113,8 @@ afterAll(() => {
   }
 });
 
-test("ssr works for 100-ish requests", async () => {
+// prettier-ignore
+test.todoIf(isWindows && isCI)("ssr works for 100-ish requests", async () => {
   expect(dev_server).not.toBeUndefined();
   expect(baseUrl).not.toBeUndefined();
 

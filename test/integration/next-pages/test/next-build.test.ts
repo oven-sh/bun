@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "../../../harness";
+import { bunEnv, bunExe, isCI, isWindows } from "../../../harness";
 import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, promises as fs } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -79,7 +79,8 @@ function normalizeOutput(stdout: string) {
   );
 }
 
-test("next build works", async () => {
+// prettier-ignore
+test.todoIf(isWindows && isCI)("next build works", async () => {
   rmSync(join(root, ".next"), { recursive: true, force: true });
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 

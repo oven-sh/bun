@@ -16,7 +16,8 @@ describe("bundler", () => {
     entryNaming: "[name].[ext]",
     entryPointsRaw: ["./a/entry.js", "./b/entry.js"],
     bundleErrors: {
-      "<bun>": [`Multiple files share the same output path: ./entry.js`],
+      // expectBundled does not support newlines.
+      "<bun>": [`Multiple files share the same output path`],
     },
   });
   itBundled("naming/ImplicitOutbase1", {

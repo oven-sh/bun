@@ -14,6 +14,16 @@ test("ascii string", () => {
   expect(identity("abc")).toBe("abc");
 });
 
+test("type coercion", () => {
+  expect(identity({ a: 1 })).toEqual({ a: 1 });
+  expect(identity([1, 2, 3])).toEqual([1, 2, 3]);
+  expect(identity(undefined)).toBe(undefined);
+  expect(identity(null)).toBe(null);
+  expect(identity(1.5)).toBe(1.5);
+  expect(identity(1)).toBe(1);
+  expect(identity(true)).toBe(true);
+});
+
 test("escaping", () => {
   expect(identity("\\")).toBe("\\");
   expect(identity("\f")).toBe("\f");

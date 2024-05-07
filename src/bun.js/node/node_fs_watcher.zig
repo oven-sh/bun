@@ -17,11 +17,11 @@ const Environment = bun.Environment;
 const Async = bun.Async;
 const log = Output.scoped(.@"fs.watch", true);
 const PathWatcher = if (Environment.isWindows) @import("./win_watcher.zig") else @import("./path_watcher.zig");
+
 pub const FSWatcher = struct {
     ctx: *VirtualMachine,
     verbose: bool = false,
 
-    // JSObject
     mutex: Mutex,
     signal: ?*JSC.AbortSignal,
     persistent: bool,
@@ -30,13 +30,14 @@ pub const FSWatcher = struct {
     globalThis: *JSC.JSGlobalObject,
     js_this: JSC.JSValue,
     encoding: JSC.Node.Encoding,
-    // user can call close and pre-detach so we need to track this
+
+    /// User can call close and pre-detach so we need to track this
     closed: bool,
 
-    // While it's not closed, the pending activity
+    /// While it's not closed, the pending activity
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
-
     current_task: FSWatchTask = undefined,
+
     pub usingnamespace JSC.Codegen.JSFSWatcher;
     pub usingnamespace bun.New(@This());
 
@@ -63,12 +64,11 @@ pub const FSWatcher = struct {
         concurrent_task: JSC.ConcurrentTask = undefined,
 
         pub const Entry = struct {
-            file_path: string,
-            event_type: EventType,
+            event: Event,
             needs_free: bool,
         };
 
-        pub fn append(this: *FSWatchTask, file_path: string, event_type: EventType, needs_free: bool) void {
+        pub fn append(this: *FSWatchTask, event: Event, needs_free: bool) void {
             if (this.count == 8) {
                 this.enqueue();
                 const ctx = this.ctx;
@@ -79,8 +79,7 @@ pub const FSWatcher = struct {
             }
 
             this.entries[this.count] = .{
-                .file_path = file_path,
-                .event_type = event_type,
+                .event = event,
                 .needs_free = needs_free,
             };
             this.count += 1;
@@ -90,16 +89,12 @@ pub const FSWatcher = struct {
             // this runs on JS Context Thread
 
             for (this.entries[0..this.count]) |entry| {
-                switch (entry.event_type) {
-                    .rename => {
-                        this.ctx.emit(entry.file_path, .rename);
+                switch (entry.event) {
+                    inline .rename, .change => |file_path, t| {
+                        this.ctx.emit(file_path, t);
                     },
-                    .change => {
-                        this.ctx.emit(entry.file_path, .change);
-                    },
-                    .@"error" => {
-                        // file_path is the error message in this case
-                        this.ctx.emitError(entry.file_path);
+                    .@"error" => |err| {
+                        this.ctx.emitError(err);
                     },
                     .abort => {
                         this.ctx.emitIfAborted();
@@ -114,7 +109,7 @@ pub const FSWatcher = struct {
         }
 
         pub fn appendAbort(this: *FSWatchTask) void {
-            this.append("", .abort, false);
+            this.append(.abort, false);
             this.enqueue();
         }
 
@@ -134,9 +129,9 @@ pub const FSWatcher = struct {
             this.cleanEntries();
         }
         pub fn cleanEntries(this: *FSWatchTask) void {
-            for (this.entries[0..this.count]) |entry| {
+            for (this.entries[0..this.count]) |*entry| {
                 if (entry.needs_free) {
-                    bun.default_allocator.free(entry.file_path);
+                    entry.event.deinit();
                 }
             }
             this.count = 0;
@@ -150,6 +145,36 @@ pub const FSWatcher = struct {
                 bun.assert(&this.ctx.current_task != this);
             }
             this.destroy();
+        }
+    };
+
+    pub const EventPathString = switch (Environment.os) {
+        .windows => FSWatchTaskWindows.StringOrBytesToDecode,
+        else => []const u8,
+    };
+
+    pub const Event = union(EventType) {
+        rename: EventPathString,
+        change: EventPathString,
+        @"error": bun.sys.Error,
+        abort: void,
+        close: void,
+
+        pub fn dupe(event: Event) !Event {
+            return switch (event) {
+                inline .rename, .change => |path, t| @unionInit(Event, @tagName(t), try bun.default_allocator.dupe(u8, path)),
+                inline else => |value, t| @unionInit(Event, @tagName(t), value),
+            };
+        }
+
+        pub fn deinit(event: *Event) void {
+            switch (event.*) {
+                .rename, .change => |*path| switch (Environment.os) {
+                    else => bun.default_allocator.free(path.*),
+                    .windows => path.deinit(),
+                },
+                else => {},
+            }
         }
     };
 
@@ -171,16 +196,15 @@ pub const FSWatcher = struct {
     };
 
     pub const FSWatchTaskWindows = struct {
-        file_path: StringOrBytesToDecode = .{ .bytes_to_free = "" },
-        event_type: EventType = .@"error",
-        ctx: *FSWatcher = undefined,
+        event: Event = .{ .@"error" = .{ .errno = @intFromEnum(bun.C.SystemErrno.EINVAL), .syscall = .watch } },
+        ctx: *FSWatcher,
 
-        // To match the API of the posix version
+        /// Unused: To match the API of the posix version
         count: u0 = 0,
 
         pub usingnamespace bun.New(@This());
 
-        const StringOrBytesToDecode = union(enum) {
+        pub const StringOrBytesToDecode = union(enum) {
             string: bun.String,
             bytes_to_free: []const u8,
 
@@ -193,40 +217,42 @@ pub const FSWatcher = struct {
                     },
                 }
             }
+
+            pub fn format(this: *const StringOrBytesToDecode, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                switch (this.*) {
+                    .string => |str| try writer.print("{}", .{str}),
+                    .bytes_to_free => |utf8| try writer.print("{s}", .{utf8}),
+                }
+            }
         };
 
         pub fn appendAbort(this: *FSWatchTaskWindows) void {
             const ctx = this.ctx;
             const task = FSWatchTaskWindows.new(.{
                 .ctx = ctx,
-                .file_path = .{ .bytes_to_free = "" },
-                .event_type = .abort,
+                .event = .abort,
             });
 
             ctx.eventLoop().enqueueTask(JSC.Task.init(task));
         }
 
+        /// this runs on JS Context Thread
         pub fn run(this: *FSWatchTaskWindows) void {
-            // this runs on JS Context Thread
             var ctx = this.ctx;
 
-            switch (this.event_type) {
-                inline .rename, .change => |eventType| {
+            switch (this.event) {
+                inline .rename, .change => |*path, event_type| {
                     if (ctx.encoding == .utf8) {
-                        ctx.emitWithFilename(this.file_path.string.transferToJS(ctx.globalThis), eventType);
+                        ctx.emitWithFilename(path.string.transferToJS(ctx.globalThis), event_type);
                     } else {
-                        const bytes = this.file_path.bytes_to_free;
-                        this.file_path.bytes_to_free = "";
-                        ctx.emit(bytes, eventType);
+                        const bytes = path.bytes_to_free;
+                        path.bytes_to_free = "";
+                        ctx.emit(bytes, event_type);
                         bun.default_allocator.free(bytes);
                     }
                 },
-                .@"error" => {
-                    // file_path is the error message in this case
-                    const err = this.file_path.bytes_to_free;
-                    this.file_path.bytes_to_free = "";
+                .@"error" => |err| {
                     ctx.emitError(err);
-                    bun.default_allocator.free(err);
                 },
                 .abort => {
                     ctx.emitIfAborted();
@@ -240,45 +266,44 @@ pub const FSWatcher = struct {
         }
 
         pub fn deinit(this: *FSWatchTaskWindows) void {
-            this.file_path.deinit();
+            this.event.deinit();
             this.destroy();
         }
     };
 
-    pub fn onPathUpdatePosix(ctx: ?*anyopaque, path: string, is_file: bool, event_type: PathWatcher.PathWatcher.EventType) void {
+    pub fn onPathUpdatePosix(ctx: ?*anyopaque, event: Event, is_file: bool) void {
         const this = bun.cast(*FSWatcher, ctx.?);
 
-        const relative_path = bun.default_allocator.dupe(u8, path) catch unreachable;
-
-        if (this.verbose and event_type != .@"error") {
-            if (is_file) {
-                Output.prettyErrorln("<r> <d>File changed: {s}<r>", .{relative_path});
-            } else {
-                Output.prettyErrorln("<r> <d>Dir changed: {s}<r>", .{relative_path});
+        if (this.verbose) {
+            switch (event) {
+                .rename, .change => |value| {
+                    if (is_file) {
+                        Output.prettyErrorln("<r> <d>File changed: {s}<r>", .{value});
+                    } else {
+                        Output.prettyErrorln("<r> <d>Dir changed: {s}<r>", .{value});
+                    }
+                },
+                else => {},
             }
         }
 
-        switch (event_type) {
-            .rename => {
-                this.current_task.append(relative_path, .rename, true);
-            },
-            .change => {
-                this.current_task.append(relative_path, .change, true);
-            },
-            else => {
-                this.current_task.append(relative_path, .@"error", true);
-            },
-        }
+        const cloned = event.dupe() catch bun.outOfMemory();
+        this.current_task.append(cloned, true);
     }
 
-    pub fn onPathUpdateWindows(ctx: ?*anyopaque, relative_path: string, is_file: bool, event_type: PathWatcher.PathWatcher.EventType) void {
+    pub fn onPathUpdateWindows(ctx: ?*anyopaque, event: Event, is_file: bool) void {
         const this = bun.cast(*FSWatcher, ctx.?);
 
-        if (this.verbose and event_type != .@"error") {
-            if (is_file) {
-                Output.prettyErrorln("<r> <d>File changed: {s}<r>", .{relative_path});
-            } else {
-                Output.prettyErrorln("<r> <d>Dir changed: {s}<r>", .{relative_path});
+        if (this.verbose) {
+            switch (event) {
+                .rename, .change => |value| {
+                    if (is_file) {
+                        Output.prettyErrorln("<r> <d>File changed: {}<r>", .{value});
+                    } else {
+                        Output.prettyErrorln("<r> <d>Dir changed: {}<r>", .{value});
+                    }
+                },
+                else => {},
             }
         }
 
@@ -286,30 +311,11 @@ pub const FSWatcher = struct {
             return;
         }
 
-        const encoding = this.encoding;
-        switch (event_type) {
-            inline .rename, .change => |eventType| {
-                const task = FSWatchTaskWindows.new(.{
-                    .ctx = this,
-                    .file_path = switch (encoding) {
-                        .utf8 => .{ .string = bun.String.createUTF8(relative_path) },
-                        else => .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, relative_path) catch bun.outOfMemory() },
-                    },
-                    .event_type = eventType,
-                });
-
-                this.eventLoop().enqueueTask(JSC.Task.init(task));
-            },
-            else => {
-                const task = FSWatchTaskWindows.new(.{
-                    .ctx = this,
-                    .file_path = .{ .bytes_to_free = bun.default_allocator.dupeZ(u8, relative_path) catch bun.outOfMemory() },
-                    .event_type = .@"error",
-                });
-
-                this.eventLoop().enqueueTask(JSC.Task.init(task));
-            },
-        }
+        const task = FSWatchTaskWindows.new(.{
+            .ctx = this,
+            .event = event,
+        });
+        this.eventLoop().enqueueTask(JSC.Task.init(task));
     }
 
     pub const onPathUpdate = if (Environment.isWindows) onPathUpdateWindows else onPathUpdatePosix;
@@ -472,12 +478,11 @@ pub const FSWatcher = struct {
             };
         }
 
-        pub fn createFSWatcher(this: Arguments) !JSC.JSValue {
-            const obj = try FSWatcher.init(this);
-            if (obj.js_this != .zero) {
-                return obj.js_this;
-            }
-            return JSC.JSValue.jsUndefined();
+        pub fn createFSWatcher(this: Arguments) JSC.Maybe(JSC.JSValue) {
+            return switch (FSWatcher.init(this)) {
+                .result => |result| .{ .result = result.js_this },
+                .err => |err| .{ .err = err },
+            };
         }
     };
 
@@ -539,7 +544,7 @@ pub const FSWatcher = struct {
             }
         }
     }
-    pub fn emitError(this: *FSWatcher, err: string) void {
+    pub fn emitError(this: *FSWatcher, err: bun.sys.Error) void {
         if (this.closed) return;
         defer this.close();
 
@@ -551,7 +556,7 @@ pub const FSWatcher = struct {
                 const globalObject = this.globalThis;
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(globalObject),
-                    JSC.ZigString.fromUTF8(err).toErrorInstance(globalObject),
+                    err.toJSC(globalObject),
                 };
                 _ = listener.callWithGlobalThis(
                     globalObject,
@@ -568,7 +573,8 @@ pub const FSWatcher = struct {
         emitJS(listener, this.globalThis, file_name, eventType);
     }
 
-    pub fn emit(this: *FSWatcher, file_name: string, comptime eventType: EventType) void {
+    pub fn emit(this: *FSWatcher, file_name: string, comptime event_type: EventType) void {
+        bun.assert(event_type != .@"error");
         const js_this = this.js_this;
         if (js_this == .zero) return;
         const listener = FSWatcher.listenerGetCached(js_this) orelse return;
@@ -585,12 +591,12 @@ pub const FSWatcher = struct {
             }
         }
 
-        emitJS(listener, globalObject, filename, eventType);
+        emitJS(listener, globalObject, filename, event_type);
     }
 
-    fn emitJS(listener: JSC.JSValue, globalObject: *JSC.JSGlobalObject, filename: JSC.JSValue, comptime eventType: EventType) void {
+    fn emitJS(listener: JSC.JSValue, globalObject: *JSC.JSGlobalObject, filename: JSC.JSValue, comptime event_type: EventType) void {
         var args = [_]JSC.JSValue{
-            eventType.toJS(globalObject),
+            event_type.toJS(globalObject),
             filename,
         };
 
@@ -600,7 +606,7 @@ pub const FSWatcher = struct {
         );
 
         if (err.toError()) |value| {
-            JSC.VirtualMachine.get().runErrorHandler(value, null);
+            JSC.VirtualMachine.get().onError(globalObject, value);
         }
     }
 
@@ -650,9 +656,7 @@ pub const FSWatcher = struct {
         _ = this.pending_activity_count.fetchSub(1, .Monotonic);
     }
 
-    pub fn close(
-        this: *FSWatcher,
-    ) void {
+    pub fn close(this: *FSWatcher) void {
         this.mutex.lock();
         if (!this.closed) {
             this.closed = true;
@@ -704,8 +708,8 @@ pub const FSWatcher = struct {
         this.deinit();
     }
 
-    pub fn init(args: Arguments) !*FSWatcher {
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+    pub fn init(args: Arguments) bun.JSC.Maybe(*FSWatcher) {
+        var buf: bun.PathBuffer = undefined;
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
@@ -715,7 +719,10 @@ pub const FSWatcher = struct {
             slice,
         };
 
-        const cwd = try bun.getcwd(&buf);
+        const cwd = switch (bun.sys.getcwd(&buf)) {
+            .result => |r| r,
+            .err => |err| return .{ .err = err },
+        };
         buf[cwd.len] = std.fs.path.sep;
 
         var joined_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
@@ -749,13 +756,17 @@ pub const FSWatcher = struct {
         });
         ctx.current_task.ctx = ctx;
 
-        errdefer ctx.deinit();
-
         ctx.path_watcher = if (args.signal == null or !args.signal.?.aborted())
-            try PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))
+            switch (PathWatcher.watch(vm, file_path_z, args.recursive, onPathUpdate, onUpdateEnd, bun.cast(*anyopaque, ctx))) {
+                .result => |r| r,
+                .err => |err| {
+                    ctx.deinit();
+                    return .{ .err = err };
+                },
+            }
         else
             null;
         ctx.initJS(args.listener);
-        return ctx;
+        return .{ .result = ctx };
     }
 };

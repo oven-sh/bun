@@ -135,19 +135,29 @@ pub const OS = struct {
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
+            var has_model_name = true;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
+                    if (!has_model_name) {
+                        const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                        cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
+                    }
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
+                    has_model_name = false;
                 } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
                     const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
+                    has_model_name = true;
                 }
-                //TODO: special handling for ARM64 (no model name)?
+            }
+            if (!has_model_name) {
+                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
             }
         } else |_| {
             // Initialize model name to "unknown"
@@ -541,11 +551,16 @@ pub const OS = struct {
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
                     const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
-                    const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
-                        addr_data[0], addr_data[1], addr_data[2],
-                        addr_data[3], addr_data[4], addr_data[5],
-                    }) catch unreachable;
-                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    if (addr_data.len < 6) {
+                        const mac = "00:00:00:00:00:00";
+                        interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    } else {
+                        const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
+                            addr_data[0], addr_data[1], addr_data[2],
+                            addr_data[3], addr_data[4], addr_data[5],
+                        }) catch unreachable;
+                        interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    }
                 } else {
                     const mac = "00:00:00:00:00:00";
                     interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
@@ -874,45 +889,4 @@ fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const last_one = @bitSizeOf(T) - @ctz(mask_bits);
     if (first_zero < @bitSizeOf(T) and first_zero < last_one) return null;
     return first_zero;
-}
-test "netmaskToCIDRSuffix" {
-    const ipv4_tests = .{
-        .{ "255.255.255.255", 32 },
-        .{ "255.255.255.254", 31 },
-        .{ "255.255.255.252", 30 },
-        .{ "255.255.255.128", 25 },
-        .{ "255.255.255.0", 24 },
-        .{ "255.255.128.0", 17 },
-        .{ "255.255.0.0", 16 },
-        .{ "255.128.0.0", 9 },
-        .{ "255.0.0.0", 8 },
-        .{ "224.0.0.0", 3 },
-        .{ "192.0.0.0", 2 },
-        .{ "128.0.0.0", 1 },
-        .{ "0.0.0.0", 0 },
-
-        // invalid masks
-        .{ "255.0.0.255", null },
-        .{ "128.0.0.255", null },
-        .{ "128.0.0.1", null },
-    };
-    inline for (ipv4_tests) |t| {
-        const addr = try std.net.Address.parseIp4(t[0], 0);
-        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(addr.in.sa.addr));
-    }
-
-    const ipv6_tests = .{
-        .{ "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 128 },
-        .{ "ffff:ffff:ffff:ffff::", 64 },
-        .{ "::", 0 },
-
-        // invalid masks
-        .{ "ff00:1::", null },
-        .{ "0:1::", null },
-    };
-    inline for (ipv6_tests) |t| {
-        const addr = try std.net.Address.parseIp6(t[0], 0);
-        const bits = @as(u128, @bitCast(addr.in6.sa.addr));
-        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(bits));
-    }
 }

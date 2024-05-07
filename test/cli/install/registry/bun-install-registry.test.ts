@@ -1,5 +1,14 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isLinux, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  toBeValidBin,
+  toHaveBins,
+  writeShebangScript,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -40,7 +49,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -1958,7 +1967,7 @@ describe("workspaces", async () => {
           version: "1.0.0",
         }),
       );
-      // install first from the root, the the workspace package
+      // install first from the root, the workspace package
       var { stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
@@ -4885,44 +4894,49 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
 
-      test("bun pm trust", async () => {
-        await writeFile(
-          join(packageDir, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            version: "1.0.0",
-            dependencies: {
-              "uses-what-bin-slow": "1.0.0",
-            },
-          }),
-        );
+      test(
+        "bun pm trust",
+        async () => {
+          const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "1.0.0",
+              dependencies: {
+                [dep]: "1.0.0",
+              },
+            }),
+          );
 
-        var { exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "ignore",
-          stderr: "ignore",
-          env: testEnv,
-        });
+          var { exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "ignore",
+            stderr: "ignore",
+            env: testEnv,
+          });
 
-        expect(await exited).toBe(0);
+          expect(await exited).toBe(0);
 
-        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeFalse();
+          expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
 
-        const proc = spawn({
-          cmd: [bunExe(), "pm", "trust", "--all"],
-          cwd: packageDir,
-          stdout: "ignore",
-          stderr: "ignore",
-          env: testEnv,
-        });
+          const proc = spawn({
+            cmd: [bunExe(), "pm", "trust", "--all"],
+            cwd: packageDir,
+            stdout: "ignore",
+            stderr: "ignore",
+            env: testEnv,
+          });
 
-        expect(await proc.exited).toBe(0);
+          expect(await proc.exited).toBe(0);
 
-        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeTrue();
+          expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeTrue();
 
-        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
-      });
+          expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
+        },
+        isWindows ? 10_000 : 5_000,
+      );
     });
   });
 

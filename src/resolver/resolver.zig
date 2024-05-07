@@ -731,7 +731,7 @@ pub const Resolver = struct {
         // support passing a package.json or path to a package
         const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
-        const json = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
 
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();
@@ -1935,7 +1935,7 @@ pub const Resolver = struct {
                 const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
                     if (err == error.FileNotFound) {
-                        switch (manager.getPreinstallState(resolved_package_id, manager.lockfile)) {
+                        switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
                                 var path = Fs.Path.init(import_path);
                                 path.is_disabled = true;

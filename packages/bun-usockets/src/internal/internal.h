@@ -54,16 +54,22 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 /* Poll type and what it polls for */
 enum {
-  /* Two first bits */
+  /* Three first bits */
   POLL_TYPE_SOCKET = 0,
   POLL_TYPE_SOCKET_SHUT_DOWN = 1,
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
+  POLL_TYPE_UDP = 4,
 
   /* Two last bits */
-  POLL_TYPE_POLLING_OUT = 4,
-  POLL_TYPE_POLLING_IN = 8
+  POLL_TYPE_POLLING_OUT = 8,
+  POLL_TYPE_POLLING_IN = 16,
 };
+
+#define POLL_TYPE_BITSIZE 5 // make sure to update epoll_kqueue.h if you change this
+#define POLL_TYPE_KIND_MASK 0b111
+#define POLL_TYPE_POLLING_MASK 0b11000
+#define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error,
@@ -121,6 +127,22 @@ struct us_socket_t {
 struct us_wrapped_socket_context_t {
   struct us_socket_events_t events;
   struct us_socket_events_t old_events;
+};
+
+struct us_udp_socket_t {
+    alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
+    void (*on_data)(struct us_udp_socket_t *, void *, int);
+    void (*on_drain)(struct us_udp_socket_t *);
+    void (*on_close)(struct us_udp_socket_t *);
+    void *user;
+    struct us_loop_t *loop;
+    /* An UDP socket can only ever be bound to one single port regardless of how
+     * many interfaces it may listen to. Therefore we cache the port after creation
+     * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
+    uint16_t port;
+    uint16_t closed : 1;
+    uint16_t connected : 1;
+    struct us_udp_socket_t *next;
 };
 
 #if defined(LIBUS_USE_KQUEUE)
@@ -254,7 +276,10 @@ void us_internal_ssl_socket_context_on_data(
     struct us_internal_ssl_socket_t *(*on_data)(
         struct us_internal_ssl_socket_t *s, char *data, int length));
 
-void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s);
+void us_internal_update_handshake(struct us_internal_ssl_socket_t *s);
+int us_internal_renegotiate(struct us_internal_ssl_socket_t *s);
+void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
+                                            int success);
 void us_internal_on_ssl_handshake(
     struct us_internal_ssl_socket_context_t *context,
     us_internal_on_handshake_t onhandshake, void *custom_data);
@@ -289,7 +314,7 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path, 
+    struct us_internal_ssl_socket_context_t *context, const char *path,
     size_t pathlen, int options, int socket_ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(

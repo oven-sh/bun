@@ -58,9 +58,9 @@ pub const FileSystem = struct {
         }
     }
 
-    pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
+    pub fn tmpdir(fs: *FileSystem) !std.fs.Dir {
         if (tmpdir_handle == null) {
-            tmpdir_handle = fs.fs.openTmpDir() catch unreachable;
+            tmpdir_handle = try fs.fs.openTmpDir();
         }
 
         return tmpdir_handle.?;
@@ -599,6 +599,15 @@ pub const FileSystem = struct {
                 tmpdir_path_set = true;
             }
 
+            if (comptime Environment.isWindows) {
+                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdir_path, .{
+                    .iterable = true,
+                    // we will not delete the temp directory
+                    .can_rename_or_delete = false,
+                    .read_only = true,
+                }).unwrap()).asDir();
+            }
+
             return try bun.openDirAbsolute(tmpdir_path);
         }
 
@@ -674,7 +683,7 @@ pub const FileSystem = struct {
                 bun.assert(this.fd != bun.invalid_fd);
                 bun.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.toFD(std.fs.cwd().fd), bun.sliceTo(name, 0));
+                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -1663,6 +1672,10 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
+        if (strings.eqlComptime(str, "package.json")) {
+            return true;
+        }
+
         if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
             return false;
         }
@@ -1838,14 +1851,3 @@ pub const Path = struct {
 //     defer std.os.close(opened);
 
 // }
-
-test "PathName.init" {
-    var file = "/root/directory/file.ext".*;
-    const res = PathName.init(
-        &file,
-    );
-
-    try std.testing.expectEqualStrings(res.dir, "/root/directory");
-    try std.testing.expectEqualStrings(res.base, "file");
-    try std.testing.expectEqualStrings(res.ext, ".ext");
-}

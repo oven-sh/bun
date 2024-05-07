@@ -518,7 +518,7 @@ pub const RuntimeTranspilerStore = struct {
                     if (input_file_fd != .zero) {
                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                             should_close_input_file_fd = false;
-                            vm.bun_watcher.addFile(
+                            _ = vm.bun_watcher.addFile(
                                 input_file_fd,
                                 path.text,
                                 hash,
@@ -526,7 +526,7 @@ pub const RuntimeTranspilerStore = struct {
                                 .zero,
                                 package_json,
                                 true,
-                            ) catch {};
+                            );
                         }
                     }
                 }
@@ -541,7 +541,7 @@ pub const RuntimeTranspilerStore = struct {
                         std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules"))
                     {
                         should_close_input_file_fd = false;
-                        vm.bun_watcher.addFile(
+                        _ = vm.bun_watcher.addFile(
                             input_file_fd,
                             path.text,
                             hash,
@@ -549,7 +549,7 @@ pub const RuntimeTranspilerStore = struct {
                             .zero,
                             package_json,
                             true,
-                        ) catch {};
+                        );
                     }
                 }
             }
@@ -719,6 +719,49 @@ pub const ModuleLoader = struct {
                 _ = arena.reset(.{ .retain_with_limit = 8 * 1024 * 1024 });
             }
         }
+    }
+
+    pub fn resolveEmbeddedFile(vm: *JSC.VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
+        if (input_path.len == 0) return null;
+        var graph = vm.standalone_module_graph orelse return null;
+        const file = graph.find(input_path) orelse return null;
+
+        if (comptime Environment.isLinux) {
+            // TODO: use /proc/fd/12346 instead! Avoid the copy!
+        }
+
+        // atomically write to a tmpfile and then move it to the final destination
+        var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
+
+        const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
+
+        // First we open the tmpfile, to avoid any other work in the event of failure.
+        const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return null;
+        defer {
+            _ = bun.sys.close(tmpfile.fd);
+        }
+
+        switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
+            &tmpname_buf, // not used
+
+            .{
+                .data = .{
+                    .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
+                },
+                .dirfd = bun.toFD(tmpdir.fd),
+                .file = .{
+                    .fd = tmpfile.fd,
+                },
+                .encoding = .buffer,
+            },
+        )) {
+            .err => {
+                return null;
+            },
+            else => {},
+        }
+        return bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename);
     }
 
     pub const AsyncModule = struct {
@@ -1402,7 +1445,7 @@ pub const ModuleLoader = struct {
 
                 if (parse_result.input_fd) |fd_| {
                     if (std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                        jsc_vm.bun_watcher.addFile(
+                        _ = jsc_vm.bun_watcher.addFile(
                             fd_,
                             path.text,
                             this.hash,
@@ -1410,7 +1453,7 @@ pub const ModuleLoader = struct {
                             .zero,
                             this.package_json,
                             true,
-                        ) catch {};
+                        );
                     }
                 }
 
@@ -1612,6 +1655,7 @@ pub const ModuleLoader = struct {
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
                     .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and is_main,
+                    .keep_json_and_toml_as_one_statement = true,
                     .set_breakpoint_on_first_line = is_main and
                         jsc_vm.debugger != null and
                         jsc_vm.debugger.?.set_breakpoint_on_first_line and
@@ -1647,7 +1691,7 @@ pub const ModuleLoader = struct {
                                     if (input_file_fd != .zero) {
                                         if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                             should_close_input_file_fd = false;
-                                            jsc_vm.bun_watcher.addFile(
+                                            _ = jsc_vm.bun_watcher.addFile(
                                                 input_file_fd,
                                                 path.text,
                                                 hash,
@@ -1655,7 +1699,7 @@ pub const ModuleLoader = struct {
                                                 .zero,
                                                 package_json,
                                                 true,
-                                            ) catch {};
+                                            );
                                         }
                                     }
                                 }
@@ -1690,7 +1734,7 @@ pub const ModuleLoader = struct {
                         if (input_file_fd != .zero) {
                             if (!is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
                                 should_close_input_file_fd = false;
-                                jsc_vm.bun_watcher.addFile(
+                                _ = jsc_vm.bun_watcher.addFile(
                                     input_file_fd,
                                     path.text,
                                     hash,
@@ -1698,7 +1742,7 @@ pub const ModuleLoader = struct {
                                     .zero,
                                     package_json,
                                     true,
-                                ) catch {};
+                                );
                             }
                         }
                     }
@@ -1732,6 +1776,17 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
+                    };
+                }
+
+                if (loader == .json or loader == .toml) {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .specifier = input_specifier,
+                        .source_url = input_specifier.createIfDifferent(path.text),
+                        .hash = 0,
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
+                        .tag = .exports_object,
                     };
                 }
 
@@ -2211,6 +2266,14 @@ pub const ModuleLoader = struct {
         if (type_attribute) |attribute| {
             if (attribute.eqlComptime("sqlite")) {
                 loader = .sqlite;
+            } else if (attribute.eqlComptime("text")) {
+                loader = .text;
+            } else if (attribute.eqlComptime("json")) {
+                loader = .json;
+            } else if (attribute.eqlComptime("toml")) {
+                loader = .toml;
+            } else if (attribute.eqlComptime("file")) {
+                loader = .file;
             }
         }
 
@@ -2354,13 +2417,6 @@ pub const ModuleLoader = struct {
                     if (!Environment.isDebug) {
                         if (!is_allowed_to_use_internal_testing_apis)
                             return null;
-                        const is_outside_our_ci = brk: {
-                            const repo = jsc_vm.bundler.env.get("GITHUB_REPOSITORY") orelse break :brk true;
-                            break :brk !strings.endsWithComptime(repo, "/bun");
-                        };
-                        if (is_outside_our_ci) {
-                            return null;
-                        }
                     }
 
                     return jsSyntheticModule(.InternalForTesting, specifier);
@@ -2918,47 +2974,16 @@ pub const HardcodedModule = enum {
 
 /// Support embedded .node files
 export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
-    var graph = vm.standalone_module_graph orelse return false;
-    const utf8 = in_out_str.toUTF8(bun.default_allocator);
-    defer utf8.deinit();
-    const file = graph.find(utf8.slice()) orelse return false;
+    if (vm.standalone_module_graph == null) return false;
 
-    if (comptime Environment.isLinux) {
-        // TODO: use /proc/fd/12346 instead! Avoid the copy!
-    }
-
-    // atomically write to a tmpfile and then move it to the final destination
-    var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname("node", &tmpname_buf, bun.hash(file.name)) catch return false, 0);
-
-    const tmpdir = bun.fs.FileSystem.instance.tmpdir();
-
-    // First we open the tmpfile, to avoid any other work in the event of failure.
-    const tmpfile = bun.Tmpfile.create(bun.toFD(tmpdir.fd), tmpfilename).unwrap() catch return false;
-    defer {
-        _ = bun.sys.close(tmpfile.fd);
-    }
-
-    switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
-        &tmpname_buf, // not used
-
-        .{
-            .data = .{
-                .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
-            },
-            .dirfd = bun.toFD(tmpdir.fd),
-            .file = .{
-                .fd = tmpfile.fd,
-            },
-            .encoding = .buffer,
-        },
-    )) {
-        .err => {
-            return false;
-        },
-        else => {},
-    }
-
-    in_out_str.* = bun.String.createUTF8(bun.path.joinAbs(bun.fs.FileSystem.instance.fs.tmpdirPath(), .auto, tmpfilename));
+    const input_path = in_out_str.toUTF8(bun.default_allocator);
+    defer input_path.deinit();
+    const result = ModuleLoader.resolveEmbeddedFile(vm, input_path.slice(), "node") orelse return false;
+    in_out_str.* = bun.String.createUTF8(result);
     return true;
+}
+
+export fn ModuleLoader__isBuiltin(data: [*]const u8, len: usize) bool {
+    const str = data[0..len];
+    return HardcodedModule.Map.get(str) != null;
 }

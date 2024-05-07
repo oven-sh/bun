@@ -259,6 +259,12 @@ const ProxyTunnel = struct {
             ssl.configureHTTPClient(hostname);
             BoringSSL.SSL_CTX_set_verify(ssl_ctx, BoringSSL.SSL_VERIFY_NONE, null);
             BoringSSL.SSL_set_verify(ssl, BoringSSL.SSL_VERIFY_NONE, null);
+            // TODO: change this to ssl_renegotiate_explicit for optimization
+            // if we allow renegotiation, we need to set the mode here
+            // https://github.com/oven-sh/bun/issues/6197
+            // https://github.com/oven-sh/bun/issues/5363
+            // renegotiation is only valid for <= TLS1_2_VERSION
+            BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_freely);
             return ProxyTunnel{ .ssl = ssl, .ssl_ctx = ssl_ctx, .in_bio = in_bio, .out_bio = out_bio, .read_buffer = bun.default_allocator.alloc(u8, 16 * 1024) catch unreachable, .partial_data = null };
         }
         unreachable;
@@ -466,10 +472,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        return client.onConnectError(
-                            comptime ssl,
-                            socket,
-                        );
+                        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                        if (client.state.stage != .done and client.state.stage != .fail)
+                            client.fail(error.ConnectionRefused);
+                        return;
                     }
                 }
 
@@ -1062,11 +1068,9 @@ pub fn onTimeout(
 pub fn onConnectError(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
     log("onConnectError  {s}\n", .{client.url.href});
-
     if (client.state.stage != .done and client.state.stage != .fail)
         client.fail(error.ConnectionRefused);
 }
@@ -1276,14 +1280,13 @@ const Decompressor = union(enum) {
                 },
                 .brotli => {
                     this.* = .{
-                        .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
+                        .brotli = try Brotli.BrotliReaderArrayList.newWithOptions(
                             buffer,
                             &body_out_str.list,
                             body_out_str.allocator,
                             .{},
                         ),
                     };
-
                     return;
                 },
                 else => @panic("Invalid encoding. This code should not be reachable"),
@@ -1624,9 +1627,7 @@ const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
 const accept_encoding_compression = "gzip, deflate, br";
-const accept_encoding_compression_no_brotli = "gzip, deflate";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
-const accept_encoding_header_compression_no_brotli = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression_no_brotli };
 const accept_encoding_header_no_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_no_compression };
 
 const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_client)
@@ -2254,11 +2255,8 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     }
 
     var socket = http_thread.connect(this, is_ssl) catch |err| {
-        if (Environment.isDebug) {
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-        }
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
         this.fail(err);
         return;
     };

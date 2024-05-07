@@ -2574,34 +2574,28 @@ pub const Arguments = struct {
                 if (current.isNumber() or current.isBigInt()) {
                     args.offset = current.to(u52);
 
-                    if (arguments.remaining.len < 2) {
-                        JSC.throwInvalidArguments(
-                            "length and position are required",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                    if (arguments.remaining.len < 1) {
+                        JSC.throwInvalidArguments("length is required", .{}, ctx, exception);
                         return null;
                     }
-                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
-                        args.length = arguments.remaining[0].to(u52);
 
+                    const arg_length = arguments.next().?;
+                    arguments.eat();
+
+                    if (arg_length.isNumber() or arg_length.isBigInt()) {
+                        args.length = arg_length.to(u52);
+                    }
                     if (args.length == 0) {
-                        JSC.throwInvalidArguments(
-                            "length must be greater than 0",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
                         return null;
                     }
 
-                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
-                        args.position = @as(ReadPosition, @intCast(arguments.remaining[1].to(i52)));
-
-                    arguments.remaining = arguments.remaining[2..];
+                    if (arguments.next()) |arg_position| {
+                        arguments.eat();
+                        if (arg_position.isNumber() or arg_position.isBigInt()) {
+                            args.position = @as(ReadPosition, @intCast(arg_position.to(i52)));
+                        }
+                    }
                 } else if (current.isObject()) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
@@ -2873,7 +2867,7 @@ pub const Arguments = struct {
                 .flag = flag,
                 .mode = mode,
                 .data = data,
-                .dirfd = bun.toFD(std.fs.cwd().fd),
+                .dirfd = bun.FD.cwd(),
             };
         }
     };
@@ -4192,8 +4186,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd.int()), .fdatasync) orelse
-            Maybe(Return.Fdatasync).success;
+        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.int()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime _: Flavor) Maybe(Return.Fstat) {
@@ -4810,7 +4803,7 @@ pub const NodeFS = struct {
     ) Maybe(void) {
         const flags = os.O.DIRECTORY | os.O.RDONLY;
 
-        const atfd = if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd;
+        const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
@@ -4960,7 +4953,7 @@ pub const NodeFS = struct {
             }
 
             const flags = os.O.DIRECTORY | os.O.RDONLY;
-            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.toFD(std.fs.cwd().fd) else root_fd, basename, flags, 0)) {
+            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.FD.cwd() else root_fd, basename, flags, 0)) {
                 .err => |err| {
                     if (root_fd == bun.invalid_fd) {
                         return .{
@@ -5108,7 +5101,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
+            .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),
@@ -5336,58 +5329,12 @@ pub const NodeFS = struct {
     }
 
     pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
-        var path: [:0]const u8 = undefined;
-        var pathbuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-
         const fd = switch (args.file) {
             .path => brk: {
-                // On Windows, we potentially mutate the path in posixToPlatformInPlace
-                // We cannot mutate JavaScript strings in-place. That will break many things.
-                // So we must always copy the path string on Windows.
-                path = path: {
-                    const temp_path = args.file.path.sliceZWithForceCopy(pathbuf, Environment.isWindows);
-                    if (Environment.isWindows) {
-                        bun.path.posixToPlatformInPlace(u8, temp_path);
-                    }
-                    break :path temp_path;
-                };
-
-                var is_dirfd_different = false;
-                var dirfd = args.dirfd;
-                if (Environment.isWindows) {
-                    while (std.mem.startsWith(u8, path, "..\\")) {
-                        is_dirfd_different = true;
-                        var buffer: bun.WPathBuffer = undefined;
-                        const dirfd_path_len = std.os.windows.kernel32.GetFinalPathNameByHandleW(args.dirfd.cast(), &buffer, buffer.len, 0);
-                        const dirfd_path = buffer[0..dirfd_path_len];
-                        const parent_path = bun.Dirname.dirname(u16, dirfd_path).?;
-                        if (std.mem.startsWith(u16, parent_path, &bun.windows.nt_maxpath_prefix)) @constCast(parent_path)[1] = '?';
-                        const newdirfd = switch (bun.sys.openDirAtWindows(bun.invalid_fd, parent_path, .{ .no_follow = true })) {
-                            .result => |fd| fd,
-                            .err => |err| {
-                                return .{ .err = err.withPath(path) };
-                            },
-                        };
-                        path = path[3..];
-                        dirfd = newdirfd;
-                    }
-                }
-                defer if (is_dirfd_different) {
-                    var d = dirfd.asDir();
-                    d.close();
-                };
-                if (Environment.isWindows) {
-                    // windows openat does not support path traversal, fix it here.
-                    // use pathbuf2 here since without it 'panic: @memcpy arguments alias' triggers
-                    if (std.mem.indexOf(u8, path, "\\.\\") != null or std.mem.indexOf(u8, path, "\\..\\") != null) {
-                        const fixed_path = bun.path.normalizeStringWindows(path, &pathbuf2, false, false);
-                        pathbuf2[fixed_path.len] = 0;
-                        path = pathbuf2[0..fixed_path.len :0];
-                    }
-                }
+                const path = args.file.path.sliceZWithForceCopy(pathbuf, true);
 
                 const open_result = Syscall.openat(
-                    dirfd,
+                    args.dirfd,
                     path,
                     @intFromEnum(args.flag) | os.O.NOCTTY,
                     args.mode,
@@ -5494,26 +5441,24 @@ pub const NodeFS = struct {
 
         const path = args.path.sliceZ(inbuf);
 
-        const len = switch (Syscall.readlink(path, &outbuf)) {
-            .err => |err| return .{
-                .err = err.withPath(args.path.slice()),
-            },
-            .result => |len| len,
+        const link_path = switch (Syscall.readlink(path, &outbuf)) {
+            .err => |err| return .{ .err = err.withPath(args.path.slice()) },
+            .result => |result| result,
         };
 
         return .{
             .result = switch (args.encoding) {
                 .buffer => .{
-                    .buffer = Buffer.fromString(outbuf[0..len], bun.default_allocator) catch unreachable,
+                    .buffer = Buffer.fromString(link_path, bun.default_allocator) catch unreachable,
                 },
                 else => if (args.path == .slice_with_underlying_string and
-                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), outbuf[0..len], true))
+                    strings.eqlLong(args.path.slice_with_underlying_string.slice(), link_path, true))
                     .{
                         .string = args.path.slice_with_underlying_string.dupeRef(),
                     }
                 else
                     .{
-                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(outbuf[0..len]) },
+                        .string = .{ .utf8 = .{}, .underlying = bun.String.createUTF8(link_path) },
                     },
             },
         };
@@ -5965,18 +5910,7 @@ pub const NodeFS = struct {
     }
 
     pub fn watch(_: *NodeFS, args: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
-        const watcher = args.createFSWatcher() catch |err| {
-            const buf = std.fmt.allocPrint(bun.default_allocator, "{s} watching {}", .{ @errorName(err), bun.fmt.QuotedFormatter{ .text = args.path.slice() } }) catch unreachable;
-            defer bun.default_allocator.free(buf);
-            args.global_this.throwValue((JSC.SystemError{
-                .message = bun.String.init(buf),
-                .code = bun.String.init(@errorName(err)),
-                .syscall = bun.String.static("watch"),
-                .path = bun.String.init(args.path.slice()),
-            }).toErrorInstance(args.global_this));
-            return Maybe(Return.Watch){ .result = JSC.JSValue.undefined };
-        };
-        return Maybe(Return.Watch){ .result = watcher };
+        return args.createFSWatcher();
     }
 
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
@@ -6621,7 +6555,7 @@ pub const NodeFS = struct {
         }
 
         const open_flags = os.O.DIRECTORY | os.O.RDONLY;
-        const fd = switch (Syscall.openatOSPath(bun.toFD(std.fs.cwd().fd), src, open_flags, 0)) {
+        const fd = switch (Syscall.openatOSPath(bun.FD.cwd(), src, open_flags, 0)) {
             .err => |err| {
                 task.finishConcurrently(.{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) });
                 return false;

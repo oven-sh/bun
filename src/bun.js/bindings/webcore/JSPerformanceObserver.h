@@ -62,6 +62,7 @@ public:
 
     template<typename Visitor> static void visitOutputConstraints(JSCell*, Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
 protected:
     JSPerformanceObserver(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceObserver>&&);
 
@@ -70,7 +71,7 @@ protected:
 
 class JSPerformanceObserverOwner final : public JSC::WeakHandleOwner {
 public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
@@ -95,6 +96,5 @@ template<> struct JSDOMWrapperConverterTraits<PerformanceObserver> {
     using ToWrappedReturnType = PerformanceObserver*;
 };
 template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
-
 
 } // namespace WebCore

@@ -178,6 +178,15 @@ pub const Process = struct {
             .event_loop = JSC.EventLoopHandle.init(event_loop),
             .sync = sync_,
             .poller = .{ .detached = {} },
+            .status = brk: {
+                if (posix.has_exited) {
+                    var rusage = std.mem.zeroes(Rusage);
+                    const waitpid_result = PosixSpawn.wait4(posix.pid, 0, &rusage);
+                    break :brk Status.from(posix.pid, &waitpid_result) orelse Status{ .running = {} };
+                }
+
+                break :brk Status{ .running = {} };
+            },
         });
     }
 
@@ -261,7 +270,15 @@ pub const Process = struct {
                         if (err_.getErrno() == .SRCH) {
                             break :brk Status.from(pid, &PosixSpawn.wait4(
                                 pid,
-                                if (this.sync) 0 else std.os.W.NOHANG,
+                                // Normally we would use WNOHANG to avoid blocking the event loop.
+                                // However, there seems to be a race condition where the operating system
+                                // tells us that the process has already exited (ESRCH) but the waitpid
+                                // call with WNOHANG doesn't return the status yet.
+                                // As a workaround, we use 0 to block the event loop until the status is available.
+                                // This should be fine because the process has already exited, so the data
+                                // should become available basically immediately. Also, testing has shown that this
+                                // occurs extremely rarely and only under high load.
+                                0,
                                 &rusage_result,
                             ));
                         }
@@ -275,9 +292,28 @@ pub const Process = struct {
         this.onExit(status, &rusage_result);
     }
 
-    pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
-        _ = vm; // autofix
+    pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
+        if (this.hasExited()) {
+            this.onExit(this.status, &std.mem.zeroes(Rusage));
+            return .{ .result = true };
+        }
 
+        switch (this.watch()) {
+            .err => |err| {
+                if (comptime Environment.isPosix) {
+                    if (err.getErrno() == .SRCH) {
+                        this.wait(true);
+                        return .{ .result = this.hasExited() };
+                    }
+                }
+
+                return .{ .err = err };
+            },
+            .result => return .{ .result = this.hasExited() },
+        }
+    }
+
+    pub fn watch(this: *Process) JSC.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
             return JSC.Maybe(void){ .result = {} };
@@ -311,10 +347,6 @@ pub const Process = struct {
             },
             .err => |err| {
                 this.poller.fd.disableKeepingProcessAlive(this.event_loop);
-
-                if (err.getErrno() != .SRCH) {
-                    @panic("This shouldn't happen");
-                }
 
                 return .{ .err = err };
             },
@@ -1044,6 +1076,9 @@ pub const PosixSpawnResult = struct {
 
     memfds: [3]bool = .{ false, false, false },
 
+    // ESRCH can happen when requesting the pidfd
+    has_exited: bool = false,
+
     pub fn close(this: *WindowsSpawnResult) void {
         for (this.extra_pipes.items) |fd| {
             _ = bun.sys.close(fd);
@@ -1065,7 +1100,7 @@ pub const PosixSpawnResult = struct {
     }
 
     fn pidfdFlagsForLinux() u32 {
-        const kernel = @import("../../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+        const kernel = bun.analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 
         // pidfd_nonblock only supported in 5.10+
         return if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
@@ -1107,9 +1142,18 @@ pub const PosixSpawnResult = struct {
                         }
                     }
 
-                    if (err == .NOSYS) {
+                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
+                    // Until we switch to clone3, this needs to be handled separately.
+                    if (err == .SRCH) {
+                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
+                    }
+
+                    // seccomp filters can be used to block this system call or pidfd's altogether
+                    // https://github.com/moby/moby/issues/42680
+                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                    if (err == .NOSYS or err == .OPNOTSUPP or err == .PERM or err == .ACCES or err == .INVAL) {
                         WaiterThread.setShouldUseWaiterThread();
-                        return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
+                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
                     }
 
                     var status: u32 = 0;
@@ -1406,9 +1450,19 @@ pub fn spawnProcessPosix(
         argv,
         envp,
     );
+    var failed_after_spawn = false;
+    defer {
+        if (failed_after_spawn) {
+            for (to_close_on_error.items) |fd| {
+                _ = bun.sys.close(fd);
+            }
+            to_close_on_error.clearAndFree();
+        }
+    }
 
     switch (spawn_result) {
         .err => {
+            failed_after_spawn = true;
             return .{ .err = spawn_result.err };
         },
         .result => |pid| {
@@ -1421,7 +1475,18 @@ pub fn spawnProcessPosix(
                     .result => |pidfd| {
                         spawned.pidfd = pidfd;
                     },
-                    .err => {},
+                    .err => |err| {
+                        // we intentionally do not clean up any of the file descriptors in this case
+                        // you could have data sitting in stdout, just waiting.
+                        if (err.getErrno() == .SRCH) {
+                            spawned.has_exited = true;
+
+                            // a real error occurred. one we should not assume means pidfd_open is blocked.
+                        } else if (!WaiterThread.shouldUseWaiterThread()) {
+                            failed_after_spawn = true;
+                            return .{ .err = err };
+                        }
+                    },
                 }
             }
 

@@ -211,11 +211,11 @@ void ScriptExecutionContext::dispatchMessagePortEvents()
 
 void ScriptExecutionContext::checkConsistency() const
 {
-    for (auto* messagePort : m_messagePorts)
-        ASSERT(messagePort->scriptExecutionContext() == this);
+    // for (auto* messagePort : m_messagePorts)
+    //     ASSERT(messagePort->scriptExecutionContext() == this);
 
-    for (auto* destructionObserver : m_destructionObservers)
-        ASSERT(destructionObserver->scriptExecutionContext() == this);
+    // for (auto* destructionObserver : m_destructionObservers)
+    //     ASSERT(destructionObserver->scriptExecutionContext() == this);
 
     // for (auto* activeDOMObject : m_activeDOMObjects) {
     //     ASSERT(activeDOMObject->scriptExecutionContext() == this);

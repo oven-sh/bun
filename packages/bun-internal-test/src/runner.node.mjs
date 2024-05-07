@@ -1,11 +1,10 @@
 import * as action from "@actions/core";
 import { spawn, spawnSync } from "child_process";
-import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, close, closeSync } from "fs";
-import { readFile, rm } from "fs/promises";
+import { rmSync, writeFileSync, readFileSync, mkdirSync, openSync, closeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
-import { constants, cpus, hostname, tmpdir, totalmem, userInfo } from "os";
-import { join, normalize } from "path";
+import { cpus, hostname, tmpdir, totalmem, userInfo } from "os";
+import { join, normalize, posix, relative } from "path";
 import { fileURLToPath } from "url";
 import PQueue from "p-queue";
 
@@ -22,9 +21,7 @@ function defaultConcurrency() {
 
   return Math.min(Math.floor((cpus().length - 2) / 2), 2);
 }
-
 const windows = process.platform === "win32";
-const KEEP_TMPDIR = process.env["BUN_KEEP_TMPDIR"] === "1";
 const nativeMemory = totalmem();
 const force_ram_size_input = parseInt(process.env["BUN_JSC_forceRAMSize"] || "0", 10);
 let force_ram_size = Number(BigInt(nativeMemory) >> BigInt(2)) + "";
@@ -208,14 +205,15 @@ function checkSlowTests() {
 setInterval(checkSlowTests, SHORT_TIMEOUT_DURATION).unref();
 var currentTestNumber = 0;
 async function runTest(path) {
+  const pathOnDisk = resolve(path);
   const thisTestNumber = currentTestNumber++;
-  const name = path.replace(cwd, "").slice(1);
+  const testFileName = posix.normalize(relative(cwd, path).replaceAll("\\", "/"));
   let exitCode, signal, err, output;
 
   const start = Date.now();
 
   const activeTestObject = { start, proc: undefined };
-  activeTests.set(path, activeTestObject);
+  activeTests.set(testFileName, activeTestObject);
 
   try {
     await new Promise((finish, reject) => {
@@ -225,12 +223,12 @@ async function runTest(path) {
 at ${((start - run_start.getTime()) / 1000).toFixed(2)}s, file ${thisTestNumber
           .toString()
           .padStart(total.toString().length, "0")}/${total}, ${failing_tests.length} failing files
-Starting "${name}"
+Starting "${testFileName}"
 
 `,
       );
       const TMPDIR = maketemp();
-      const proc = spawn(bunExe, ["test", resolve(path)], {
+      const proc = spawn(bunExe, ["test", pathOnDisk], {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
@@ -241,6 +239,7 @@ Starting "${name}"
           GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
           BUN_DEBUG_QUIET_LOGS: "1",
           BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
+          BUN_ENABLE_CRASH_REPORTING: "1",
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });
@@ -301,7 +300,7 @@ Starting "${name}"
       });
     });
   } finally {
-    activeTests.delete(path);
+    activeTests.delete(testFileName);
   }
 
   if (!hasInitialMaxFD) {
@@ -311,7 +310,7 @@ Starting "${name}"
     maxFd = getMaxFileDescriptor();
     if (maxFd > prevMaxFd + queue.concurrency * 2) {
       process.stderr.write(
-        `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${name}, delta: ${
+        `\n\x1b[31mewarn\x1b[0;2m:\x1b[0m file descriptor leak in ${testFileName}, delta: ${
           maxFd - prevMaxFd
         }, current: ${maxFd}, previous: ${prevMaxFd}\n`,
       );
@@ -361,9 +360,9 @@ Starting "${name}"
   }
 
   console.log(
-    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${passed ? "\x1b[32m✔" : "\x1b[31m✖"} ${name}\x1b[0m${
-      reason ? ` (${reason})` : ""
-    }`,
+    `\x1b[2m${formatTime(duration).padStart(6, " ")}\x1b[0m ${
+      passed ? "\x1b[32m✔" : "\x1b[31m✖"
+    } ${testFileName}\x1b[0m${reason ? ` (${reason})` : ""}`,
   );
 
   finished++;
@@ -377,11 +376,11 @@ Starting "${name}"
   }
 
   if (!passed) {
-    failing_tests.push({ path: name, reason, output });
+    failing_tests.push({ path: testFileName, reason, output });
     process.exitCode = 1;
     if (err) console.error(err);
   } else {
-    passing_tests.push(name);
+    passing_tests.push(testFileName);
   }
 
   return passed;
@@ -521,7 +520,31 @@ writeFileSync(
   }),
 );
 
+function mabeCapitalize(str) {
+  str = str.toLowerCase();
+  if (str.includes("arm64") || str.includes("aarch64")) {
+    return str.toUpperCase();
+  }
+
+  if (str.includes("x64")) {
+    return "x64";
+  }
+
+  if (str.includes("baseline")) {
+    return str;
+  }
+
+  return str[0].toUpperCase() + str.slice(1);
+}
+
 console.log("-> test-report.md, test-report.json");
+function linkify(text, url) {
+  if (url?.startsWith?.("https://")) {
+    return `[${text}](${url})`;
+  }
+
+  return text;
+}
 
 if (ci) {
   if (failing_tests.length > 0) {
@@ -529,12 +552,61 @@ if (ci) {
   }
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
+  if (failing_tests.length) {
+    const { env } = process;
+    const tag = process.env.BUN_TAG || "unknown";
+    const url = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+
+    let comment = `## ${linkify(`${emojiTag(tag)}${failing_tests.length} failing tests`, url)} ${tag
+      .split("-")
+      .map(mabeCapitalize)
+      .join(" ")}
+
+${failingTestDisplay}
+
+`;
+    writeFileSync("comment.md", comment);
+  }
   let truncated_report = report;
   if (truncated_report.length > 512 * 1000) {
     truncated_report = truncated_report.slice(0, 512 * 1000) + "\n\n...truncated...";
   }
   action.summary.addRaw(truncated_report);
   await action.summary.write();
+}
+
+function emojiTag(tag) {
+  let emojiText = "";
+  tag = tag.toLowerCase();
+  if (tag.includes("win32") || tag.includes("windows")) {
+    emojiText += "🪟";
+  }
+
+  if (tag.includes("linux")) {
+    emojiText += "🐧";
+  }
+
+  if (tag.includes("macos") || tag.includes("darwin")) {
+    emojiText += "";
+  }
+
+  if (tag.includes("x86") || tag.includes("x64") || tag.includes("_64") || tag.includes("amd64")) {
+    if (!tag.includes("linux")) {
+      emojiText += "💻";
+    } else {
+      emojiText += "🖥";
+    }
+  }
+
+  if (tag.includes("arm64") || tag.includes("aarch64")) {
+    emojiText += "💪";
+  }
+
+  if (emojiText) {
+    emojiText += " ";
+  }
+
+  return emojiText;
 }
 
 process.exit(failing_tests.length ? 1 : process.exitCode);

@@ -350,7 +350,7 @@ const TablePrinter = struct {
                 var cols_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(this.globalObject, row_value.asObjectRef());
+                }).init(this.globalObject, row_value);
                 defer cols_iter.deinit();
 
                 while (cols_iter.next()) |col_key| {
@@ -359,11 +359,16 @@ const TablePrinter = struct {
                     // find or create the column for the property
                     const column: *Column = brk: {
                         const col_str = String.init(col_key);
+
                         for (columns.items[1..]) |*col| {
                             if (col.name.eql(col_str)) {
                                 break :brk col;
                             }
                         }
+
+                        // Need to ref this string because JSPropertyIterator
+                        // uses `toString` instead of `toStringRef` for property names
+                        col_str.ref();
 
                         try columns.append(.{ .name = col_str });
 
@@ -524,7 +529,7 @@ const TablePrinter = struct {
                 var rows_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data.asObjectRef());
+                }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
                 while (rows_iter.next()) |row_key| {
@@ -597,7 +602,7 @@ const TablePrinter = struct {
                 var rows_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
-                }).init(globalObject, this.tabular_data.asObjectRef());
+                }).init(globalObject, this.tabular_data);
                 defer rows_iter.deinit();
 
                 while (rows_iter.next()) |row_key| {
@@ -1043,8 +1048,6 @@ pub const Formatter = struct {
                 .cell = js_type,
             };
 
-            // Cell is the "unknown" type
-            // if we call JSObjectGetPrivate, it can segfault
             if (js_type == .Cell) {
                 return .{
                     .tag = .{ .NativeCode = {} },
@@ -1820,11 +1823,13 @@ pub const Formatter = struct {
 
     extern fn JSC__JSValue__callCustomInspectFunction(
         *JSC.JSGlobalObject,
+        *JSC.JSGlobalObject,
         JSValue,
         JSValue,
         depth: u32,
         max_depth: u32,
         colors: bool,
+        is_exception: *bool,
     ) JSValue;
 
     pub fn printAs(
@@ -2003,16 +2008,25 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
             },
             .CustomFormattedObject => {
+                var is_exception = false;
                 // Call custom inspect function. Will return the error if there is one
                 // we'll need to pass the callback through to the "this" value in here
                 const result = JSC__JSValue__callCustomInspectFunction(
+                    JSC.VirtualMachine.get().global,
                     this.globalThis,
                     this.custom_formatted_object.function,
                     this.custom_formatted_object.this,
                     this.max_depth -| this.depth,
                     this.max_depth,
                     enable_ansi_colors,
+                    &is_exception,
                 );
+                if (is_exception) {
+                    // Previously, this printed [native code]
+                    // TODO: in the future, should this throw when in Bun.inspect?
+                    writer.print("[custom formatter threw an exception]", .{});
+                    return;
+                }
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});
@@ -2724,7 +2738,7 @@ pub const Formatter = struct {
                         .skip_empty_name = true,
 
                         .include_value = true,
-                    }).init(this.globalThis, props.asObjectRef());
+                    }).init(this.globalThis, props);
                     defer props_iter.deinit();
 
                     const children_prop = props.get(this.globalThis, "children");

@@ -828,6 +828,7 @@ pub const Body = struct {
         }
 
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
+            error_instance.ensureStillAlive();
             if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
@@ -842,7 +843,7 @@ pub const Body = struct {
                 }
 
                 if (locked.readable.get()) |readable| {
-                    readable.done(global);
+                    readable.abort(global);
                     locked.readable.deinit();
                 }
                 // will be unprotected by body value deinit

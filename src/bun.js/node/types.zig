@@ -333,23 +333,23 @@ pub const BlobOrStringOrBuffer = union(enum) {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
         return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
-        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
 
@@ -450,12 +450,7 @@ pub const StringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJSMaybeAsync(
-        global: *JSC.JSGlobalObject,
-        allocator: std.mem.Allocator,
-        value: JSC.JSValue,
-        is_async: bool,
-    ) ?StringOrBuffer {
+    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 const str = bun.String.tryFromJS(value, global) orelse return null;
@@ -495,9 +490,11 @@ pub const StringOrBuffer = union(enum) {
             else => null,
         };
     }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
         return fromJSMaybeAsync(global, allocator, value, false);
     }
+
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) ?StringOrBuffer {
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
     }
@@ -535,6 +532,15 @@ pub const StringOrBuffer = union(enum) {
         };
 
         return fromJSWithEncoding(global, allocator, value, encoding);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) ?StringOrBuffer {
+        const encoding: Encoding = brk: {
+            if (!encoding_value.isCell())
+                break :brk .utf8;
+            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
+        };
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
     }
 };
 
@@ -3495,6 +3501,13 @@ pub const Path = struct {
         return buf[0..bufSize];
     }
 
+    pub fn normalizeT(comptime T: type, path: []const T, buf: []T) []const T {
+        return switch (Environment.os) {
+            .windows => normalizeWindowsT(T, path, buf),
+            else => normalizePosixT(T, path, buf),
+        };
+    }
+
     pub inline fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
         return toJSString(globalObject, normalizePosixT(T, path, buf));
     }
@@ -4843,7 +4856,7 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(bun.argv()[0]).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(bun.argv[0]).toValueGC(globalObject);
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -4874,13 +4887,13 @@ pub const Process = struct {
             JSC.ZigString,
             // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
             // argv also omits the script name
-            bun.argv().len -| 1,
+            bun.argv.len -| 1,
         ) catch bun.outOfMemory();
         defer allocator.free(args);
         var used: usize = 0;
         const offset = 1;
 
-        for (bun.argv()[@min(bun.argv().len, offset)..]) |arg| {
+        for (bun.argv[@min(bun.argv.len, offset)..]) |arg| {
             if (arg.len == 0)
                 continue;
 

@@ -59,10 +59,6 @@ inline fn @"is .. with type"(comptime T: type, slice: []const T) bool {
     return slice.len >= 2 and slice[0] == '.' and slice[1] == '.';
 }
 
-inline fn isDotSlash(slice: []const u8) bool {
-    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
-}
-
 inline fn @"is ../"(slice: []const u8) bool {
     return strings.hasPrefixComptime(slice, "../");
 }
@@ -598,6 +594,24 @@ pub fn isDriveLetter(c: u8) bool {
 
 pub fn isDriveLetterT(comptime T: type, c: T) bool {
     return 'a' <= c and c <= 'z' or 'A' <= c and c <= 'Z';
+}
+
+pub fn hasAnyIllegalChars(maybe_path: []const u8) bool {
+    if (!bun.Environment.isWindows) return false;
+    var maybe_path_ = maybe_path;
+    // check for disk discrimnator; remove it since it has a ':'
+    if (startsWithDiskDiscriminator(maybe_path_)) maybe_path_ = maybe_path_[2..];
+    // guard against OBJECT_NAME_INVALID => unreachable
+    return bun.strings.indexAnyComptime(maybe_path_, "<>:\"|?*") != null;
+}
+
+pub fn startsWithDiskDiscriminator(maybe_path: []const u8) bool {
+    if (!bun.Environment.isWindows) return false;
+    if (maybe_path.len < 3) return false;
+    if (!isDriveLetter(maybe_path[0])) return false;
+    if (maybe_path[1] != ':') return false;
+    if (maybe_path[2] != '\\') return false;
+    return true;
 }
 
 // path.relative lets you do relative across different share drives
@@ -1201,11 +1215,18 @@ pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]co
     return buf[start_offset..][0..joined.len :0];
 }
 pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []const u8 {
+    return joinStringBufT(u8, buf, parts, _platform);
+}
+pub fn joinStringBufW(buf: []u16, parts: anytype, comptime _platform: Platform) []const u16 {
+    return joinStringBufT(u16, buf, parts, _platform);
+}
+
+pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _platform: Platform) []const T {
     const platform = comptime _platform.resolve();
 
     var written: usize = 0;
-    var temp_buf_: [4096]u8 = undefined;
-    var temp_buf: []u8 = &temp_buf_;
+    var temp_buf_: [4096]T = undefined;
+    var temp_buf: []T = &temp_buf_;
     var free_temp_buf = false;
     defer {
         if (free_temp_buf) {
@@ -1220,7 +1241,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(u8, count * 2) catch @panic("Out of memory");
+        temp_buf = bun.default_allocator.alloc(T, count * 2) catch @panic("Out of memory");
         free_temp_buf = true;
     }
 
@@ -1234,8 +1255,14 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
             written += 1;
         }
 
-        bun.copy(u8, temp_buf[written..], part);
-        written += part.len;
+        const Element = std.meta.Elem(@TypeOf(part));
+        if (comptime T == u16 and Element == u8) {
+            const wrote = bun.strings.convertUTF8toUTF16InBuffer(temp_buf[written..], part);
+            written += wrote.len;
+        } else {
+            bun.copy(T, temp_buf[written..], part);
+            written += part.len;
+        }
     }
 
     if (written == 0) {
@@ -1243,7 +1270,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
         return buf[0..1];
     }
 
-    return normalizeStringNode(temp_buf[0..written], buf, platform);
+    return normalizeStringNodeT(T, temp_buf[0..written], buf, platform);
 }
 
 pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
@@ -1621,26 +1648,37 @@ pub fn normalizeStringNode(
     buf: []u8,
     comptime platform: Platform,
 ) []u8 {
+    return normalizeStringNodeT(u8, str, buf, platform);
+}
+
+pub fn normalizeStringNodeT(
+    comptime T: type,
+    str: []const T,
+    buf: []T,
+    comptime platform: Platform,
+) []const T {
     if (str.len == 0) {
         buf[0] = '.';
         return buf[0..1];
     }
 
-    const is_absolute = platform.isAbsolute(str);
-    const trailing_separator = platform.isSeparator(str[str.len - 1]);
+    const is_absolute = platform.isAbsoluteT(T, str);
+    const trailing_separator = platform.isSeparatorT(T, str[str.len - 1]);
 
     // `normalizeStringGeneric` handles absolute path cases for windows
     // we should not prefix with /
     var buf_ = if (platform == .windows) buf else buf[1..];
 
-    var out = if (!is_absolute) normalizeStringGeneric(
+    var out = if (!is_absolute) normalizeStringGenericT(
+        T,
         str,
         buf_,
         true,
         comptime platform.resolve().separator(),
         comptime platform.getSeparatorFuncT(),
         false,
-    ) else normalizeStringGeneric(
+    ) else normalizeStringGenericT(
+        T,
         str,
         buf_,
         false,
@@ -1656,7 +1694,8 @@ pub fn normalizeStringNode(
         }
 
         if (trailing_separator) {
-            buf[0..2].* = platform.trailingSeparator();
+            const sep = platform.trailingSeparator();
+            buf[0..2].* = .{ sep[0], sep[1] };
             return buf[0..2];
         }
 
@@ -1665,7 +1704,7 @@ pub fn normalizeStringNode(
     }
 
     if (trailing_separator) {
-        if (!platform.isSeparator(out[out.len - 1])) {
+        if (!platform.isSeparatorT(T, out[out.len - 1])) {
             buf_[out.len] = platform.separator();
             out = buf_[0 .. out.len + 1];
         }
@@ -1680,337 +1719,6 @@ pub fn normalizeStringNode(
     }
 
     return out;
-}
-
-test "joinAbsStringPosix" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app/";
-
-    _ = t.expect(
-        "/project/.pnpm/lodash@4.17.21/node_modules/lodash/eq",
-        try default_allocator.dupe(u8, joinAbsString(cwd, &[_]string{
-            "/project/.pnpm/lodash@4.17.21/node_modules/lodash/",
-            "./eq",
-        }, .posix)),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/foo/lodash/eq.js",
-        joinAbsString(cwd, &[_]string{ "/foo/lodash/", "./eq.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/foo/lodash/eq.js",
-        joinAbsString(cwd, &[_]string{ "/foo/lodash", "./eq.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/file.js",
-        joinAbsString(cwd, &[_]string{ "", "../../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
-        @src(),
-    );
-}
-
-test "joinAbsStringLoose" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app";
-
-    _ = t.expect(
-        "/bar/foo",
-        joinAbsString(cwd, &[_]string{
-            "/bar/foo",
-            "/bar/foo",
-        }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-}
-
-test "joinStringBuf" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const fixtures = .{
-        .{ &[_][]const u8{ ".", "x/b", "..", "/b/c.js" }, "x/b/c.js" },
-        .{ &[_][]const u8{}, "." },
-        .{ &[_][]const u8{ "/.", "x/b", "..", "/b/c.js" }, "/x/b/c.js" },
-        .{ &[_][]const u8{ "/foo", "../../../bar" }, "/bar" },
-        .{ &[_][]const u8{ "foo", "../../../bar" }, "../../bar" },
-        .{ &[_][]const u8{ "foo/", "../../../bar" }, "../../bar" },
-        .{ &[_][]const u8{ "foo/x", "../../../bar" }, "../bar" },
-        .{ &[_][]const u8{ "foo/x", "./bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{ "foo/x/", "./bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{ "foo/x/", ".", "bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{"./"}, "./" },
-        .{ &[_][]const u8{ ".", "./" }, "./" },
-        .{ &[_][]const u8{ ".", ".", "." }, "." },
-        .{ &[_][]const u8{ ".", "./", "." }, "." },
-        .{ &[_][]const u8{ ".", "/./", "." }, "." },
-        .{ &[_][]const u8{ ".", "/////./", "." }, "." },
-        .{ &[_][]const u8{"."}, "." },
-        .{ &[_][]const u8{ "", "." }, "." },
-        .{ &[_][]const u8{ "", "foo" }, "foo" },
-        .{ &[_][]const u8{ "foo", "/bar" }, "foo/bar" },
-        .{ &[_][]const u8{ "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "", "foo" }, "foo" },
-        .{ &[_][]const u8{ "foo", "" }, "foo" },
-        .{ &[_][]const u8{ "foo/", "" }, "foo/" },
-        .{ &[_][]const u8{ "foo", "", "/bar" }, "foo/bar" },
-        .{ &[_][]const u8{ "./", "..", "/foo" }, "../foo" },
-        .{ &[_][]const u8{ "./", "..", "..", "/foo" }, "../../foo" },
-        .{ &[_][]const u8{ ".", "..", "..", "/foo" }, "../../foo" },
-        .{ &[_][]const u8{ "", "..", "..", "/foo" }, "../../foo" },
-
-        .{ &[_][]const u8{"/"}, "/" },
-        .{ &[_][]const u8{ "/", "." }, "/" },
-        .{ &[_][]const u8{ "/", ".." }, "/" },
-        .{ &[_][]const u8{ "/", "..", ".." }, "/" },
-        .{ &[_][]const u8{""}, "." },
-        .{ &[_][]const u8{ "", "" }, "." },
-        .{ &[_][]const u8{" /foo"}, " /foo" },
-        .{ &[_][]const u8{ " ", "foo" }, " /foo" },
-        .{ &[_][]const u8{ " ", "." }, " " },
-        .{ &[_][]const u8{ " ", "/" }, " /" },
-        .{ &[_][]const u8{ " ", "" }, " " },
-        .{ &[_][]const u8{ "/", "foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "//foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "/", "foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "/", "/foo" }, "/foo" },
-
-        .{ &[_][]const u8{ "", "..", "..", "..", "/foo" }, "../../../foo" },
-        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo" }, "../../bar/foo" },
-        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo", "../" }, "../../bar/" },
-    };
-    inline for (fixtures) |fixture| {
-        const expected = fixture[1];
-        const buf = try default_allocator.alloc(u8, 2048);
-        _ = t.expect(expected, joinStringBuf(buf, fixture[0], .posix), @src());
-    }
-}
-
-test "normalizeStringPosix" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    var buf: [2048]u8 = undefined;
-    var buf2: [2048]u8 = undefined;
-    // Don't mess up strings that
-    _ = t.expect("../../bar", normalizeStringNode("../foo../../../bar", &buf, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", true, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", true, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("/foo/bar", normalizeStringNode("/././foo/././././././bar/../bar/../bar", &buf2, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar", false, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "/////", false, .posix), @src());
-    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "../boom/../", true, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "./", true, .posix), @src());
-}
-
-test "normalizeStringWindows" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    // Don't mess up strings that
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", true, .windows), @src());
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\.\\.\\foo\\.\\.\\.\\.\\.\\.\\bar\\..\\bar\\..\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar", false, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "..\\boom\\..\\", true, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, ".\\", true, .windows), @src());
-}
-
-test "relative" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const fixtures = .{
-        .{ "/var/lib", "/var", ".." },
-        .{ "/var/lib", "/bin", "../../bin" },
-        .{ "/var/lib", "/var/lib", "" },
-        .{ "/var/lib", "/var/apache", "../apache" },
-        .{ "/var/", "/var/lib", "lib" },
-        .{ "/", "/var/lib", "var/lib" },
-        .{ "/foo/test", "/foo/test/bar/package.json", "bar/package.json" },
-        .{ "/Users/a/web/b/test/mails", "/Users/a/web/b", "../.." },
-        .{ "/foo/bar/baz-quux", "/foo/bar/baz", "../baz" },
-        .{ "/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux" },
-        .{ "/baz-quux", "/baz", "../baz" },
-        .{ "/baz", "/baz-quux", "../baz-quux" },
-        .{ "/page1/page2/foo", "/", "../../.." },
-    };
-
-    inline for (fixtures) |fixture| {
-        const from = fixture[0];
-        const to = fixture[1];
-        const expected = fixture[2];
-        _ = t.expect(expected, try relativeAlloc(default_allocator, from, to), @src());
-    }
-
-    _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
-    _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
-    _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
-    _ = t.expect("../../../../bacon/foo/baz", try relativeAlloc(default_allocator, "/app/foo/bar/baz.js", "/bacon/foo/baz"), @src());
-}
-
-test "longestCommonPath" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..2]), @src());
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..4]), @src());
-    _ = t.expect("/var/boo/foo/beep/", longestCommonPath(strs[2..3]), @src());
-    _ = t.expect("/bar/", longestCommonPath(strs[5..strs.len]), @src());
-    _ = t.expect("/", longestCommonPath(&strs), @src());
-
-    const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
-    _ = t.expect("/app/", longestCommonPath(&more), @src());
-    _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
 }
 
 pub fn basename(path: []const u8) []const u8 {

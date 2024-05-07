@@ -352,6 +352,9 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
+const BrotliDecoder = JSC.API.BrotliDecoder;
+const BrotliEncoder = JSC.API.BrotliEncoder;
+
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
 const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
@@ -430,6 +433,8 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
+    BrotliEncoder,
+    BrotliDecoder,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -850,7 +855,7 @@ pub const EventLoop = struct {
         const result = callback.callWithThis(globalObject, thisValue, arguments);
 
         if (result.toError()) |err| {
-            this.virtual_machine.onUnhandledError(globalObject, err);
+            this.virtual_machine.onError(globalObject, err);
         }
     }
 
@@ -1180,6 +1185,14 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(Unlink))) => {
                     var any: *Unlink = task.get(Unlink).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
+                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
+                    var any: *BrotliDecoder = task.get(BrotliDecoder).?;
                     any.runFromJSThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
@@ -1917,7 +1930,7 @@ pub const MiniEventLoop = struct {
             }
 
             store.* = JSC.WebCore.Blob.Store{
-                .ref_count = 2,
+                .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{
@@ -1949,7 +1962,7 @@ pub const MiniEventLoop = struct {
             }
 
             store.* = JSC.WebCore.Blob.Store{
-                .ref_count = 2,
+                .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{

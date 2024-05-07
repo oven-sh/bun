@@ -60,12 +60,10 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
                 Global.exit(1);
             }
             if (Environment.allow_assert) {
-                const maybe_trace = @errorReturnTrace();
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                 Output.prettyErrorln("Error: {s}", .{@errorName(err)});
                 log.printForLogLevel(Output.errorWriter()) catch {};
-                if (maybe_trace) |trace| {
-                    std.debug.dumpStackTrace(trace.*);
-                }
                 Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
                 Global.exit(1);
             }

@@ -93,6 +93,20 @@ pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Ver
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
+const IGNORED_PATHS: []const []const u8 = &.{
+    "node_modules",
+    ".git",
+    "CMakeFiles",
+};
+fn ignoredWorkspacePaths(path: []const u8) bool {
+    inline for (IGNORED_PATHS) |ignored| {
+        if (bun.strings.eqlComptime(path, ignored)) return true;
+    }
+    return false;
+}
+
+const GlobWalker = bun.glob.GlobWalker_(ignoredWorkspacePaths, bun.glob.SyscallAccessor, false);
+
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
@@ -409,7 +423,7 @@ pub const Tree = struct {
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: Lockfile.TreeFiller,
         log: *logger.Log,
-        old_lockfile: *Lockfile,
+        lockfile: *Lockfile,
         prefer_dev_dependencies: bool = false,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
@@ -417,15 +431,15 @@ pub const Tree = struct {
         }
 
         pub fn buf(this: *const Builder) []const u8 {
-            return this.old_lockfile.buffers.string_bytes.items;
+            return this.lockfile.buffers.string_bytes.items;
         }
 
         pub fn packageName(this: *Builder, id: PackageID) String.Formatter {
-            return this.old_lockfile.packages.items(.name)[id].fmt(this.old_lockfile.buffers.string_bytes.items);
+            return this.lockfile.packages.items(.name)[id].fmt(this.lockfile.buffers.string_bytes.items);
         }
 
         pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
-            return this.old_lockfile.packages.items(.resolution)[id].fmt(this.old_lockfile.buffers.string_bytes.items, .auto);
+            return this.lockfile.packages.items(.resolution)[id].fmt(this.lockfile.buffers.string_bytes.items, .auto);
         }
 
         pub const Entry = struct {
@@ -738,6 +752,13 @@ pub fn cleanWithLogger(
     // We will only shrink the number of packages here.
     // never grow
 
+    // preinstall_state is used during installPackages. the indexes(package ids) need
+    // to be remapped
+    var preinstall_state = PackageManager.instance.preinstall_state;
+    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    defer old_preinstall_state.deinit(old.allocator);
+    @memset(preinstall_state.items, .unknown);
+
     if (updates.len > 0) {
         try old.preprocessUpdateRequests(updates, exact_versions);
     }
@@ -775,6 +796,7 @@ pub fn cleanWithLogger(
         .mapping = package_id_mapping,
         .clone_queue = clone_queue_,
         .log = log,
+        .old_preinstall_state = old_preinstall_state,
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -925,6 +947,7 @@ const Cloner = struct {
     trees: Tree.List = Tree.List{},
     trees_count: u32 = 1,
     log: *logger.Log,
+    old_preinstall_state: std.ArrayListUnmanaged(Install.PreinstallState),
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -948,7 +971,7 @@ const Cloner = struct {
         }
 
         if (this.lockfile.buffers.dependencies.items.len > 0)
-            try this.hoist();
+            try this.hoist(this.lockfile);
 
         // capacity is used for calculating byte size
         // so we need to make sure it's exact
@@ -956,20 +979,20 @@ const Cloner = struct {
             this.lockfile.packages.shrinkAndFree(this.lockfile.allocator, this.lockfile.packages.len);
     }
 
-    fn hoist(this: *Cloner) anyerror!void {
-        if (this.lockfile.packages.len == 0) return;
+    fn hoist(this: *Cloner, lockfile: *Lockfile) anyerror!void {
+        if (lockfile.packages.len == 0) return;
 
-        const allocator = this.lockfile.allocator;
-        var slice = this.lockfile.packages.slice();
+        const allocator = lockfile.allocator;
+        var slice = lockfile.packages.slice();
         var builder = Tree.Builder{
             .name_hashes = slice.items(.name_hash),
             .queue = TreeFiller.init(allocator),
             .resolution_lists = slice.items(.resolutions),
-            .resolutions = this.lockfile.buffers.resolutions.items,
+            .resolutions = lockfile.buffers.resolutions.items,
             .allocator = allocator,
-            .dependencies = this.lockfile.buffers.dependencies.items,
+            .dependencies = lockfile.buffers.dependencies.items,
             .log = this.log,
-            .old_lockfile = this.old,
+            .lockfile = lockfile,
             .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
         };
 
@@ -979,10 +1002,10 @@ const Cloner = struct {
             try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, &builder);
         }
 
-        this.lockfile.buffers.hoisted_dependencies = try builder.clean();
+        lockfile.buffers.hoisted_dependencies = try builder.clean();
         {
             const final = builder.list.items(.tree);
-            this.lockfile.buffers.trees = .{
+            lockfile.buffers.trees = .{
                 .items = final,
                 .capacity = final.len,
             };
@@ -1662,15 +1685,12 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     }
 
     file.closeAndMoveTo(tmpname, filename) catch |err| {
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
         // note: file is already closed here.
         _ = bun.sys.unlink(tmpname);
 
-        if (comptime Environment.allow_assert) {
-            if (@errorReturnTrace()) |trace| {
-                std.debug.dumpStackTrace(trace.*);
-            }
-        }
-        Output.err(err, "failed to replace old lockfile with new lockfile on disk", .{});
+        Output.err(err, "Failed to replace old lockfile with new lockfile on disk", .{});
         Global.crash();
     };
 }
@@ -2669,7 +2689,7 @@ pub const Package = extern struct {
                 };
 
                 initializeStore();
-                break :brk try json_parser.ParseJSONUTF8(
+                break :brk try json_parser.ParsePackageJSONUTF8(
                     &json_src,
                     log,
                     allocator,
@@ -2840,6 +2860,10 @@ pub const Package = extern struct {
         );
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
+
+        if (PackageManager.instance.preinstall_state.items.len > 0) {
+            PackageManager.instance.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
+        }
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {
             new_dep.* = try old_dep.clone(
@@ -3479,7 +3503,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParseJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+        const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -3775,10 +3799,6 @@ pub const Package = extern struct {
         }
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
-            if (comptime Environment.allow_assert) {
-                assert(!strings.containsChar(key, std.fs.path.sep_windows));
-            }
-
             if (comptime Environment.isDebug) {
                 if (!bun.sys.exists(key)) {
                     Output.debugWarn("WorkspaceMap.insert: key {s} does not exist", .{key});
@@ -3827,13 +3847,13 @@ pub const Package = extern struct {
         workspace_allocator: std.mem.Allocator,
         dir: std.fs.Dir,
         path: []const u8,
-        path_buf: *[bun.MAX_PATH_BYTES]u8,
+        path_buf: *bun.PathBuffer,
         name_to_copy: *[1024]u8,
         log: *logger.Log,
     ) !WorkspaceEntry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
             const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .posix);
+            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
         };
 
         // TODO: windows
@@ -3844,6 +3864,27 @@ pub const Package = extern struct {
 
         defer workspace_file.close();
 
+        return processWorkspaceNameImpl(
+            allocator,
+            workspace_allocator,
+            workspace_file,
+            path,
+            path_to_use,
+            name_to_copy,
+            log,
+        );
+    }
+
+    fn processWorkspaceNameImpl(
+        allocator: std.mem.Allocator,
+        workspace_allocator: std.mem.Allocator,
+        workspace_file: std.fs.File,
+        path: []const u8,
+        path_to_use: []const u8,
+        name_to_copy: *[1024]u8,
+        log: *logger.Log,
+    ) !WorkspaceEntry {
+        _ = path_to_use; // autofix
         const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
         defer workspace_allocator.free(workspace_bytes);
         const workspace_source = logger.Source.initPathString(path, workspace_bytes);
@@ -3859,7 +3900,7 @@ pub const Package = extern struct {
             .name = name_to_copy[0..workspace_json.found_name.len],
             .name_loc = workspace_json.name_loc,
         };
-        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
+        debug("processWorkspaceName({s}) = {s}", .{ path, entry.name });
         if (workspace_json.has_found_version) {
             entry.version = try allocator.dupe(u8, workspace_json.found_version);
         }
@@ -3884,13 +3925,15 @@ pub const Package = extern struct {
 
         const orig_msgs_len = log.msgs.items.len;
 
-        var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
-        defer asterisked_workspace_paths.deinit();
-        const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
-        defer allocator.destroy(filepath_buf);
+        var workspace_globs = std.ArrayList(string).init(allocator);
+        defer workspace_globs.deinit();
+        const filepath_bufOS = allocator.create(bun.PathBuffer) catch unreachable;
+        const filepath_buf = std.mem.asBytes(filepath_bufOS);
+        defer allocator.destroy(filepath_bufOS);
 
         for (arr.slice()) |item| {
             defer fallback.fixed_buffer_allocator.reset();
+            // TODO: when does this get deallocated?
             var input_path = item.asString(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
@@ -3901,29 +3944,8 @@ pub const Package = extern struct {
                 return error.InvalidPackageJSON;
             };
 
-            if (strings.containsChar(input_path, '*')) {
-                if (strings.contains(input_path, "**")) {
-                    log.addError(source, item.loc,
-                        \\TODO multi level globs. For now, try something like "packages/*"
-                    ) catch {};
-                    continue;
-                }
-
-                const without_trailing_slash = strings.withoutTrailingSlash(input_path);
-
-                if (!strings.endsWithComptime(without_trailing_slash, "/*") and !strings.eqlComptime(without_trailing_slash, "*")) {
-                    log.addError(source, item.loc,
-                        \\TODO glob star * in the middle of a path. For now, try something like "packages/*", at the end of the path.
-                    ) catch {};
-                    continue;
-                }
-
-                asterisked_workspace_paths.append(without_trailing_slash) catch unreachable;
-                continue;
-            } else if (strings.containsAny(input_path, "!{}[]")) {
-                log.addError(source, item.loc,
-                    \\TODO fancy glob patterns. For now, try something like "packages/*"
-                ) catch {};
+            if (bun.glob.detectGlobSyntax(input_path)) {
+                workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             } else if (string_builder == null) {
                 input_path = Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{input_path}, .auto);
@@ -3937,12 +3959,12 @@ pub const Package = extern struct {
                 workspace_allocator,
                 std.fs.cwd(),
                 input_path,
-                filepath_buf,
+                filepath_bufOS,
                 workspace_name_buf,
                 log,
             ) catch |err| {
                 switch (err) {
-                    error.FileNotFound => {
+                    error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(
                             source,
                             item.loc,
@@ -3991,89 +4013,84 @@ pub const Package = extern struct {
             });
         }
 
-        if (asterisked_workspace_paths.items.len > 0) {
-            for (asterisked_workspace_paths.items) |user_path| {
-                var dir_prefix = if (string_builder) |_|
-                    strings.withoutLeadingSlash(user_path)
-                else
-                    Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{user_path}, .auto);
+        if (workspace_globs.items.len > 0) {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+            for (workspace_globs.items) |user_pattern| {
+                defer _ = arena.reset(.retain_capacity);
 
-                dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
-                if (dir_prefix.len == 0 or
-                    strings.eqlComptime(dir_prefix, ".") or
-                    strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
-                {
-                    if (comptime Environment.isWindows)
-                        dir_prefix = Fs.FileSystem.instance.top_level_dir
-                    else
-                        dir_prefix = ".";
+                const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
+                    const parts = [_][]const u8{ user_pattern, "package.json" };
+                    break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
+                };
+
+                var walker: GlobWalker = .{};
+                var cwd = bun.path.dirname(source.path.textZ(), .auto);
+                cwd = if (bun.strings.eql(cwd, "")) bun.fs.FileSystem.instance.top_level_dir else cwd;
+                if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |e| {
+                    log.addErrorFmt(
+                        source,
+                        loc,
+                        allocator,
+                        "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        .{ user_pattern, @tagName(e.getErrno()) },
+                    ) catch {};
+                    return error.GlobError;
+                }
+                defer walker.deinit(false);
+
+                var iter: GlobWalker.Iterator = .{
+                    .walker = &walker,
+                };
+                defer iter.deinit();
+                if ((try iter.init()).asErr()) |e| {
+                    log.addErrorFmt(
+                        source,
+                        loc,
+                        allocator,
+                        "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        .{ user_pattern, @tagName(e.getErrno()) },
+                    ) catch {};
+                    return error.GlobError;
                 }
 
-                const entries_option = FileSystem.instance.fs.readDirectory(
-                    dir_prefix,
-                    null,
-                    0,
-                    true,
-                ) catch |err| switch (err) {
-                    error.ENOENT => {
-                        log.addWarningFmt(
+                while (switch (try iter.next()) {
+                    .result => |r| r,
+                    .err => |e| {
+                        log.addErrorFmt(
                             source,
                             loc,
                             allocator,
-                            "workspaces directory prefix not found \"{s}\"",
-                            .{dir_prefix},
+                            "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                            .{ user_pattern, @tagName(e.getErrno()) },
                         ) catch {};
-                        continue;
+                        return error.GlobError;
                     },
-                    error.ENOTDIR => {
-                        log.addWarningFmt(
-                            source,
-                            loc,
-                            allocator,
-                            "workspaces directory prefix is not a directory \"{s}\"",
-                            .{dir_prefix},
-                        ) catch {};
-                        continue;
-                    },
-                    else => continue,
-                };
-                if (entries_option.* != .entries) continue;
-                var entries = entries_option.entries.data.iterator();
-                const skipped_names = &[_][]const u8{ "node_modules", ".git" };
+                }) |matched_path| {
+                    const workspace_file = iter.cwd_fd.value.asDir().openFile(matched_path, .{ .mode = .read_only }) catch |err| {
+                        debug("processWorkspaceName({s}) = {} ", .{ glob_pattern, err });
+                        return err;
+                    };
+                    defer workspace_file.close();
 
-                while (entries.next()) |entry_iter| {
-                    const name = entry_iter.key_ptr.*;
-                    if (strings.eqlAnyComptime(name, skipped_names))
-                        continue;
-                    var entry: *FileSystem.Entry = entry_iter.value_ptr.*;
-                    if (entry.kind(&Fs.FileSystem.instance.fs, true) != .dir) continue;
+                    const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
+                    const entry_base: []const u8 = Path.basename(matched_path);
+                    debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 
-                    var parts = [2]string{ entry.dir, entry.base() };
+                    var parts = [_]string{entry_dir};
                     const entry_path = Path.joinAbsStringBufZ(
-                        Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                        cwd,
                         filepath_buf,
                         &parts,
                         .auto,
                     );
 
-                    if (entry.cache.fd == .zero) {
-                        entry.cache.fd = bun.toFD(bun.sys.open(
-                            entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
-                            0,
-                        ).unwrap() catch continue);
-                    }
-
-                    const dir_fd = entry.cache.fd;
-                    assert(dir_fd != bun.invalid_fd); // kind() should've opened
-                    defer fallback.fixed_buffer_allocator.reset();
-
-                    const workspace_entry = processWorkspaceName(
+                    const workspace_entry = processWorkspaceNameImpl(
                         allocator,
                         workspace_allocator,
-                        dir_fd.asDir(),
+                        workspace_file,
                         "",
-                        filepath_buf,
+                        matched_path,
                         workspace_name_buf,
                         log,
                     ) catch |err| {
@@ -4085,7 +4102,7 @@ pub const Package = extern struct {
                                     logger.Loc.Empty,
                                     allocator,
                                     "Missing \"name\" from package.json in {s}" ++ std.fs.path.sep_str ++ "{s}",
-                                    .{ entry.dir, entry.base() },
+                                    .{ entry_dir, entry_base },
                                 ) catch {};
                             },
                             else => {
@@ -4094,7 +4111,7 @@ pub const Package = extern struct {
                                     logger.Loc.Empty,
                                     allocator,
                                     "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                                    .{ @errorName(err), entry.dir, entry.base() },
+                                    .{ @errorName(err), entry_dir, entry_base },
                                 ) catch {};
                             },
                         }

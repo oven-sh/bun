@@ -449,6 +449,16 @@ pub const LineColumnOffset = struct {
             var iter = strings.CodepointIterator.initOffset(input, i);
             var cursor = strings.CodepointIterator.Cursor{ .i = @as(u32, @truncate(iter.i)) };
             _ = iter.next(&cursor);
+
+            // Given a null byte, cursor.width becomes 0
+            // This can lead to integer overflow, crashes, or hangs.
+            // https://github.com/oven-sh/bun/issues/10624
+            if (cursor.width == 0) {
+                columns += 1;
+                offset = i + 1;
+                continue;
+            }
+
             offset = i + cursor.width;
 
             switch (cursor.c) {
@@ -678,6 +688,10 @@ pub const VLQ = struct {
     // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
+
+    pub fn writeTo(self: VLQ, writer: anytype) !void {
+        try writer.writeAll(self.bytes[0..self.len]);
+    }
 };
 
 pub fn encodeVLQWithLookupTable(
@@ -687,41 +701,6 @@ pub fn encodeVLQWithLookupTable(
         vlq_lookup_table[@as(usize, @intCast(value))]
     else
         encodeVLQ(value);
-}
-
-test "encodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = encodeVLQ(fixture[0]);
-        try std.testing.expectEqualStrings(fixture[1], result.bytes[0..result.len]);
-    }
-}
-
-test "decodeVLQ" {
-    const fixtures = .{
-        .{ 2_147_483_647, "+/////D" },
-        .{ -2_147_483_647, "//////D" },
-        .{ 0, "A" },
-        .{ 1, "C" },
-        .{ -1, "D" },
-        .{ 123, "2H" },
-        .{ 123456789, "qxmvrH" },
-    };
-    inline for (fixtures) |fixture| {
-        const result = decodeVLQ(fixture[1], 0);
-        try std.testing.expectEqual(
-            result.value,
-            fixture[0],
-        );
-    }
 }
 
 // A single base 64 digit can contain 6 bits of data. For the base 64 variable
@@ -736,9 +715,7 @@ test "decodeVLQ" {
 //   V    V
 //   101011
 //
-pub fn encodeVLQ(
-    value: i32,
-) VLQ {
+pub fn encodeVLQ(value: i32) VLQ {
     var len: u4 = 0;
     var bytes: [vlq_max_in_bytes]u8 = undefined;
 

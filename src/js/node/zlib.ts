@@ -46,7 +46,7 @@ const kHandle = Symbol("kHandle");
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
   this[kHandle] = createBrotliEncoder(opts, {}, null);
-  stream.Transform.$call(this);
+  stream.Transform.$apply(this, arguments);
 }
 BrotliCompress.prototype = {};
 ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);

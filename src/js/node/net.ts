@@ -725,8 +725,8 @@ const Socket = (function (InternalSocket) {
 
 // we gotta handle the different signatures that nodejs tls.connect accepts
 // connect(options[, callback])
-// connect(path[, options][, callback])
-// connect(port[, host][, options][, callback])
+// connect(path[, callback])
+// connect(port[, host][, callback])
 function normalizeArgs(args) {
   if (args.length === 0) {
     return [{}, null];
@@ -745,15 +745,9 @@ function normalizeArgs(args) {
     }
   }
 
-  if (args[1] !== null && typeof args[1] === "object") {
-    Object.assign(options, args[1]);
-  } else if (args[2] !== null && typeof args[2] === "object") {
-    Object.assign(options, args[2]);
-  }
+  const connectListener = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
 
-  const callback = typeof args[args.length - 1] === "function" ? args[args.length - 1] : null;
-
-  return [options, callback];
+  return [options, connectListener];
 }
 
 function createConnection(...args) {

@@ -652,6 +652,18 @@ class Server extends NetServer {
   }
 }
 
+function normalizeConnectArgs(args) {
+  let [options, callback] = net._normalizeArgs(args);
+
+  if (args[1] !== null && typeof args[1] === "object") {
+    Object.assign(options, args[1]);
+  } else if (args[2] !== null && typeof args[2] === "object") {
+    Object.assign(options, args[2]);
+  }
+
+  return [options, callback];
+}
+
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
@@ -676,7 +688,7 @@ const DEFAULT_ECDH_CURVE = "auto",
     return new TLSSocket().connect(port, host, connectListener);
   },
   connect = (...args) => {
-    let [options, callback] = net._normalizeArgs(args);
+    let [options, callback] = normalizeConnectArgs(args);
     if (options.ALPNProtocols) {
       convertALPNProtocols(options.ALPNProtocols, options);
     }

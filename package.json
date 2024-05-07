@@ -21,6 +21,7 @@
   },
   "scripts": {
     "setup": "./scripts/setup.sh",
+    "bump": "bun ./scripts/bump.ts",
     "build": "if [ ! -e build ]; then bun setup; fi && ninja -C build",
     "build:valgrind": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-valgrind && ninja -Cbuild-valgrind",
     "build:tidy": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy && ninja -Cbuild-tidy",

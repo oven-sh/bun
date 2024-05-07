@@ -15,8 +15,8 @@ export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
-export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden'
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden'
+export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
 
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"

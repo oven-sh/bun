@@ -133,10 +133,15 @@ pub const BrotliEncoder = struct {
 
         pub usingnamespace bun.New(@This());
 
+        pub fn runTask(this: *JSC.WorkPoolTask) void {
+            var job: *EncodeJob = @fieldParentPtr(EncodeJob, "task", this);
+            job.run();
+            job.destroy();
+        }
+
         pub fn run(this: *EncodeJob) void {
             defer {
                 _ = this.encoder.has_pending_activity.fetchSub(1, .Monotonic);
-                this.destroy();
             }
 
             var any = false;
@@ -205,11 +210,6 @@ pub const BrotliEncoder = struct {
                 this.encoder.poll_ref.refConcurrently(vm);
                 vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this.encoder)));
             }
-        }
-
-        pub fn runTask(this: *JSC.WorkPoolTask) void {
-            var job: *EncodeJob = @fieldParentPtr(EncodeJob, "task", this);
-            job.run();
         }
     };
 
@@ -281,10 +281,10 @@ pub const BrotliEncoder = struct {
         if (is_last)
             this.has_called_end = true;
 
-        var task = EncodeJob.new(.{
+        var task: EncodeJob = .{
             .encoder = this,
             .is_async = false,
-        });
+        };
 
         {
             this.input_lock.lock();
@@ -496,10 +496,10 @@ pub const BrotliDecoder = struct {
         if (is_last)
             this.has_called_end = true;
 
-        var task = DecodeJob.new(.{
+        var task: DecodeJob = .{
             .decoder = this,
             .is_async = false,
-        });
+        };
 
         {
             this.input_lock.lock();
@@ -525,12 +525,12 @@ pub const BrotliDecoder = struct {
         pub fn runTask(this: *JSC.WorkPoolTask) void {
             var job: *DecodeJob = @fieldParentPtr(DecodeJob, "task", this);
             job.run();
+            job.destroy();
         }
 
         pub fn run(this: *DecodeJob) void {
             defer {
                 _ = this.decoder.has_pending_activity.fetchSub(1, .Monotonic);
-                this.destroy();
             }
 
             var any = false;

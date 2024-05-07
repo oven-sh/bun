@@ -374,6 +374,7 @@ pub const ReadableStream = struct {
                 return reader.toReadableStream(globalThis);
             },
             else => {
+                globalThis.throw("Expected FileBlob", .{});
                 return .zero;
             },
         }

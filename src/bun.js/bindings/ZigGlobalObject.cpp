@@ -217,7 +217,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
-    printf("1: b\n");
     JSC::initialize();
     {
         JSC::Options::AllowUnfinalizedAccessScope scope;

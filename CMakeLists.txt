@@ -1075,7 +1075,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             /delayload:ole32.dll
             /delayload:WINMM.dll
             /delayload:dbghelp.dll
-            /delayload:MSVCP140.dll
             /delayload:VCRUNTIME140_1.dll
 
             # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them

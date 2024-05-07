@@ -2829,6 +2829,20 @@ pub const Blob = struct {
         return stream;
     }
 
+    pub fn toStreamWithOffset(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
+        const args = callframe.arguments(1).slice();
+
+        return JSC.WebCore.ReadableStream.fromFileBlobWithOffset(
+            globalThis,
+            this,
+            @intCast(args[0].toInt64()),
+        );
+    }
+
     fn promisified(
         value: JSC.JSValue,
         global: *JSGlobalObject,

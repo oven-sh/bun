@@ -127,7 +127,7 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
                 // They may have said yes, but the stdin is invalid.
                 return .false;
             };
-            if(next_byte == '\n'){
+            if (next_byte == '\n') {
                 return .false;
             }
         },
@@ -142,7 +142,7 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
                 return .true;
-            }else if(next_byte == '\r'){
+            } else if (next_byte == '\r') {
                 //Check Windows style
                 const second_byte = reader.readByte() catch {
                     return .false;

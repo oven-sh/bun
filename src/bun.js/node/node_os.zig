@@ -83,11 +83,10 @@ pub const OS = struct {
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
 
-            file_buf.ensureTotalCapacity(try file.getEndPos());
-            file_buf.items.len = try file.readAll(file_buf.items);
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
             defer file_buf.clearRetainingCapacity();
+            const contents = file_buf.items[0..read];
 
-            const contents = file_buf.items;
             var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             // Skip the first line (aggregate of all CPUs)
@@ -126,11 +125,10 @@ pub const OS = struct {
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
             defer file.close();
 
-            file_buf.ensureTotalCapacity(try file.getEndPos());
-            file_buf.items.len = try file.readAll(file_buf.items);
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
             defer file_buf.clearRetainingCapacity();
+            const contents = file_buf.items[0..read];
 
-            const contents = file_buf.items;
             var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             const key_processor = "processor\t: ";
@@ -178,11 +176,11 @@ pub const OS = struct {
             if (std.fs.openFileAbsolute(path, .{})) |file| {
                 defer file.close();
 
-                file_buf.ensureTotalCapacity(try file.getEndPos());
-                file_buf.items.len = try file.readAll(file_buf.items);
+                const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
                 defer file_buf.clearRetainingCapacity();
+                const contents = file_buf.items[0..read];
 
-                const digits = std.mem.trim(u8, file_buf.items, " \n");
+                const digits = std.mem.trim(u8, contents, " \n");
                 const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
                 cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));

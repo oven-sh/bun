@@ -10463,6 +10463,7 @@ pub const PackageManager = struct {
                         }
 
                         for (lockfile.workspace_paths.values()) |path| builder.count(path.slice(lockfile.buffers.string_bytes.items));
+                        for (lockfile.workspace_versions.values()) |version| version.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         lockfile.overrides.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
@@ -10546,8 +10547,7 @@ pub const PackageManager = struct {
                             builder,
                         );
 
-                        // Copy over new workspace paths or update existing ones that have been changed
-                        // TODO: is this correct, what else do we need to do?
+                        // Update workspace paths
                         manager.lockfile.workspace_paths.deinit(manager.lockfile.allocator);
                         manager.lockfile.workspace_paths = try lockfile.workspace_paths.clone(manager.lockfile.allocator);
                         const disk_lockfile_paths = manager.lockfile.workspace_paths.values();
@@ -10556,6 +10556,14 @@ pub const PackageManager = struct {
                             const str = parsed_path.slice(lockfile.buffers.string_bytes.items);
                             disk_path.* = builder.append(String, str);
                         }
+
+                        // Update workspace versions
+                        manager.lockfile.workspace_versions.deinit(manager.lockfile.allocator);
+                        manager.lockfile.workspace_versions = try lockfile.workspace_versions.clone(manager.lockfile.allocator);
+                        for (manager.lockfile.workspace_versions.values(), lockfile.workspace_versions.values()) |*version, parsed_version| {
+                            version.* = parsed_version.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        }
+
                         builder.clamp();
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers

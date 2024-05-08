@@ -2,12 +2,9 @@ import { expect, describe, it } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
-import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { bunExe, bunEnv, tmpdirSync, isWindows } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { spawn } from "node:child_process";
-
-const isWindows = process.platform === "win32";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -46,6 +43,7 @@ describe("Readable", () => {
 
     readable.pipe(writable);
   });
+
   it("should be able to be piped via .pipe, issue #3607", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStreamEmptyFile.txt`;
     writeFileSync(path, "");
@@ -72,6 +70,7 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+
   it("should be able to be piped via .pipe, issue #3668", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStream.txt`;
     writeFileSync(path, "12345");
@@ -96,6 +95,7 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+
   it("should be able to be piped via .pipe, both start and end are 0", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStream2.txt`;
     writeFileSync(path, "12345");
@@ -121,6 +121,7 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+
   it("should be able to be piped via .pipe with a large file", done => {
     const data = Buffer.allocUnsafe(768 * 1024)
       .fill("B")
@@ -152,6 +153,15 @@ describe("Readable", () => {
       done(err);
     });
     stream.pipe(writable);
+  });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = Readable({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
   });
 });
 
@@ -193,6 +203,17 @@ describe("createReadStream", () => {
   });
 });
 
+describe("Writable", () => {
+  it.todo("should have the correct fields in _events", () => {
+    const s = Writable({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+  });
+});
+
 describe("Duplex", () => {
   it("should allow subclasses to be derived via .call() on class", () => {
     function Subclass(opts) {
@@ -205,6 +226,18 @@ describe("Duplex", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof Duplex).toBe(true);
+  });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = Duplex({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
   });
 });
 
@@ -221,6 +254,18 @@ describe("Transform", () => {
     const subclass = new Subclass();
     expect(subclass instanceof Transform).toBe(true);
   });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = Transform({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
+  });
 });
 
 describe("PassThrough", () => {
@@ -235,6 +280,18 @@ describe("PassThrough", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof PassThrough).toBe(true);
+  });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = PassThrough({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
   });
 });
 

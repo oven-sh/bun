@@ -1281,14 +1281,13 @@ const Decompressor = union(enum) {
                 },
                 .brotli => {
                     this.* = .{
-                        .brotli = try Brotli.BrotliReaderArrayList.initWithOptions(
+                        .brotli = try Brotli.BrotliReaderArrayList.newWithOptions(
                             buffer,
                             &body_out_str.list,
                             body_out_str.allocator,
                             .{},
                         ),
                     };
-
                     return;
                 },
                 else => @panic("Invalid encoding. This code should not be reachable"),
@@ -1625,9 +1624,7 @@ const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
 
 const accept_encoding_no_compression = "identity";
 const accept_encoding_compression = "gzip, deflate, br";
-const accept_encoding_compression_no_brotli = "gzip, deflate";
 const accept_encoding_header_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression };
-const accept_encoding_header_compression_no_brotli = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_compression_no_brotli };
 const accept_encoding_header_no_compression = picohttp.Header{ .name = "Accept-Encoding", .value = accept_encoding_no_compression };
 
 const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_client)

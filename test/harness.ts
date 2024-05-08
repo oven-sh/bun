@@ -265,11 +265,11 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
 }
 
 export function randomPort(): number {
-  return 1024 + Math.floor(Math.random() * 65535);
+  return 1024 + Math.floor(Math.random() * (65535 - 1024));
 }
 
 expect.extend({
-  toRun(cmds: string[]) {
+  toRun(cmds: string[], optionalStdout?: string) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
@@ -280,6 +280,14 @@ expect.extend({
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+      };
+    }
+
+    if (optionalStdout) {
+      return {
+        pass: result.stdout.toString("utf-8") === optionalStdout,
+        message: () =>
+          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
       };
     }
 

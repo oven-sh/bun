@@ -1044,6 +1044,19 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with offset + length passed but not position", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+    {
+      const count = readSync(fd, four, 0, 4);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -1802,6 +1815,24 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it(
+    "correctly handles file descriptors with an offset",
+    done => {
+      const path = `${tmpdir()}/bun-fs-createReadStream-${Date.now()}.txt`;
+      const fd = fs.openSync(path, "w+");
+
+      const stream = fs.createReadStream("", { fd: fd, start: 2 });
+      stream.on("data", chunk => {
+        expect(chunk.toString()).toBe("llo, world!");
+        done();
+      });
+      stream.on("error", done);
+
+      fs.writeSync(fd, "Hello, world!");
+    },
+    { timeout: 100 },
+  );
 });
 
 describe("fs.WriteStream", () => {
@@ -3005,4 +3036,15 @@ it("existsSync should never throw ENAMETOOLONG", () => {
 
 it("promises exists should never throw ENAMETOOLONG", async () => {
   expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
+  try {
+    await _promises.fdatasync(500);
+  } catch (e) {
+    expect(typeof e.fd).toBe("number");
+    expect(e.fd).toBe(500);
+    return;
+  }
+  expect.unreachable();
 });

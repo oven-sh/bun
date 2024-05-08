@@ -231,11 +231,11 @@ pub const WalkTask = struct {
 };
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
-    if (globWalk.matchedPaths.items.len == 0) {
+    if (globWalk.matchedPaths.keys().len == 0) {
         return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
 
-    return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
+    return BunString.toJSArray(globalThis, globWalk.matchedPaths.keys());
 }
 
 /// The reference to the arena is not used after the scope because it is copied

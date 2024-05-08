@@ -1,6 +1,10 @@
 
+
 #include "node_api.h"
 #include "root.h"
+
+#include "JavaScriptCore/DateInstance.h"
+#include "JavaScriptCore/JSCast.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
@@ -490,24 +494,35 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
         return napi_invalid_arg;
     }
 
-    auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto* object = toJS(target).getObject();
-    if (!object) {
+    JSValue targetValue = toJS(target);
+    if (!targetValue.isObject()) {
         return napi_object_expected;
     }
+
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto* object = targetValue.getObject();
 
     auto keyProp = toJS(key);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    PutPropertySlot slot(object, true);
-    Identifier identifier = keyProp.toPropertyKey(globalObject);
-    JSValue jsValue = toJS(value);
+    PutPropertySlot slot(object, false);
 
-    object->put(object, globalObject, identifier, jsValue, slot);
+    Identifier identifier = keyProp.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
-    scope.clearException();
+    JSValue jsValue = toJS(value);
+
+    if (!object->put(object, globalObject, identifier, jsValue, slot)) {
+        scope.clearExceptionExceptTermination();
+        return napi_generic_failure;
+    }
+
+    if (UNLIKELY(scope.exception())) {
+        scope.clearException();
+        return napi_generic_failure;
+    }
+
     return napi_ok;
 }
 extern "C" napi_status napi_has_property(napi_env env, napi_value object,
@@ -534,6 +549,32 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     scope.clearException();
     return napi_ok;
 }
+
+extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, double* result)
+{
+    NAPI_PREMABLE
+
+    if (UNLIKELY(!env)) {
+        return napi_invalid_arg;
+    }
+
+    JSValue jsValue = toJS(value);
+    if (UNLIKELY(!jsValue)) {
+        return napi_date_expected;
+    }
+
+    auto* date = jsDynamicCast<JSC::DateInstance*>(jsValue);
+    if (UNLIKELY(!date)) {
+        return napi_date_expected;
+    }
+
+    if (result) {
+        *result = date->internalNumber();
+    }
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     napi_value key, napi_value* result)
 {
@@ -1989,9 +2030,10 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
     if (buf == nullptr) {
         if (writtenPtr != nullptr) {
             if (view.is8Bit()) {
-                *writtenPtr = Bun__encoding__byteLengthLatin1(view.characters8(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+
+                *writtenPtr = Bun__encoding__byteLengthLatin1(view.span8().data(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
             } else {
-                *writtenPtr = Bun__encoding__byteLengthUTF16(view.characters16(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+                *writtenPtr = Bun__encoding__byteLengthUTF16(view.span16().data(), length, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
             }
         }
 
@@ -2011,9 +2053,9 @@ extern "C" napi_status napi_get_value_string_utf8(napi_env env,
 
     size_t written;
     if (view.is8Bit()) {
-        written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeLatin1(view.span8().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     } else {
-        written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
+        written = Bun__encoding__writeUTF16(view.span16().data(), view.length(), reinterpret_cast<unsigned char*>(buf), bufsize - 1, static_cast<uint8_t>(WebCore::BufferEncodingType::utf8));
     }
 
     if (writtenPtr != nullptr) {

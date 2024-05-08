@@ -3973,6 +3973,91 @@ declare module "bun" {
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  namespace udp {
+    type Data = string | ArrayBufferView | ArrayBufferLike;
+
+    export interface SocketHandler<DataBinaryType extends BinaryType> {
+      data?(
+        socket: Socket<DataBinaryType>,
+        data: BinaryTypeList[DataBinaryType],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
+      drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
+      error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
+    }
+
+    export interface ConnectedSocketHandler<DataBinaryType extends BinaryType> {
+      data?(
+        socket: ConnectedSocket<DataBinaryType>,
+        data: BinaryTypeList[DataBinaryType],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
+      drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
+      error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
+    }
+
+    export interface SocketOptions<DataBinaryType extends BinaryType> {
+      hostname?: string;
+      port?: number;
+      binaryType?: DataBinaryType;
+      socket?: SocketHandler<DataBinaryType>;
+    }
+
+    export interface ConnectSocketOptions<DataBinaryType extends BinaryType> {
+      hostname?: string;
+      port?: number;
+      binaryType?: DataBinaryType;
+      socket?: ConnectedSocketHandler<DataBinaryType>;
+      connect: {
+        hostname: string;
+        port: number;
+      };
+    }
+
+    export interface BaseUDPSocket {
+      readonly hostname: string;
+      readonly port: number;
+      readonly address: SocketAddress;
+      readonly binaryType: BinaryType;
+      readonly closed: boolean;
+      ref(): void;
+      unref(): void;
+      close(): void;
+    }
+
+    export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+      readonly remoteAddress: SocketAddress;
+      sendMany(packets: readonly Data[]): number;
+      send(data: Data): boolean;
+      reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
+    }
+
+    export interface Socket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+      sendMany(packets: readonly (Data | string | number)[]): number;
+      send(data: Data, port: number, address: string): boolean;
+      reload(handler: SocketHandler<DataBinaryType>): void;
+    }
+  }
+
+  /**
+   * Create a UDP socket
+   *
+   * @param options The options to use when creating the server
+   * @param options.socket The socket handler to use
+   * @param options.hostname The hostname to listen on
+   * @param options.port The port to listen on
+   * @param options.binaryType The binary type to use for the socket
+   * @param options.connect The hostname and port to connect to
+   */
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.SocketOptions<DataBinaryType>,
+  ): Promise<udp.Socket<DataBinaryType>>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.ConnectSocketOptions<DataBinaryType>,
+  ): Promise<udp.ConnectedSocket<DataBinaryType>>;
+
   namespace SpawnOptions {
     /**
      * Option for stdout/stderr
@@ -4669,34 +4754,6 @@ declare module "bun" {
    * This is sort of like readline() except without the IO.
    */
   function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
-
-  /**
-   * Provides a higher level API for command-line argument parsing than interacting
-   * with `process.argv` directly. Takes a specification for the expected arguments
-   * and returns a structured object with the parsed options and positionals.
-   *
-   * ```js
-   * const args = ['-f', '--bar', 'b'];
-   * const options = {
-   *   foo: {
-   *     type: 'boolean',
-   *     short: 'f',
-   *   },
-   *   bar: {
-   *     type: 'string',
-   *   },
-   * };
-   * const {
-   *   values,
-   *   positionals,
-   * } = Bun.parseArgs({ args, options });
-   * console.log(values, positionals);
-   * // Prints: { foo: true, bar: 'b' } []
-   * ```
-   * @param config Used to provide arguments for parsing and to configure the parser.
-   * @return The parsed command line arguments
-   */
-  const parseArgs: typeof import("util").parseArgs;
 
   interface GlobScanOptions {
     /**

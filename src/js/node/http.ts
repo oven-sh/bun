@@ -337,7 +337,7 @@ class Agent extends EventEmitter {
 function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (typeof onListen === "function") {
     try {
-      onListen(err, hostname, port);
+      onListen.$apply(self, [err, hostname, port]);
     } catch (err) {
       self.emit("error", err);
     }
@@ -1089,7 +1089,6 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
 
 function emitCloseNT(self) {
   if (!self._closed) {
-    self.destroyed = true;
     self._closed = true;
     self.emit("close");
   }
@@ -1391,6 +1390,8 @@ class ClientRequest extends OutgoingMessage {
   #finished;
   #tls;
 
+  _httpMessage;
+
   get path() {
     return this.#path;
   }
@@ -1411,6 +1412,10 @@ class ClientRequest extends OutgoingMessage {
     return this.#protocol;
   }
 
+  get agent() {
+    return this.#agent;
+  }
+
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
@@ -1428,6 +1433,15 @@ class ClientRequest extends OutgoingMessage {
       return;
     }
     this.#bodyChunks.push(...chunks);
+    callback();
+  }
+  _destroy(err, callback) {
+    this.destroyed = true;
+    // If request is destroyed we abort the current response
+    this[kAbortController]?.abort?.();
+    if (err) {
+      this.emit("error", err);
+    }
     callback();
   }
 
@@ -1482,7 +1496,6 @@ class ClientRequest extends OutgoingMessage {
       }
 
       this._writableState.autoDestroy = false;
-      this.emit("socket", this.socket);
       //@ts-ignore
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
@@ -1518,7 +1531,7 @@ class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController]!.abort();
+    this[kAbortController]?.abort?.();
     // TODO: Close stream if body streaming
   }
 
@@ -1750,6 +1763,14 @@ class ClientRequest extends OutgoingMessage {
 
     const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
+
+    this._httpMessage = this;
+
+    process.nextTick(() => {
+      // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
+      if (this.destroyed) return;
+      this.emit("socket", this.socket);
+    });
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {

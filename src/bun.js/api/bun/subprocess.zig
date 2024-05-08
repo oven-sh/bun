@@ -176,7 +176,7 @@ pub const Subprocess = struct {
             };
         }
     };
-    process: *Process = undefined,
+    process: *Process,
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
@@ -208,6 +208,7 @@ pub const Subprocess = struct {
         is_sync: bool = false,
         killed: bool = false,
         has_stdin_destructor_called: bool = false,
+        finalized: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -573,6 +574,34 @@ pub const Subprocess = struct {
         return this.stdout.toJS(globalThis, this.hasExited());
     }
 
+    pub fn asyncDispose(
+        this: *Subprocess,
+        global: *JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        if (this.process.hasExited()) {
+            // rely on GC to clean everything up in this case
+            return .undefined;
+        }
+
+        // unref streams so that this disposed process will not prevent
+        // the process from exiting causing a hang
+        this.stdin.unref();
+        this.stdout.unref();
+        this.stderr.unref();
+
+        switch (this.tryKill(SignalCode.default)) {
+            .result => {},
+            .err => |err| {
+                // Signal 9 should always be fine, but just in case that somehow fails.
+                global.throwValue(err.toJSC(global));
+                return .zero;
+            },
+        }
+
+        return this.getExited(global);
+    }
+
     pub fn kill(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
@@ -672,7 +701,13 @@ pub const Subprocess = struct {
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
 
-        this.updateHasPendingActivity();
+        if (this.flags.finalized) {
+            // if the process has already been garbage collected, we can free the memory now
+            bun.default_allocator.destroy(this);
+        } else {
+            // otherwise update the pending activity flag
+            this.updateHasPendingActivity();
+        }
     }
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
@@ -1514,7 +1549,12 @@ pub const Subprocess = struct {
 
         this.process.detach();
         this.process.deref();
-        bun.default_allocator.destroy(this);
+
+        this.flags.finalized = true;
+        if (this.weak_file_sink_stdin_ptr == null) {
+            // if no file sink exists we can free immediately
+            bun.default_allocator.destroy(this);
+        }
     }
 
     pub fn getExited(
@@ -1707,7 +1747,6 @@ pub const Subprocess = struct {
                     if (arg.len == 0) {
                         continue;
                     }
-
                     argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;

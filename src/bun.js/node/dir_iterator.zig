@@ -184,8 +184,18 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             }
         },
         .windows => struct {
+            const FILE_DIRECTORY_INFORMATION = std.os.windows.FILE_DIRECTORY_INFORMATION;
+            // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
+            // this may not always be the case (e.g. due to faulty VM/Sandboxing tools)
+            const FILE_DIRECTORY_INFORMATION_PTR = *align(2) FILE_DIRECTORY_INFORMATION;
             dir: Dir,
-            buf: [8192]u8 align(@alignOf(std.os.windows.FILE_DIRECTORY_INFORMATION)),
+
+            // This structure must be aligned on a LONGLONG (8-byte) boundary.
+            // If a buffer contains two or more of these structures, the
+            // NextEntryOffset value in each entry, except the last, falls on an
+            // 8-byte boundary.
+            // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_directory_information
+            buf: [8192]u8 align(8),
             index: usize,
             end_index: usize,
             first: bool,
@@ -208,6 +218,10 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     const w = std.os.windows;
                     if (self.index >= self.end_index) {
                         var io: w.IO_STATUS_BLOCK = undefined;
+                        if (self.first) {
+                            // > Any bytes inserted for alignment SHOULD be set to zero, and the receiver MUST ignore them
+                            @memset(&self.buf, 0);
+                        }
 
                         const rc = w.ntdll.NtQueryDirectoryFile(
                             self.dir.fd,
@@ -270,7 +284,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.toFD(self.dir.fd), self.end_index });
                     }
 
-                    const dir_info: *w.FILE_DIRECTORY_INFORMATION = @ptrCast(@alignCast(&self.buf[self.index]));
+                    const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
                     if (dir_info.NextEntryOffset != 0) {
                         self.index += dir_info.NextEntryOffset;
                     } else {

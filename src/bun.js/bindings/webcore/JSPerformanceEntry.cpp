@@ -46,7 +46,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -115,8 +114,7 @@ template<> void JSPerformanceEntryDOMConstructor::initializeProperties(VM& vm, J
 
 /* Hash table for prototype */
 
-static const HashTableValue JSPerformanceEntryPrototypeTableValues[] =
-{
+static const HashTableValue JSPerformanceEntryPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceEntryConstructor, 0 } },
     { "name"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceEntry_name, 0 } },
     { "entryType"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceEntry_entryType, 0 } },
@@ -166,7 +164,7 @@ void JSPerformanceEntry::destroy(JSC::JSCell* cell)
     thisObject->JSPerformanceEntry::~JSPerformanceEntry();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntryConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntryConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -184,7 +182,7 @@ static inline JSValue jsPerformanceEntry_nameGetter(JSGlobalObject& lexicalGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.name())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_name, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_name, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceEntry>::get<jsPerformanceEntry_nameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -197,7 +195,7 @@ static inline JSValue jsPerformanceEntry_entryTypeGetter(JSGlobalObject& lexical
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.entryType())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_entryType, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_entryType, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceEntry>::get<jsPerformanceEntry_entryTypeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -210,7 +208,7 @@ static inline JSValue jsPerformanceEntry_startTimeGetter(JSGlobalObject& lexical
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.startTime())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_startTime, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_startTime, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceEntry>::get<jsPerformanceEntry_startTimeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -223,7 +221,7 @@ static inline JSValue jsPerformanceEntry_durationGetter(JSGlobalObject& lexicalG
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDouble>(lexicalGlobalObject, throwScope, impl.duration())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_duration, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceEntry_duration, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceEntry>::get<jsPerformanceEntry_durationGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -236,33 +234,33 @@ static inline EncodedJSValue jsPerformanceEntryPrototypeFunction_toJSONBody(JSGl
     auto& impl = castedThis->wrapped();
     auto* result = constructEmptyObject(lexicalGlobalObject);
     auto nameValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.name());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "name"_s), nameValue);
     auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "entryType"_s), entryTypeValue);
     auto startTimeValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.startTime());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "startTime"_s), startTimeValue);
     auto durationValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.duration());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "duration"_s), durationValue);
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_toJSON, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceEntry>::call<jsPerformanceEntryPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceEntry::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceEntry, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForPerformanceEntry.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceEntry = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForPerformanceEntry.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceEntry = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSPerformanceEntry, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceEntry.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceEntry = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForPerformanceEntry.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceEntry = std::forward<decltype(space)>(space); });
 }
 
 void JSPerformanceEntry::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -274,7 +272,7 @@ void JSPerformanceEntry::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSPerformanceEntryOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSPerformanceEntryOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);

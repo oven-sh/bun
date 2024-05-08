@@ -685,7 +685,7 @@ pub const FileSystem = struct {
                 bun.assert(this.fd != bun.invalid_fd);
                 bun.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.toFD(std.fs.cwd().fd), bun.sliceTo(name, 0));
+                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -1674,6 +1674,10 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
+        if (strings.eqlComptime(str, "package.json")) {
+            return true;
+        }
+
         if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
             return false;
         }

@@ -8,7 +8,6 @@ const JSC = bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;
 pub const OS = struct {
@@ -76,25 +75,25 @@ pub const OS = struct {
         const values = JSC.JSValue.createEmptyArray(globalThis, 0);
         var num_cpus: u32 = 0;
 
-        // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
-        var line_buffer: [1024 * 8]u8 = undefined;
+        var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
+        var file_buf = std.ArrayList(u8).init(stack_fallback.get());
+        defer file_buf.deinit();
 
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
-            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
-            // is extremely slow and should rarely ever be used in Bun until
-            // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
-            var reader = buffered_reader.reader();
+
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+            defer file_buf.clearRetainingCapacity();
+            const contents = file_buf.items[0..read];
+
+            var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             // Skip the first line (aggregate of all CPUs)
-            // TODO: use indexOfNewline
-            try reader.skipUntilDelimiterOrEof('\n');
+            _ = line_iter.next();
 
             // Read each CPU line
-            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-
+            while (line_iter.next()) |line| {
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
                 var toks = std.mem.tokenize(u8, line, " \t");
                 const cpu_name = toks.next();
@@ -125,29 +124,40 @@ pub const OS = struct {
         // Read /proc/cpuinfo to get model information (optional)
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
             defer file.close();
-            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
-            // is extremely slow and should rarely ever be used in Bun until
-            // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
-            var reader = buffered_reader.reader();
+
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+            defer file_buf.clearRetainingCapacity();
+            const contents = file_buf.items[0..read];
+
+            var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
-            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+            var has_model_name = true;
+            while (line_iter.next()) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
+                    if (!has_model_name) {
+                        const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                        cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
+                    }
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
+                    has_model_name = false;
                 } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
                     const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
                     cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
+                    has_model_name = true;
                 }
-                //TODO: special handling for ARM64 (no model name)?
+            }
+            if (!has_model_name) {
+                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
             }
         } else |_| {
             // Initialize model name to "unknown"
@@ -166,8 +176,11 @@ pub const OS = struct {
             if (std.fs.openFileAbsolute(path, .{})) |file| {
                 defer file.close();
 
-                const bytes_read = try file.readAll(&line_buffer);
-                const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
+                const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+                defer file_buf.clearRetainingCapacity();
+                const contents = file_buf.items[0..read];
+
+                const digits = std.mem.trim(u8, contents, " \n");
                 const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
                 cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
@@ -541,11 +554,16 @@ pub const OS = struct {
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
                     const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
-                    const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
-                        addr_data[0], addr_data[1], addr_data[2],
-                        addr_data[3], addr_data[4], addr_data[5],
-                    }) catch unreachable;
-                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    if (addr_data.len < 6) {
+                        const mac = "00:00:00:00:00:00";
+                        interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    } else {
+                        const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
+                            addr_data[0], addr_data[1], addr_data[2],
+                            addr_data[3], addr_data[4], addr_data[5],
+                        }) catch unreachable;
+                        interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    }
                 } else {
                     const mac = "00:00:00:00:00:00";
                     interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));

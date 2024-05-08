@@ -208,9 +208,8 @@ pub const Arguments = struct {
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
-        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
+    } ++ auto_only_params;
 
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
@@ -251,25 +250,7 @@ pub const Arguments = struct {
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    fn printVersionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
-        Global.exit(0);
-    }
-
-    fn printRevisionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
-        Global.exit(0);
-    }
-
-    pub fn loadConfigPath(
-        allocator: std.mem.Allocator,
-        auto_loaded: bool,
-        config_path: [:0]const u8,
-        ctx: Command.Context,
-        comptime cmd: Command.Tag,
-    ) !void {
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
@@ -752,15 +733,15 @@ pub const Arguments = struct {
             }
 
             if (args.option("--entry-naming")) |entry_naming| {
-                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(entry_naming) });
             }
 
             if (args.option("--chunk-naming")) |chunk_naming| {
-                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(chunk_naming) });
             }
 
             if (args.option("--asset-naming")) |asset_naming| {
-                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -2212,7 +2193,7 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
                         \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
                         \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
                         \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
                     ;
@@ -2347,3 +2328,15 @@ pub const Command = struct {
         });
     };
 };
+
+pub fn printVersionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+    Global.exit(0);
+}
+
+pub fn printRevisionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
+    Global.exit(0);
+}

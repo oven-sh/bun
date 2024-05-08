@@ -2401,7 +2401,7 @@ pub const Interpreter = struct {
 
                 var iter = GlobWalker.Iterator{ .walker = this.walker };
                 defer iter.deinit();
-                switch (iter.init() catch |e| OOM(e)) {
+                switch (iter.init() catch bun.outOfMemory()) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }
@@ -9937,6 +9937,8 @@ pub const Interpreter = struct {
                 this.state = .done;
                 if (this.bltn.stdout.needsIO()) {
                     this.bltn.stdout.enqueue(this, this.buf.items);
+                } else {
+                    this.bltn.done(0);
                 }
                 return Maybe(void).success;
             }
@@ -9992,6 +9994,8 @@ pub const Interpreter = struct {
                 this.state = .done;
                 if (this.bltn.stdout.needsIO()) {
                     this.bltn.stdout.enqueue(this, this.buf.items);
+                } else {
+                    this.bltn.done(0);
                 }
                 return Maybe(void).success;
             }
@@ -10058,6 +10062,8 @@ pub const Interpreter = struct {
                 this.state = .done;
                 if (this.bltn.stdout.needsIO()) {
                     this.bltn.stdout.enqueue(this, this.buf.items);
+                } else {
+                    this.bltn.done(0);
                 }
                 return Maybe(void).success;
             }

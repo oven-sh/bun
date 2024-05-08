@@ -1535,7 +1535,7 @@ pub const Ref = struct {
 
 pub const Strong = @import("./Strong.zig").Strong;
 
-pub const BinaryType = enum {
+pub const BinaryType = enum(u4) {
     Buffer,
     ArrayBuffer,
     Uint8Array,

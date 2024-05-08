@@ -51,14 +51,7 @@ pub const BrotliDecoder = opaque {
     }
 
     pub fn decompressStream(state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult {
-        return BrotliDecoderDecompressStream(
-            state,
-            available_in,
-            next_in,
-            available_out,
-            next_out,
-            total_out,
-        );
+        return BrotliDecoderDecompressStream(state, available_in, next_in, available_out, next_out, total_out);
     }
 
     pub fn hasMoreOutput(state: *const BrotliDecoder) callconv(.C) bool {

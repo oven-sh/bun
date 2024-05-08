@@ -2573,34 +2573,28 @@ pub const Arguments = struct {
                 if (current.isNumber() or current.isBigInt()) {
                     args.offset = current.to(u52);
 
-                    if (arguments.remaining.len < 2) {
-                        JSC.throwInvalidArguments(
-                            "length and position are required",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                    if (arguments.remaining.len < 1) {
+                        JSC.throwInvalidArguments("length is required", .{}, ctx, exception);
                         return null;
                     }
-                    if (arguments.remaining[0].isNumber() or arguments.remaining[0].isBigInt())
-                        args.length = arguments.remaining[0].to(u52);
 
+                    const arg_length = arguments.next().?;
+                    arguments.eat();
+
+                    if (arg_length.isNumber() or arg_length.isBigInt()) {
+                        args.length = arg_length.to(u52);
+                    }
                     if (args.length == 0) {
-                        JSC.throwInvalidArguments(
-                            "length must be greater than 0",
-                            .{},
-                            ctx,
-                            exception,
-                        );
-
+                        JSC.throwInvalidArguments("length must be greater than 0", .{}, ctx, exception);
                         return null;
                     }
 
-                    if (arguments.remaining[1].isNumber() or arguments.remaining[1].isBigInt())
-                        args.position = @as(ReadPosition, @intCast(arguments.remaining[1].to(i52)));
-
-                    arguments.remaining = arguments.remaining[2..];
+                    if (arguments.next()) |arg_position| {
+                        arguments.eat();
+                        if (arg_position.isNumber() or arg_position.isBigInt()) {
+                            args.position = @as(ReadPosition, @intCast(arg_position.to(i52)));
+                        }
+                    }
                 } else if (current.isObject()) {
                     if (current.getTruthy(ctx.ptr(), "offset")) |num| {
                         if (num.isNumber() or num.isBigInt()) {
@@ -2872,7 +2866,7 @@ pub const Arguments = struct {
                 .flag = flag,
                 .mode = mode,
                 .data = data,
-                .dirfd = bun.toFD(std.fs.cwd().fd),
+                .dirfd = bun.FD.cwd(),
             };
         }
     };
@@ -4191,8 +4185,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd.int()), .fdatasync) orelse
-            Maybe(Return.Fdatasync).success;
+        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.int()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime _: Flavor) Maybe(Return.Fstat) {
@@ -4812,7 +4805,7 @@ pub const NodeFS = struct {
     ) Maybe(void) {
         const flags = bun.O.DIRECTORY | bun.O.RDONLY;
 
-        const atfd = if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd;
+        const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
@@ -4962,7 +4955,7 @@ pub const NodeFS = struct {
             }
 
             const flags = bun.O.DIRECTORY | bun.O.RDONLY;
-            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.toFD(std.fs.cwd().fd) else root_fd, basename, flags, 0)) {
+            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.FD.cwd() else root_fd, basename, flags, 0)) {
                 .err => |err| {
                     if (root_fd == bun.invalid_fd) {
                         return .{
@@ -5110,7 +5103,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
+            .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),
@@ -6567,7 +6560,7 @@ pub const NodeFS = struct {
         }
 
         const open_flags = bun.O.DIRECTORY | bun.O.RDONLY;
-        const fd = switch (Syscall.openatOSPath(bun.toFD(std.fs.cwd().fd), src, open_flags, 0)) {
+        const fd = switch (Syscall.openatOSPath(bun.FD.cwd(), src, open_flags, 0)) {
             .err => |err| {
                 task.finishConcurrently(.{ .err = err.withPath(this.osPathIntoSyncErrorBuf(src)) });
                 return false;

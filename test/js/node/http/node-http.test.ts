@@ -1,5 +1,5 @@
 // @ts-nocheck
-import {
+import http, {
   createServer,
   request,
   get,
@@ -26,7 +26,9 @@ import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 import { bunExe } from "bun:harness";
-import { bunEnv } from "harness";
+import { bunEnv, tmpdirSync } from "harness";
+import * as stream from "node:stream";
+import * as zlib from "node:zlib";
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -138,6 +140,21 @@ describe("node:http", () => {
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
       listenResponse.close();
+    });
+
+    it("listen callback should be bound to server", async () => {
+      const server = createServer();
+      const { resolve, reject, promise } = Promise.withResolvers();
+      server.listen(0, function () {
+        try {
+          expect(this === server).toBeTrue();
+          resolve();
+        } catch (e) {
+          reject();
+        }
+      });
+      await promise;
+      server.close();
     });
 
     it("option method should be uppercase (#7250)", async () => {
@@ -1830,4 +1847,194 @@ it("should emit events in the right order", async () => {
     // `[ "res", "close" ]`,
     "",
   ]);
+});
+
+it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to connect to stripe", async () => {
+  const package_dir = tmpdirSync("bun-test-");
+
+  await Bun.write(
+    path.join(package_dir, "package.json"),
+    JSON.stringify({
+      "dependencies": {
+        "stripe": "^15.4.0",
+      },
+    }),
+  );
+
+  let { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  let err = await new Response(stderr).text();
+  expect(err).not.toContain("panic:");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
+  let out = await new Response(stdout).text();
+
+  // prettier-ignore
+  const [access_token, charge_id, account_id] = process.env.TEST_INFO_STRIPE?.split(",");
+
+  const fixture_path = path.join(package_dir, "index.js");
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    const Stripe = require("stripe");
+    const stripe = Stripe("${access_token}");
+
+    await stripe.charges
+      .retrieve("${charge_id}", {
+        stripeAccount: "${account_id}",
+      })
+      .then((x) => {
+        console.log(x);
+      });
+    `,
+  );
+
+  ({ stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  }));
+  out = await new Response(stdout).text();
+  expect(out).toBeEmpty();
+  err = await new Response(stderr).text();
+  expect(err).toContain(`error: No such charge: '${charge_id}'\n`);
+});
+
+it("destroy should end download", async () => {
+  // just simulate some file that will take forever to download
+  const payload = Buffer.from("X".repeat(16 * 1024));
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      let running = true;
+      req.signal.onabort = () => (running = false);
+      return new Response(async function* () {
+        while (running) {
+          yield payload;
+          await Bun.sleep(10);
+        }
+      });
+    },
+  });
+
+  try {
+    let chunks = 0;
+
+    const { promise, resolve } = Promise.withResolvers();
+    const req = request(server.url, res => {
+      res.on("data", () => {
+        process.nextTick(resolve);
+        chunks++;
+      });
+    });
+    req.end();
+    // wait for the first chunk
+    await promise;
+    // should stop the download
+    req.destroy();
+    await Bun.sleep(200);
+    expect(chunks).toBeLessThanOrEqual(3);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("can send brotli from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send brotli from Server and receive with Client", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      const passthrough = new stream.PassThrough();
+      passthrough.on("data", data => res.write(data));
+      passthrough.on("end", () => res.end());
+
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(passthrough);
+    });
+
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      let rawData = "";
+      const passthrough = stream.PassThrough();
+      passthrough.on("data", chunk => {
+        rawData += chunk;
+      });
+      passthrough.on("end", () => {
+        try {
+          expect(Buffer.from(rawData)).toEqual(Buffer.from("Hello World"));
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      res.pipe(zlib.createBrotliDecompress()).pipe(passthrough);
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("ServerResponse ClientRequest field exposes agent getter", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.end("world");
+    });
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      try {
+        expect(res.req.agent.protocol).toBe("http:");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
 });

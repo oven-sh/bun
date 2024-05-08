@@ -171,7 +171,7 @@ pub const FolderResolution = union(Tag) {
         defer Npm.Registry.BodyPool.release(body);
 
         const source = brk: {
-            var file = bun.sys.File.from(try bun.sys.openatA(bun.toFD(std.fs.cwd().fd), abs, bun.O.RDONLY, 0).unwrap());
+            var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, bun.O.RDONLY, 0).unwrap());
             defer file.close();
 
             {

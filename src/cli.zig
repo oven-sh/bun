@@ -2224,7 +2224,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 Command.Tag.HelpCommand => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
                 Command.Tag.UpgradeCommand => {
                     const intro_text =
@@ -2283,7 +2283,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
             }
         }
@@ -2329,13 +2329,6 @@ pub const Command = struct {
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,
-            .InstallCommand = false,
-            .AddCommand = false,
-            .RemoveCommand = false,
-            .UpdateCommand = false,
-            .PackageManagerCommand = false,
-            .LinkCommand = false,
-            .UnlinkCommand = false,
             .BunxCommand = false,
         });
     };

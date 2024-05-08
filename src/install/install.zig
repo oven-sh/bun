@@ -7082,9 +7082,20 @@ pub const PackageManager = struct {
             };
 
             const child_cwd = this_cwd;
+
+            var ignore_workspace = false;
+
+            if (cli.ignore_workspace) {
+                ignore_workspace = true;
+            }
+
+            if (ctx.install) |install_| {
+                ignore_workspace = install_.ignore_workspace orelse false;
+            }
+
             // Check if this is a workspace; if so, use root package
             var found = false;
-            if (comptime subcommand != .link) {
+            if ((comptime subcommand != .link) and !ignore_workspace) {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
@@ -7773,6 +7784,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-progress                         Disable the progress bar") catch unreachable,
         clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
         clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
+        clap.parseParam("--ignore-workspace                    Skip verifying if the current package is in a workspace or not") catch unreachable,
         clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
         clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
@@ -7849,6 +7861,7 @@ pub const PackageManager = struct {
         ignore_scripts: bool = false,
         trusted: bool = false,
         no_summary: bool = false,
+        ignore_workspace: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -8070,6 +8083,7 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            cli.ignore_workspace = args.flag("--ignore-workspace");
 
             // link and unlink default to not saving, all others default to
             // saving.

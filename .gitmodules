@@ -83,6 +83,12 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "zig"]
+path = src/deps/zig
+url = https://github.com/oven-sh/zig
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false
 [submodule "test/node.js/upstream"]
 	path = test/node.js/upstream
 	url = https://github.com/nodejs/node.git

@@ -10548,20 +10548,28 @@ pub const PackageManager = struct {
                         );
 
                         // Update workspace paths
-                        manager.lockfile.workspace_paths.deinit(manager.lockfile.allocator);
-                        manager.lockfile.workspace_paths = try lockfile.workspace_paths.clone(manager.lockfile.allocator);
-                        const disk_lockfile_paths = manager.lockfile.workspace_paths.values();
-                        const parsed_lockfile_paths = lockfile.workspace_paths.values();
-                        for (disk_lockfile_paths, parsed_lockfile_paths) |*disk_path, parsed_path| {
-                            const str = parsed_path.slice(lockfile.buffers.string_bytes.items);
-                            disk_path.* = builder.append(String, str);
+                        try manager.lockfile.workspace_paths.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_paths.entries.len);
+                        {
+                            manager.lockfile.workspace_paths.clearRetainingCapacity();
+                            var iter = lockfile.workspace_paths.iterator();
+                            while (iter.next()) |entry| {
+                                // The string offsets will be wrong so fix them
+                                const path = entry.value_ptr.slice(lockfile.buffers.string_bytes.items);
+                                const str = builder.append(String, path);
+                                manager.lockfile.workspace_paths.putAssumeCapacity(entry.key_ptr.*, str);
+                            }
                         }
 
                         // Update workspace versions
-                        manager.lockfile.workspace_versions.deinit(manager.lockfile.allocator);
-                        manager.lockfile.workspace_versions = try lockfile.workspace_versions.clone(manager.lockfile.allocator);
-                        for (manager.lockfile.workspace_versions.values(), lockfile.workspace_versions.values()) |*version, parsed_version| {
-                            version.* = parsed_version.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        try manager.lockfile.workspace_versions.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_versions.entries.len);
+                        {
+                            manager.lockfile.workspace_versions.clearRetainingCapacity();
+                            var iter = lockfile.workspace_versions.iterator();
+                            while (iter.next()) |entry| {
+                                // Copy version string offsets
+                                const version = entry.value_ptr.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                                manager.lockfile.workspace_versions.putAssumeCapacity(entry.key_ptr.*, version);
+                            }
                         }
 
                         builder.clamp();

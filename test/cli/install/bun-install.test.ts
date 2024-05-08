@@ -298,6 +298,7 @@ it("should work when moving workspace packages", async () => {
 
   mv packages/typescript-config config/
   mv packages/eslint-config config/
+  mv packages/ui config/
 
   rm -rf packages
   rm -rf apps

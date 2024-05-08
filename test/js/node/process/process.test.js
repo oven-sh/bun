@@ -572,3 +572,18 @@ if (isWindows) {
     expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
   });
 }
+
+it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallback.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('uncaughtException', fn)", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtException.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
+  expect(await proc.exited).toBe(42);
+});

@@ -2091,6 +2091,89 @@ pub const JSPromise = extern struct {
         Rejected = 2,
     };
 
+    pub fn Weak(comptime T: type) type {
+        return struct {
+            weak: JSC.Weak(T) = .{},
+            const WeakType = @This();
+
+            pub fn reject(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+                this.swap().reject(globalThis, val);
+            }
+
+            /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
+            pub fn rejectTask(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
+
+                this.reject(globalThis, val);
+            }
+
+            pub fn rejectOnNextTick(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+                this.swap().rejectOnNextTick(globalThis, val);
+            }
+
+            pub fn resolve(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+                this.swap().resolve(globalThis, val);
+            }
+
+            /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
+            pub fn resolveTask(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+                const loop = JSC.VirtualMachine.get().eventLoop();
+                loop.enter();
+                defer loop.exit();
+                this.resolve(globalThis, val);
+            }
+
+            pub fn resolveOnNextTick(this: *WeakType, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+                this.swap().resolveOnNextTick(globalThis, val);
+            }
+
+            pub fn init(
+                globalThis: *JSC.JSGlobalObject,
+                promise: JSValue,
+                ctx: *T,
+                comptime finalizer: *const fn (*T, JSC.JSValue) void,
+            ) WeakType {
+                return WeakType{
+                    .weak = JSC.Weak(T).create(
+                        promise,
+                        globalThis,
+                        ctx,
+                        finalizer,
+                    ),
+                };
+            }
+
+            pub fn get(this: *const WeakType) *JSC.JSPromise {
+                return this.weak.get().?.asPromise().?;
+            }
+
+            pub fn getOrNull(this: *const WeakType) ?*JSC.JSPromise {
+                const promise_value = this.weak.get() orelse return null;
+                return promise_value.asPromise();
+            }
+
+            pub fn value(this: *const WeakType) JSValue {
+                return this.weak.get().?;
+            }
+
+            pub fn valueOrEmpty(this: *const WeakType) JSValue {
+                return this.weak.get() orelse .zero;
+            }
+
+            pub fn swap(this: *WeakType) *JSC.JSPromise {
+                const prom = this.weak.swap().asPromise().?;
+                this.weak.deinit();
+                return prom;
+            }
+            pub fn deinit(this: *WeakType) void {
+                this.weak.clear();
+                this.weak.deinit();
+            }
+        };
+    }
+
     pub const Strong = struct {
         strong: JSC.Strong = .{},
 
@@ -2153,7 +2236,41 @@ pub const JSPromise = extern struct {
             this.strong.deinit();
             return prom;
         }
+        pub fn deinit(this: *Strong) void {
+            this.strong.clear();
+            this.strong.deinit();
+        }
     };
+
+    // TODO: incomplete
+    // pub fn Lazy(comptime T: type) type {
+    //     const LazyType = @This();
+    //     return struct {
+    //         weak_promise: Weak(T) = .{},
+    //         strong_promise: JSC.Strong = .{},
+    //         pub fn init(globalThis: *JSC.JSGlobalObject) LazyType {
+
+    //             return LazyType{ .weak_promise = Weak(T).init(globalThis, this) };
+    //         }
+
+    //         pub fn onFinalize(this: *LazyType, promise: JSC.JSValue) void {
+
+    //         }
+    //         pub fn cleanPromise(this: *LazyType) void {
+    //             this.weak_promise.deinit();
+    //             this.strong_promise.deinit();
+    //         }
+    //         pub fn getPromiseValue(this: *LazyType) JSC.JSValue {
+    //             const value = this.weak_promise.valueOrEmpty();
+    //             if (value.isEmpty()) {
+    //                 if (this.strong_promise.get()) |strong_value| {
+    //                     return strong_value;
+    //                 }
+    //             }
+    //             return value;
+    //         }
+    //     };
+    // }
 
     pub fn wrap(
         globalObject: *JSGlobalObject,

@@ -198,6 +198,15 @@ query.get({ $message: "Hello world" });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) followed by [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it no longer returns `SQLITE_ROW`. If the query returns no rows, `undefined` is returned.
 
+Use the "RETURNING" SQL statement and `get()` when inserting a record to grab the last inserted row id.
+
+```ts
+const insertStatement = "INSERT INTO foo (greeting) VALUES ($greeting) RETURNING id;"
+const insertQuery = db.query(insertStatement, { $greeting: "Welcome to Bun!" });
+console.log(await insertQuery.get());
+// Output: { id: 1 }
+```
+
 ### `.run()`
 
 Use `.run()` to run a query and get back `undefined`. This is useful for schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.

@@ -626,7 +626,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             const open_flags = os.O.DIRECTORY | os.O.RDONLY;
-            const fd = switch (Syscall.openatOSPath(bun.toFD(std.fs.cwd().fd), src, open_flags, 0)) {
+            const fd = switch (Syscall.openatOSPath(bun.FD.cwd(), src, open_flags, 0)) {
                 .err => |err| {
                     this.finishConcurrently(.{ .err = err.withPath(nodefs.osPathIntoSyncErrorBuf(src)) });
                     return false;

@@ -23,7 +23,7 @@ try {
   $Baseline = $env:BUN_DEV_ENV_SET -eq "Baseline=True"
 
   # TODO: -MT
-  Run clang-cl @($env:CFLAGS -split ' ') libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c"
+  Run clang-cl @($env:CFLAGS -split ' ') libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c" "-D_CRT_SECURE_NO_WARNINGS"
   Run lib "tcc.obj" "-OUT:tcc.lib"
 
   Copy-Item tcc.obj $BUN_DEPS_OUT_DIR/tcc.lib

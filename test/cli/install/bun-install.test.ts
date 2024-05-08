@@ -276,7 +276,6 @@ it("should work when moving workspace packages", async () => {
     },
   });
 
-  console.log("Cwd", package_dir);
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 

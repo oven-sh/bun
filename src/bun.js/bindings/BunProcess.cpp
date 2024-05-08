@@ -478,6 +478,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue arg0 = callFrame->argument(0);
+    if (!arg0.isCallable() && !arg0.isNull()) {
+        throwTypeError(globalObject, throwScope, "The \"callback\" argument must be callable or null"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    } 
+    auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobal)) {
+        zigGlobal = Bun__getDefaultGlobal();
+    }
+    jsCast<Process*>(zigGlobal->processObject())->setUncaughtExceptionCaptureCallback(arg0);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
@@ -765,14 +782,12 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         wrapped.emit(uncaughtExceptionMonitor, args);
     }
 
-    // TODO figure this stuff out
-    /*
-    auto capture = process->uncaughtExceptionCaptureCallback();
-    if (capture)
-        capture.call(globalObject, exception, origin);
+    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
+    auto capture = process->getUncaughtExceptionCaptureCallback();
+    if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
+        call(lexicalGlobalObject, capture, args, ASCIILiteral::fromLiteralUnsafe("uncaughtExceptionCaptureCallback"));
         return true;
     }
-    */
 
     auto uncaughtException = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
     if (wrapped.listenerCount(uncaughtException) > 0) {
@@ -2089,6 +2104,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Process* thisObject = jsCast<Process*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
@@ -2776,6 +2792,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   report                           constructProcessReportObject                        PropertyCallback
   revision                         constructRevision                                   PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
+  setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
   send                             constructProcessSend                                PropertyCallback
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback

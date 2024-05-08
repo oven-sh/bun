@@ -255,3 +255,5 @@ console.log("%f", 0.30000000000000004);
 
 console.log("Hello %cWorld", "color: red", 123);
 console.log("Hello %vWorld", 123);
+
+console.log("Hello %i %i", [1, 2, 3, 4]);

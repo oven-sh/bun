@@ -610,6 +610,7 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
         pub fn log(comptime fmt: string, args: anytype) void {
+            if (!source_set) return;
             if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
                 return log(fmt ++ "\n", args);
             }

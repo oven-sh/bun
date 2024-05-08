@@ -1,7 +1,12 @@
 param(
-  [switch]$Baseline = $False
+  [switch]$Baseline = $false
 )
-$ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
+
+if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {
+  $Baseline = $true
+}
+
+$ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
 # it sets c compiler and flags
@@ -28,6 +33,8 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   # Please do not try to compile Bun for 32 bit. It will not work. I promise.
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
+
+$ENV:BUN_DEV_ENV_SET = "Baseline=$Baseline";
 
 $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $ScriptDir '..' }
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }

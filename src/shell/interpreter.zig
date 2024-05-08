@@ -10365,6 +10365,7 @@ pub const Interpreter = struct {
             }
 
             pub fn printShellCpTask(this: *Cp, task: *ShellCpTask) void {
+                // Deinitialize this task as we are starting a new one
                 defer task.deinit();
 
                 const err_ = task.err;

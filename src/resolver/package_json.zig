@@ -84,7 +84,7 @@ pub const PackageJSON = struct {
             const chunk = hashy[chunk_start..chunk_end];
             const hash = std.hash.Murmur3_32.hash(chunk);
             partial_hashes.append(hash) catch |err| {
-                std.debug.print("Error appending hash: {}\n", .{err});
+                Output.printError("Error appending hash: {}", .{ err });
                 return;
             };
             i += 1;

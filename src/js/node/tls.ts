@@ -314,7 +314,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     enumerable: false,
   });
   function Socket(options) {
-    return new InternalTLSSocket(options.socket, options);
+    return new InternalTLSSocket(options);
   }
   Socket.prototype = InternalTLSSocket.prototype;
   return Object.defineProperty(Socket, Symbol.hasInstance, {
@@ -652,22 +652,9 @@ class Server extends NetServer {
   }
 }
 
-function normalizeConnectArgs(args) {
-  let [options, callback] = net._normalizeArgs(args);
-
-  if (args[1] !== null && typeof args[1] === "object") {
-    Object.assign(options, args[1]);
-  } else if (args[2] !== null && typeof args[2] === "object") {
-    Object.assign(options, args[2]);
-  }
-
-  return [options, callback];
-}
-
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
-
 const DEFAULT_ECDH_CURVE = "auto",
   // https://github.com/Jarred-Sumner/uSockets/blob/fafc241e8664243fc0c51d69684d5d02b9805134/src/crypto/openssl.c#L519-L523
   DEFAULT_CIPHERS =
@@ -687,33 +674,7 @@ const DEFAULT_ECDH_CURVE = "auto",
     // port is path or host, let connect handle this
     return new TLSSocket().connect(port, host, connectListener);
   },
-  connect = (...args) => {
-    let [options, callback] = normalizeConnectArgs(args);
-    if (options.ALPNProtocols) {
-      convertALPNProtocols(options.ALPNProtocols, options);
-    }
-
-    options = {
-      rejectUnauthorized: rejectUnauthorizedDefault,
-      ciphers: DEFAULT_CIPHERS,
-      checkServerIdentity,
-      ...options,
-    };
-
-    // @ts-ignore
-    const tlsSocket = new TLSSocket(options);
-
-    // Node.js connects the socket right away if no options.socket is provided. For compatibility, I guess we should do the same.
-    if (!options.socket) {
-      tlsSocket.connect(options, callback);
-    }
-
-    if (options.servername && !net.isIP(options.servername)) {
-      tlsSocket.setServername(options.servername);
-    }
-
-    return tlsSocket;
-  };
+  connect = createConnection;
 
 function getCiphers() {
   return DEFAULT_CIPHERS.split(":");

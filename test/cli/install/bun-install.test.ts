@@ -15,7 +15,6 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry.js";
-import { version } from "yargs";
 
 expect.extend({
   toBeWorkspaceLink,

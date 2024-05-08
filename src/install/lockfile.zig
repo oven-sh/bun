@@ -3668,7 +3668,7 @@ pub const Package = extern struct {
                 if ((workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) or
 
                     // no version in workspace package.json
-                    (workspace_path != null and npm.version.isSingleWildcard()))
+                    (workspace_path != null and npm.version.@"is *"()))
                 {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`

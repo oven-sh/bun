@@ -605,6 +605,10 @@ pub const Version = extern struct {
         return lhs.order(rhs, ctx, ctx);
     }
 
+    pub fn isZero(this: Version) bool {
+        return this.patch == 0 and this.minor == 0 and this.major == 0;
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,
@@ -1117,8 +1121,7 @@ pub const Version = extern struct {
                 },
                 '-', '+' => {
                     // Just a plain tag with no version is invalid.
-
-                    if (part_i < 2) {
+                    if (part_i < 2 and result.wildcard == .none) {
                         result.valid = false;
                         is_done = true;
                         break;
@@ -1609,17 +1612,14 @@ pub const Query = struct {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
         }
 
-        pub fn isSingleWildcard(this: *const Group) bool {
+        pub fn @"is *"(this: *const Group) bool {
             const left = this.head.head.range.left;
             return this.head.head.range.right.op == .unset and
                 left.op == .gte and
-                left.version.patch == 0 and
-                left.version.minor == 0 and
-                left.version.major == 0 and
-                left.version.tag.pre.isEmpty() and
-                left.version.tag.build.isEmpty() and
                 this.head.next == null and
-                this.head.head.next == null;
+                this.head.head.next == null and
+                left.version.isZero() and
+                !this.flags.isSet(Flags.build);
         }
 
         pub inline fn eql(lhs: Group, rhs: Group) bool {

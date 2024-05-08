@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, tmpdirSync } from "harness";
-import { join, s } from "path";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { beforeEach, test, expect } from "bun:test";
 
@@ -19,7 +19,6 @@ beforeEach(() => {
     `
 [install]
 cache = false
-registry = "http://localhost:${port}/"
 `,
   );
 });
@@ -37,14 +36,14 @@ test("dependency on workspace without version in package.json", () => {
   writeFileSync(
     join(packageDir, "packages", "mono", "package.json"),
     JSON.stringify({
-      name: "mono",
+      name: "lodash",
     }),
   );
 
   mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
 
   const shouldWork: string[] = ["*", "*.*.*", "latest", "", "=*", "kjwoehcojrgjoj", "*.1.*"];
-  const shouldNotWork: string[] = ["1", "1.1.*", "1.1.*", "1.1.1"];
+  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.1"];
 
   for (const version of shouldWork) {
     writeFileSync(
@@ -53,7 +52,7 @@ test("dependency on workspace without version in package.json", () => {
         name: "bar",
         version: "1.0.0",
         dependencies: {
-          mono: version,
+          lodash: version,
         },
       }),
     );
@@ -78,7 +77,7 @@ test("dependency on workspace without version in package.json", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       " + bar@workspace:packages/bar",
-      " + mono@workspace:packages/mono",
+      " + lodash@workspace:packages/mono",
       "",
       " 2 packages installed",
     ]);
@@ -89,6 +88,8 @@ test("dependency on workspace without version in package.json", () => {
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
 
+  // downloads the package from the registry instead of
+  // using the workspace locally
   for (const version of shouldNotWork) {
     writeFileSync(
       join(packageDir, "packages", "bar", "package.json"),
@@ -96,12 +97,12 @@ test("dependency on workspace without version in package.json", () => {
         name: "bar",
         version: "1.0.0",
         dependencies: {
-          mono: version,
+          lodash: version,
         },
       }),
     );
 
-    const { stderr, exitCode } = spawnSync({
+    const { stderr, exitCode, stdout } = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
       stderr: "pipe",
@@ -110,8 +111,21 @@ test("dependency on workspace without version in package.json", () => {
     });
 
     const err = stderr.toString();
-    expect(err).toContain("failed to resolve");
-    expect(err).not.toContain("Saved lockfile");
-    expect(exitCode).toBe(1);
+    expect(err).toContain("Saved lockfile");
+
+    const out = stdout.toString();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      " + bar@workspace:packages/bar",
+      " + lodash@workspace:packages/mono",
+      "",
+      " 3 packages installed",
+    ]);
+
+    expect(exitCode).toBe(0);
+
+    rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
+    rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
+    rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
 });

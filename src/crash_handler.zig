@@ -117,7 +117,13 @@ pub fn crashHandler(
                 panic_mutex.lock();
                 defer panic_mutex.unlock();
 
-                const writer = Output.errorWriter();
+                // Use an raw unbuffered writer to stderr to avoid losing information on
+                // panic in a panic. There is also a possibility that `Output` related code
+                // is not configured correctly, so that would also mask the message.
+                //
+                // Output.errorWriter() is not used here because it may not be configured
+                // if the program crashes immediatly at startup.
+                const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug
                 // builds Mainly, we demangle the backtrace immediately instead
@@ -140,10 +146,17 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.os.abort();
                     printMetadata(writer) catch std.os.abort();
-
-                    Output.flush();
                 } else {
-                    Output.err("oh no", "multiple threads are crashing", .{});
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                    }
+                    writer.writeAll("oh no") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.os.abort();
+                    } else {
+                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                    }
+                    writer.writeAll("multiple threads are crashing") catch std.os.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
@@ -173,10 +186,12 @@ pub fn crashHandler(
                         else => @compileError("TODO"),
                     }
 
-                    Output.prettyErrorln(":<r> {}", .{reason});
+                    writer.writeAll(": ") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r>", true)) catch std.os.abort();
+                    }
+                    writer.print("{}\n", .{reason}) catch std.os.abort();
                 }
-
-                Output.flush();
 
                 var addr_buf: [10]usize = undefined;
                 var trace_buf: std.builtin.StackTrace = undefined;
@@ -194,35 +209,39 @@ pub fn crashHandler(
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
 
-                    // TODO: REMOVE
                     trace_str_buf.writer().print("{}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
-                        .action = .open_issue,
+                        .action = .view_trace,
                     }}) catch std.os.abort();
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
+                        writer.writeAll("oh no") catch std.os.abort();
+                        if (Output.enable_ansi_colors) {
+                            writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.os.abort();
+                        } else {
+                            writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                        }
                         if (reason == .out_of_memory) {
-                            Output.err("oh no",
+                            writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            , .{});
+                            ) catch std.os.abort();
                         } else {
-                            Output.err("oh no",
+                            writer.writeAll(
                                 \\Bun has crashed. This indicates a bug in Bun, not your code.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            , .{});
+                            ) catch std.os.abort();
                         }
-                        Output.flush();
                     }
 
                     if (Output.enable_ansi_colors) {
@@ -247,8 +266,6 @@ pub fn crashHandler(
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
-
-                Output.flush();
             }
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
@@ -463,7 +480,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
-                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
                         \\
                         \\<d>Current limit: {d}<r>
                         \\
@@ -508,14 +525,14 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     }
                 } else {
                     Output.errGeneric(
-                        "An unknown error ocurred <d>(<red>{s}<r><d>)<r>",
+                        "An unknown error occurred <d>(<red>{s}<r><d>)<r>",
                         .{@errorName(err)},
                     );
                     show_trace = true;
                 }
             } else {
                 Output.errGeneric(
-                    \\An unknown error ocurred <d>(<red>{s}<r><d>)<r>
+                    \\An unknown error occurred <d>(<red>{s}<r><d>)<r>
                 ,
                     .{@errorName(err)},
                 );
@@ -544,7 +561,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (bun.Environment.isDebug)
                     "'main' returned <red>error.{s}<r>"
                 else
-                    "An internal error ocurred (<red>{s}<r>)",
+                    "An internal error occurred (<red>{s}<r>)",
                 .{@errorName(err)},
             );
             show_trace = true;

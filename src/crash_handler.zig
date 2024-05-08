@@ -190,7 +190,7 @@ pub fn crashHandler(
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.os.abort();
                     }
-                    writer.print("{}", .{reason}) catch std.os.abort();
+                    writer.print("{}\n", .{reason}) catch std.os.abort();
                 }
 
                 var addr_buf: [10]usize = undefined;

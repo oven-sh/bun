@@ -349,7 +349,6 @@ it("should work when renaming a single workspace package", async () => {
     },
   });
 
-  console.log("Cwd", package_dir);
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 

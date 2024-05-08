@@ -573,13 +573,16 @@ pub const Status = union(enum) {
             },
         }
 
-        if (signal) |sig| {
+        if (exit_code != null) {
             return .{
-                .signaled = @enumFromInt(sig),
+                .exited = .{
+                    .code = exit_code.?,
+                    .signal = @enumFromInt(signal orelse 0),
+                },
             };
-        } else if (exit_code) |exit| {
+        } else if (signal != null) {
             return .{
-                .exited = .{ .code = exit, .signal = @enumFromInt(0) },
+                .signaled = @enumFromInt(signal.?),
             };
         }
 

@@ -61,11 +61,4 @@ declare module "tls" {
   }
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
-  function connect(path: string, options?: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
-  function connect(
-    port: number,
-    host?: string,
-    options?: BunConnectionOptions,
-    secureConnectListener?: () => void,
-  ): TLSSocket;
 }

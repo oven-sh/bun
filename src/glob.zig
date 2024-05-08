@@ -463,7 +463,7 @@ pub fn GlobWalker_(
                     var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
                     var starting_component_idx = this.walker.basename_excluding_special_syntax_component_idx;
 
-                    if (std.mem.eql(u8, path_without_special_syntax, "")) {
+                    if (path_without_special_syntax.len == 0) {
                         path_without_special_syntax = if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
                     } else {
                         // Skip the components associated with the literal path
@@ -1649,7 +1649,7 @@ pub fn GlobWalker_(
                                 end_byte,
                                 has_relative_patterns,
                             )) |component| {
-                                saw_special = if (!saw_special) component.syntax_hint.isSpecialSyntax() else saw_special;
+                                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                                 if (!saw_special) {
                                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
                                     end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
@@ -1684,7 +1684,7 @@ pub fn GlobWalker_(
                             end_byte,
                             has_relative_patterns,
                         )) |component| {
-                            saw_special = if (!saw_special) component.syntax_hint.isSpecialSyntax() else saw_special;
+                            saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                             if (!saw_special) {
                                 basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
                                 end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
@@ -1717,7 +1717,7 @@ pub fn GlobWalker_(
                 @intCast(pattern.len),
                 has_relative_patterns,
             )) |component| {
-                saw_special = if (!saw_special) component.syntax_hint.isSpecialSyntax() else saw_special;
+                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
                 if (!saw_special) {
                     basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
                     end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;

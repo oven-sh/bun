@@ -654,7 +654,6 @@ describe("absolute path pattern", async () => {
     await Bun.$`mkdir -p ${files.slice(0, 3)}; touch ${files.slice(3)}`;
     const glob = new Glob(`${path.join(tmpdir, "**")}`);
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
-    console.log("ENTRIES", entries);
     expect(entries.sort()).toEqual(files.slice(0, files.length - 1).sort());
   });
 

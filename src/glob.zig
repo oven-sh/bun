@@ -478,8 +478,12 @@ pub fn GlobWalker_(
                             const fd = switch (try Accessor.open(path)) {
                                 .err => |e| {
                                     if (e.getErrno() == bun.C.E.NOTDIR) {
-                                        // TODO check symlink
                                         this.iter_state = .{ .matched = path };
+                                        return Maybe(void).success;
+                                    }
+                                    // Doesn't exist
+                                    if (e.getErrno() == bun.C.E.NOENT) {
+                                        this.iter_state = .get_next;
                                         return Maybe(void).success;
                                     }
                                     const errpath = try this.walker.arena.allocator().dupeZ(u8, path);

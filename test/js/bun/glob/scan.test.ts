@@ -662,6 +662,13 @@ describe("absolute path pattern", async () => {
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
     expect(entries).toEqual([]);
   });
+
+  test("doesn't exist, file pattern", async () => {
+    const tmpdir = makeTmpdir();
+    await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
+    const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
+    console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
+  });
 });
 
 describe("glob.scan wildcard fast path", async () => {

@@ -17,6 +17,7 @@ To _containerize_ our application, we define a `Dockerfile`. This file contains 
 # see all versions at https://hub.docker.com/r/oven/bun/tags
 FROM oven/bun:1 as base
 WORKDIR /usr/src/app
+RUN apt-get update && apt-get install procps -y
 
 # install dependencies into temp directory
 # this will cache them and speed up future builds

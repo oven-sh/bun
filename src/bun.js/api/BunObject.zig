@@ -3685,7 +3685,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            _ = globalThis.bunVM().uncaughtException(globalThis, args.ptr[0], .null);
+            _ = globalThis.bunVM().uncaughtException(globalThis, args.ptr[0], true);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -3787,7 +3787,7 @@ pub const Timer = struct {
             }
 
             if (result.isAnyError()) {
-                _ = vm.uncaughtException(globalThis, result, JSC.JSValue.null);
+                _ = vm.uncaughtException(globalThis, result, false);
                 this.deinit();
                 return;
             }
@@ -5265,7 +5265,7 @@ pub const EnvironmentVariables = struct {
 };
 
 export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void {
-    _ = JSC.VirtualMachine.get().uncaughtException(globalObject, err, .null);
+    _ = JSC.VirtualMachine.get().uncaughtException(globalObject, err, false);
 }
 
 comptime {

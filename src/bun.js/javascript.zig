@@ -351,7 +351,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // This JSGlobalObject might not be the main script execution context
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
-    _ = jsc_vm.uncaughtException(globalObject, value, .undefined);
+    _ = jsc_vm.uncaughtException(globalObject, value, false);
     return JSC.JSValue.jsUndefined();
 }
 
@@ -608,6 +608,7 @@ pub const VirtualMachine = struct {
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
+    is_handling_uncaught_exception: bool = false,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
@@ -821,8 +822,9 @@ pub const VirtualMachine = struct {
         }
     }
 
-    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, origin: JSC.JSValue) c_int;
+    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: c_int) c_int;
     extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
+    extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
 
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
         const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
@@ -833,8 +835,15 @@ pub const VirtualMachine = struct {
         return handled;
     }
 
-    pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, origin: JSC.JSValue) bool {
-        const handled = Bun__handleUncaughtException(globalObject, err, origin) > 0;
+    pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool {
+        if (this.is_handling_uncaught_exception) {
+            this.runErrorHandler(err, null);
+            Bun__Process__exit(globalObject, 1);
+            @panic("Uncaught exception while handling uncaught exception");
+        }
+        this.is_handling_uncaught_exception = true;
+        defer this.is_handling_uncaught_exception = false;
+        const handled = Bun__handleUncaughtException(globalObject, err, if (is_rejection) 1 else 0) > 0;
         if (!handled) {
             // TODO maybe we want a separate code path for uncaught exceptions
             this.unhandled_error_counter += 1;
@@ -2181,6 +2190,10 @@ pub const VirtualMachine = struct {
         }
     }
 
+    export fn Bun__logUnhandledException(exception: JSC.JSValue) void {
+        get().runErrorHandler(exception, null);
+    }
+
     pub fn clearEntryPoint(
         this: *VirtualMachine,
     ) void {
@@ -2627,7 +2640,7 @@ pub const VirtualMachine = struct {
 
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
-        _ = jsc_vm.uncaughtException(globalObject, exception.value(), JSC.JSValue.jsUndefined());
+        _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
         return JSC.JSValue.jsUndefined();
     }
 

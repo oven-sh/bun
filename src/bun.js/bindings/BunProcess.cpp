@@ -3,8 +3,11 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/Protect.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
@@ -22,6 +25,7 @@
 #include "wtf-bindings.h"
 
 #include "ProcessBindingTTYWrap.h"
+#include "wtf/text/ASCIILiteral.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -765,42 +769,54 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     });
 };
 
-extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, JSC::JSValue origin)
+extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
-    // TODO do we maybe need to manually get the process object in this case?
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info())) return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = jsCast<Process*>(globalObject->processObject());
     auto& wrapped = process->wrapped();
+    auto& vm = globalObject->vm();
 
     MarkedArgumentBuffer args;
     args.append(exception);
-    args.append(origin);
+    if (isRejection) {
+        args.append(jsString(vm, WTF::StringView::fromLatin1("unhandledRejection")));
+    } else {
+        args.append(jsString(vm, WTF::StringView::fromLatin1("uncaughtException")));
+    }
+
 
     auto uncaughtExceptionMonitor = Identifier::fromString(globalObject->vm(), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
         wrapped.emit(uncaughtExceptionMonitor, args);
     }
 
+    auto uncaughtExceptionIdent = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
+
     // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
-        call(lexicalGlobalObject, capture, args, ASCIILiteral::fromLiteralUnsafe("uncaughtExceptionCaptureCallback"));
-        return true;
-    }
-
-    auto uncaughtException = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
-    if (wrapped.listenerCount(uncaughtException) > 0) {
-        wrapped.emit(uncaughtException, args);
-        return true;
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            // if an exception is thrown in the uncaughtException handler, we abort
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+            Bun__Process__exit(lexicalGlobalObject, 1);
+        }
+    } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+        wrapped.emit(uncaughtExceptionIdent, args);
     } else {
         return false;
     }
+
+    return true;
 }
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
 {
-    // TODO see above
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info())) return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = jsCast<Process*>(globalObject->processObject());

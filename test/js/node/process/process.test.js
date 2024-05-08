@@ -587,3 +587,19 @@ it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
   const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
   expect(await proc.exited).toBe(42);
 });
+
+it("aborts when the uncaughtException handler throws", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
+    stderr: "pipe"
+  });
+  expect(await proc.exited).toBe(1);
+  expect(await new Response(proc.stderr).text()).toContain("bar");
+});
+
+it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
+    stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(1);
+  expect(await new Response(proc.stderr).text()).toContain("bar");
+});

@@ -274,7 +274,7 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
-                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), .null);
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
                 if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();

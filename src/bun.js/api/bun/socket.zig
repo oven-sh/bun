@@ -236,14 +236,14 @@ const Handlers = struct {
         const onError = this.onError;
         if (onError == .zero) {
             if (err.len > 0)
-                _ = this.vm.uncaughtException(this.globalObject, err[0], JSC.JSValue.null);
+                _ = this.vm.uncaughtException(this.globalObject, err[0], false);
 
             return false;
         }
 
         const result = onError.callWithThis(this.globalObject, thisValue, err);
         if (result.isAnyError()) {
-            _ = this.vm.uncaughtException(this.globalObject, result, JSC.JSValue.null);
+            _ = this.vm.uncaughtException(this.globalObject, result, false);
         }
 
         return true;

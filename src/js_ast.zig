@@ -7150,7 +7150,7 @@ pub const Macro = struct {
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
-                        _ = this.macro.vm.uncaughtException(this.global, value, JSC.JSValue.null);
+                        _ = this.macro.vm.uncaughtException(this.global, value, false);
                         return this.caller;
                     },
                     .Undefined => if (this.is_top_level)
@@ -7177,7 +7177,7 @@ pub const Macro = struct {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
                             } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
-                                _ = this.macro.vm.uncaughtException(this.global, value, JSC.JSValue.null);
+                                _ = this.macro.vm.uncaughtException(this.global, value, false);
                                 return error.MacroFailed;
                             }
                         }

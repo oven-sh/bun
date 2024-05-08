@@ -1127,7 +1127,7 @@ pub const TestCommand = struct {
         if (is_last) {
             if (jest.Jest.runner != null) {
                 if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
-                    _ = vm.uncaughtException(vm.global, err, JSC.JSValue.null);
+                    _ = vm.uncaughtException(vm.global, err, true);
                 }
             }
         }

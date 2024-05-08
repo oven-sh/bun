@@ -20,6 +20,10 @@ function generate(name) {
         fn: "doReload",
         length: 2,
       },
+      "@@dispose": {
+        fn: "dispose",
+        length: 0,
+      },
       stop: {
         fn: "doStop",
         length: 1,

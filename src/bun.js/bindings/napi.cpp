@@ -494,24 +494,35 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
         return napi_invalid_arg;
     }
 
-    auto globalObject = toJS(env);
-    auto& vm = globalObject->vm();
-    auto* object = toJS(target).getObject();
-    if (!object) {
+    JSValue targetValue = toJS(target);
+    if (!targetValue.isObject()) {
         return napi_object_expected;
     }
+
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto* object = targetValue.getObject();
 
     auto keyProp = toJS(key);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    PutPropertySlot slot(object, true);
-    Identifier identifier = keyProp.toPropertyKey(globalObject);
-    JSValue jsValue = toJS(value);
+    PutPropertySlot slot(object, false);
 
-    object->put(object, globalObject, identifier, jsValue, slot);
+    Identifier identifier = keyProp.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
-    scope.clearException();
+    JSValue jsValue = toJS(value);
+
+    if (!object->put(object, globalObject, identifier, jsValue, slot)) {
+        scope.clearExceptionExceptTermination();
+        return napi_generic_failure;
+    }
+
+    if (UNLIKELY(scope.exception())) {
+        scope.clearException();
+        return napi_generic_failure;
+    }
+
     return napi_ok;
 }
 extern "C" napi_status napi_has_property(napi_env env, napi_value object,

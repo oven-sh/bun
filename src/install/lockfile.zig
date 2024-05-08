@@ -3639,10 +3639,14 @@ pub const Package = extern struct {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
-            .npm => if (comptime tag != null)
-                unreachable
-            else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
+            .npm => {
+                if (comptime tag != null) bun.assert(false);
+                const npm = dependency_version.value.npm;
+                if ((workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) or
+
+                    // no version in workspace package.json
+                    (workspace_path != null and npm.version.isSingleWildcard()))
+                {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {

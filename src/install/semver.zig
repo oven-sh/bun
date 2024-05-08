@@ -1609,6 +1609,19 @@ pub const Query = struct {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
         }
 
+        pub fn isSingleWildcard(this: *const Group) bool {
+            const left = this.head.head.range.left;
+            return this.head.head.range.right.op == .unset and
+                left.op == .gte and
+                left.version.patch == 0 and
+                left.version.minor == 0 and
+                left.version.major == 0 and
+                left.version.tag.pre.isEmpty() and
+                left.version.tag.build.isEmpty() and
+                this.head.next == null and
+                this.head.head.next == null;
+        }
+
         pub inline fn eql(lhs: Group, rhs: Group) bool {
             return lhs.head.eql(&rhs.head);
         }

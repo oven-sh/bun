@@ -1846,10 +1846,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.request_body) |body| {
                 ctxLog("finalizeWithoutDeinit: request_body != null", .{});
+                // Case 1:
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.value == .Locked and body.value.Locked.hasPendingPromise()) {
+                // Case 2:
+                // User ignored the body and the connection was aborted or ended
+                // Case 3:
+                // Stream was not consumed and the connection was aborted or ended
+                if (body.value == .Locked) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }
@@ -2818,10 +2823,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .Invalid => {
                                 this.readable_stream_ref.deinit();
                             },
-                            // toBlobIfPossible should've caught this
-                            .Blob, .File => unreachable,
-
-                            .JavaScript, .Direct => {
+                            // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
+                            .Blob,
+                            .File,
+                            // These are the common scenario:
+                            .JavaScript,
+                            .Direct,
+                            => {
                                 if (this.resp) |resp| {
                                     var pair = StreamPair{ .stream = stream, .this = this };
                                     resp.runCorkedWithType(*StreamPair, doRenderStream, &pair);
@@ -5114,6 +5122,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         } = .{},
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
+        pub const dispose = JSC.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
         pub const doUpgrade = JSC.wrapInstanceMethod(ThisServer, "onUpgrade", false);
         pub const doPublish = JSC.wrapInstanceMethod(ThisServer, "publish", false);
         pub const doReload = onReload;
@@ -5534,6 +5543,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
                 this.stop(abrupt);
+            }
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
+            if (this.listener != null) {
+                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject = JSC.JSValue.jsUndefined();
+                this.stop(true);
             }
 
             return JSC.JSValue.jsUndefined();

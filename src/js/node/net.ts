@@ -342,9 +342,10 @@ const Socket = (function (InternalSocket) {
     pauseOnConnect = false;
     #upgraded;
     #unrefOnConnected = false;
+    #handlers = Socket.#Handlers;
 
     constructor(options) {
-      const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
+      const { socket, signal, write, read, allowHalfOpen = false, onread = null, ...opts } = options || {};
       super({
         ...opts,
         allowHalfOpen,
@@ -358,6 +359,26 @@ const Socket = (function (InternalSocket) {
       this.#upgraded = null;
       if (socket instanceof Socket) {
         this.#socket = socket;
+      }
+      if (onread) {
+        if (typeof onread !== "object") {
+          throw new TypeError("onread must be an object");
+        }
+        if (typeof onread.callback !== "function") {
+          throw new TypeError("onread.callback must be a function");
+        }
+        // when the onread option is specified we use a different handlers object
+        this.#handlers = {
+          ...Socket.#Handlers,
+          data({ data: self }, buffer) {
+            if (!self) return;
+            try {
+              onread.callback(buffer.length, buffer);
+            } catch (e) {
+              self.emit("error", e);
+            }
+          },
+        };
       }
 
       if (signal) {
@@ -454,7 +475,7 @@ const Socket = (function (InternalSocket) {
           bunConnect({
             data: this,
             fd,
-            socket: Socket.#Handlers,
+            socket: this.#handlers,
             tls,
           }).catch(error => {
             this.emit("error", error);
@@ -529,7 +550,7 @@ const Socket = (function (InternalSocket) {
             const result = socket.upgradeTLS({
               data: this,
               tls,
-              socket: Socket.#Handlers,
+              socket: this.#handlers,
             });
             if (result) {
               const [raw, tls] = result;
@@ -554,7 +575,7 @@ const Socket = (function (InternalSocket) {
               const result = socket.upgradeTLS({
                 data: this,
                 tls,
-                socket: Socket.#Handlers,
+                socket: this.#handlers,
               });
 
               if (result) {
@@ -576,7 +597,7 @@ const Socket = (function (InternalSocket) {
           bunConnect({
             data: this,
             unix: path,
-            socket: Socket.#Handlers,
+            socket: this.#handlers,
             tls,
           }).catch(error => {
             this.emit("error", error);
@@ -588,7 +609,7 @@ const Socket = (function (InternalSocket) {
             data: this,
             hostname: host || "localhost",
             port: port,
-            socket: Socket.#Handlers,
+            socket: this.#handlers,
             tls,
           }).catch(error => {
             this.emit("error", error);
@@ -598,6 +619,11 @@ const Socket = (function (InternalSocket) {
       } catch (error) {
         process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
+      // reset the underlying writable object when establishing a new connection
+      // this is a function on `Duplex`, originally defined on `Writable`
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+      this._undestroy();
       return this;
     }
 

@@ -718,7 +718,7 @@ pub const TypeScript = struct {
                 return false;
             }
 
-            // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
+            // If we have an 'await' keyword, and we're in the [await] context, then 'await' is
             // considered a keyword and is not an identifier.
             if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(p.lexer.identifier, "await")) {
                 return false;
@@ -22141,7 +22141,7 @@ fn NewParser_(
 
                 // Wrap everything in a try/catch/finally block
                 p.recordUsage(caught_ref);
-                result.ensureUnusedCapacity(2) catch bun.outOfMemory();
+                result.ensureUnusedCapacity(2 + @as(usize, @intFromBool(exports.items.len > 0))) catch bun.outOfMemory();
                 result.appendAssumeCapacity(p.s(S.Local{
                     .decls = decls: {
                         const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();

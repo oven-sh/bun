@@ -3181,7 +3181,7 @@ pub const Arguments = struct {
                 .flag = flag,
                 .mode = mode,
                 .data = data,
-                .dirfd = bun.toFD(std.fs.cwd().fd),
+                .dirfd = bun.FD.cwd(),
             };
         }
     };
@@ -5120,7 +5120,7 @@ pub const NodeFS = struct {
     ) Maybe(void) {
         const flags = os.O.DIRECTORY | os.O.RDONLY;
 
-        const atfd = if (comptime is_root) bun.toFD(std.fs.cwd().fd) else async_task.root_fd;
+        const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
@@ -5270,7 +5270,7 @@ pub const NodeFS = struct {
             }
 
             const flags = os.O.DIRECTORY | os.O.RDONLY;
-            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.toFD(std.fs.cwd().fd) else root_fd, basename, flags, 0)) {
+            const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.FD.cwd() else root_fd, basename, flags, 0)) {
                 .err => |err| {
                     if (root_fd == bun.invalid_fd) {
                         return .{
@@ -5418,7 +5418,7 @@ pub const NodeFS = struct {
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
-            .windows => bun.sys.openDirAtWindowsA(bun.toFD(std.fs.cwd().fd), path, .{ .iterable = true, .read_only = true }),
+            .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
             .err => |err| return .{
                 .err = err.withPath(args.path.slice()),

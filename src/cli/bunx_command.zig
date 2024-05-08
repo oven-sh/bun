@@ -148,7 +148,7 @@ pub const BunxCommand = struct {
                 bun.pathLiteral("{s}/package.json"),
                 .{tempdir_name},
             ) catch unreachable;
-            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
+            const target_package_json_fd = bun.sys.openat(bun.FD.cwd(), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
             const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
             const is_stale = is_stale: {
@@ -186,7 +186,7 @@ pub const BunxCommand = struct {
             .{ tempdir_name, package_name },
         ) catch unreachable;
 
-        return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
+        return try getBinNameFromSubpath(bundler, bun.FD.cwd(), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"

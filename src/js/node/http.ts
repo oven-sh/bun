@@ -1089,7 +1089,6 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
 
 function emitCloseNT(self) {
   if (!self._closed) {
-    self.destroyed = true;
     self._closed = true;
     self.emit("close");
   }
@@ -1413,6 +1412,10 @@ class ClientRequest extends OutgoingMessage {
     return this.#protocol;
   }
 
+  get agent() {
+    return this.#agent;
+  }
+
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
@@ -1430,6 +1433,15 @@ class ClientRequest extends OutgoingMessage {
       return;
     }
     this.#bodyChunks.push(...chunks);
+    callback();
+  }
+  _destroy(err, callback) {
+    this.destroyed = true;
+    // If request is destroyed we abort the current response
+    this[kAbortController]?.abort?.();
+    if (err) {
+      this.emit("error", err);
+    }
     callback();
   }
 
@@ -1519,7 +1531,7 @@ class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController]!.abort();
+    this[kAbortController]?.abort?.();
     // TODO: Close stream if body streaming
   }
 

@@ -506,12 +506,12 @@ void JSEventEmitter::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSEventEmitterOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSEventEmitterOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsEventEmitter = jsCast<JSEventEmitter*>(handle.slot()->asCell());
     if (jsEventEmitter->wrapped().isFiringEventListeners()) {
         if (UNLIKELY(reason))
-            *reason = "EventEmitter firing event listeners";
+            *reason = "EventEmitter firing event listeners"_s;
         return true;
     }
     UNUSED_PARAM(visitor);

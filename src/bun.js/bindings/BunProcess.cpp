@@ -490,7 +490,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
     if (!arg0.isCallable() && !arg0.isNull()) {
         throwTypeError(globalObject, throwScope, "The \"callback\" argument must be callable or null"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
-    } 
+    }
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobal)) {
         zigGlobal = Bun__getDefaultGlobal();
@@ -773,7 +773,8 @@ extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
-    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info())) return false;
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = jsCast<Process*>(globalObject->processObject());
     auto& wrapped = process->wrapped();
@@ -782,11 +783,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     MarkedArgumentBuffer args;
     args.append(exception);
     if (isRejection) {
-        args.append(jsString(vm, WTF::StringView::fromLatin1("unhandledRejection")));
+        args.append(jsString(vm, String("unhandledRejection"_s)));
     } else {
-        args.append(jsString(vm, WTF::StringView::fromLatin1("uncaughtException")));
+        args.append(jsString(vm, String("uncaughtException"_s)));
     }
-
 
     auto uncaughtExceptionMonitor = Identifier::fromString(globalObject->vm(), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
@@ -817,7 +817,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
 extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
 {
-    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info())) return false;
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto* process = jsCast<Process*>(globalObject->processObject());
     MarkedArgumentBuffer args;
@@ -852,12 +853,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 }
             }
             return;
-        }
-
-        if (eventName.string() == "uncaughtException"_s) {
-            if (isAdded) {
-
-            }
         }
 
         // Signal Handlers

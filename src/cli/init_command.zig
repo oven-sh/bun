@@ -244,17 +244,39 @@ pub const InitCommand = struct {
                 Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
                 Output.flush();
 
-                const name = prompt(
-                    alloc,
-                    "<r><cyan>package name<r> ",
-                    fields.name,
-                    Output.enable_ansi_colors_stdout,
-                ) catch |err| {
-                    if (err == error.EndOfStream) return;
-                    return err;
-                };
+                var retry = false;  // Variable to control retry logic
 
-                fields.name = try normalizePackageName(alloc, name);
+                while (true) {
+                    retry = false;  // Reset retry at the beginning of each iteration
+
+                    const name = prompt(
+                        alloc,
+                        "<r><cyan>package name<r> ",
+                        fields.name,
+                        Output.enable_ansi_colors_stdout,
+                    ) catch |err| {
+                        if (err == error.EndOfStream) {
+                            return; // Exit if there is no more input
+                        } else if (err == error.StreamTooLong) {
+                            Output.prettyln("Sorry, the name can no longer contain more than 214 characters.", .{});
+                            return; // Exit to avoid crash
+                        } else {
+                            return err; // Return any other error immediately
+                        }
+                    };
+
+                    if (name.len > 214) {
+                        Output.prettyln("Sorry, the name can no longer contain more than 214 characters.", .{});
+                        retry = true; // Need to retry, input too long
+                        continue; // Skip to the next iteration to retry immediately
+                    }
+
+                    // If name was successfully retrieved and retry was not flagged
+                    if (!retry) {
+                        fields.name = try normalizePackageName(alloc, name);
+                        break; // Successfully processed the name, exit loop
+                    }
+                }
 
                 fields.entry_point = prompt(
                     alloc,
@@ -272,7 +294,6 @@ pub const InitCommand = struct {
                 Output.prettyln("A package.json was found here. Would you like to configure", .{});
             }
         }
-
         const Steps = struct {
             write_gitignore: bool = true,
             write_package_json: bool = true,

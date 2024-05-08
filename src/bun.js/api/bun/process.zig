@@ -385,19 +385,19 @@ pub const Process = struct {
 
         bun.windows.libuv.log("Process.onExit({d}) code: {d}, signal: {?}", .{ process.pid, exit_code, signal_code });
 
-        if (exit_code >= 0) {
-            this.close();
-            this.onExit(
-                .{
-                    .exited = .{ .code = exit_code, .signal = signal_code orelse @enumFromInt(0) },
-                },
-                &rusage,
-            );
-        } else if (signal_code) |sig| {
+        if (signal_code) |sig| {
             this.close();
 
             this.onExit(
                 .{ .signaled = sig },
+                &rusage,
+            );
+        } else if (exit_code >= 0) {
+            this.close();
+            this.onExit(
+                .{
+                    .exited = .{ .code = exit_code, .signal = @enumFromInt(0) },
+                },
                 &rusage,
             );
         } else {
@@ -575,7 +575,10 @@ pub const Status = union(enum) {
 
         if (exit_code != null) {
             return .{
-                .exited = .{ .code = exit_code.?, .signal = @enumFromInt(signal orelse 0) },
+                .exited = .{
+                    .code = exit_code.?,
+                    .signal = @enumFromInt(signal orelse 0),
+                },
             };
         } else if (signal != null) {
             return .{

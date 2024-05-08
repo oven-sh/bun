@@ -18,7 +18,6 @@ export function createTestBuilder(path: string) {
   });
 
   class TestBuilder {
-    // promise: { type: "ok"; val: ShellPromise } | { type: "err"; val: Error };
     _testName: string | undefined = undefined;
 
     expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";

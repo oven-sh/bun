@@ -10176,6 +10176,7 @@ pub const Interpreter = struct {
                 absolute_srcs: std.StringArrayHashMapUnmanaged(void) = .{},
 
                 pub fn deinit(this: *EbusyState) void {
+                    // The tasks themselves are freed in `ignoreEbusyErrorIfPossible()`
                     this.tasks.deinit(bun.default_allocator);
                     for (this.absolute_targets.keys()) |tgt| {
                         bun.default_allocator.free(tgt);
@@ -10228,7 +10229,6 @@ pub const Interpreter = struct {
                 if (this.state.ebusy.idx < this.state.ebusy.state.tasks.items.len) {
                     outer_loop: for (this.state.ebusy.state.tasks.items[this.state.ebusy.idx..], 0..) |task_, i| {
                         const task: *ShellCpTask = task_;
-                        assert(task.tgt_absolute != null);
                         const failure_src = task.src_absolute.?;
                         const failure_tgt = task.tgt_absolute.?;
                         if (this.state.ebusy.state.absolute_targets.get(failure_tgt)) |_| {

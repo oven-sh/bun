@@ -491,22 +491,12 @@ pub const ShellSubprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *@This(), comptime deactivate_poll_ref: bool) void {
-        _ = deactivate_poll_ref; // autofix
-        // const vm = this.globalThis.bunVM();
-
+    pub fn unref(this: *@This(), comptime _: bool) void {
         this.process.disableKeepingEventLoopAlive();
-        // if (!this.hasCalledGetter(.stdin)) {
-        // this.stdin.unref();
-        // }
 
-        // if (!this.hasCalledGetter(.stdout)) {
         this.stdout.unref();
-        // }
 
-        // if (!this.hasCalledGetter(.stderr)) {
         this.stderr.unref();
-        // }
     }
 
     pub fn hasKilled(this: *const @This()) bool {

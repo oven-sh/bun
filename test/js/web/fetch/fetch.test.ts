@@ -1962,3 +1962,23 @@ describe("http/1.1 response body length", () => {
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
   });
 });
+
+it("should allow the Content-Length header to be overridden", async () => {
+  const { resolve, reject, promise } = Promise.withResolvers();
+  startServer({
+    fetch(req) {
+      try {
+        expect(req.headers.get("content-length")).toEqual("42");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    },
+  });
+  await fetch(`http://${server.hostname}:${server.port}/`, {
+    method: "POST",
+    body: "foo",
+    headers: { "CoNtEnT-lEnGtH": "42" },
+  });
+  await promise;
+});

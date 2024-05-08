@@ -50,12 +50,14 @@ const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 const print_every = 0;
 var print_every_i: usize = 0;
 
+const request_headers_buf_len = 256;
+
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
-var shared_request_headers_buf: [256]picohttp.Header = undefined;
+var shared_request_headers_buf: [request_headers_buf_len]picohttp.Header = undefined;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-var shared_response_headers_buf: [256]picohttp.Header = undefined;
+var shared_response_headers_buf: [request_headers_buf_len]picohttp.Header = undefined;
 
 const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
 
@@ -2151,7 +2153,6 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
 
     if (!override_accept_encoding and !this.disable_decompression) {
         request_headers_buf[header_count] = accept_encoding_header;
-
         header_count += 1;
     }
 
@@ -2161,6 +2162,30 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
         };
         header_count += 1;
+    }
+
+    // let user headers override ones we've written
+    var seen = std.mem.zeroes([request_headers_buf_len]bool);
+    var seen_idx: [request_headers_buf_len]std.math.IntFittingRange(0, request_headers_buf_len - 1) = undefined;
+    for (this.header_entries.items(.name), 0..) |n, i| {
+        const name = this.header_buf[n.offset..][0..n.length];
+
+        for (request_headers_buf[0..header_count], 0..) |h, j| {
+            if (bun.strings.eqlCaseInsensitiveASCII(h.name, name, true)) {
+                seen[i] = true;
+                seen_idx[i] = @intCast(j);
+            }
+        }
+    }
+    // propogate user-defined headers
+    for (this.header_entries.items(.name), this.header_entries.items(.value), 0..) |n, v, i| {
+        const name = this.header_buf[n.offset..][0..n.length];
+        const value = this.header_buf[v.offset..][0..v.length];
+        var header_index = header_count;
+        if (seen[i]) header_index = seen_idx[i];
+        request_headers_buf[header_index] = .{ .name = name, .value = value };
+        if (!seen[i]) header_count += 1;
+        if (header_count == request_headers_buf_len) break;
     }
 
     return picohttp.Request{

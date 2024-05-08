@@ -825,6 +825,55 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    it("should emit `close` event on IncomingRequest when request is destroyed", async done => {
+      try {
+        const SERVER_RESPONSE = "event_emitted";
+        var server = createServer((req, res) => {
+          req.on("close", () => {
+            res.end(SERVER_RESPONSE);
+            done();
+          });
+          res.writeHead(200, { "Content-Type": "text/html" });
+          req.destroy();
+        });
+        const url = new URL("/event-based-response-endpoint", await listen(server));
+        const response_text = await fetch(url).then(res => res.text());
+        expect(response_text).toBe(SERVER_RESPONSE);
+      } catch (e) {
+        throw e;
+      } finally {
+        server.close();
+      }
+    });
+
+    it("should emit `close` event on IncomingRequest when client disconnects", async done => {
+      try {
+        const response_interval_duration_ms = 100;
+        const client_request_abort_duration_ms = 50;
+        var server = createServer((req, res) => {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          let responseInterval = setInterval(() => {
+            clearInterval(responseInterval); // cleanup: remove testing interval as close event failed to emit and cannot be cleaned up.
+            res.write(`content sent at ${new Date().toISOString()}\n`);
+            throw new Error("MemoryLeak -- failed to emit `close` event on client disconnection");
+          }, response_interval_duration_ms);
+          req.on("close", () => {
+            clearInterval(responseInterval);
+            done(); // allow test to pass if client disconnection is handled by the IncomingRequest `close` event.
+          });
+        });
+        const url = new URL("/event-based-response-endpoint", await listen(server));
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), client_request_abort_duration_ms);
+        const abortedRequestErrorMessage = await fetch(url, { signal: controller.signal }).catch(e => e.name);
+        expect(abortedRequestErrorMessage).toBe("AbortError");
+      } catch (e) {
+        throw e;
+      } finally {
+        server.close();
+      }
+    });
   });
 
   describe("signal", () => {

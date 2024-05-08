@@ -1268,6 +1268,15 @@ pub const Formatter = struct {
                         'O' => .O,
                         'd', 'i' => .i,
                         'c' => .c,
+                        '%' => {
+                            // print up to and including the first %
+                            const end = slice[0..i];
+                            writer.writeAll(end);
+                            // then skip the second % so we dont hit it again
+                            slice = slice[@min(slice.len, i + 1)..];
+                            i = 0;
+                            continue;
+                        },
                         else => continue,
                     };
 
@@ -1419,12 +1428,6 @@ pub const Formatter = struct {
                         },
                     }
                     if (this.remaining_values.len == 0) break;
-                },
-                '\\' => {
-                    i += 1;
-                    if (i >= len)
-                        break;
-                    if (slice[i] == '%') i += 2;
                 },
                 else => {},
             }

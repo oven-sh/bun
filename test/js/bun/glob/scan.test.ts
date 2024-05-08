@@ -625,7 +625,7 @@ describe("absolute path pattern", async () => {
     expect(entries.sort()).toEqual(files.sort());
   });
 
-  test("works **", async () => {
+  test("works **/", async () => {
     const tmpdir = makeTmpdir();
     const files = [
       `${tmpdir}${path.sep}bunx-foo`,
@@ -639,6 +639,35 @@ describe("absolute path pattern", async () => {
     const glob = new Glob(`${path.join(tmpdir, "**")}${path.sep}`);
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
     expect(entries.sort()).toEqual(files.slice(0, 3).sort());
+  });
+
+  test("works **", async () => {
+    const tmpdir = makeTmpdir();
+    const files = [
+      `${tmpdir}${path.sep}bunx-foo`,
+      `${tmpdir}${path.sep}bunx-bar`,
+      `${tmpdir}${path.sep}bunx-baz`,
+      `${tmpdir}${path.sep}foo`,
+      `${tmpdir}${path.sep}bar`,
+      `${tmpdir}${path.sep}bar`,
+    ];
+    await Bun.$`mkdir -p ${files.slice(0, 3)}; touch ${files.slice(3)}`;
+    const glob = new Glob(`${path.join(tmpdir, "**")}`);
+    const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
+    expect(entries.sort()).toEqual(files.slice(0, files.length - 1).sort());
+  });
+
+  test("non-special path as first component", async () => {
+    const glob = new Glob("/**lol");
+    const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
+    expect(entries).toEqual([]);
+  });
+
+  test("doesn't exist, file pattern", async () => {
+    const tmpdir = makeTmpdir();
+    await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
+    const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
+    console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
   });
 });
 

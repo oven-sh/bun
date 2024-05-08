@@ -21,4 +21,4 @@ process.on("unhandledRejection", (err, promise) => {
   }
 });
 
-promise = Promise.reject(new Error('error'));
+promise = Promise.reject(new Error("error"));

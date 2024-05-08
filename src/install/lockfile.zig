@@ -1874,16 +1874,30 @@ pub const StringBuilder = struct {
     lockfile: *Lockfile,
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
+        this.assertNotAllocated();
+
         if (String.canInline(slice)) return;
         this._countWithHash(slice, String.Builder.stringHash(slice));
     }
 
     pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+        this.assertNotAllocated();
+
         if (String.canInline(slice)) return;
         this._countWithHash(slice, hash);
     }
 
+    inline fn assertNotAllocated(this: *const StringBuilder) void {
+        if (comptime Environment.allow_assert) {
+            if (this.ptr != null) {
+                Output.panic("StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before allocating.", .{});
+            }
+        }
+    }
+
     inline fn _countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+        this.assertNotAllocated();
+
         if (!this.lockfile.string_pool.contains(hash)) {
             this.cap += slice.len;
         }

@@ -58,6 +58,8 @@ pub const PackageJSON = struct {
     };
 
     pub fn generateHash(package_json: *PackageJSON) void {
+        const CHUNK_SIZE: usize = 512; 
+
         var hashy: [1024]u8 = undefined;
         @memset(&hashy, 0);
         var used: usize = 0;
@@ -69,8 +71,39 @@ pub const PackageJSON = struct {
         bun.copy(u8, hashy[used..], package_json.version);
         used += package_json.version.len;
 
-        package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
+        // Calculate number of chunks required to contain package json
+        const num_chunks = (used + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        var partial_hashes = std.ArrayList(u32).init(std.heap.page_allocator);
+        defer partial_hashes.deinit(); // We liberate partial_hashes memory
+
+        // Calculate the hash for each chunk
+        var i: usize = 0;
+        while (i < num_chunks) {
+            const chunk_start = i * CHUNK_SIZE;
+            const chunk_end = @min((i + 1) * CHUNK_SIZE, used);
+            const chunk = hashy[chunk_start..chunk_end];
+            const hash = std.hash.Murmur3_32.hash(chunk);
+            partial_hashes.append(hash) catch |err| {
+                std.debug.print("Error appending hash: {}\n", .{err});
+                return;
+            };
+            i += 1;
+        }
+
+        // Combine hashes to form one
+        package_json.hash = combineHashes(partial_hashes.items);
     }
+
+
+    pub fn combineHashes(partial_hashes: []const u32) u32 {
+        var combined_hash: u32 = 0;
+        for (partial_hashes) |hash| {
+            combined_hash ^= hash; 
+        }
+        return combined_hash;
+    }
+
+
 
     const node_modules_path = std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str;
 
@@ -657,7 +690,14 @@ pub const PackageJSON = struct {
         if (json.asProperty("name")) |version_json| {
             if (version_json.expr.asString(allocator)) |version_str| {
                 if (version_str.len > 0) {
-                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
+                    const name =  allocator.dupe(u8, version_str) catch unreachable;
+                    if (name.len > 0 and name.len < 215) {
+                                                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Sorry, name can no longer contain more than 214 characters 1.", .{ }) catch unreachable;
+
+                        package_json.name = name;
+                    }else{
+                                                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Sorry, name can no longer contain more than 214 characters 2.", .{ }) catch unreachable;
+                    }
                 }
             }
         }
@@ -820,7 +860,6 @@ pub const PackageJSON = struct {
                     package_json.package_manager_package_id = pkg;
                     break :update_dependencies;
                 }
-
                 // // if there is a name & version, check if the lockfile has the package
                 if (package_json.name.len > 0 and package_json.version.len > 0) {
                     if (r.package_manager) |pm| {

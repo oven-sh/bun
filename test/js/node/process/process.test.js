@@ -590,7 +590,7 @@ it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
 
 it("aborts when the uncaughtException handler throws", async () => {
   const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
-    stderr: "pipe"
+    stderr: "pipe",
   });
   expect(await proc.exited).toBe(1);
   expect(await new Response(proc.stderr).text()).toContain("bar");

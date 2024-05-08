@@ -1,5 +1,5 @@
-process.on("uncaughtException", (err) => {
-  throw new Error('bar')
-})
+process.on("uncaughtException", err => {
+  throw new Error("bar");
+});
 
-throw new Error('foo');
+throw new Error("foo");

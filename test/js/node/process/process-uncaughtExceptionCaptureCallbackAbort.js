@@ -1,5 +1,5 @@
-process.setUncaughtExceptionCaptureCallback((err) => {
-  throw new Error('bar')
-})
+process.setUncaughtExceptionCaptureCallback(err => {
+  throw new Error("bar");
+});
 
-throw new Error('foo');
+throw new Error("foo");

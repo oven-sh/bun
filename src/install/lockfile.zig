@@ -3623,6 +3623,10 @@ pub const Package = extern struct {
             }
         }
 
+        if (comptime tag != null) {
+            bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
+        }
+
         switch (dependency_version.tag) {
             .folder => {
                 const relative = Path.relative(
@@ -3640,7 +3644,6 @@ pub const Package = extern struct {
                 dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
             .dist_tag => {
-                if (comptime tag != null) bun.assert(false);
                 if (workspace_path != null) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3663,12 +3666,12 @@ pub const Package = extern struct {
                 }
             },
             .npm => {
-                if (comptime tag != null) bun.assert(false);
                 const npm = dependency_version.value.npm;
-                if ((workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) or
+                if (workspace_version != null and
+                    (npm.version.satisfies(workspace_version.?, buf, buf) or
 
                     // no version in workspace package.json
-                    (workspace_path != null and npm.version.@"is *"()))
+                    (workspace_path != null and npm.version.@"is *"())))
                 {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`

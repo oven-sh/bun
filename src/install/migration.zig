@@ -410,9 +410,39 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         // the counting pass
         const pkg = entry.value.?.data.e_object;
 
-        if (pkg.get("link") != null or if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
-
         const pkg_path = entry.key.?.asString(allocator).?;
+
+        if (pkg.get("link")) |link| {
+            if (workspace_map) |wksp| {
+                if (link.data != .e_boolean) continue;
+                if (link.data.e_boolean.value) {
+                    if (pkg.get("resolved")) |resolved| {
+                        if (resolved.data != .e_string) continue;
+                        const resolved_str = resolved.asString(allocator).?;
+                        if (wksp.map.get(resolved_str)) |wksp_entry| {
+                            const pkg_name = packageNameFromPath(pkg_path);
+                            if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
+                                if (!this.workspace_paths.contains(stringHash(pkg_name))) {
+                                    // Package resolve path is an entry in the workspace map, but
+                                    // the package name is different. This package doesn't exist
+                                    // in node_modules, but we still allow packages to resolve to it's
+                                    // resolution.
+                                    this.workspace_paths.put(
+                                        allocator,
+                                        stringHash(pkg_name),
+                                        builder.append(String, resolved_str),
+                                    ) catch bun.outOfMemory();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            continue;
+        }
+
+        if (if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
 
         const workspace_entry = if (workspace_map) |map| map.map.get(pkg_path) else null;
         const is_workspace = workspace_entry != null;

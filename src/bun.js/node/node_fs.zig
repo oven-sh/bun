@@ -295,7 +295,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                var this: *ThisSingleTask = @fieldParentPtr( "task", task);
+                var this: *ThisSingleTask = @fieldParentPtr("task", task);
 
                 // TODO: error strings on node_fs will die
                 var node_fs = NodeFS{};
@@ -424,7 +424,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            const this: *ThisAsyncCpTask = @alignCast(@fieldParentPtr( "task", task));
+            const this: *ThisAsyncCpTask = @alignCast(@fieldParentPtr("task", task));
 
             var node_fs = NodeFS{};
             ThisAsyncCpTask.cpAsync(&node_fs, this);

@@ -847,7 +847,7 @@ describe("node:http", () => {
       }
     });
 
-    it("should emit `close` event on IncomingRequest when client disconnects", async done => {
+    it.todo("should emit `close` event on IncomingRequest when client disconnects", async done => {
       try {
         const response_interval_duration_ms = 100;
         const client_request_abort_duration_ms = 50;

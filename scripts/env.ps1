@@ -50,18 +50,18 @@ $CFLAGS = '/O2'
 $CXXFLAGS = '/O2'
 # $CXXFLAGS = '/O2 /MT'
 
-if ($Baseline) {
-  $CFLAGS += ' -march=nehalem'
-  $CXXFLAGS += ' -march=nehalem'
-}
+$CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
+
+$CFLAGS += " -march=${CPU_NAME}"
+$CXXFLAGS += " -march=${CPU_NAME}"
 
 $CMAKE_FLAGS = @(
   "-GNinja",
   "-DCMAKE_BUILD_TYPE=Release",
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
-  "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
-  "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
+  "-DCMAKE_C_FLAGS=$CFLAGS",
+  "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
 )
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
@@ -86,9 +86,10 @@ function Run() {
   $command = $args[0]
   $commandArgs = @()
   if ($args.Count -gt 1) {
-    $commandArgs = $args[1..($args.Count - 1)]
+    $commandArgs = @($args[1..($args.Count - 1)] | % {$_})
   }
 
+  write-host "> $command $commandArgs"
   & $command $commandArgs
   $result = $LASTEXITCODE
 

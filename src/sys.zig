@@ -9,7 +9,6 @@ const posix = std.posix;
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
-const linux = std.os.linux;
 const mem = std.mem;
 const mode_t = posix.mode_t;
 const open_sym = system.open;
@@ -647,7 +646,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
-        .linux => Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+        .linux => Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
         .windows => {
             var wbuf: bun.WPathBuffer = undefined;

@@ -476,7 +476,7 @@ Server.prototype.close = function (optionalCallback?) {
   this.emit("close");
 };
 
-Server.prototype[Symbol.asyncDispose] = async function () {
+Server.prototype[Symbol.asyncDispose] = function () {
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
     if (err) reject(err);

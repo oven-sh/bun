@@ -309,9 +309,6 @@ pub const RunCommand = struct {
 
         if (!use_system_shell) {
             if (!silent) {
-                if (Environment.isDebug) {
-                    Output.prettyError("[bun shell] ", .{});
-                }
                 Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
                 Output.flush();
             }

@@ -272,14 +272,16 @@ pub const WebWorker = struct {
         };
 
         if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.onError(vm.global, promise.result(vm.global.vm()));
+            const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
-            vm.exit_handler.exit_code = 1;
-            this.exitAndDeinit();
-            return;
+            if (!handled) {
+                vm.exit_handler.exit_code = 1;
+                this.exitAndDeinit();
+                return;
+            }
+        } else {
+            _ = promise.result(vm.global.vm());
         }
-
-        _ = promise.result(vm.global.vm());
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});

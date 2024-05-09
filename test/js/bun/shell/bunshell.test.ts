@@ -101,8 +101,8 @@ describe("bunshell", () => {
       const buf = new Uint8Array(1);
 
       expect(async () => {
-        await TestBuilder.command`echo hi > \\${buf}`.run();
-      }).toThrow("Redirection with no file");
+        await TestBuilder.command`echo hi > \\${buf}`.error("Redirection with no file").run();
+      });
     });
 
     test("in command position", async () => {

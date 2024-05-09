@@ -5,6 +5,7 @@ const TestBuilder = createTestBuilder(import.meta.path);
 import { bunEnv, bunExe } from "harness";
 import * as path from "node:path";
 
+$.nothrow();
 describe("$ argv", async () => {
   for (let i = 0; i < process.argv.length; i++) {
     const element = process.argv[i];

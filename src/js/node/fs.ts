@@ -542,10 +542,10 @@ function createReadStream(path, options) {
 }
 
 const NativeReadable = Stream._getNativeReadableStreamPrototype(2, Stream.Readable);
+const NativeReadablePrototype = NativeReadable.prototype;
 const kFs = Symbol("kFs");
 const kHandle = Symbol("kHandle");
 
-const kSuper = Symbol("kSuper");
 const kinternalRead = Symbol("kinternalRead");
 const kerrorOrDestroy = Symbol("kerrorOrDestroy");
 const mfileSize = Symbol("mfileSize");
@@ -556,7 +556,6 @@ function ReadStream(this: typeof ReadStream, pathOrFd, options) {
   }
 
   options ??= defaultReadStreamOptions;
-  this[kSuper] = NativeReadable.prototype;
 
   this.fd = null;
   this.bytesRead = 0;
@@ -673,8 +672,8 @@ ReadStream.prototype = {};
 ObjectSetPrototypeOf(ReadStream.prototype, NativeReadable.prototype);
 
 ReadStream.prototype._construct = function (callback) {
-  if (this[kSuper]._construct) {
-    this[kSuper]._construct.$apply(this, [callback]);
+  if (NativeReadablePrototype._construct) {
+    NativeReadablePrototype._construct.$apply(this, [callback]);
   } else {
     callback();
   }
@@ -690,17 +689,17 @@ ReadStream.prototype._destroy = function (err, cb) {
       handle[kUnref]();
       this.fd = null;
       this[kHandle] = null;
-      this[kSuper]._destroy.$apply(this, [err, cb]);
+      NativeReadablePrototype._destroy.$apply(this, [err, cb]);
       return;
     }
 
     var fd = this.fd;
     if (!fd) {
-      this[kSuper]._destroy.$apply(this, [err, cb]);
+      NativeReadablePrototype._destroy.$apply(this, [err, cb]);
     } else {
       $assert(this[kFs]);
       this[kFs].close(fd, er => {
-        this[kSuper]._destroy.$apply(this, [er || err, cb]);
+        NativeReadablePrototype._destroy.$apply(this, [er || err, cb]);
       });
       this.fd = null;
     }
@@ -724,12 +723,12 @@ ReadStream.prototype.push = function (chunk) {
       chunk = chunk.slice(0, end - this.pos + 1);
       var [_, ...rest] = arguments;
       this.pos = this.bytesRead;
-      return this[kSuper].push.$apply(this, [chunk, ...rest]);
+      return NativeReadablePrototype.push.$apply(this, [chunk, ...rest]);
     }
     this.pos = this.bytesRead;
   }
 
-  return this[kSuper].push.$apply(this, arguments);
+  return NativeReadablePrototype.push.$apply(this, arguments);
 };
 
 // n should be the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
@@ -768,7 +767,7 @@ ReadStream.prototype[kinternalRead] = function (n) {
 
   // At this point, we know the file size and how much we want to read of the file
   this[kIoDone] = false;
-  var res = this[kSuper]._read.$apply(this, [n]);
+  var res = NativeReadablePrototype._read.$apply(this, [n]);
   $debug("res -- undefined? why?", res);
   if ($isPromise(res)) {
     var then = res?.then;
@@ -813,17 +812,17 @@ ReadStream.prototype[kerrorOrDestroy] = function (err, sync = null) {
 
 ReadStream.prototype.pause = function () {
   this[readStreamPathFastPathSymbol] = false;
-  return this[kSuper].pause.$apply(this);
+  return NativeReadablePrototype.pause.$apply(this);
 };
 
 ReadStream.prototype.resume = function () {
   this[readStreamPathFastPathSymbol] = false;
-  return this[kSuper].resume.$apply(this);
+  return NativeReadablePrototype.resume.$apply(this);
 };
 
 ReadStream.prototype.unshift = function (...args) {
   this[readStreamPathFastPathSymbol] = false;
-  return this[kSuper].unshift.$apply(this, arguments);
+  return NativeReadablePrototype.unshift.$apply(this, arguments);
 };
 
 ReadStream.prototype.pipe = function (dest, pipeOpts) {
@@ -836,7 +835,7 @@ ReadStream.prototype.pipe = function (dest, pipeOpts) {
   }
 
   this[readStreamPathFastPathSymbol] = false;
-  return this[kSuper].pipe.$apply(this, [dest, pipeOpts]);
+  return NativeReadablePrototype.pipe.$apply(this, [dest, pipeOpts]);
 };
 
 var defaultWriteStreamOptions = {

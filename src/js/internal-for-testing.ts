@@ -44,6 +44,10 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   closeTempDirHandle: () => void;
 };
 
+export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
+  printLockfileAsJSON: (cwd: string) => string;
+};
+
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",
   "createNativeFrameForTesting",

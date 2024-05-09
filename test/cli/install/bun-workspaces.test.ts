@@ -3,6 +3,8 @@ import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { beforeEach, test, expect } from "bun:test";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { printLockfileAsJSON } = install_test_helpers;
 
 var testCounter: number = 0;
 
@@ -84,6 +86,8 @@ test("dependency on workspace without version in package.json", () => {
 
     expect(exitCode).toBe(0);
 
+    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
@@ -123,6 +127,8 @@ test("dependency on workspace without version in package.json", () => {
     ]);
 
     expect(exitCode).toBe(0);
+
+    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
 
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });

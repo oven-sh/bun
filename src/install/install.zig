@@ -11187,3 +11187,71 @@ pub const PackageManifestError = error{
 };
 
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
+
+pub const bun_install_js_bindings = struct {
+    const JSValue = JSC.JSValue;
+    const ZigString = JSC.ZigString;
+    const JSGlobalObject = JSC.JSGlobalObject;
+
+    pub fn generate(global: *JSGlobalObject) JSValue {
+        const obj = JSValue.createEmptyObject(global, 3);
+        const printLockfileAsJSON = ZigString.static("printLockfileAsJSON");
+        obj.put(global, printLockfileAsJSON, JSC.createCallback(global, printLockfileAsJSON, 1, jsPrintLockfileAsJSON));
+        return obj;
+    }
+
+    pub fn jsPrintLockfileAsJSON(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const allocator = bun.default_allocator;
+        var log = logger.Log.init(allocator);
+
+        const args = callFrame.arguments(1).slice();
+        const cwd = args[0].toSliceOrNull(globalObject) orelse return .undefined;
+        defer cwd.deinit();
+
+        const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);
+
+        var lockfile: Lockfile = undefined;
+        lockfile.initEmpty(allocator);
+
+        const load_result: Lockfile.LoadFromDiskResult = lockfile.loadFromDisk(allocator, &log, lockfile_path);
+
+        switch (load_result) {
+            .err => |err| {
+                globalObject.throw("Failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.value), lockfile_path });
+                return .zero;
+            },
+            .not_found => {
+                globalObject.throw("Lockfile not found: \"{s}\"", .{lockfile_path});
+                return .zero;
+            },
+            .ok => {},
+        }
+
+        var buffer = bun.MutableString.initEmpty(allocator);
+        defer buffer.deinit();
+
+        var buffered_writer = buffer.bufferedWriter();
+
+        std.json.stringify(
+            lockfile,
+            .{
+                .whitespace = .indent_2,
+                .emit_null_optional_fields = true,
+                .emit_nonportable_numbers_as_strings = true,
+            },
+            buffered_writer.writer(),
+        ) catch |err| {
+            globalObject.throw("Failed to print lockfile as JSON: {s}", .{@errorName(err)});
+            return .zero;
+        };
+
+        buffered_writer.flush() catch |err| {
+            globalObject.throw("Failed to print lockfile as JSON: {s}", .{@errorName(err)});
+            return .zero;
+        };
+
+        var str = bun.String.createUTF8(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalObject);
+    }
+};

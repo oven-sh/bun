@@ -161,10 +161,6 @@ pub const O = switch (Environment.os) {
 
 pub const S = if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
 
-const statSym = C.stat;
-const fstatSym = C.fstat;
-const lstat64 = C.lstat;
-
 pub const Tag = enum(u8) {
     TODO,
 
@@ -543,7 +539,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.stat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        const rc = statSym(path, &stat_);
+        const rc = C.stat(path, &stat_);
 
         if (comptime Environment.allow_assert)
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
@@ -558,7 +554,7 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
         return sys_uv.lstat(path);
     } else {
         var stat_ = mem.zeroes(bun.Stat);
-        if (Maybe(bun.Stat).errnoSys(lstat64(path, &stat_), .lstat)) |err| return err;
+        if (Maybe(bun.Stat).errnoSys(C.lstat64(path, &stat_), .lstat)) |err| return err;
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -568,7 +564,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
 
     var stat_ = mem.zeroes(bun.Stat);
 
-    const rc = fstatSym(fd.cast(), &stat_);
+    const rc = C.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
         log("fstat({}) = {d}", .{ fd, rc });

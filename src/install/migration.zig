@@ -422,16 +422,22 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
                         if (wksp.map.get(resolved_str)) |wksp_entry| {
                             const pkg_name = packageNameFromPath(pkg_path);
                             if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
-                                if (!this.workspace_paths.contains(stringHash(pkg_name))) {
+                                const pkg_name_hash = stringHash(pkg_name);
+                                const path_entry = this.workspace_paths.getOrPut(allocator, pkg_name_hash) catch bun.outOfMemory();
+                                if (!path_entry.found_existing) {
                                     // Package resolve path is an entry in the workspace map, but
                                     // the package name is different. This package doesn't exist
                                     // in node_modules, but we still allow packages to resolve to it's
                                     // resolution.
-                                    this.workspace_paths.put(
-                                        allocator,
-                                        stringHash(pkg_name),
-                                        builder.append(String, resolved_str),
-                                    ) catch bun.outOfMemory();
+                                    path_entry.value_ptr.* = builder.append(String, resolved_str);
+
+                                    if (wksp_entry.version) |version_string| {
+                                        const sliced_version = Semver.SlicedString.init(version_string, version_string);
+                                        const result = Semver.Version.parse(sliced_version);
+                                        if (result.valid and result.wildcard == .none) {
+                                            this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()) catch bun.outOfMemory();
+                                        }
+                                    }
                                 }
                             }
                         }

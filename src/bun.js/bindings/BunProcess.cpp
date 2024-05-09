@@ -499,6 +499,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobal)) {
+        zigGlobal = Bun__getDefaultGlobal();
+    }
+    JSValue cb = jsCast<Process*>(zigGlobal->processObject())->getUncaughtExceptionCaptureCallback();
+    if (cb.isEmpty() || !cb.isCell()) {
+        return JSValue::encode(jsBoolean(false));
+    }
+
+    return JSValue::encode(jsBoolean(true));
+}
+
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
@@ -2787,6 +2802,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   exitCode                         processExitCode                                     CustomAccessor
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2

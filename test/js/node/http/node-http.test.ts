@@ -847,7 +847,7 @@ describe("node:http", () => {
       }
     });
 
-    it.todo("should emit `close` event on IncomingRequest when client disconnects", async done => {
+    it("should emit `close` event on IncomingRequest when client disconnects", async done => {
       try {
         const response_interval_duration_ms = 100;
         const client_request_abort_duration_ms = 50;
@@ -1996,94 +1996,94 @@ it("destroy should end download", async () => {
   }
 });
 
-// it("can send brotli from Server and receive with fetch", async () => {
-//   try {
-//     var server = createServer((req, res) => {
-//       expect(req.url).toBe("/hello");
-//       res.writeHead(200);
-//       res.setHeader("content-encoding", "br");
+it("can send brotli from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
 
-//       const inputStream = new stream.Readable();
-//       inputStream.push("Hello World");
-//       inputStream.push(null);
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
 
-//       inputStream.pipe(zlib.createBrotliCompress()).pipe(res);
-//     });
-//     const url = await listen(server);
-//     const res = await fetch(new URL("/hello", url));
-//     expect(await res.text()).toBe("Hello World");
-//   } catch (e) {
-//     throw e;
-//   } finally {
-//     server.close();
-//   }
-// });
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
 
-// it("can send brotli from Server and receive with Client", async () => {
-//   try {
-//     var server = createServer((req, res) => {
-//       expect(req.url).toBe("/hello");
-//       res.writeHead(200);
-//       res.setHeader("content-encoding", "br");
+it("can send brotli from Server and receive with Client", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
 
-//       const inputStream = new stream.Readable();
-//       inputStream.push("Hello World");
-//       inputStream.push(null);
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
 
-//       const passthrough = new stream.PassThrough();
-//       passthrough.on("data", data => res.write(data));
-//       passthrough.on("end", () => res.end());
+      const passthrough = new stream.PassThrough();
+      passthrough.on("data", data => res.write(data));
+      passthrough.on("end", () => res.end());
 
-//       inputStream.pipe(zlib.createBrotliCompress()).pipe(passthrough);
-//     });
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(passthrough);
+    });
 
-//     const url = await listen(server);
-//     const { resolve, reject, promise } = Promise.withResolvers();
-//     http.get(new URL("/hello", url), res => {
-//       let rawData = "";
-//       const passthrough = stream.PassThrough();
-//       passthrough.on("data", chunk => {
-//         rawData += chunk;
-//       });
-//       passthrough.on("end", () => {
-//         try {
-//           expect(Buffer.from(rawData)).toEqual(Buffer.from("Hello World"));
-//           resolve();
-//         } catch (e) {
-//           reject(e);
-//         }
-//       });
-//       res.pipe(zlib.createBrotliDecompress()).pipe(passthrough);
-//     });
-//     await promise;
-//   } catch (e) {
-//     throw e;
-//   } finally {
-//     server.close();
-//   }
-// });
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      let rawData = "";
+      const passthrough = stream.PassThrough();
+      passthrough.on("data", chunk => {
+        rawData += chunk;
+      });
+      passthrough.on("end", () => {
+        try {
+          expect(Buffer.from(rawData)).toEqual(Buffer.from("Hello World"));
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      res.pipe(zlib.createBrotliDecompress()).pipe(passthrough);
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
 
-// it("ServerResponse ClientRequest field exposes agent getter", async () => {
-//   try {
-//     var server = createServer((req, res) => {
-//       expect(req.url).toBe("/hello");
-//       res.writeHead(200);
-//       res.end("world");
-//     });
-//     const url = await listen(server);
-//     const { resolve, reject, promise } = Promise.withResolvers();
-//     http.get(new URL("/hello", url), res => {
-//       try {
-//         expect(res.req.agent.protocol).toBe("http:");
-//         resolve();
-//       } catch (e) {
-//         reject(e);
-//       }
-//     });
-//     await promise;
-//   } catch (e) {
-//     throw e;
-//   } finally {
-//     server.close();
-//   }
-// });
+it("ServerResponse ClientRequest field exposes agent getter", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.end("world");
+    });
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      try {
+        expect(res.req.agent.protocol).toBe("http:");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});

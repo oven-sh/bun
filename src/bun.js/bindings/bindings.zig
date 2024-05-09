@@ -2487,6 +2487,10 @@ pub const JSInternalPromise = extern struct {
         return cppFn("create", .{globalThis});
     }
 
+    pub fn asValue(this: *JSInternalPromise) JSValue {
+        return JSValue.fromCell(this);
+    }
+
     pub const Extern = [_][]const u8{
         "create",
         // "then_",
@@ -2557,6 +2561,12 @@ pub const AnyPromise = union(enum) {
         switch (this) {
             inline else => |promise| promise.rejectAsHandledException(globalThis, value),
         }
+    }
+    pub fn asValue(this: AnyPromise, globalThis: *JSGlobalObject) JSValue {
+        return switch (this) {
+            .Normal => |promise| promise.asValue(globalThis),
+            .Internal => |promise| promise.asValue(),
+        };
     }
 };
 

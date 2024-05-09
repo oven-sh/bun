@@ -1759,8 +1759,8 @@ pub fn getPackageID(
                 return id;
             }
 
-            if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+            if (resolutions[id].tag == .npm and npm_version != null) {
+                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
@@ -1771,8 +1771,8 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+                if (resolutions[id].tag == .npm and npm_version != null) {
+                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -3623,6 +3623,10 @@ pub const Package = extern struct {
             }
         }
 
+        if (comptime tag != null) {
+            bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
+        }
+
         switch (dependency_version.tag) {
             .folder => {
                 const relative = Path.relative(
@@ -3639,10 +3643,9 @@ pub const Package = extern struct {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
-            .npm => if (comptime tag != null)
-                unreachable
-            else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
+            .npm => {
+                const npm = dependency_version.value.npm;
+                if (workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3664,77 +3667,79 @@ pub const Package = extern struct {
                     }
                 }
             },
-            .workspace => if (workspace_path) |path| {
-                if (workspace_range) |range| {
-                    if (workspace_version) |ver| {
-                        if (range.satisfies(ver, buf, buf)) {
-                            dependency_version.literal = path;
-                            dependency_version.value.workspace = path;
+            .workspace => {
+                if (workspace_path) |path| {
+                    if (workspace_range) |range| {
+                        if (workspace_version) |ver| {
+                            if (range.satisfies(ver, buf, buf)) {
+                                dependency_version.literal = path;
+                                dependency_version.value.workspace = path;
+                            }
                         }
+                    } else {
+                        dependency_version.literal = path;
+                        dependency_version.value.workspace = path;
                     }
                 } else {
+                    const workspace = dependency_version.value.workspace.slice(buf);
+                    const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
+                        var buf2: bun.PathBuffer = undefined;
+                        break :brk Path.relativePlatform(
+                            FileSystem.instance.top_level_dir,
+                            Path.joinAbsStringBuf(
+                                FileSystem.instance.top_level_dir,
+                                &buf2,
+                                &[_]string{
+                                    source.path.name.dir,
+                                    workspace,
+                                },
+                                .auto,
+                            ),
+                            .posix,
+                            false,
+                        );
+                    });
+                    if (comptime Environment.allow_assert) {
+                        assert(path.len() > 0);
+                        assert(!std.fs.path.isAbsolute(path.slice(buf)));
+                    }
                     dependency_version.literal = path;
                     dependency_version.value.workspace = path;
-                }
-            } else {
-                const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
-                    var buf2: bun.PathBuffer = undefined;
-                    break :brk Path.relativePlatform(
-                        FileSystem.instance.top_level_dir,
-                        Path.joinAbsStringBuf(
-                            FileSystem.instance.top_level_dir,
-                            &buf2,
-                            &[_]string{
-                                source.path.name.dir,
-                                workspace,
-                            },
-                            .auto,
-                        ),
-                        .posix,
-                        false,
-                    );
-                });
-                if (comptime Environment.allow_assert) {
-                    assert(path.len() > 0);
-                    assert(!std.fs.path.isAbsolute(path.slice(buf)));
-                }
-                dependency_version.literal = path;
-                dependency_version.value.workspace = path;
 
-                const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
+                    const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                    const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
 
-                if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (switch (package_dep.version.tag) {
-                            // `dependencies` & `workspaces` defined within the same `package.json`
-                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
-                            // `workspace:*`
-                            .workspace => found_matching_workspace and
-                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
-                            else => false,
-                        }) {
-                            package_dep.version = dependency_version;
-                            workspace_entry.value_ptr.* = path;
-                            return null;
+                    if (workspace_version) |ver| {
+                        try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (switch (package_dep.version.tag) {
+                                // `dependencies` & `workspaces` defined within the same `package.json`
+                                .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                    package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                // `workspace:*`
+                                .workspace => found_matching_workspace and
+                                    String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                                else => false,
+                            }) {
+                                package_dep.version = dependency_version;
+                                workspace_entry.value_ptr.* = path;
+                                return null;
+                            }
                         }
-                    }
-                } else if (workspace_entry.found_existing) {
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (package_dep.version.tag == .workspace and
-                            String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
-                        {
-                            package_dep.version = dependency_version;
-                            return null;
+                    } else if (workspace_entry.found_existing) {
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (package_dep.version.tag == .workspace and
+                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
+                            {
+                                package_dep.version = dependency_version;
+                                return null;
+                            }
                         }
+                        return error.InstallFailed;
                     }
-                    return error.InstallFailed;
-                }
 
-                workspace_entry.value_ptr.* = path;
+                    workspace_entry.value_ptr.* = path;
+                }
             },
             else => {},
         }
@@ -4583,7 +4588,7 @@ pub const Package = extern struct {
         }
 
         total_dependencies_count = 0;
-        const in_workspace = lockfile.workspace_paths.contains(@as(u32, @truncate(package.name_hash)));
+        const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
@@ -6095,7 +6100,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             if (pkg.resolution.tag == .uninitialized) {
                 try w.write(null);
             } else {
-                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .auto) });
+                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .posix) });
                 try w.write(b);
             }
 

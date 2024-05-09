@@ -1242,32 +1242,27 @@ pub const Behavior = packed struct(u8) {
     }
 
     pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const fields = std.meta.fields(Behavior);
-        var num_fields: u8 = 0;
-        inline for (fields) |f| {
-            if (f.type == bool and @field(self, f.name)) {
-                num_fields += 1;
+        const fields = .{
+            "normal",
+            "optional",
+            "dev",
+            "peer",
+            "workspace",
+        };
+
+        var first = true;
+        inline for (fields) |field| {
+            if (@field(self, field)) {
+                if (!first) {
+                    try writer.writeAll(" | ");
+                }
+                try writer.writeAll(field);
+                first = false;
             }
         }
-        switch (num_fields) {
-            0 => try writer.writeAll("Behavior.uninitialized"),
-            1 => {
-                inline for (fields) |f| {
-                    if (f.type == bool and @field(self, f.name)) {
-                        try writer.writeAll("Behavior." ++ f.name);
-                        break;
-                    }
-                }
-            },
-            else => {
-                try writer.writeAll("Behavior{");
-                inline for (fields) |f| {
-                    if (f.type == bool and @field(self, f.name)) {
-                        try writer.writeAll(" " ++ f.name);
-                    }
-                }
-                try writer.writeAll(" }");
-            },
+
+        if (first) {
+            try writer.writeAll("-");
         }
     }
 

@@ -605,6 +605,10 @@ pub const Version = extern struct {
         return lhs.order(rhs, ctx, ctx);
     }
 
+    pub fn isZero(this: Version) bool {
+        return this.patch == 0 and this.minor == 0 and this.major == 0;
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,
@@ -1117,8 +1121,7 @@ pub const Version = extern struct {
                 },
                 '-', '+' => {
                     // Just a plain tag with no version is invalid.
-
-                    if (part_i < 2) {
+                    if (part_i < 2 and result.wildcard == .none) {
                         result.valid = false;
                         is_done = true;
                         break;
@@ -1276,6 +1279,18 @@ pub const Range = struct {
     left: Comparator = .{},
     right: Comparator = .{},
 
+    pub fn format(this: Range, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.left.op == .unset and this.right.op == .unset) {
+            return;
+        }
+
+        if (this.right.op == .unset) {
+            try std.fmt.format(writer, "{}", .{this.left});
+        } else {
+            try std.fmt.format(writer, "{} {}", .{ this.left, this.right });
+        }
+    }
+
     /// *
     /// >= 0.0.0
     /// >= 0
@@ -1366,12 +1381,59 @@ pub const Range = struct {
         return lhs.left.eql(rhs.left) and lhs.right.eql(rhs.right);
     }
 
+    pub const Formatter = struct {
+        buffer: []const u8,
+        range: *const Range,
+
+        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.range.left.op == Op.unset and this.range.right.op == Op.unset) {
+                return;
+            }
+
+            if (this.range.right.op == .unset) {
+                try std.fmt.format(writer, "{}", .{this.range.left.fmt(this.buffer)});
+            } else {
+                try std.fmt.format(writer, "{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            }
+        }
+    };
+
+    pub fn fmt(this: *const Range, buf: []const u8) @This().Formatter {
+        return .{ .buffer = buf, .range = this };
+    }
+
     pub const Comparator = struct {
         op: Op = .unset,
         version: Version = .{},
 
         pub inline fn eql(lhs: Comparator, rhs: Comparator) bool {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
+        }
+
+        pub const Formatter = struct {
+            buffer: []const u8,
+            comparator: *const Comparator,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.comparator.op == Op.unset) {
+                    return;
+                }
+
+                switch (this.comparator.op) {
+                    .unset => unreachable, // see above,
+                    .eql => try writer.writeAll("=="),
+                    .lt => try writer.writeAll("<"),
+                    .lte => try writer.writeAll("<="),
+                    .gt => try writer.writeAll(">"),
+                    .gte => try writer.writeAll(">="),
+                }
+
+                try std.fmt.format(writer, "{}", .{this.comparator.version.fmt(this.buffer)});
+            }
+        };
+
+        pub fn fmt(this: *const Comparator, buf: []const u8) @This().Formatter {
+            return .{ .buffer = buf, .comparator = this };
         }
 
         pub fn satisfies(
@@ -1470,6 +1532,27 @@ pub const Query = struct {
     // AND
     next: ?*Query = null,
 
+    const Formatter = struct {
+        query: *const Query,
+        buffer: []const u8,
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const this = formatter.query;
+
+            if (this.next) |ptr| {
+                if (ptr.range.hasLeft() or ptr.range.hasRight()) {
+                    try std.fmt.format(writer, "{} && {}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
+                    return;
+                }
+            }
+
+            try std.fmt.format(writer, "{}", .{this.range.fmt(formatter.buffer)});
+        }
+    };
+
+    pub fn fmt(this: *const Query, buf: []const u8) @This().Formatter {
+        return .{ .query = this, .buffer = buf };
+    }
+
     /// Linked-list of Queries OR'd together
     /// "^1 || ^2"
     /// ----|-----
@@ -1480,6 +1563,24 @@ pub const Query = struct {
 
         // OR
         next: ?*List = null,
+
+        const Formatter = struct {
+            list: *const List,
+            buffer: []const u8,
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.list;
+
+                if (this.next) |ptr| {
+                    try std.fmt.format(writer, "{} || {}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
+                } else {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buffer)});
+                }
+            }
+        };
+
+        pub fn fmt(this: *const List, buf: []const u8) @This().Formatter {
+            return .{ .list = this, .buffer = buf };
+        }
 
         pub fn satisfies(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
             return list.head.satisfies(
@@ -1555,6 +1656,44 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        const Formatter = struct {
+            group: *const Group,
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.group;
+
+                if (this.tail == null and this.head.tail == null and !this.head.head.range.hasLeft()) {
+                    return;
+                }
+
+                if (this.tail == null and this.head.tail == null) {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(this.input)});
+                    return;
+                }
+
+                var list = &this.head;
+                while (list.next) |next| {
+                    try std.fmt.format(writer, "{} && ", .{list.fmt(this.input)});
+                    list = next;
+                }
+
+                try std.fmt.format(writer, "{}", .{list.fmt(this.input)});
+            }
+        };
+
+        pub fn fmt(this: *const Group) @This().Formatter {
+            return .{ .group = this };
+        }
+
+        pub fn jsonStringify(this: *const Group, writer: anytype) !void {
+            const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
+            defer bun.default_allocator.free(temp);
+            try std.json.encodeJsonString(temp, .{}, writer);
+        }
+
+        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try this.fmt().format("", .{}, writer);
+        }
+
         pub fn deinit(this: *Group) void {
             var list = this.head;
             var allocator = this.allocator;
@@ -1607,6 +1746,16 @@ pub const Query = struct {
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
+        }
+
+        pub fn @"is *"(this: *const Group) bool {
+            const left = this.head.head.range.left;
+            return this.head.head.range.right.op == .unset and
+                left.op == .gte and
+                this.head.next == null and
+                this.head.head.next == null and
+                left.version.isZero() and
+                !this.flags.isSet(Flags.build);
         }
 
         pub inline fn eql(lhs: Group, rhs: Group) bool {

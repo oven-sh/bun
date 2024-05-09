@@ -4,8 +4,6 @@ const {
   getWindowSize: _getWindowSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
-const fs = require("node:fs");
-
 // primordials
 const NumberIsInteger = Number.isInteger;
 
@@ -15,7 +13,7 @@ function ReadStream(fd) {
   }
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
 
   this.isRaw = false;
   this.isTTY = true;
@@ -23,7 +21,7 @@ function ReadStream(fd) {
 
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
+    const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
     Prototype.setRawMode = function (flag) {
       flag = !!flag;
@@ -139,7 +137,7 @@ function WriteStream(fd) {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = fs.WriteStream.$call(this, "", { fd });
+  const stream = require("node:fs").WriteStream.$call(this, "", { fd });
 
   stream.columns = undefined;
   stream.rows = undefined;
@@ -158,7 +156,7 @@ function WriteStream(fd) {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
+    const Real = require("node:fs").WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
     WriteStream.prototype._refreshSize = function () {

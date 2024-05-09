@@ -417,6 +417,7 @@ describe("signal", () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR1"],
       env: bunEnv,
+      stderr: "inherit",
     });
 
     expect(await child.exited).toBe(0);

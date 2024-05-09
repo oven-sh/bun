@@ -46,13 +46,29 @@ function dedent(str: string | TemplateStringsArray, ...args: any[]) {
 let currentFile: string | undefined;
 
 function errorOrWarnParser(isError = true) {
-  const prefix = isError ? "error: " : "warn: ";
-  return function (text: string) {
+  let defaultPrefix = isError ? "error: " : "warn: ";
+  return function parser(text: string) {
+    let prefix = defaultPrefix;
     var i = 0;
     var list = [];
     while (i < text.length) {
       let errorLineI = text.indexOf(prefix, i);
       if (errorLineI === -1) {
+        // Sometimes, our errors start with the error name itself
+        // e.g. "ConnectionRefused: connect ECONNREFUSED 127.0.0.1:8080"
+        // In those cases, it IS an error, but it doesn't start with "error: ",
+        if (list.length === 0 && prefix === defaultPrefix && !text.includes(prefix)) {
+          const firstPrefix = text.indexOf(": ", 0);
+          if (firstPrefix !== -1) {
+            const possiblePrefix = text.slice(0, firstPrefix).trim();
+            if (/^([a-zA-Z0-9_]+)$/.test(possiblePrefix)) {
+              prefix = possiblePrefix.trim() + ": ";
+              i = 0;
+              continue;
+            }
+          }
+        }
+
         return list;
       }
       const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
@@ -175,7 +191,7 @@ export interface BundlerTestInput {
   /** Defaults to `/out` */
   outdir?: string;
   /** Defaults to "browser". "bun" is set to "node" when using esbuild. */
-  target?: "bun" | "node" | "browser";
+  target?: "bun" | "node" | "browser" | `bun-${string}`;
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";

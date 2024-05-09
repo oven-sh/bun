@@ -436,3 +436,45 @@ pub fn defineValues(this: *const CompileTarget) []const []const u8 {
         },
     }
 }
+
+const JSC = bun.JSC;
+pub fn createCompileTargetBindings(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    var object = JSC.JSValue.createEmptyObject(globalObject, 2);
+    const getDefaultTarget = struct {
+        pub fn getDefaultTarget(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const target = CompileTarget{};
+            var str = bun.String.createFormat("{}", .{target}) catch |err| {
+                global.throwError(err, "Failed");
+                return .zero;
+            };
+            defer str.deref();
+            return str.toJS(global);
+        }
+    }.getDefaultTarget;
+    const from_fn = struct {
+        pub fn from(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const name_value = callframe.arguments(1).ptr[0];
+            const input = name_value.toSlice(global, bun.default_allocator);
+            defer input.deinit();
+            const target = CompileTarget.from(input.slice());
+
+            var str = bun.String.createFormat("{}", .{target}) catch |err| {
+                global.throwError(err, "Failed");
+                return .zero;
+            };
+            defer str.deref();
+            return str.toJS(global);
+        }
+    }.from;
+    object.put(
+        globalObject,
+        bun.String.init("getDefaultTarget"),
+        JSC.createCallback(globalObject, null, 0, &getDefaultTarget),
+    );
+    object.put(
+        globalObject,
+        bun.String.init("from"),
+        JSC.createCallback(globalObject, null, 1, &from_fn),
+    );
+    return object;
+}

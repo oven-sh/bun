@@ -602,7 +602,7 @@ pub const TestScope = struct {
         debug("onReject", .{});
         const arguments = callframe.arguments(2);
         const err = arguments.ptr[0];
-        globalThis.bunVM().onError(globalThis, err);
+        _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
         task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .promise);
         globalThis.bunVM().autoGarbageCollect();
@@ -637,7 +637,7 @@ pub const TestScope = struct {
                     task.handleResult(.{ .pass = expect.active_test_expectation_counter.actual }, .callback);
                 } else {
                     debug("done(err)", .{});
-                    globalThis.bunVM().onError(globalThis, err);
+                    _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
                     task.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .callback);
                 }
             } else {
@@ -696,7 +696,7 @@ pub const TestScope = struct {
         initial_value = callJSFunctionForTestRunner(vm, vm.global, this.func, this.func_arg);
 
         if (initial_value.isAnyError()) {
-            vm.onError(vm.global, initial_value);
+            _ = vm.uncaughtException(vm.global, initial_value, true);
 
             if (this.tag == .todo) {
                 return .{ .todo = {} };
@@ -719,7 +719,7 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.onError(vm.global, promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
@@ -893,7 +893,7 @@ pub const DescribeScope = struct {
             if (args.len > 0) {
                 const err = args.ptr[0];
                 if (!err.isEmptyOrUndefinedOrNull()) {
-                    ctx.bunVM().onError(ctx.bunVM().global, err);
+                    _ = ctx.bunVM().uncaughtException(ctx.bunVM().global, err, true);
                 }
             }
             scope.done = true;
@@ -1090,12 +1090,12 @@ pub const DescribeScope = struct {
                 switch (prom.status(globalObject.ptr().vm())) {
                     JSPromise.Status.Fulfilled => {},
                     else => {
-                        globalObject.bunVM().onError(globalObject, prom.result(globalObject.ptr().vm()));
+                        _ = globalObject.bunVM().unhandledRejection(globalObject, prom.result(globalObject.ptr().vm()), prom.asValue(globalObject));
                         return .undefined;
                     },
                 }
             } else if (result.toError()) |err| {
-                globalObject.bunVM().onError(globalObject, err);
+                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 return .undefined;
             }
         }
@@ -1123,7 +1123,7 @@ pub const DescribeScope = struct {
 
         if (this.shouldEvaluateScope()) {
             if (this.runCallback(globalObject, .beforeAll)) |err| {
-                globalObject.bunVM().onError(globalObject, err);
+                _ = globalObject.bunVM().uncaughtException(globalObject, err, true);
                 while (i < end) {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
@@ -1168,7 +1168,7 @@ pub const DescribeScope = struct {
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
-                globalThis.bunVM().onError(globalThis, err);
+                _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
 
@@ -1180,7 +1180,7 @@ pub const DescribeScope = struct {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
-                globalThis.bunVM().onError(globalThis, err);
+                _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
 
@@ -1327,7 +1327,7 @@ pub const TestRunnerTask = struct {
             const label = test_.label;
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
-                jsc_vm.onError(globalThis, err);
+                _ = jsc_vm.uncaughtException(globalThis, err, true);
                 Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
                 return false;
             }
@@ -1429,7 +1429,7 @@ pub const TestRunnerTask = struct {
 
         if (comptime from == .timeout) {
             const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
-            this.globalThis.bunVM().onError(this.globalThis, err);
+            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
         }
 
         processTestResult(this, this.globalThis, result, test_, test_id, describe);

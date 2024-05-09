@@ -882,7 +882,7 @@ pub const EventLoop = struct {
         const result = callback.callWithThis(globalObject, thisValue, arguments);
 
         if (result.toError()) |err| {
-            this.virtual_machine.onError(globalObject, err);
+            _ = this.virtual_machine.uncaughtException(globalObject, err, false);
         }
     }
 

@@ -44,8 +44,24 @@ test("dependency on workspace without version in package.json", () => {
 
   mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
 
-  const shouldWork: string[] = ["*", "*.*.*", "latest", "", "=*", "kjwoehcojrgjoj", "*.1.*", "*-pre"];
-  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.1", "*-pre+build", "*+build"];
+  const shouldWork: string[] = [
+    "*",
+    "*.*.*",
+    "=*",
+    "kjwoehcojrgjoj", // dist-tag does not exist, should choose local workspace
+    "*.1.*",
+    "*-pre",
+  ];
+  const shouldNotWork: string[] = [
+    "1",
+    "1.*",
+    "1.1.*",
+    "1.1.1",
+    "*-pre+build",
+    "*+build",
+    "latest", // dist-tag exists, should choose package from npm
+    "",
+  ];
 
   for (const version of shouldWork) {
     writeFileSync(

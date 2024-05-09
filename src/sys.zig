@@ -23,13 +23,12 @@ const PathString = bun.PathString;
 const Syscall = @This();
 const SystemError = JSC.SystemError;
 
+const linux = system;
+
 pub const sys_uv = if (Environment.isWindows) @import("./sys_uv.zig") else Syscall;
 
 const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
-
-// On Linux aarch64, Zig is missing stat & lstat syscalls
-const use_libc = !(Environment.isLinux and Environment.isX64);
 
 pub const system = switch (Environment.os) {
     .linux => std.c,
@@ -162,26 +161,9 @@ pub const O = switch (Environment.os) {
 
 pub const S = if (Environment.isLinux) linux.S else if (Environment.isPosix) std.posix.S else struct {};
 
-const statSym = if (use_libc)
-    C.stat
-else if (Environment.isLinux)
-    linux.stat
-else
-    @compileError("STAT");
-
-const fstatSym = if (use_libc)
-    C.fstat
-else if (Environment.isLinux)
-    linux.fstat
-else
-    @compileError("STAT");
-
-const lstat64 = if (use_libc)
-    C.lstat
-else if (Environment.isLinux)
-    linux.lstat
-else
-    @compileError("STAT");
+const statSym = C.stat;
+const fstatSym = C.fstat;
+const lstat64 = C.lstat;
 
 pub const Tag = enum(u8) {
     TODO,
@@ -1788,7 +1770,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
 
     while (true) {
         const rc = switch (comptime Environment.os) {
-            .linux => linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
+            .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .mac => bun.C.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             else => @compileError("renameat2() is not implemented on this platform"),
         };
@@ -2593,7 +2575,7 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             var debug_timer = bun.Output.DebugTimer.start();
 
             // Note that there is a bug on Linux Kernel 5
-            const rc = C.sys_preadv2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+            const rc = C.sys_preadv2(@intCast(fd.int()), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
                 log("preadv2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
@@ -2637,7 +2619,7 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 
             var debug_timer = bun.Output.DebugTimer.start();
 
-            const rc = C.sys_pwritev2(@intCast(fd.int()), &iovec, 1, -1, linux.RWF.NOWAIT);
+            const rc = C.sys_pwritev2(@intCast(fd.int()), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
                 log("pwritev2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });

@@ -286,7 +286,7 @@ pub const AnyTaskWithExtraContext = struct {
                         @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
-                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr(AnyTaskWithExtraContext, "ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
+                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr("ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
                 bun.default_allocator.destroy(anytask);
             }
         };

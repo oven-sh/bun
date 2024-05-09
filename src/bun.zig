@@ -764,12 +764,12 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
-            return switch (is_enabled.load(.SeqCst)) {
+            return switch (is_enabled.load(.seq_cst)) {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
                     const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .SeqCst);
+                    is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
                     return enabled;
                 },
             };

@@ -616,8 +616,9 @@ else
     "x64";
 
 const metadata_version_line = std.fmt.comptimePrint(
-    "Bun v{s} {s} {s}{s}\n",
+    "Bun {s}v{s} {s} {s}{s}\n",
     .{
+        if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,

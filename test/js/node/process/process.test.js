@@ -603,3 +603,11 @@ it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
   expect(await proc.exited).toBe(1);
   expect(await new Response(proc.stderr).text()).toContain("bar");
 });
+
+it("process.hasUncaughtExceptionCaptureCallback", () => {
+  process.setUncaughtExceptionCaptureCallback(null);
+  expect(process.hasUncaughtExceptionCaptureCallback()).toBe(false);
+  process.setUncaughtExceptionCaptureCallback(() => {});
+  expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
+  process.setUncaughtExceptionCaptureCallback(null);
+});

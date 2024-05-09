@@ -1759,8 +1759,8 @@ pub fn getPackageID(
                 return id;
             }
 
-            if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+            if (resolutions[id].tag == .npm and npm_version != null) {
+                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
@@ -1771,8 +1771,8 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+                if (resolutions[id].tag == .npm and npm_version != null) {
+                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },

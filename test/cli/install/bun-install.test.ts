@@ -276,7 +276,6 @@ it("should work when moving workspace packages", async () => {
     },
   });
 
-
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 
   await Bun.$/* sh */ `
@@ -348,7 +347,6 @@ it("should work when renaming a single workspace package", async () => {
       },
     },
   });
-
 
   await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 

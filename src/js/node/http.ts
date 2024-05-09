@@ -481,8 +481,8 @@ Server.prototype[Symbol.asyncDispose] = async function () {
   this.close(function (err, ...args) {
     if (err) reject(err);
     else resolve(...args);
-    return promise;
   });
+  return promise;
 };
 
 Server.prototype.address = function () {

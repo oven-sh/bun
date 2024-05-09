@@ -6100,7 +6100,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             if (pkg.resolution.tag == .uninitialized) {
                 try w.write(null);
             } else {
-                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .auto) });
+                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .posix) });
                 try w.write(b);
             }
 

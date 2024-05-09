@@ -10462,8 +10462,10 @@ pub const PackageManager = struct {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
-                        lockfile.overrides.count(&lockfile, builder);
+                        for (lockfile.workspace_paths.values()) |path| builder.count(path.slice(lockfile.buffers.string_bytes.items));
+                        for (lockfile.workspace_versions.values()) |version| version.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
+                        lockfile.overrides.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -10544,6 +10546,31 @@ pub const PackageManager = struct {
                             *Lockfile.StringBuilder,
                             builder,
                         );
+
+                        // Update workspace paths
+                        try manager.lockfile.workspace_paths.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_paths.entries.len);
+                        {
+                            manager.lockfile.workspace_paths.clearRetainingCapacity();
+                            var iter = lockfile.workspace_paths.iterator();
+                            while (iter.next()) |entry| {
+                                // The string offsets will be wrong so fix them
+                                const path = entry.value_ptr.slice(lockfile.buffers.string_bytes.items);
+                                const str = builder.append(String, path);
+                                manager.lockfile.workspace_paths.putAssumeCapacity(entry.key_ptr.*, str);
+                            }
+                        }
+
+                        // Update workspace versions
+                        try manager.lockfile.workspace_versions.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_versions.entries.len);
+                        {
+                            manager.lockfile.workspace_versions.clearRetainingCapacity();
+                            var iter = lockfile.workspace_versions.iterator();
+                            while (iter.next()) |entry| {
+                                // Copy version string offsets
+                                const version = entry.value_ptr.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                                manager.lockfile.workspace_versions.putAssumeCapacity(entry.key_ptr.*, version);
+                            }
+                        }
 
                         builder.clamp();
 

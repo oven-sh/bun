@@ -359,14 +359,14 @@ pub const UDPSocket = struct {
 
         if (callback == .zero) {
             if (err.len > 0)
-                vm.onError(globalThis, err[0]);
+                _ = vm.uncaughtException(globalThis, err[0], false);
 
             return false;
         }
 
         const result = callback.callWithThis(globalThis, thisValue, err);
         if (result.isAnyError()) {
-            vm.onError(globalThis, result);
+            _ = vm.uncaughtException(globalThis, result, false);
         }
 
         return true;

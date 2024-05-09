@@ -324,7 +324,7 @@ pub fn GlobWalker_(
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
 
-    const count_fds = Accessor.count_fds and bun.Environment.allow_assert;
+    const count_fds = Accessor.count_fds and bun.Environment.isDebug;
 
     const stdJoin = comptime if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
     const bunJoin = comptime if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
@@ -460,36 +460,53 @@ pub fn GlobWalker_(
 
                     was_absolute = true;
 
-                    const path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
-                    const component_idx = this.walker.basename_excluding_special_syntax_component_idx + 1;
+                    var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    var starting_component_idx = this.walker.basename_excluding_special_syntax_component_idx;
 
-                    // This means we got a pattern without any special glob syntax, for example:
-                    // `/Users/zackradisic/foo/bar`
-                    // In that case we don't need to do any walking and can just open up the FS entry
-                    if (component_idx >= this.walker.patternComponents.items.len) {
-                        const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
-                        const fd = switch (try Accessor.open(path)) {
-                            .err => |e| {
-                                if (e.getErrno() == bun.C.E.NOTDIR) {
-                                    // TODO check symlink
-                                    this.iter_state = .{ .matched = path };
-                                    return Maybe(void).success;
-                                }
-                                const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
-                                return .{ .err = e.withPath(errpath) };
-                            },
-                            .result => |fd| fd,
-                        };
-                        _ = Accessor.close(fd);
-                        this.iter_state = .{ .matched = path };
-                        return Maybe(void).success;
+                    if (path_without_special_syntax.len == 0) {
+                        path_without_special_syntax = if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
+                    } else {
+                        // Skip the components associated with the literal path
+                        starting_component_idx += 1;
+
+                        // This means we got a pattern without any special glob syntax, for example:
+                        // `/Users/zackradisic/foo/bar`
+                        //
+                        // In that case we don't need to do any walking and can just open up the FS entry
+                        if (starting_component_idx >= this.walker.patternComponents.items.len) {
+                            const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                            const fd = switch (try Accessor.open(path)) {
+                                .err => |e| {
+                                    if (e.getErrno() == bun.C.E.NOTDIR) {
+                                        this.iter_state = .{ .matched = path };
+                                        return Maybe(void).success;
+                                    }
+                                    // Doesn't exist
+                                    if (e.getErrno() == bun.C.E.NOENT) {
+                                        this.iter_state = .get_next;
+                                        return Maybe(void).success;
+                                    }
+                                    const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
+                                    return .{ .err = e.withPath(errpath) };
+                                },
+                                .result => |fd| fd,
+                            };
+                            _ = Accessor.close(fd);
+                            this.iter_state = .{ .matched = path };
+                            return Maybe(void).success;
+                        }
+
+                        // In the above branch, if `starting_compoennt_dix >= pattern_components.len` then
+                        // it should also mean that `end_byte_of_basename_excluding_special_syntax >= pattern.len`
+                        //
+                        // So if we see that `end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len` we
+                        // miscalculated the values
+                        bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
                     }
-
-                    bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
 
                     break :brk WorkItem.new(
                         path_without_special_syntax,
-                        component_idx,
+                        starting_component_idx,
                         .directory,
                     );
                 };
@@ -524,6 +541,9 @@ pub fn GlobWalker_(
             }
 
             pub fn deinit(this: *Iterator) void {
+                defer {
+                    bun.debugAssert(this.fds_open == 0);
+                }
                 this.closeCwdFd();
                 switch (this.iter_state) {
                     .directory => |dir| {
@@ -541,9 +561,7 @@ pub fn GlobWalker_(
                 }
 
                 if (comptime count_fds) {
-                    if (bun.Environment.allow_assert) {
-                        bun.assert(this.fds_open == 0);
-                    }
+                    bun.debugAssert(this.fds_open == 0);
                 }
             }
 
@@ -563,7 +581,7 @@ pub fn GlobWalker_(
                 if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    bun.assert(this.fds_open <= 2);
+                    bun.debugAssert(this.fds_open <= 2);
                 }
             }
 
@@ -1063,7 +1081,7 @@ pub fn GlobWalker_(
                 .error_on_broken_symlinks = error_on_broken_symlinks,
                 .only_files = only_files,
                 .basename_excluding_special_syntax_component_idx = 0,
-                .end_byte_of_basename_excluding_special_syntax = @intCast(pattern.len),
+                .end_byte_of_basename_excluding_special_syntax = 0,
             };
 
             try GlobWalker.buildPatternComponents(

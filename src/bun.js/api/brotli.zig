@@ -91,15 +91,8 @@ pub const BrotliEncoder = struct {
         this.output_lock.lock();
         defer this.output_lock.unlock();
 
-        if (this.output.items.len > 16 * 1024) {
-            defer this.output.items = "";
-            defer this.output.deinit(bun.default_allocator);
-            return JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
-        } else {
-            defer this.output.items = "";
-            defer this.output.deinit(bun.default_allocator);
-            return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
-        }
+        defer this.output.clearRetainingCapacity();
+        return JSC.ArrayBuffer.create(this.globalThis, this.output.items, .Buffer);
     }
 
     pub fn runFromJSThread(this: *BrotliEncoder) void {
@@ -293,7 +286,7 @@ pub const BrotliEncoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return if (!is_last) .undefined else this.collectOutputValue();
+        return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
     }
 
     pub fn end(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -389,13 +382,8 @@ pub const BrotliDecoder = struct {
         this.output_lock.lock();
         defer this.output_lock.unlock();
 
-        if (this.output.items.len > 16 * 1024) {
-            defer this.output.clearRetainingCapacity();
-            return JSC.JSValue.createBuffer(this.globalThis, this.output.items, bun.default_allocator);
-        } else {
-            defer this.output.clearRetainingCapacity();
-            return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
-        }
+        defer this.output.clearRetainingCapacity();
+        return JSC.ArrayBuffer.create(this.globalThis, this.output.items, .Buffer);
     }
 
     pub fn runFromJSThread(this: *BrotliDecoder) void {

@@ -1970,6 +1970,52 @@ it("can send brotli from Server and receive with fetch", async () => {
   }
 });
 
+it("can send gzip from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "gzip");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createGzip()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send deflate from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "deflate");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createDeflate()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
 it("can send brotli from Server and receive with Client", async () => {
   try {
     var server = createServer((req, res) => {

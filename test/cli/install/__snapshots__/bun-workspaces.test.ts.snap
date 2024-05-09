@@ -1209,3 +1209,99 @@ exports[`dependency on workspace without version in package.json: version: *+bui
   }
 }"
 `;
+
+exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
+"{
+  "format": "v2",
+  "meta_hash": "13e05e9c7522649464f47891db2c094497e8827d4a1f6784db8ef6c066211846",
+  "package_index": {
+    "lodash": [
+      1,
+      3
+    ],
+    "foo": 0,
+    "bar": 2
+  },
+  "packages": [
+    {
+      "id": 0,
+      "name": "foo",
+      "name_hash": "14841791273925386894",
+      "resolution": "root ",
+      "dependencies": {
+        "bar": {
+          "literal": "packages/bar",
+          "workspace": "packages/bar",
+          "resolved_id": 2,
+          "behavior": "workspace"
+        },
+        "lodash": {
+          "literal": "packages/mono",
+          "workspace": "packages/mono",
+          "resolved_id": 1,
+          "behavior": "workspace"
+        }
+      },
+      "integrity": null,
+      "man_dir": "",
+      "origin": "local",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 1,
+      "name": "lodash",
+      "name_hash": "15298228331728003776",
+      "resolution": "workspace workspace:packages/mono",
+      "dependencies": {},
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "bar",
+      "name_hash": "11592711315645265694",
+      "resolution": "workspace workspace:packages/bar",
+      "dependencies": {
+        "lodash": {
+          "literal": "latest",
+          "dist_tag": {
+            "name": "lodash",
+            "tag": "lodash"
+          },
+          "resolved_id": 3,
+          "behavior": "normal | workspace"
+        }
+      },
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 3,
+      "name": "lodash",
+      "name_hash": "15298228331728003776",
+      "resolution": "npm 4.17.21",
+      "dependencies": {},
+      "integrity": "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==",
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    }
+  ],
+  "workspace_paths": {
+    "11592711315645265694": "packages/bar",
+    "15298228331728003776": "packages/mono"
+  },
+  "workspace_versions": {
+    "11592711315645265694": "1.0.0",
+    "15298228331728003776": "4.17.21"
+  }
+}"
+`;

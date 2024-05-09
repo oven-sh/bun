@@ -124,3 +124,55 @@ test("dependency on workspace without version in package.json", () => {
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
 });
+
+test("dependency on same name as workspace and dist-tag", () => {
+  writeFileSync(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["packages/*"],
+    }),
+  );
+
+  mkdirSync(join(packageDir, "packages", "mono"), { recursive: true });
+  writeFileSync(
+    join(packageDir, "packages", "mono", "package.json"),
+    JSON.stringify({
+      name: "lodash",
+      version: "4.17.21",
+    }),
+  );
+
+  mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
+  writeFileSync(
+    join(packageDir, "packages", "bar", "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "1.0.0",
+      dependencies: {
+        lodash: "latest",
+      },
+    }),
+  );
+
+  const { stdout, exitCode } = spawnSync({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stderr: "inherit",
+    stdout: "pipe",
+    env,
+  });
+
+  expect(printLockfileAsJSON(packageDir)).toMatchSnapshot("with version");
+
+  const out = stdout.toString();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + bar@workspace:packages/bar",
+    " + lodash@workspace:packages/mono",
+    "",
+    " 3 packages installed",
+  ]);
+
+  expect(exitCode).toBe(0);
+});

@@ -3643,36 +3643,9 @@ pub const Package = extern struct {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
-            .dist_tag => {
-                if (workspace_path != null) {
-                    for (package_dependencies[0..dependencies_count]) |dep| {
-                        if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
-                            return null;
-                        }
-                    }
-
-                    const path = workspace_path.?.sliced(buf);
-                    if (Dependency.parseWithTag(
-                        allocator,
-                        external_alias.value,
-                        external_alias.hash,
-                        path.slice,
-                        .workspace,
-                        &path,
-                        log,
-                    )) |dep| {
-                        dependency_version = dep;
-                    }
-                }
-            },
             .npm => {
                 const npm = dependency_version.value.npm;
-                if (workspace_version != null and
-                    (npm.version.satisfies(workspace_version.?, buf, buf) or
-
-                    // no version in workspace package.json
-                    (workspace_path != null and npm.version.@"is *"())))
-                {
+                if (workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {

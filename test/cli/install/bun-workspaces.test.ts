@@ -42,8 +42,8 @@ test("dependency on workspace without version in package.json", () => {
 
   mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
 
-  const shouldWork: string[] = ["*", "*.*.*", "latest", "", "=*", "kjwoehcojrgjoj", "*.1.*"];
-  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.1"];
+  const shouldWork: string[] = ["*", "*.*.*", "latest", "", "=*", "kjwoehcojrgjoj", "*.1.*", "*-pre"];
+  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.1", "*-pre+build", "*+build"];
 
   for (const version of shouldWork) {
     writeFileSync(

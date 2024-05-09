@@ -3773,7 +3773,7 @@ pub const PackageManager = struct {
                         }
                     } else {
                         // dist_tag will match any workspace version, even missing ones
-                        if (workspace_path != null) {
+                        if (workspace_path != null and !this.lockfile.workspace_versions.contains(name_hash)) {
                             const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
                             const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
                             const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);

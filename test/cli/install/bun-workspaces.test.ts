@@ -67,6 +67,8 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
+    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+
     const err = stderr.toString();
 
     expect(err).toContain("Saved lockfile");
@@ -85,8 +87,6 @@ test("dependency on workspace without version in package.json", () => {
     ]);
 
     expect(exitCode).toBe(0);
-
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
 
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -114,6 +114,8 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
+    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+
     const err = stderr.toString();
     expect(err).toContain("Saved lockfile");
 
@@ -127,8 +129,6 @@ test("dependency on workspace without version in package.json", () => {
     ]);
 
     expect(exitCode).toBe(0);
-
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
 
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });

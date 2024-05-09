@@ -3747,29 +3747,27 @@ pub const PackageManager = struct {
                 const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
                 resolve_from_workspace: {
                     if (version.tag == .npm) {
-                        if (this.lockfile.workspace_versions.count() > 0) {
-                            const workspace_version = this.lockfile.workspace_versions.get(name_hash);
-                            const buf = this.lockfile.buffers.string_bytes.items;
-                            if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
+                        const workspace_version = this.lockfile.workspace_versions.get(name_hash);
+                        const buf = this.lockfile.buffers.string_bytes.items;
+                        if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
 
-                                // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                                // if the workspace doesn't have a version, it can still be used if
-                                // dependency version is wildcard
-                                (workspace_path != null and version.value.npm.version.@"is *"()))
-                            {
-                                const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
-                                const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
-                                const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
+                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
+                            // if the workspace doesn't have a version, it can still be used if
+                            // dependency version is wildcard
+                            (workspace_path != null and version.value.npm.version.@"is *"()))
+                        {
+                            const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
+                            const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
+                            const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
 
-                                for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
-                                    if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                        // make sure verifyResolutions sees this resolution as a valid package id
-                                        successFn(this, dependency_id, workspace_package_id);
-                                        return .{
-                                            .package = this.lockfile.packages.get(workspace_package_id),
-                                            .is_first_time = false,
-                                        };
-                                    }
+                            for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+                                if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                    // make sure verifyResolutions sees this resolution as a valid package id
+                                    successFn(this, dependency_id, workspace_package_id);
+                                    return .{
+                                        .package = this.lockfile.packages.get(workspace_package_id),
+                                        .is_first_time = false,
+                                    };
                                 }
                             }
                         }
@@ -3843,7 +3841,7 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // package name hash should be used to find workspace path from map
-                const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
+                const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(name_hash) orelse &version.value.workspace;
                 const workspace_path = this.lockfile.str(workspace_path_raw);
                 var buf2: bun.PathBuffer = undefined;
                 const workspace_path_u8 = if (std.fs.path.isAbsolute(workspace_path)) workspace_path else blk: {

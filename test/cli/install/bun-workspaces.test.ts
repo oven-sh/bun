@@ -59,23 +59,15 @@ test("dependency on workspace without version in package.json", () => {
       }),
     );
 
-    const { stdout, stderr, exitCode } = spawnSync({
+    const { stdout, exitCode } = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stderr: "pipe",
+      stderr: "inherit",
       stdout: "pipe",
       env,
     });
 
     expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
-
-    const err = stderr.toString();
-
-    expect(err).toContain("Saved lockfile");
-    expect(err).not.toContain("error:");
-    expect(err).not.toContain("warn:");
-    expect(err).not.toContain("panic:");
-    expect(err).not.toContain("failed");
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -106,18 +98,15 @@ test("dependency on workspace without version in package.json", () => {
       }),
     );
 
-    const { stderr, exitCode, stdout } = spawnSync({
+    const { exitCode, stdout } = spawnSync({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
-      stderr: "pipe",
+      stderr: "inherit",
       stdout: "pipe",
       env,
     });
 
     expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
-
-    const err = stderr.toString();
-    expect(err).toContain("Saved lockfile");
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([

@@ -2,7 +2,6 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const util = require("node:util");
 
 const {
   getHeader,
@@ -478,7 +477,12 @@ Server.prototype.close = function (optionalCallback?) {
 };
 
 Server.prototype[Symbol.asyncDispose] = async function () {
-  return util.promisify(this.close).$apply(this);
+  const { resolve, reject, promise } = Promise.withResolvers();
+  this.close(function (err, ...args) {
+    if (err) reject(err);
+    else resolve(...args);
+    return promise;
+  });
 };
 
 Server.prototype.address = function () {

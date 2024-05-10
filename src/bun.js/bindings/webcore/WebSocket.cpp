@@ -127,14 +127,14 @@ static String encodeProtocolString(const String& protocol)
         if (protocol[i] < 0x20 || protocol[i] > 0x7E)
             builder.append("\\u", hex(protocol[i], 4));
         else if (protocol[i] == 0x5c)
-            builder.append("\\\\");
+            builder.append("\\\\"_s);
         else
             builder.append(protocol[i]);
     }
     return builder.toString();
 }
 
-static String joinStrings(const Vector<String>& strings, const char* separator)
+static String joinStrings(const Vector<String>& strings, ASCIILiteral separator)
 {
     StringBuilder builder;
     for (size_t i = 0; i < strings.size(); ++i) {

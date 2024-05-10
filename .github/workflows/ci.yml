@@ -53,6 +53,7 @@ jobs:
       arch: x64
       cpu: haswell
       canary: true
+      no-cache: true
   linux-x64-baseline:
     if: ${{ !inputs.run-id }}
     name: Build linux-x64-baseline
@@ -64,6 +65,7 @@ jobs:
       arch: x64
       cpu: nehalem
       canary: true
+      no-cache: true
   linux-aarch64:
     if: ${{ !inputs.run-id && github.repository_owner == 'oven-sh' }}
     name: Build linux-aarch64
@@ -75,6 +77,7 @@ jobs:
       arch: aarch64
       cpu: native
       canary: true
+      no-cache: true
   darwin-x64:
     if: ${{ !inputs.run-id }}
     name: Build darwin-x64

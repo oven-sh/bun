@@ -717,52 +717,54 @@ ${temp_dir}`
    *
    */
   describe("escaping", () => {
-  // Testing characters that need special handling when not quoted or in different contexts
-  TestBuilder.command`echo ${"$"}`.stdout('$\n').runAsTest('dollar')
-  TestBuilder.command`echo ${">"}`.stdout('>\n').runAsTest('right_arrow')
-  TestBuilder.command`echo ${"&"}`.stdout('&\n').runAsTest('ampersand')
-  TestBuilder.command`echo ${"|"}`.stdout('|\n').runAsTest('pipe')
-  TestBuilder.command`echo ${"="}`.stdout('=\n').runAsTest('equals')
-  TestBuilder.command`echo ${";"}`.stdout(';\n').runAsTest('semicolon')
-  TestBuilder.command`echo ${"\n"}`.stdout('\n\n').runAsTest('newline')
-  TestBuilder.command`echo ${"{"}`.stdout('{\n').runAsTest('left_brace')
-  TestBuilder.command`echo ${"}"}`.stdout('}\n').runAsTest('right_brace')
-  TestBuilder.command`echo ${","}`.stdout(',\n').runAsTest('comma')
-  TestBuilder.command`echo ${"("}`.stdout('(\n').runAsTest('left_parenthesis')
-  TestBuilder.command`echo ${")"}`.stdout(')\n').runAsTest('right_parenthesis')
-  TestBuilder.command`echo ${"\\"}`.stdout('\\\n').runAsTest('backslash')
-  TestBuilder.command`echo ${" "}`.stdout(' \n').runAsTest('space')
-  TestBuilder.command`echo ${"'hello'"}`.stdout("'hello'\n").runAsTest('single_quote')
-  TestBuilder.command`echo ${'"hello"'}`.stdout('"hello"\n').runAsTest('double_quote')
-  TestBuilder.command`echo ${"`hello`"}`.stdout("`hello`\n").runAsTest('backtick')
+    // Testing characters that need special handling when not quoted or in different contexts
+    TestBuilder.command`echo ${"$"}`.stdout("$\n").runAsTest("dollar");
+    TestBuilder.command`echo ${">"}`.stdout(">\n").runAsTest("right_arrow");
+    TestBuilder.command`echo ${"&"}`.stdout("&\n").runAsTest("ampersand");
+    TestBuilder.command`echo ${"|"}`.stdout("|\n").runAsTest("pipe");
+    TestBuilder.command`echo ${"="}`.stdout("=\n").runAsTest("equals");
+    TestBuilder.command`echo ${";"}`.stdout(";\n").runAsTest("semicolon");
+    TestBuilder.command`echo ${"\n"}`.stdout("\n\n").runAsTest("newline");
+    TestBuilder.command`echo ${"{"}`.stdout("{\n").runAsTest("left_brace");
+    TestBuilder.command`echo ${"}"}`.stdout("}\n").runAsTest("right_brace");
+    TestBuilder.command`echo ${","}`.stdout(",\n").runAsTest("comma");
+    TestBuilder.command`echo ${"("}`.stdout("(\n").runAsTest("left_parenthesis");
+    TestBuilder.command`echo ${")"}`.stdout(")\n").runAsTest("right_parenthesis");
+    TestBuilder.command`echo ${"\\"}`.stdout("\\\n").runAsTest("backslash");
+    TestBuilder.command`echo ${" "}`.stdout(" \n").runAsTest("space");
+    TestBuilder.command`echo ${"'hello'"}`.stdout("'hello'\n").runAsTest("single_quote");
+    TestBuilder.command`echo ${'"hello"'}`.stdout('"hello"\n').runAsTest("double_quote");
+    TestBuilder.command`echo ${"`hello`"}`.stdout("`hello`\n").runAsTest("backtick");
 
-  // Testing characters that need to be escaped within double quotes
-  TestBuilder.command`echo "${"$"}"`.stdout('$\n').runAsTest('dollar_in_dquotes')
-  TestBuilder.command`echo "${"`"}"`.stdout('`\n').runAsTest('backtick_in_dquotes')
-  TestBuilder.command`echo "${"\""}"`.stdout('"\n').runAsTest('double_quote_in_dquotes')
-  TestBuilder.command`echo "${"\\"}"`.stdout('\\\n').runAsTest('backslash_in_dquotes')
+    // Testing characters that need to be escaped within double quotes
+    TestBuilder.command`echo "${"$"}"`.stdout("$\n").runAsTest("dollar_in_dquotes");
+    TestBuilder.command`echo "${"`"}"`.stdout("`\n").runAsTest("backtick_in_dquotes");
+    TestBuilder.command`echo "${'"'}"`.stdout('"\n').runAsTest("double_quote_in_dquotes");
+    TestBuilder.command`echo "${"\\"}"`.stdout("\\\n").runAsTest("backslash_in_dquotes");
 
-  // Testing characters that need to be escaped within single quotes
-  TestBuilder.command`echo '${"$"}'`.stdout('$\n').runAsTest('dollar_in_squotes')
-  TestBuilder.command`echo '${"\""}'`.stdout('"\n').runAsTest('double_quote_in_squotes')
-  TestBuilder.command`echo '${"`"}'`.stdout('`\n').runAsTest('backtick_in_squotes')
-  TestBuilder.command`echo '${"\\\\"}'`.stdout('\\\\\n').runAsTest('backslash_in_squotes')
+    // Testing characters that need to be escaped within single quotes
+    TestBuilder.command`echo '${"$"}'`.stdout("$\n").runAsTest("dollar_in_squotes");
+    TestBuilder.command`echo '${'"'}'`.stdout('"\n').runAsTest("double_quote_in_squotes");
+    TestBuilder.command`echo '${"`"}'`.stdout("`\n").runAsTest("backtick_in_squotes");
+    TestBuilder.command`echo '${"\\\\"}'`.stdout("\\\\\n").runAsTest("backslash_in_squotes");
 
-  // Ensure that backslash escapes within single quotes are treated literally
-  TestBuilder.command`echo '${"\\"}'`.stdout('\\\n').runAsTest('literal_backslash_single_quote')
-  TestBuilder.command`echo '${"\\\\"}'`.stdout('\\\\\n').runAsTest('double_backslash_single_quote')
+    // Ensure that backslash escapes within single quotes are treated literally
+    TestBuilder.command`echo '${"\\"}'`.stdout("\\\n").runAsTest("literal_backslash_single_quote");
+    TestBuilder.command`echo '${"\\\\"}'`.stdout("\\\\\n").runAsTest("double_backslash_single_quote");
 
-  // Edge cases with mixed quotes
-  TestBuilder.command`echo "'\${"$"}'"`.stdout("'${$}'\n").runAsTest('mixed_quotes_dollar')
-  TestBuilder.command`echo '"${"`"}"'`.stdout('\"`\"\n').runAsTest('mixed_quotes_backtick')
+    // Edge cases with mixed quotes
+    TestBuilder.command`echo "'\${"$"}'"`.stdout("'${$}'\n").runAsTest("mixed_quotes_dollar");
+    TestBuilder.command`echo '"${"`"}"'`.stdout('"`"\n').runAsTest("mixed_quotes_backtick");
 
-  // Compound command with special characters
-  TestBuilder.command`echo ${"hello; echo world"}`.stdout('hello; echo world\n').runAsTest('compound_command')
-  TestBuilder.command`echo ${"hello > world"}`.stdout('hello > world\n').runAsTest('redirect_in_echo')
-  TestBuilder.command`echo ${"$(echo nested)"}`.stdout('$(echo nested)\n').runAsTest('nested_command_substitution')
+    // Compound command with special characters
+    TestBuilder.command`echo ${"hello; echo world"}`.stdout("hello; echo world\n").runAsTest("compound_command");
+    TestBuilder.command`echo ${"hello > world"}`.stdout("hello > world\n").runAsTest("redirect_in_echo");
+    TestBuilder.command`echo ${"$(echo nested)"}`.stdout("$(echo nested)\n").runAsTest("nested_command_substitution");
 
-  // Pathological cases involving multiple special characters
-  TestBuilder.command`echo ${"complex > command; \$(execute)"}`.stdout('complex > command; $(execute)\n').runAsTest('complex_mixed_special_chars')
+    // Pathological cases involving multiple special characters
+    TestBuilder.command`echo ${"complex > command; $(execute)"}`
+      .stdout("complex > command; $(execute)\n")
+      .runAsTest("complex_mixed_special_chars");
   });
 });
 

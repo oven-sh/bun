@@ -48,6 +48,23 @@ uncygwinTempDir();
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
+function makeRunningBunInstallInWrongDirectoryFailInCI() {
+  const paths = [join(cwd, "package.json"), join(cwd, "test", "package.json")];
+
+  for (const current of paths) {
+    const inputPackageJSON = JSON.parse(readFileSync(current, "utf-8"));
+    inputPackageJSON.scripts ??= {};
+    inputPackageJSON.scripts.prepublish =
+      inputPackageJSON.scripts.preinstall =
+      inputPackageJSON.scripts.postinstall =
+      inputPackageJSON.scripts.install =
+        `echo "Ran bun install in the wrong directory. This is a bug in your test. Please fix your test." && exit 42`;
+    writeFileSync(current, JSON.stringify(inputPackageJSON, null, 2));
+  }
+}
+
+makeRunningBunInstallInWrongDirectoryFailInCI();
+
 const ci = !!process.env["GITHUB_ACTIONS"];
 const enableProgressBar = false;
 

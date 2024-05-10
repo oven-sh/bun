@@ -20,10 +20,10 @@ it("works", async () => {
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warn:");
   let out = await new Response(stdout).text();
-  await exited;
+  expect(await exited).toBe(0);
 
   const fixture_path = path.join(package_dir, "index.ts");
-  const fixture_data = String.raw`
+  const fixture_data = `
     import { createServer } from "node:http";
     import st from "st";
 
@@ -46,7 +46,7 @@ it("works", async () => {
   `;
   await Bun.write(fixture_path, fixture_data);
 
-  ({ stdout, stderr } = Bun.spawn({
+  ({ stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "run", fixture_path],
     cwd: package_dir,
     stdout: "pipe",
@@ -58,4 +58,5 @@ it("works", async () => {
   // expect(err).toBeEmpty();
   out = await new Response(stdout).text();
   expect(out).toEqual(fixture_data + "\n");
+  expect(await exited).toBe(0);
 });

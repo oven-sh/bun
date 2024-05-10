@@ -39,78 +39,95 @@ sources_content: []string,
 mapping: Mapping.List = .{},
 allocator: std.mem.Allocator,
 
-pub fn parse(
-    allocator: std.mem.Allocator,
-    json_source: *const Logger.Source,
-    log: *Logger.Log,
-) !SourceMap {
-    var json = try bun.JSON.ParseJSONUTF8(json_source, log, allocator);
-    var mappings = bun.sourcemap.Mapping.List{};
+/// `source` must be in UTF-8 and can be freed after this call.
+/// The mappings are owned by the `alloc` allocator.
+/// Temporary allocations are made to the `arena` allocator, which
+/// should be an arena allocator (those allocations are not freed).
+pub fn parseUrl(
+    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    source: []const u8,
+) Mapping.ParseResult {
+    const data_prefix = "data:application/json";
+    if (bun.strings.hasPrefixComptime(source, data_prefix) and source.len > (data_prefix.len + 1)) try_data_url: {
+        const json_bytes = switch (source[data_prefix.len]) {
+            ';' => json_bytes: {
+                const encoding = bun.sliceTo(source[data_prefix.len + 1 ..], ',');
+                if (!bun.strings.eqlComptime(encoding, "base64")) break :try_data_url;
+                const base64_data = source[data_prefix.len + ";base64,".len ..];
 
-    if (json.get("version")) |version| {
-        if (version.data != .e_number or version.data.e_number.value != 3.0) {
-            return error.@"Unsupported sourcemap version";
+                const len = bun.base64.decodeLen(base64_data);
+                const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
+                const result = bun.base64.decode(bytes, base64_data);
+                if (result.fail) return .{ .fail = .{
+                    .msg = "Invalid Base64",
+                    .err = error.InvalidBase64,
+                    .value = 0,
+                    .loc = .{ .start = 0 },
+                } };
+                break :json_bytes bytes[0..result.written];
+            },
+            ',' => source[data_prefix.len + 1 ..],
+            else => break :try_data_url,
+        };
+
+        const json_src = bun.logger.Source.initPathString("url.json", json_bytes);
+        var log = bun.logger.Log.init(arena);
+        defer log.deinit();
+
+        var json = bun.JSON.ParseJSONUTF8(&json_src, &log, arena) catch {
+            return .{ .fail = .{
+                .msg = "Invalid JSON",
+                .err = error.InvalidJSON,
+                .value = 0,
+                .loc = .{ .start = 0 },
+            } };
+        };
+
+        if (json.get("version")) |version| {
+            if (version.data != .e_number or version.data.e_number.value != 3.0) {
+                return .{ .fail = .{
+                    .msg = "Unsupported source map version",
+                    .err = error.UnsupportedVersion,
+                    .value = 0,
+                    .loc = .{ .start = 0 },
+                } };
+            }
         }
-    }
 
-    if (json.get("mappings")) |mappings_str| {
+        const mappings_str = json.get("mappings") orelse {
+            return .{ .fail = .{
+                .msg = "Missing source mappings",
+                .err = error.UnsupportedVersion,
+                .value = 0,
+                .loc = .{ .start = 0 },
+            } };
+        };
+
         if (mappings_str.data != .e_string) {
-            return error.@"Invalid sourcemap mappings";
+            return .{ .fail = .{
+                .msg = "Missing source mappings",
+                .err = error.UnsupportedVersion,
+                .value = 0,
+                .loc = .{ .start = 0 },
+            } };
         }
 
-        var parsed = bun.sourcemap.Mapping.parse(allocator, try mappings_str.data.e_string.toUTF8(allocator), null, std.math.maxInt(i32));
-        if (parsed == .fail) {
-            try log.addMsg(bun.logger.Msg{
-                .data = parsed.fail.toData("sourcemap.json"),
-                .kind = .err,
-            });
-            return error.@"Failed to parse sourcemap mappings";
-        }
-
-        mappings = parsed.success;
+        return Mapping.parse(
+            alloc,
+            mappings_str.data.e_string.slice(arena),
+            null,
+            std.math.maxInt(i32),
+            std.math.maxInt(i32),
+        );
     }
 
-    var sources = std.ArrayList(bun.string).init(allocator);
-    var sources_content = std.ArrayList(string).init(allocator);
-
-    if (json.get("sourcesContent")) |mappings_str| {
-        if (mappings_str.data != .e_array) {
-            return error.@"Invalid sourcemap sources";
-        }
-
-        try sources_content.ensureTotalCapacityPrecise(mappings_str.data.e_array.items.len);
-        for (mappings_str.data.e_array.items.slice()) |source| {
-            if (source.data != .e_string) {
-                return error.@"Invalid sourcemap source";
-            }
-
-            try source.data.e_string.toUTF8(allocator);
-            sources_content.appendAssumeCapacity(source.data.e_string.slice());
-        }
-    }
-
-    if (json.get("sources")) |mappings_str| {
-        if (mappings_str.data != .e_array) {
-            return error.@"Invalid sourcemap sources";
-        }
-
-        try sources.ensureTotalCapacityPrecise(mappings_str.data.e_array.items.len);
-        for (mappings_str.data.e_array.items.slice()) |source| {
-            if (source.data != .e_string) {
-                return error.@"Invalid sourcemap source";
-            }
-
-            try source.data.e_string.toUTF8(allocator);
-            sources.appendAssumeCapacity(source.data.e_string.slice());
-        }
-    }
-
-    return SourceMap{
-        .mapping = mappings,
-        .allocator = allocator,
-        .sources_content = sources_content.items,
-        .sources = sources.items,
-    };
+    return .{ .fail = .{
+        .msg = "Unsupported source map type",
+        .err = error.UnsupportedFormat,
+        .value = 0,
+        .loc = .{ .start = 0 },
+    } };
 }
 
 pub const Mapping = struct {
@@ -559,14 +576,14 @@ pub const SourceMapPieces = struct {
 
             const potential_start_of_run = current;
 
-            current = decodeVLQ(mappings, current).start;
-            current = decodeVLQ(mappings, current).start;
-            current = decodeVLQ(mappings, current).start;
+            current = decodeVLQAssumeValid(mappings, current).start;
+            current = decodeVLQAssumeValid(mappings, current).start;
+            current = decodeVLQAssumeValid(mappings, current).start;
 
             if (current < mappings.len) {
                 const c = mappings[current];
                 if (c != ',' and c != ';') {
-                    current = decodeVLQ(mappings, current).start;
+                    current = decodeVLQAssumeValid(mappings, current).start;
                 }
             }
 
@@ -594,7 +611,8 @@ pub const SourceMapPieces = struct {
             assert(shift.before.lines == shift.after.lines);
 
             const shift_column_delta = shift.after.columns - shift.before.columns;
-            const encode = encodeVLQ(decode_result.value + shift_column_delta - prev_shift_column_delta);
+            const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
+            const encode = encodeVLQ(vlq_value);
             j.push(encode.bytes[0..encode.len]);
             prev_shift_column_delta = shift_column_delta;
 
@@ -637,14 +655,16 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
     // Strip off the first mapping from the buffer. The first mapping should be
     // for the start of the original file (the printer always generates one for
     // the start of the file).
+    //
+    // Bun has a 24-byte header for source map meta-data
     var i: usize = 0;
-    const generated_column_ = decodeVLQ(source_map, 0);
+    const generated_column_ = decodeVLQAssumeValid(source_map, i);
     i = generated_column_.start;
-    const source_index_ = decodeVLQ(source_map, i);
+    const source_index_ = decodeVLQAssumeValid(source_map, i);
     i = source_index_.start;
-    const original_line_ = decodeVLQ(source_map, i);
+    const original_line_ = decodeVLQAssumeValid(source_map, i);
     i = original_line_.start;
-    const original_column_ = decodeVLQ(source_map, i);
+    const original_column_ = decodeVLQAssumeValid(source_map, i);
     i = original_column_.start;
 
     source_map = source_map[i..];
@@ -658,7 +678,12 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
     start_state.original_column += original_column_.value;
 
     j.append(
-        appendMappingToBuffer(MutableString.initEmpty(allocator), j.lastByte(), prev_end_state, start_state).list.items,
+        appendMappingToBuffer(
+            MutableString.initEmpty(allocator),
+            j.lastByte(),
+            prev_end_state,
+            start_state,
+        ).list.items,
         0,
         allocator,
     );
@@ -694,9 +719,7 @@ pub const VLQ = struct {
     }
 };
 
-pub fn encodeVLQWithLookupTable(
-    value: i32,
-) VLQ {
+pub fn encodeVLQWithLookupTable(value: i32) VLQ {
     return if (value >= 0 and value <= 255)
         vlq_lookup_table[@as(usize, @intCast(value))]
     else
@@ -777,6 +800,39 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     comptime var i: usize = 0;
     inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
         const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
+
+        // decode a byte
+        vlq |= (index & 31) << @as(u5, @truncate(shift));
+        shift += 5;
+
+        // Stop if there's no continuation bit
+        if ((index & 32) == 0) {
+            return VLQResult{
+                .start = start + comptime (i + 1),
+                .value = if ((vlq & 1) == 0)
+                    @as(i32, @intCast(vlq >> 1))
+                else
+                    -@as(i32, @intCast((vlq >> 1))),
+            };
+        }
+    }
+
+    return VLQResult{ .start = start + encoded_.len, .value = 0 };
+}
+
+pub fn decodeVLQAssumeValid(encoded: []const u8, start: usize) VLQResult {
+    var shift: u8 = 0;
+    var vlq: u32 = 0;
+
+    // hint to the compiler what the maximum value is
+    const encoded_ = encoded[start..][0..@min(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
+
+    // inlining helps for the 1 or 2 byte case, hurts a little for larger
+    comptime var i: usize = 0;
+    inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
+        bun.assert(encoded_[i] < std.math.maxInt(u7)); // invalid base64 character
+        const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
+        bun.assert(index != std.math.maxInt(u7)); // invalid base64 character
 
         // decode a byte
         vlq |= (index & 31) << @as(u5, @truncate(shift));
@@ -1368,9 +1424,9 @@ pub const Chunk = struct {
 
             pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
                 if (
-                // exclude generated code from source
+                // don't insert mappings for same location twice
                 b.prev_loc.eql(loc) or
-                    // don't insert mappings for same location twice
+                    // exclude generated code from source
                     loc.start == Logger.Loc.Empty.start)
                     return;
 

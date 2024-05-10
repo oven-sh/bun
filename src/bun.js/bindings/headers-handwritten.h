@@ -99,6 +99,7 @@ typedef struct ResolvedSource {
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool needsDeref;
+    bool already_bundled;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

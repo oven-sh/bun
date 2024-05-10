@@ -1,5 +1,7 @@
 #include "headers.h"
 #include "root.h"
+#include <_types/_uint64_t.h>
+#include <limits>
 
 #pragma once
 
@@ -36,7 +38,11 @@ class SourceProvider final : public JSC::SourceProvider {
     using SourceOrigin = JSC::SourceOrigin;
 
 public:
-    static Ref<SourceProvider> create(Zig::GlobalObject*, ResolvedSource& resolvedSource, JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module, bool isBuiltIn = false);
+    static Ref<SourceProvider> create(
+        Zig::GlobalObject*,
+        ResolvedSource& resolvedSource,
+        JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
+        bool isBuiltIn = false);
     ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override { return StringView(m_source.get()); }
@@ -67,17 +73,12 @@ private:
         : Base(sourceOrigin, WTFMove(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_source(sourceImpl)
     {
-
         m_resolvedSource = resolvedSource;
     }
 
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
-    bool did_free_source_code = false;
-    Zig::GlobalObject* m_globalObjectForSourceProviderMap;
     unsigned m_hash = 0;
-
-    // JSC::SourceCodeKey key;
 };
 
 } // namespace Zig

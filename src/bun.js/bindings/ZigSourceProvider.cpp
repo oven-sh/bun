@@ -66,10 +66,14 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
+extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, void* opaque_source_provider, BunString* specifier);
 
-Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource& resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
-{
-
+Ref<SourceProvider> SourceProvider::create(
+    Zig::GlobalObject* globalObject,
+    ResolvedSource& resolvedSource,
+    JSC::SourceProviderSourceType sourceType,
+    bool isBuiltin
+) {
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
@@ -97,6 +101,10 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
 
     if (shouldGenerateCodeCoverage) {
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
+    }
+
+    if (resolvedSource.already_bundled) {
+        Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &resolvedSource.source_url);
     }
 
     return provider;
@@ -229,4 +237,10 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     //   return 0;
     // }
 }
+
+extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider) {
+    // TODO(@paperdave): does this clone the data? i sure hope not.
+    return Bun::toStringRef(provider->source().toString());
+}
+
 }; // namespace Zig

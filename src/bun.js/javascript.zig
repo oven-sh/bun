@@ -118,9 +118,13 @@ const MappingList = SourceMap.Mapping.List;
 const uv = bun.windows.libuv;
 
 pub const SavedSourceMap = struct {
+    /// This is a pointer to the map located on the VirtualMachine struct
+    map: *HashTable,
+    mutex: bun.Lock = bun.Lock.init(),
+
     pub const vlq_offset = 24;
 
-    // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
+    // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
     pub const SavedMappings = struct {
@@ -172,16 +176,70 @@ pub const SavedSourceMap = struct {
         }
     };
 
+    /// ParsedSourceMap is the canonical form for sourcemaps,
+    ///
+    /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
+    /// In `fn get`, this value gets converted to ParsedSourceMap always
     pub const Value = TaggedPointerUnion(.{
         ParsedSourceMap,
         SavedMappings,
+        SourceProviderMap,
     });
+
+    /// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
+    /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
+    ///
+    /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
+    pub const SourceProviderMap = opaque {
+        extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
+
+        pub fn toParsedSourceMap(provider: *SourceProviderMap) ?*ParsedSourceMap {
+            const bun_str = ZigSourceProvider__getSourceSlice(provider);
+            defer bun_str.deref();
+            bun.assert(bun_str.tag == .WTFStringImpl);
+            const wtf = bun_str.value.WTFStringImpl;
+
+            // TODO: do not use toUTF8()
+            const utf8 = wtf.toUTF8(bun.default_allocator);
+            defer utf8.deinit();
+            const bytes = utf8.slice();
+
+            // TODO: use smarter technique
+            if (std.mem.indexOf(u8, bytes, "//# sourceMappingURL=")) |index| {
+                const end = std.mem.indexOfAnyPos(u8, bytes, index + "//# sourceMappingURL=".len, " \n\r") orelse bytes.len;
+                const url = bytes[index + "//# sourceMappingURL=".len .. end];
+
+                var sfb = std.heap.stackFallback(32768, bun.default_allocator);
+                var arena = bun.ArenaAllocator.init(sfb.get());
+                defer arena.deinit();
+
+                switch (bun.sourcemap.parseUrl(bun.default_allocator, arena.allocator(), url)) {
+                    .fail => {
+                        return null;
+                    },
+                    .success => |parsed| {
+                        const ptr = bun.default_allocator.create(ParsedSourceMap) catch bun.outOfMemory();
+                        ptr.* = parsed;
+                        return ptr;
+                    },
+                }
+            }
+
+            return null;
+        }
+
+        pub fn deinit(provider: *SourceProviderMap) void {
+            _ = provider;
+            @panic("TODO");
+        }
+    };
+
+    pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
+        this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    }
+
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
-
-    /// This is a pointer to the map located on the VirtualMachine struct
-    map: *HashTable,
-
-    mutex: bun.Lock = bun.Lock.init(),
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
@@ -211,26 +269,31 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
+    }
+
+    fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        const entry = try this.map.getOrPut(bun.hash(source.path.text));
+        const entry = try this.map.getOrPut(bun.hash(path));
         if (entry.found_existing) {
-            var value = Value.from(entry.value_ptr.*);
-            if (value.get(ParsedSourceMap)) |source_map_| {
-                var source_map: *ParsedSourceMap = source_map_;
+            var old_value = Value.from(entry.value_ptr.*);
+            if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
+                var source_map: *ParsedSourceMap = parsed_source_map;
                 source_map.deinit(default_allocator);
-            } else if (value.get(SavedMappings)) |saved_mappings| {
+            } else if (old_value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-
                 saved.deinit();
+            } else if (old_value.get(SourceProviderMap)) |provider| {
+                provider.deinit();
             }
         }
-
-        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
+        entry.value_ptr.* = value.ptr();
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
-        const mapping = this.map.getEntry(bun.hash(path)) orelse return null;
+        const hash = bun.hash(path);
+        const mapping = this.map.getEntry(hash) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
                 return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
@@ -246,7 +309,23 @@ pub const SavedSourceMap = struct {
                 mapping.value_ptr.* = Value.init(result).ptr();
                 return result.*;
             },
-            else => return null,
+            Value.Tag.SourceProviderMap => {
+                var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                if (ptr.toParsedSourceMap()) |result| {
+                    mapping.value_ptr.* = Value.init(result).ptr();
+                    return result.*;
+                } else {
+                    // does not have a valid source map
+                    _ = this.map.remove(hash);
+                    return null;
+                }
+            },
+            else => {
+                if (Environment.allow_assert) {
+                    @panic("Corrupt pointer tag");
+                }
+                return null;
+            },
         }
     }
 
@@ -3823,6 +3902,14 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
     };
+}
+
+export fn Bun__addSourceProviderSourceMap(bun_vm: *anyopaque, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    const vm: *VirtualMachine = @alignCast(@ptrCast(bun_vm));
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 pub export var isBunTest: bool = false;

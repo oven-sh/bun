@@ -67,6 +67,7 @@ $ bun --watch run index.tsx
 {% callout %}
 **Note** — When using `bun run`, put Bun flags like `--watch` immediately after `bun`.
 
+
 ```bash
 $ bun --watch run dev # ✔️ do this
 $ bun run dev --watch # ❌ don't do this
@@ -74,6 +75,26 @@ $ bun run dev --watch # ❌ don't do this
 
 Flags that occur at the end of the command will be ignored and passed through to the `"dev"` script itself.
 {% /callout %}
+
+Keep in mind that when using `bun start` or `bun run` to run a package script, direct use of the `--watch` flag will generally be ignored, seeing as package scripts specify command line operations of their own. To use watch with a package script, add the flag to the script itself. For example:
+
+{% callout %}
+In your package.json file:
+
+```json
+{
+  "scripts": {
+    "dev": "bun --watch run index.ts"
+  }
+}
+```
+
+Then on the command line:
+
+```bash
+$ bun run dev # ✔️ the script takes care of the watch flag
+$ bun --watch run dev # ❌ use of the watch flag here is not picked up by the script
+```
 
 ## Run a `package.json` script
 

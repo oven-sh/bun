@@ -588,3 +588,11 @@ it("should send Readable events in the right order", async () => {
     ``,
   ]);
 });
+
+it("emits newListener event _before_ adding the listener", () => {
+  const stream = new Stream();
+  stream.on("newListener", event => {
+    expect(stream.listenerCount(event)).toBe(0);
+  });
+  stream.on('foo', () => {});
+});

@@ -19,8 +19,8 @@ export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidd
 export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
 
 if [[ $(uname -s) == 'Linux' ]]; then
-    export CFLAGS+=(' -ffunction-sections -fdata-sections -fPIC')
-    export CXXFLAGS+=(' -ffunction-sections -fdata-sections -fPIC')
+    export CFLAGS+=(' -ffunction-sections -fdata-sections')
+    export CXXFLAGS+=(' -ffunction-sections -fdata-sections')
 fi
 
 export CMAKE_FLAGS=(

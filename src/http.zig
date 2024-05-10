@@ -87,8 +87,7 @@ pub const Signals = struct {
 
     pub fn get(this: Signals, comptime field: std.meta.FieldEnum(Signals)) bool {
         var ptr: *std.atomic.Value(bool) = @field(this, @tagName(field)) orelse return false;
-        const value = ptr.load(.Monotonic);
-        return value;
+        return ptr.load(.Monotonic);
     }
 };
 

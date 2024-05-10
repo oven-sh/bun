@@ -8,20 +8,15 @@ const {
 const NumberIsInteger = Number.isInteger;
 
 function ReadStream(fd) {
-  if (!(this instanceof ReadStream)) return new ReadStream(fd);
+  if (!(this instanceof ReadStream)) {
+    return new ReadStream(fd);
+  }
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").ReadStream.$call(this, "", {
-    fd,
-  });
-  Object.setPrototypeOf(stream, ReadStream.prototype);
+  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
 
-  stream.isRaw = false;
-  stream.isTTY = true;
-
-  $assert(stream instanceof ReadStream);
-
-  return stream;
+  this.isRaw = false;
+  this.isTTY = true;
 }
 
 Object.defineProperty(ReadStream, "prototype", {

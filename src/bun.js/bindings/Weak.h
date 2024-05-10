@@ -6,8 +6,6 @@
 
 namespace Bun {
 
-// We tried to pool these
-// But it was very complicated
 class WeakRef : public JSC::WeakHandleOwner {
     WTF_MAKE_ISO_ALLOCATED(WeakRef);
 

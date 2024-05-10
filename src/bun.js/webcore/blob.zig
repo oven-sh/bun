@@ -1070,7 +1070,7 @@ pub const Blob = struct {
                     .Blob,
                     .Null,
                     => {
-                        break :brk response.body.use();
+                        break :brk response.body.value.use();
                     },
                     .Error => {
                         destination_blob.detach();

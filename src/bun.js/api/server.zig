@@ -5475,7 +5475,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 existing_request = Request{
                     .url = bun.String.createUTF8(url.href),
                     .headers = headers,
-                    .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
+                    .body = JSC.WebCore.Body.Value.initRef(body),
                     .method = method,
                 };
             } else if (first_arg.as(Request)) |request_| {
@@ -6042,7 +6042,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
             var request_object = this.allocator.create(JSC.WebCore.Request) catch bun.outOfMemory();
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            var body = JSC.WebCore.Body.Value.initRef(.{ .Null = {} });
 
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
@@ -6160,7 +6160,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            var body = JSC.WebCore.Body.Value.initRef(.{ .Null = {} });
 
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);

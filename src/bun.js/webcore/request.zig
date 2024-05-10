@@ -47,17 +47,9 @@ const InternalBlob = JSC.WebCore.InternalBlob;
 const BodyMixin = JSC.WebCore.BodyMixin;
 const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
+const BodyValueRef = JSC.WebCore.BodyValueRef;
 const Response = JSC.WebCore.Response;
 
-const body_value_pool_size: u16 = 256;
-pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
-const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
-
-var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocator);
-
-pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
-    return try BodyValueRef.init(value, &body_value_hive_allocator);
-}
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: bun.String = bun.String.empty,
@@ -463,9 +455,7 @@ pub const Request = struct {
         arguments: []const JSC.JSValue,
     ) ?Request {
         var req = Request{
-            .body = InitRequestBodyValue(.{ .Null = {} }) catch {
-                return null;
-            },
+            .body = Body.Value.initRef(.{ .Null = {} }),
         };
 
         if (arguments.len == 0) {
@@ -779,10 +769,7 @@ pub const Request = struct {
         _ = allocator;
         this.ensureURL() catch {};
 
-        const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
-            globalThis.throw("Failed to clone request", .{});
-            return;
-        };
+        const body = Body.Value.initRef(this.body.value.clone(globalThis));
         const original_url = req.url;
 
         req.* = Request{

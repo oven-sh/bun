@@ -2242,36 +2242,6 @@ pub const JSPromise = extern struct {
         }
     };
 
-    // TODO: incomplete
-    // pub fn Lazy(comptime T: type) type {
-    //     const LazyType = @This();
-    //     return struct {
-    //         weak_promise: Weak(T) = .{},
-    //         strong_promise: JSC.Strong = .{},
-    //         pub fn init(globalThis: *JSC.JSGlobalObject) LazyType {
-
-    //             return LazyType{ .weak_promise = Weak(T).init(globalThis, this) };
-    //         }
-
-    //         pub fn onFinalize(this: *LazyType, promise: JSC.JSValue) void {
-
-    //         }
-    //         pub fn cleanPromise(this: *LazyType) void {
-    //             this.weak_promise.deinit();
-    //             this.strong_promise.deinit();
-    //         }
-    //         pub fn getPromiseValue(this: *LazyType) JSC.JSValue {
-    //             const value = this.weak_promise.valueOrEmpty();
-    //             if (value.isEmpty()) {
-    //                 if (this.strong_promise.get()) |strong_value| {
-    //                     return strong_value;
-    //                 }
-    //             }
-    //             return value;
-    //         }
-    //     };
-    // }
-
     pub fn wrap(
         globalObject: *JSGlobalObject,
         value: JSValue,

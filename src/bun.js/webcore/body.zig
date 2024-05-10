@@ -48,6 +48,14 @@ const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Body
+
+const body_value_pool_size: u16 = 256;
+pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
+
+const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
+
+var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocator);
+
 pub const Body = struct {
     value: Value, // = Value.empty,
 
@@ -70,30 +78,7 @@ pub const Body = struct {
     }
 
     pub fn writeFormat(this: *const Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
-        const Writer = @TypeOf(writer);
-
-        try formatter.writeIndent(Writer, writer);
-        try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
-        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
-
-        if (this.value == .Blob) {
-            try formatter.printComma(Writer, writer, enable_ansi_colors);
-            try writer.writeAll("\n");
-            try formatter.writeIndent(Writer, writer);
-            try this.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
-        } else if (this.value == .InternalBlob or this.value == .WTFStringImpl) {
-            try formatter.printComma(Writer, writer, enable_ansi_colors);
-            try writer.writeAll("\n");
-            try formatter.writeIndent(Writer, writer);
-            try Blob.writeFormatForSize(this.value.size(), writer, enable_ansi_colors);
-        } else if (this.value == .Locked) {
-            if (this.value.Locked.readable.get()) |stream| {
-                try formatter.printComma(Writer, writer, enable_ansi_colors);
-                try writer.writeAll("\n");
-                try formatter.writeIndent(Writer, writer);
-                formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
-            }
-        }
+        this.value.writeFormat(this.value, formatter, writer, enable_ansi_colors);
     }
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
@@ -310,6 +295,36 @@ pub const Body = struct {
         Error: JSValue,
         Null: void,
 
+        pub fn initRef(value: Value) *BodyValueRef {
+            return BodyValueRef.init(value, &body_value_hive_allocator) catch bun.outOfMemory();
+        }
+
+        pub fn writeFormat(this: *const Value, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+            const Writer = @TypeOf(writer);
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
+            formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.* == .Used), .BooleanObject, enable_ansi_colors);
+
+            if (this.* == .Blob) {
+                try formatter.printComma(Writer, writer, enable_ansi_colors);
+                try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
+                try this.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+            } else if (this.* == .InternalBlob or this.* == .WTFStringImpl) {
+                try formatter.printComma(Writer, writer, enable_ansi_colors);
+                try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
+                try Blob.writeFormatForSize(this.size(), writer, enable_ansi_colors);
+            } else if (this.* == .Locked) {
+                if (this.Locked.readable.get()) |stream| {
+                    try formatter.printComma(Writer, writer, enable_ansi_colors);
+                    try writer.writeAll("\n");
+                    try formatter.writeIndent(Writer, writer);
+                    formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                }
+            }
+        }
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* == .WTFStringImpl) {
                 if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {

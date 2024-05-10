@@ -51,7 +51,7 @@ const Body = JSC.WebCore.Body;
 const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
 const Async = bun.Async;
-
+const BodyValueRef = JSC.WebCore.BodyValueRef;
 const BoringSSL = bun.BoringSSL;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
@@ -59,8 +59,8 @@ const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 pub const Response = struct {
     const ResponseMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSResponse;
-
-    body: Body,
+    // we need to keep the response body alive to resolve a fetch request
+    body: *BodyValueRef,
     init: Init,
     url: bun.String = bun.String.empty,
     redirected: bool = false,
@@ -132,7 +132,7 @@ pub const Response = struct {
 
     pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
+        try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.value.size())});
 
         {
             formatter.indent += 1;
@@ -176,7 +176,7 @@ pub const Response = struct {
             try writer.writeAll("\n");
 
             formatter.resetLine();
-            try this.body.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
+            try this.body.value.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);
@@ -271,7 +271,7 @@ pub const Response = struct {
         globalThis: *JSGlobalObject,
     ) Response {
         return Response{
-            .body = this.body.clone(globalThis),
+            .body = Body.Value.initRef(this.body.value.clone(globalThis)),
             .init = this.init.clone(globalThis),
             .url = this.url.clone(),
             .redirected = this.redirected,
@@ -294,7 +294,7 @@ pub const Response = struct {
         this: *Response,
     ) callconv(.C) void {
         this.init.deinit(bun.default_allocator);
-        this.body.deinit(bun.default_allocator);
+        _ = this.body.unref();
         this.url.deref();
 
         bun.destroy(this);
@@ -326,9 +326,7 @@ pub const Response = struct {
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
         var response = Response{
-            .body = Body{
-                .value = .{ .Empty = {} },
-            },
+            .body = Body.Value.initRef(.{ .Null = {} }),
             .init = Response.Init{
                 .status_code = 200,
             },
@@ -386,9 +384,7 @@ pub const Response = struct {
             .init = Response.Init{
                 .status_code = 302,
             },
-            .body = Body{
-                .value = .{ .Empty = {} },
-            },
+            .body = Body.Value.initRef(.{ .Null = {} }),
             .url = bun.String.empty,
         };
 
@@ -429,9 +425,7 @@ pub const Response = struct {
                 .init = Response.Init{
                     .status_code = 0,
                 },
-                .body = Body{
-                    .value = .{ .Empty = {} },
-                },
+                .body = Body.Value.initRef(.{ .Empty = {} }),
             },
         );
 
@@ -496,7 +490,7 @@ pub const Response = struct {
         } orelse return null;
 
         var response = bun.new(Response, Response{
-            .body = body,
+            .body = Body.Value.initRef(body.value),
             .init = init,
         });
 
@@ -707,12 +701,14 @@ pub const Fetch = struct {
         response_buffer: MutableString = undefined,
         /// buffer used to stream response to JS
         scheduled_response_buffer: MutableString = undefined,
-        /// response strong ref
-        response: JSC.Strong = .{},
+        /// response weak ref
+        response: JSC.Weak(FetchTasklet) = .{},
+        response_body: ?*BodyValueRef = null,
+        //TODO: this should be WeakRef too
         /// stream strong ref if any is available
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
         request_headers: Headers = Headers{ .allocator = undefined },
-        weak_promise: JSC.JSPromise.Weak(FetchTasklet) = .{},
+        promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: Async.KeepAlive = .{},
         memory_reporter: *JSC.MemoryReportingAllocator,
@@ -808,6 +804,10 @@ pub const Fetch = struct {
 
             this.response_buffer.deinit();
             this.response.deinit();
+            if (this.response_body) |body| {
+                _ = body.unref();
+                this.response_body = null;
+            }
             this.readable_stream_ref.deinit();
 
             this.scheduled_response_buffer.deinit();
@@ -833,6 +833,20 @@ pub const Fetch = struct {
             allocator.destroy(this);
             // reporter.assert();
             bun.default_allocator.destroy(reporter);
+        }
+
+        fn getCurrentResponseBody(this: *FetchTasklet) ?*BodyValueRef {
+            // we need a body to resolve the promise when buffering
+            if (this.response_body) |body| {
+                return body;
+            }
+            // if we did not have a direct reference we check if the Weak ref is still alive
+            if (this.response.get()) |response_js| {
+                if (response_js.as(Response)) |response| {
+                    return response.body;
+                }
+            }
+            return null;
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
@@ -866,17 +880,14 @@ pub const Fetch = struct {
                     }
                 }
                 // if we are buffering resolve the promise
-                if (this.response.get()) |response_js| {
-                    if (response_js.as(Response)) |response| {
-                        const body = response.body;
-                        if (body.value == .Locked) {
-                            if (body.value.Locked.promise) |promise_| {
-                                const promise = promise_.asAnyPromise().?;
-                                promise.reject(globalThis, err);
-                            }
+                if (this.getCurrentResponseBody()) |body| {
+                    if (body.value == .Locked) {
+                        if (body.value.Locked.promise) |promise_| {
+                            const promise = promise_.asAnyPromise().?;
+                            promise.reject(globalThis, err);
                         }
-                        response.body.value.toErrorInstance(err, globalThis);
                     }
+                    body.value.toErrorInstance(err, globalThis);
                 }
                 return;
             }
@@ -914,94 +925,75 @@ pub const Fetch = struct {
                 }
             }
 
-            if (this.response.get()) |response_js| {
-                if (response_js.as(Response)) |response| {
-                    var body = &response.body;
-                    if (body.value == .Locked) {
-                        if (body.value.Locked.readable.get()) |readable| {
-                            if (readable.ptr == .Bytes) {
-                                readable.ptr.Bytes.size_hint = this.getSizeHint();
+            if (this.getCurrentResponseBody()) |body| {
+                if (body.value == .Locked) {
+                    if (body.value.Locked.readable.get()) |readable| {
+                        if (readable.ptr == .Bytes) {
+                            readable.ptr.Bytes.size_hint = this.getSizeHint();
 
-                                const scheduled_response_buffer = this.scheduled_response_buffer.list;
+                            const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
-                                const chunk = scheduled_response_buffer.items;
+                            const chunk = scheduled_response_buffer.items;
 
-                                if (this.result.has_more) {
-                                    readable.ptr.Bytes.onData(
-                                        .{
-                                            .temporary = bun.ByteList.initConst(chunk),
-                                        },
-                                        bun.default_allocator,
-                                    );
+                            if (this.result.has_more) {
+                                readable.ptr.Bytes.onData(
+                                    .{
+                                        .temporary = bun.ByteList.initConst(chunk),
+                                    },
+                                    bun.default_allocator,
+                                );
 
-                                    // clean for reuse later
-                                    this.scheduled_response_buffer.reset();
-                                } else {
-                                    var prev = body.value.Locked.readable;
-                                    body.value.Locked.readable = .{};
-                                    readable.value.ensureStillAlive();
-                                    prev.deinit();
-                                    readable.value.ensureStillAlive();
-                                    readable.ptr.Bytes.onData(
-                                        .{
-                                            .temporary_and_done = bun.ByteList.initConst(chunk),
-                                        },
-                                        bun.default_allocator,
-                                    );
-                                }
-
-                                return;
+                                // clean for reuse later
+                                this.scheduled_response_buffer.reset();
+                            } else {
+                                var prev = body.value.Locked.readable;
+                                body.value.Locked.readable = .{};
+                                readable.value.ensureStillAlive();
+                                prev.deinit();
+                                readable.value.ensureStillAlive();
+                                readable.ptr.Bytes.onData(
+                                    .{
+                                        .temporary_and_done = bun.ByteList.initConst(chunk),
+                                    },
+                                    bun.default_allocator,
+                                );
                             }
-                        } else {
-                            response.body.value.Locked.size_hint = this.getSizeHint();
+
+                            return;
                         }
-                        // we will reach here when not streaming
-                        if (!this.result.has_more) {
-                            var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                    } else {
+                        body.value.Locked.size_hint = this.getSizeHint();
+                    }
+                    // we will reach here when not streaming
+                    if (!this.result.has_more) {
+                        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
 
-                            // done resolve body
-                            var old = body.value;
-                            const body_value = Body.Value{
-                                .InternalBlob = .{
-                                    .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                                },
-                            };
-                            response.body.value = body_value;
+                        // done resolve body
+                        var old = body.value;
 
-                            this.scheduled_response_buffer = .{
-                                .allocator = this.memory_reporter.allocator(),
-                                .list = .{
-                                    .items = &.{},
-                                    .capacity = 0,
-                                },
-                            };
+                        body.value = Body.Value{
+                            .InternalBlob = .{
+                                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                            },
+                        };
 
-                            if (old == .Locked) {
-                                old.resolve(&response.body.value, this.global_this);
-                            }
+                        this.scheduled_response_buffer = .{
+                            .allocator = this.memory_reporter.allocator(),
+                            .list = .{
+                                .items = &.{},
+                                .capacity = 0,
+                            },
+                        };
+
+                        if (old == .Locked) {
+                            old.resolve(&body.value, this.global_this);
                         }
                     }
                 }
             }
         }
 
-        fn cleanPromise(this: *FetchTasklet) void {
-            // this are only stubs for the LazyPromise
-            this.weak_promise.deinit();
-            // this.strong_promise.deinit();
-        }
-        fn getPromiseValue(this: *FetchTasklet) JSC.JSValue {
-
-            // this are only stubs for the LazyPromise
-            const value = this.weak_promise.valueOrEmpty();
-            // if (value.isEmpty()) {
-            //     if (this.strong_promise.get()) |strong_value| {
-            //         return strong_value;
-            //     }
-            // }
-            return value;
-        }
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
@@ -1029,14 +1021,15 @@ pub const Fetch = struct {
                 this.deinit();
                 return;
             }
-            const promise_value = this.getPromiseValue();
+
+            const promise_value = this.promise.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
             const vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
-                this.cleanPromise();
+                this.promise.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
@@ -1063,7 +1056,7 @@ pub const Fetch = struct {
                     promise.reject(globalThis, result);
 
                     tracker.didDispatch(globalThis);
-                    this.cleanPromise();
+                    this.promise.deinit();
                     this.has_schedule_callback.store(false, .Monotonic);
                     this.mutex.unlock();
                     if (this.is_waiting_abort) {
@@ -1085,12 +1078,14 @@ pub const Fetch = struct {
                 }
             }
 
+            const promise = promise_value.asAnyPromise().?;
+            _ = promise;
             const tracker = this.tracker;
             tracker.willDispatch(globalThis);
             defer {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
-                this.cleanPromise();
+                this.promise.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
@@ -1114,39 +1109,39 @@ pub const Fetch = struct {
                 globalObject: *JSC.JSGlobalObject,
                 task: JSC.AnyTask,
 
-                pub fn resolve(self: *@This()) void {
-                    var prom = self.promise.swap().asAnyPromise().?;
-                    const globalObject = self.globalObject;
-                    const res = self.held.swap();
-                    self.held.deinit();
-                    self.promise.deinit();
+                pub fn resolve(held: *@This()) void {
+                    var prom = held.promise.swap().asAnyPromise().?;
+                    const globalObject = held.globalObject;
+                    const res = held.held.swap();
+                    held.held.deinit();
+                    held.promise.deinit();
                     res.ensureStillAlive();
 
-                    bun.default_allocator.destroy(self);
+                    bun.default_allocator.destroy(held);
                     prom.resolve(globalObject, res);
                 }
 
-                pub fn reject(self: *@This()) void {
-                    var prom = self.promise.swap().asAnyPromise().?;
-                    const globalObject = self.globalObject;
-                    const res = self.held.swap();
-                    self.held.deinit();
-                    self.promise.deinit();
+                pub fn reject(held: *@This()) void {
+                    var prom = held.promise.swap().asAnyPromise().?;
+                    const globalObject = held.globalObject;
+                    const res = held.held.swap();
+                    held.held.deinit();
+                    held.promise.deinit();
                     res.ensureStillAlive();
 
-                    bun.default_allocator.destroy(self);
+                    bun.default_allocator.destroy(held);
                     prom.reject(globalObject, res);
                 }
             };
+
             var holder = bun.default_allocator.create(Holder) catch unreachable;
             holder.* = .{
                 .held = JSC.Strong.create(result, globalThis),
-                // we need the promise to be alive until the task is done
-                .promise = JSC.Strong.create(promise_value, globalThis),
+                .promise = this.promise.strong,
                 .globalObject = globalThis,
                 .task = undefined,
             };
-            this.cleanPromise();
+            this.promise.strong = .{};
             holder.task = switch (success) {
                 true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
                 false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
@@ -1329,6 +1324,7 @@ pub const Fetch = struct {
 
         pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
+            // TODO: we are keeping the stream alive until it finishes but we could just use Weak here too
             this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, this.global_this);
         }
 
@@ -1430,10 +1426,29 @@ pub const Fetch = struct {
                     .status_code = @as(u16, @truncate(http_response.status_code)),
                     .status_text = bun.String.createAtomIfPossible(http_response.status),
                 },
-                .body = .{
-                    .value = this.toBodyValue(),
-                },
+                .body = Body.Value.initRef(this.toBodyValue()),
             };
+        }
+
+        pub fn onResponseFinalize(this: *FetchTasklet, response_js: JSValue) void {
+            log("onResponseFinalize", .{});
+            if (response_js.as(Response)) |response| {
+                const body = response.body;
+                // we are streaming or already solved at this point
+                if (body.value != .Locked or this.readable_stream_ref.get() != null) {
+                    return;
+                }
+                if (body.value.Locked.promise) |promise| {
+                    if (promise.isEmptyOrUndefinedOrNull()) {
+                        this.ignoreRemainingResponseBody();
+                    } else {
+                        // we need to resolve the promise/body
+                        this.response_body = body.ref();
+                    }
+                } else {
+                    this.ignoreRemainingResponseBody();
+                }
+            }
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
@@ -1441,15 +1456,15 @@ pub const Fetch = struct {
             const response = bun.new(Response, this.toResponse());
             const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
             response_js.ensureStillAlive();
-            this.response = JSC.Strong.create(response_js, this.global_this);
+            this.response = JSC.Weak(FetchTasklet).create(response_js, this.global_this, this, onResponseFinalize);
             return response_js;
         }
 
         pub fn get(
             allocator: std.mem.Allocator,
             globalThis: *JSC.JSGlobalObject,
+            promise: JSC.JSPromise.Strong,
             fetch_options: FetchOptions,
-            promise: JSValue,
         ) !*FetchTasklet {
             var jsc_vm = globalThis.bunVM();
             var fetch_tasklet = try allocator.create(FetchTasklet);
@@ -1474,9 +1489,8 @@ pub const Fetch = struct {
                 .javascript_vm = jsc_vm,
                 .request_body = fetch_options.body,
                 .global_this = globalThis,
-                // we abort the fetch request if the promise is finalized/free/never waited
-                .weak_promise = JSC.JSPromise.Weak(FetchTasklet).init(globalThis, promise, fetch_tasklet, onPromiseFinalize),
                 .request_headers = fetch_options.headers,
+                .promise = promise,
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,
                 .signal = fetch_options.signal,
                 .hostname = fetch_options.hostname,
@@ -1485,7 +1499,6 @@ pub const Fetch = struct {
                 .check_server_identity = fetch_options.check_server_identity,
                 .reject_unauthorized = fetch_options.reject_unauthorized,
             };
-
             fetch_tasklet.signals = fetch_tasklet.signal_store.to();
 
             fetch_tasklet.tracker.didSchedule(globalThis);
@@ -1507,10 +1520,6 @@ pub const Fetch = struct {
                 fetch_tasklet.signal_store.cert_errors.store(true, .Monotonic);
             } else {
                 fetch_tasklet.signals.cert_errors = null;
-                // we use aborted to signal that we should abort reject_unauthorized after check with check_server_identity
-                if (fetch_tasklet.signal == null) {
-                    fetch_tasklet.signals.aborted = null;
-                }
             }
 
             fetch_tasklet.http.?.* = http.AsyncHTTP.init(
@@ -1525,7 +1534,9 @@ pub const Fetch = struct {
                 http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
                     FetchTasklet.callback,
-                ).init(fetch_tasklet),
+                ).init(
+                    fetch_tasklet,
+                ),
                 fetch_options.redirect_type,
                 .{
                     .http_proxy = proxy,
@@ -1561,37 +1572,42 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
-        pub fn onPromiseFinalize(this: *FetchTasklet, promise_value: JSValue) void {
-            if (promise_value.isUndefinedOrNull()) {
-                return;
-            }
-
-            if (promise_value.asPromise()) |promise| {
-                if (!promise.isHandled(this.global_this.vm())) {
-                    // if the promise is not handled we should just abort the request
-                    this.signal_store.aborted.store(true, .Monotonic);
-                    this.tracker.didCancel(this.global_this);
-
-                    if (this.http != null) {
-                        http.http_thread.scheduleShutdown(this.http.?);
-                    }
-                }
-                // the problem is that in the case we have a promise that is handled we should have a strong ref of it so we can resolve it later
-                // the plan is stub the then/catch/finalize methods and store the promise in a strong ref
-            }
-        }
-
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
             log("abortListener", .{});
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
-            this.signal_store.aborted.store(true, .Monotonic);
+            this.abort();
+        }
+
+        fn abort(this: *FetchTasklet) void {
+            @fence(.Release);
+            log("abort", .{});
+            this.signal_store.aborted.store(true, .Release);
             this.tracker.didCancel(this.global_this);
 
-            if (this.http != null) {
-                http.http_thread.scheduleShutdown(this.http.?);
+            if (this.http) |_http| {
+                http.http_thread.scheduleShutdown(_http);
             }
+        }
+
+        fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
+            log("ignoreRemainingResponseBody", .{});
+            // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
+            // without a stream ref, response body or response instance alive it will just ignore the result
+            if (this.http) |http_| {
+                http_.enableBodyStreaming();
+            }
+            // we should not keep the process alive if we are ignoring the body
+            const vm = this.global_this.bunVM();
+            this.poll_ref.unref(vm);
+            // clean any remaining refereces
+            if (this.response_body) |body| {
+                _ = body.unref();
+                this.response_body = null;
+            }
+            this.readable_stream_ref.deinit();
+            this.response.deinit();
         }
 
         const FetchOptions = struct {
@@ -1620,15 +1636,15 @@ pub const Fetch = struct {
         pub fn queue(
             allocator: std.mem.Allocator,
             global: *JSGlobalObject,
-            promise: JSValue,
             fetch_options: FetchOptions,
+            promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
             try http.HTTPThread.init();
             var node = try get(
                 allocator,
                 global,
-                fetch_options,
                 promise,
+                fetch_options,
             );
 
             var batch = bun.ThreadPool.Batch{};
@@ -1695,11 +1711,9 @@ pub const Fetch = struct {
         var response = bun.new(
             Response,
             Response{
-                .body = Body{
-                    .value = .{
-                        .Blob = blob,
-                    },
-                },
+                .body = Body.Value.initRef(.{
+                    .Blob = blob,
+                }),
                 .init = Response.Init{
                     .status_code = 200,
                     .status_text = bun.String.createAtomASCII("OK"),
@@ -2374,9 +2388,7 @@ pub const Fetch = struct {
             );
 
             const response = bun.new(Response, Response{
-                .body = Body{
-                    .value = .{ .Blob = bun_file },
-                },
+                .body = Body.Value.initRef(.{ .Blob = bun_file }),
                 .init = Response.Init{
                     .status_code = 200,
                 },
@@ -2521,13 +2533,15 @@ pub const Fetch = struct {
             }
         }
 
-        const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
-        promise.ensureStillAlive();
+        // Only create this after we have validated all the input.
+        // or else we will leak it
+        var promise = JSPromise.Strong.init(globalThis);
+
+        const promise_val = promise.value();
 
         _ = FetchTasklet.queue(
             allocator,
             globalThis,
-            promise,
             .{
                 .method = method,
                 .url = url,
@@ -2551,8 +2565,13 @@ pub const Fetch = struct {
                 .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),
                 .unix_socket_path = unix_socket_path,
             },
+            // Pass the Strong value instead of creating a new one, or else we
+            // will leak it
+            // see https://github.com/oven-sh/bun/issues/2985
+            promise,
         ) catch bun.outOfMemory();
-        return promise;
+
+        return promise_val;
     }
 };
 

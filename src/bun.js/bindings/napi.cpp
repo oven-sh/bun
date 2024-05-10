@@ -624,10 +624,12 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
 
     auto keyProp = toJS(key);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    if (result) {
-        *result = toNapi(target->deleteProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject))));
-    }
+    auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    if (LIKELY(result)) {
+        *result = toNapi(deleteResult);
+    }
 
     scope.clearException();
     return napi_ok;
@@ -1161,7 +1163,7 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
 {
     NAPI_PREMABLE
 
-    if (property_count > 0 && !properties) {
+    if (UNLIKELY(property_count > 0 && !properties)) {
         return napi_invalid_arg;
     }
 
@@ -1289,7 +1291,7 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     NAPI_PREMABLE
     NapiRef* napiRef = toJS(ref);
     napiRef->unref();
-    if (result) {
+    if (LIKELY(result)) {
         *result = napiRef->refCount;
     }
     return napi_ok;
@@ -1323,7 +1325,7 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     NAPI_PREMABLE
     NapiRef* napiRef = toJS(ref);
     napiRef->ref();
-    if (result) {
+    if (LIKELY(result)) {
         *result = napiRef->refCount;
     }
     return napi_ok;

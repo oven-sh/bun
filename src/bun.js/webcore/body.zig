@@ -47,8 +47,6 @@ const InternalBlob = JSC.WebCore.InternalBlob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Body
-
 const body_value_pool_size: u16 = 256;
 pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
 
@@ -56,6 +54,7 @@ const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size)
 
 var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocator);
 
+// https://developer.mozilla.org/en-US/docs/Web/API/Body
 pub const Body = struct {
     value: Value, // = Value.empty,
 

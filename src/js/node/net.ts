@@ -1006,6 +1006,42 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
+function normalizeArgs(args) {
+  let arr;
+
+  if (args.length === 0) {
+    arr = [{}, null];
+    return arr;
+  }
+
+  const arg0 = args[0];
+  let options: any = {};
+  if (typeof arg0 === "object" && arg0 !== null) {
+    options = arg0;
+  } else if (isPipeName(arg0)) {
+    options.path = arg0;
+  } else {
+    options.port = arg0;
+    if (args.length > 1 && typeof args[1] === "string") {
+      options.host = args[1];
+    }
+  }
+
+  const cb = args[args.length - 1];
+  if (typeof cb !== "function") arr = [options, null];
+  else arr = [options, cb];
+
+  return arr;
+}
+
+function isPipeName(s) {
+  return typeof s === "string" && toNumber(s) === false;
+}
+
+function toNumber(x) {
+  return (x = Number(x)) >= 0 ? x : false;
+}
+
 // TODO:
 class BlockList {
   constructor() {}
@@ -1027,6 +1063,7 @@ export default {
   isIPv6,
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
+  _normalizeArgs: normalizeArgs,
 
   getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
   setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),

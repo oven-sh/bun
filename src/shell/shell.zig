@@ -2169,8 +2169,16 @@ pub const LexError = struct {
     /// Allocated with lexer arena
     msg: []const u8,
 };
-pub const LEX_JS_OBJREF_PREFIX = &[_]u8{8} ++ "__bun_";
-pub const LEX_JS_STRING_PREFIX = &[_]u8{8} ++ "__bunstr_";
+
+/// A special char used to denote the beginning of a special token
+/// used for substituting JS variables into the script string.
+///
+/// \b (decimal value of 8) is deliberately chosen so that it is not
+/// easy for the user to accidentally use this char in their script.
+///
+const SPECIAL_JS_CHAR = 8;
+pub const LEX_JS_OBJREF_PREFIX = &[_]u8{SPECIAL_JS_CHAR} ++ "__bun_";
+pub const LEX_JS_STRING_PREFIX = &[_]u8{SPECIAL_JS_CHAR} ++ "__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -2310,7 +2318,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                 // Special token to denote substituted JS variables
                 // we use 8 or \b which is a non printable char
-                if (char == 8) {
+                if (char == SPECIAL_JS_CHAR) {
                     if (self.looksLikeJSStringRef()) {
                         if (self.eatJSStringRef()) |bunstr| {
                             try self.break_word(false);

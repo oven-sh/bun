@@ -4100,7 +4100,7 @@ pub fn needsEscapeBunstr(bunstr: bun.String) bool {
 
 pub fn needsEscapeUTF16(str: []const u16) bool {
     for (str) |codeunit| {
-        if (SPECIAL_CHARS_TABLE.isSet(codeunit)) return true;
+        if (codeunit < 0xff and SPECIAL_CHARS_TABLE.isSet(codeunit)) return true;
     }
 
     return false;

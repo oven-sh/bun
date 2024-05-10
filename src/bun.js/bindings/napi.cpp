@@ -1396,7 +1396,7 @@ extern "C" napi_status napi_adjust_external_memory(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (!adjusted_value) {
+    if (UNLIKELY(!adjusted_value)) {
         return napi_invalid_arg;
     }
 
@@ -2209,7 +2209,7 @@ extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
     JSObject* object = jsValue.getObject();
 
     auto scope = DECLARE_THROW_SCOPE(object->vm());
-    if (result) {
+    if (LIKELY(result)) {
         *result = JSObject::deletePropertyByIndex(object, toJS(env), index);
     }
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);

@@ -5960,7 +5960,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version.fmt(sb)}));
         },
         .dist_tag => {
             try w.beginObject();

@@ -5,6 +5,8 @@ import { copyFileSync } from "fs";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { cp, rm } from "fs/promises";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { printLockfileAsJSON } = install_test_helpers;
 
 import { tmpdir } from "node:os";
 
@@ -124,6 +126,9 @@ test.skipIf(puppeteer_unsupported)(
   async () => {
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
+
+    expect(printLockfileAsJSON(root)).toMatchSnapshot();
+
     var pid: number, exited;
     let timeout = setTimeout(() => {
       if (timeout && pid) {

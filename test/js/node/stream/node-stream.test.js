@@ -594,5 +594,5 @@ it("emits newListener event _before_ adding the listener", () => {
   stream.on("newListener", event => {
     expect(stream.listenerCount(event)).toBe(0);
   });
-  stream.on('foo', () => {});
+  stream.on("foo", () => {});
 });

@@ -530,7 +530,7 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -558,7 +558,7 @@ extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, doubl
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -586,7 +586,7 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -637,7 +637,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -739,7 +739,7 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -766,7 +766,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1051,7 +1051,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1216,7 +1216,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1302,7 +1302,7 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     napi_value* result)
 {
     NAPI_PREMABLE
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
     NapiRef* napiRef = toJS(ref);
@@ -1350,7 +1350,7 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1409,7 +1409,7 @@ extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1422,7 +1422,7 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1564,7 +1564,7 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1649,7 +1649,7 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1664,7 +1664,7 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1715,7 +1715,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1731,12 +1731,8 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     auto dataView = JSC::DataView::create(arraybufferValue->impl(), byte_offset, length);
 
     *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
-    *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
-}
-*result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
-}
 
-return napi_ok;
+    return napi_ok;
 }
 
 namespace Zig {
@@ -1853,7 +1849,7 @@ extern "C" napi_status napi_get_all_property_names(
 {
     NAPI_PREMABLE;
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1886,7 +1882,7 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1926,7 +1922,7 @@ extern "C" napi_status napi_define_class(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -1984,7 +1980,7 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -2178,7 +2174,7 @@ extern "C" napi_status napi_get_element(napi_env env, napi_value objectValue,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 
@@ -2487,7 +2483,7 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
 {
     NAPI_PREMABLE
 
-    if (!result) {
+    if (UNLIKELY(!result)) {
         return napi_invalid_arg;
     }
 

@@ -762,7 +762,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value,
             &.{},
     );
 
-    if (result) |*result_| {
+    if (result) |result_| {
         result_.* = res;
     }
 
@@ -937,13 +937,13 @@ pub export fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytele
         bytelength.?.* = array_buffer.byte_len;
 
     if (data != null)
-        data.* = array_buffer.ptr;
+        data.?.* = array_buffer.ptr;
 
     if (arraybuffer != null)
-        arraybuffer.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), dataview.asObjectRef(), null));
+        arraybuffer.?.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), dataview.asObjectRef(), null));
 
     if (byte_offset != null)
-        byte_offset.* = array_buffer.offset;
+        byte_offset.?.* = array_buffer.offset;
 
     return .ok;
 }

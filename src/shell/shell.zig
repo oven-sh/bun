@@ -895,6 +895,13 @@ pub const AST = struct {
                 .compound => self.compound.brace_expansion_hint,
             };
         }
+
+        pub fn hasTildeExpansion(self: *const Atom) bool {
+            return switch (self.*) {
+                .simple => self.simple == .tilde,
+                .compound => self.compound.atoms.len > 0 and self.compound.atoms[0] == .tilde,
+            };
+        }
     };
 
     pub const SimpleAtom = union(enum) {
@@ -906,6 +913,7 @@ pub const AST = struct {
         brace_begin,
         brace_end,
         comma,
+        tilde,
         cmd_subst: struct {
             script: Script,
             quoted: bool = false,
@@ -922,6 +930,7 @@ pub const AST = struct {
                 .brace_end => false,
                 .comma => false,
                 .cmd_subst => false,
+                .tilde => false,
             };
         }
     };
@@ -1688,8 +1697,16 @@ pub const Parser = struct {
                     },
                     .SingleQuotedText, .DoubleQuotedText, .Text => |txtrng| {
                         _ = self.advance();
-                        const txt = self.text(txtrng);
-                        try atoms.append(.{ .Text = txt });
+                        var txt = self.text(txtrng);
+                        if (peeked == .Text and txt.len > 0 and txt[0] == '~') {
+                            txt = txt[1..];
+                            try atoms.append(.tilde);
+                            if (txt.len > 0) {
+                                try atoms.append(.{ .Text = txt });
+                            }
+                        } else {
+                            try atoms.append(.{ .Text = txt });
+                        }
                         if (next_delimits) {
                             _ = self.match(.Delimit);
                             if (should_break) break;
@@ -2152,8 +2169,8 @@ pub const LexError = struct {
     /// Allocated with lexer arena
     msg: []const u8,
 };
-pub const LEX_JS_OBJREF_PREFIX = "~__bun_";
-pub const LEX_JS_STRING_PREFIX = "~__bunstr_";
+pub const LEX_JS_OBJREF_PREFIX = &[_]u8{8} ++ "__bun_";
+pub const LEX_JS_STRING_PREFIX = &[_]u8{8} ++ "__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -2292,7 +2309,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const escaped = input.escaped;
 
                 // Special token to denote substituted JS variables
-                if (char == '~') {
+                // we use 8 or \b which is a non printable char
+                if (char == 8) {
                     if (self.looksLikeJSStringRef()) {
                         if (self.eatJSStringRef()) |bunstr| {
                             try self.break_word(false);
@@ -2706,6 +2724,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     try self.tokens.append(.Delimit);
                 }
             } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
+                // whether or not to add a delimiter token
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
                 .Var,
                 .VarArgv,

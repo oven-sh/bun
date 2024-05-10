@@ -1162,6 +1162,8 @@ if(UNIX AND NOT APPLE)
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
     )
 
+    target_compile_options(${bun} PUBLIC -ffunction-sections -fdata-sections)
+
     target_link_libraries(${bun} PRIVATE "c")
     target_link_libraries(${bun} PRIVATE "pthread")
     target_link_libraries(${bun} PRIVATE "dl")

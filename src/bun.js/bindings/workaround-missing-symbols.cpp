@@ -182,6 +182,21 @@ extern "C" double __wrap_fmod(double x, double y)
     return __real_fmod(x, y);
 }
 
+static inline float __real_expf(float arg)
+{
+    static void* ptr = nullptr;
+    if (UNLIKELY(ptr == nullptr)) {
+        ptr = dlsym(RTLD_DEFAULT, "expf");
+    }
+
+    return ((float (*)(float))ptr)(arg);
+}
+
+extern "C" float __wrap_expf(float arg)
+{
+    return __real_expf(arg);
+}
+
 #ifndef _MKNOD_VER
 #define _MKNOD_VER 1
 #endif

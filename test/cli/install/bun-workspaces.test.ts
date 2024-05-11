@@ -4,7 +4,7 @@ import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { beforeEach, test, expect } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
-const { printLockfileAsJSON } = install_test_helpers;
+const { parseLockfile } = install_test_helpers;
 
 var testCounter: number = 0;
 
@@ -83,7 +83,7 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+    expect(parseLockfile(packageDir)).toMatchSnapshot(`version: ${version}`);
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -122,7 +122,7 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+    expect(parseLockfile(packageDir)).toMatchSnapshot(`version: ${version}`);
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -179,7 +179,7 @@ test("dependency on same name as workspace and dist-tag", () => {
     env,
   });
 
-  expect(printLockfileAsJSON(packageDir)).toMatchSnapshot("with version");
+  expect(parseLockfile(packageDir)).toMatchSnapshot("with version");
 
   const out = stdout.toString();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([

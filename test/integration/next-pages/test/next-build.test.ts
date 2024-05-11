@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { cp } from "fs/promises";
 import { install_test_helpers } from "bun:internal-for-testing";
-const { printLockfileAsJSON } = install_test_helpers;
+const { parseLockfile } = install_test_helpers;
 
 const root = join(import.meta.dir, "../");
 
@@ -86,10 +86,10 @@ test("next build works", async () => {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const bunDir = await tempDirToBuildIn();
-  expect(printLockfileAsJSON(bunDir)).toMatchSnapshot("bun");
+  expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
 
   const nodeDir = await tempDirToBuildIn();
-  expect(printLockfileAsJSON(nodeDir)).toMatchSnapshot("node");
+  expect(parseLockfile(nodeDir)).toMatchSnapshot("node");
 
   console.log("Bun Dir: " + bunDir);
   console.log("Node Dir: " + nodeDir);

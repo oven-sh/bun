@@ -6,7 +6,7 @@ import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { cp, rm } from "fs/promises";
 import { install_test_helpers } from "bun:internal-for-testing";
-const { printLockfileAsJSON } = install_test_helpers;
+const { parseLockfile } = install_test_helpers;
 
 import { tmpdir } from "node:os";
 
@@ -118,7 +118,7 @@ afterAll(() => {
 test("ssr works for 100-ish requests", async () => {
   expect(dev_server).not.toBeUndefined();
   expect(baseUrl).not.toBeUndefined();
-  expect(printLockfileAsJSON(root)).toMatchSnapshot();
+  expect(parseLockfile(root)).toMatchSnapshot();
 
   const batchSize = 16;
   const promises = [];

@@ -541,17 +541,22 @@ pub const Tree = struct {
 
             const dependency = builder.dependencies[dep_id];
 
-            switch (next.hoistDependency(
-                true,
-                pid,
-                dep_id,
-                &dependency,
-                dependency_lists,
-                trees,
-                builder,
-            ) catch |err| return err) {
+            // Do not hoist aliased packages
+            const destination = if (dependency.name_hash != name_hashes[pid])
+                next.id
+            else
+                next.hoistDependency(
+                    true,
+                    pid,
+                    dep_id,
+                    &dependency,
+                    dependency_lists,
+                    trees,
+                    builder,
+                ) catch |err| return err;
+            switch (destination) {
                 Tree.dependency_loop, Tree.hoisted => continue,
-                else => |destination| {
+                else => {
                     dependency_lists[destination].append(builder.allocator, dep_id) catch unreachable;
                     trees[destination].dependencies.len += 1;
                     if (builder.resolution_lists[pid].len > 0) {

@@ -6,7 +6,7 @@ import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { cp, rm } from "fs/promises";
 import { install_test_helpers } from "bun:internal-for-testing";
-const { printLockfileAsJSON } = install_test_helpers;
+const { parseLockfile } = install_test_helpers;
 
 import { tmpdir } from "node:os";
 
@@ -127,7 +127,7 @@ test.skipIf(puppeteer_unsupported)(
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
 
-    expect(printLockfileAsJSON(root)).toMatchSnapshot();
+    expect(parseLockfile(root)).toMatchSnapshot();
 
     var pid: number, exited;
     let timeout = setTimeout(() => {

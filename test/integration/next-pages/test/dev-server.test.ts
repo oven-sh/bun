@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { bunEnv, bunExe, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
@@ -9,6 +9,8 @@ import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
 import { tmpdir } from "node:os";
+
+expect.extend({ toMatchNodeModulesAt });
 
 let root = join(tmpdir(), "next-pages" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36));
 
@@ -127,7 +129,9 @@ test.skipIf(puppeteer_unsupported)(
     expect(dev_server).not.toBeUndefined();
     expect(baseUrl).not.toBeUndefined();
 
-    expect(parseLockfile(root)).toMatchSnapshot();
+    const lockfile = parseLockfile(root);
+    expect(lockfile).toMatchNodeModulesAt(root);
+    expect(lockfile).toMatchSnapshot();
 
     var pid: number, exited;
     let timeout = setTimeout(() => {

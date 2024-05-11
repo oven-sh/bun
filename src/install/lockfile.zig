@@ -5963,12 +5963,20 @@ pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
     return default_trusted_dependencies.has(name);
 }
 
-pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {
+pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: DependencyID, dep: Dependency, res: PackageID) !void {
     const sb = this.buffers.string_bytes.items;
     var buf: [2048]u8 = undefined;
 
     try w.beginObject();
     defer w.endObject() catch {};
+
+    try w.objectField("name");
+    try w.write(dep.name.slice(sb));
+
+    if (dep.version.tag == .npm and dep.version.value.npm.is_alias) {
+        try w.objectField("is_alias");
+        try w.write(true);
+    }
 
     try w.objectField("literal");
     try w.write(dep.version.literal.slice(sb));
@@ -6058,12 +6066,25 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
         },
     }
 
-    try w.objectField("resolved_id");
-    try w.write(if (res) |r| if (r == invalid_package_id) null else r else null);
+    try w.objectField("package_id");
+    try w.write(if (res == invalid_package_id) null else res);
 
-    const behavior = try std.fmt.bufPrint(&buf, "{}", .{dep.behavior});
     try w.objectField("behavior");
-    try w.write(behavior);
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        const fields = @typeInfo(Behavior).Struct.fields;
+        inline for (fields[1 .. fields.len - 1]) |field| {
+            if (@field(dep.behavior, field.name)) {
+                try w.objectField(field.name);
+                try w.write(true);
+            }
+        }
+    }
+
+    try w.objectField("id");
+    try w.write(dep_id);
 }
 
 pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
@@ -6164,6 +6185,22 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             }
         }
     }
+
+    {
+        try w.objectField("dependencies");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        const dependencies = this.buffers.dependencies.items;
+        const resolutions = this.buffers.resolutions.items;
+
+        for (0..dependencies.len) |dep_id| {
+            const dep = dependencies[dep_id];
+            const res = resolutions[dep_id];
+            try this.jsonStringifyDependency(w, @intCast(dep_id), dep, res);
+        }
+    }
+
     {
         try w.objectField("packages");
         try w.beginArray();
@@ -6184,22 +6221,26 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.write(pkg.name_hash);
 
             try w.objectField("resolution");
-            if (pkg.resolution.tag == .uninitialized) {
-                try w.write(null);
-            } else {
-                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .posix) });
-                try w.write(b);
+            {
+                const res = pkg.resolution;
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                try w.objectField("tag");
+                try w.write(@tagName(res.tag));
+
+                try w.objectField("value");
+                const formatted = try std.fmt.bufPrint(&buf, "{s}", .{res.fmt(sb, .posix)});
+                try w.write(formatted);
             }
 
             try w.objectField("dependencies");
             {
-                try w.beginObject();
-                defer w.endObject() catch {};
+                try w.beginArray();
+                defer w.endArray() catch {};
 
-                for (pkg.dependencies.get(this.buffers.dependencies.items), pkg.resolutions.get(this.buffers.resolutions.items)) |dep_, res| {
-                    const dep: Dependency = dep_;
-                    try w.objectField(dep.name.slice(sb));
-                    try this.jsonStringifyDependency(w, dep, res);
+                for (pkg.dependencies.off..pkg.dependencies.off + pkg.dependencies.len) |dep_id| {
+                    try w.write(dep_id);
                 }
             }
 

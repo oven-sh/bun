@@ -8,6 +8,7 @@ import {
   toHaveBins,
   writeShebangScript,
   tmpdirSync,
+  toMatchNodeModulesAt,
 } from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
@@ -16,10 +17,13 @@ import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
   toHaveBins,
+  toMatchNodeModulesAt,
 });
 
 var verdaccioServer: ChildProcess;
@@ -27,26 +31,26 @@ var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
 
-// beforeAll(async () => {
-//   verdaccioServer = fork(
-//     require.resolve("verdaccio/bin/verdaccio"),
-//     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-//     { silent: true, execPath: "bun" },
-//   );
+beforeAll(async () => {
+  verdaccioServer = fork(
+    require.resolve("verdaccio/bin/verdaccio"),
+    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
+    { silent: true, execPath: "bun" },
+  );
 
-//   await new Promise<void>(done => {
-//     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-//       if (msg.verdaccio_started) {
-//         console.log("Verdaccio started");
-//         done();
-//       }
-//     });
-//   });
-// });
+  await new Promise<void>(done => {
+    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
+      if (msg.verdaccio_started) {
+        console.log("Verdaccio started");
+        done();
+      }
+    });
+  });
+});
 
-// afterAll(() => {
-//   verdaccioServer.kill();
-// });
+afterAll(() => {
+  verdaccioServer.kill();
+});
 
 beforeEach(async () => {
   packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
@@ -888,6 +892,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
   expect(await exited).toBe(0);
 
+  let lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+
   // delete node_modules
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -927,6 +934,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
   ]);
   expect(await exited).toBe(0);
+
+  lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
 
   for (var i = 0; i < 100; i++) {
     // Situation:

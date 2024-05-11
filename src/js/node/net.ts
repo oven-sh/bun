@@ -422,66 +422,47 @@ const Socket = (function (InternalSocket) {
       process.nextTick(closeNT, connection);
     }
 
-    connect(port, host, connectListener) {
-      var path;
-      var connection = this.#socket;
-      var _checkServerIdentity = undefined;
-      if (typeof port === "string") {
-        path = port;
-        port = undefined;
+    connect(...args) {
+      const [options, connectListener] = normalizeArgs(args);
+      let connection = this.#socket;
 
-        if (typeof host === "function") {
-          connectListener = host;
-          host = undefined;
-        }
-      } else if (typeof host == "function") {
-        if (typeof port === "string") {
-          path = port;
-          port = undefined;
-        }
+      let {
+        fd,
+        port,
+        host,
+        path,
+        socket,
+        // TODOs
+        localAddress,
+        localPort,
+        family,
+        hints,
+        lookup,
+        noDelay,
+        keepAlive,
+        keepAliveInitialDelay,
+        requestCert,
+        rejectUnauthorized,
+        pauseOnConnect,
+        servername,
+        checkServerIdentity,
+        session,
+      } = options;
 
-        connectListener = host;
-        host = undefined;
+      this.servername = servername;
+
+      if (socket) {
+        connection = socket;
       }
-      if (typeof port == "object") {
-        var {
-          fd,
-          port,
-          host,
-          path,
-          socket,
-          // TODOs
-          localAddress,
-          localPort,
-          family,
-          hints,
-          lookup,
-          noDelay,
-          keepAlive,
-          keepAliveInitialDelay,
-          requestCert,
-          rejectUnauthorized,
-          pauseOnConnect,
-          servername,
-          checkServerIdentity,
-          session,
-        } = port;
-        _checkServerIdentity = checkServerIdentity;
-        this.servername = servername;
-        if (socket) {
-          connection = socket;
-        }
-        if (fd) {
-          bunConnect({
-            data: this,
-            fd,
-            socket: this.#handlers,
-            tls,
-          }).catch(error => {
-            this.emit("error", error);
-            this.emit("close");
-          });
-        }
+      if (fd) {
+        bunConnect({
+          data: this,
+          fd: fd,
+          socket: this.#handlers,
+        }).catch(error => {
+          this.emit("error", error);
+          this.emit("close");
+        });
       }
 
       this.pauseOnConnect = pauseOnConnect;
@@ -516,7 +497,7 @@ const Socket = (function (InternalSocket) {
           tls.requestCert = true;
           tls.session = session || tls.session;
           this.servername = tls.servername;
-          tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity;
+          tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
           this[bunTLSConnectOptions] = tls;
           if (!connection && tls.socket) {
             connection = tls.socket;

@@ -238,7 +238,7 @@ pub const SavedSourceMap = struct {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                 saved.deinit();
             } else if (old_value.get(SourceProviderMap)) |provider| {
-                provider.deinit();
+                _ = provider; // do nothing
             }
         }
         entry.value_ptr.* = value.ptr();
@@ -268,7 +268,7 @@ pub const SavedSourceMap = struct {
                     mapping.value_ptr.* = Value.init(result).ptr();
                     return result;
                 } else {
-                    // does not have a valid source map
+                    // does not have a valid source map. let's not try again
                     _ = this.map.remove(hash);
                     return null;
                 }

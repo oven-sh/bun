@@ -687,6 +687,7 @@ pub const Mapping = struct {
             //     allocator.free(this.external_source_contents);
             // }
             allocator.destroy(this);
+            @panic("TODO: this destructor");
         }
     };
 };
@@ -753,11 +754,6 @@ pub const SourceProviderMap = opaque {
         // TODO: look for file of same filename.
 
         return null;
-    }
-
-    pub fn deinit(provider: *SourceProviderMap) void {
-        _ = provider;
-        @panic("TODO");
     }
 };
 

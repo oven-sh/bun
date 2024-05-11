@@ -931,6 +931,10 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
+if(APPLE)
+    add_compile_definitions("__APPLE_USE_RFC_3542=1")
+Endif()
+
 add_compile_definitions(
 
     # TODO: are all of these variables strictly necessary?

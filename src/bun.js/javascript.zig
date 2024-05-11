@@ -114,6 +114,7 @@ export var has_bun_garbage_collector_flag_enabled = false;
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
+const SourceProviderMap = SourceMap.SourceProviderMap;
 
 const uv = bun.windows.libuv;
 
@@ -186,54 +187,6 @@ pub const SavedSourceMap = struct {
         SourceProviderMap,
     });
 
-    /// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
-    /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
-    ///
-    /// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
-    pub const SourceProviderMap = opaque {
-        extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
-
-        pub fn toParsedSourceMap(provider: *SourceProviderMap) ?*ParsedSourceMap {
-            const bun_str = ZigSourceProvider__getSourceSlice(provider);
-            defer bun_str.deref();
-            bun.assert(bun_str.tag == .WTFStringImpl);
-            const wtf = bun_str.value.WTFStringImpl;
-
-            // TODO: do not use toUTF8()
-            const utf8 = wtf.toUTF8(bun.default_allocator);
-            defer utf8.deinit();
-            const bytes = utf8.slice();
-
-            // TODO: use smarter technique
-            if (std.mem.indexOf(u8, bytes, "//# sourceMappingURL=")) |index| {
-                const end = std.mem.indexOfAnyPos(u8, bytes, index + "//# sourceMappingURL=".len, " \n\r") orelse bytes.len;
-                const url = bytes[index + "//# sourceMappingURL=".len .. end];
-
-                var sfb = std.heap.stackFallback(32768, bun.default_allocator);
-                var arena = bun.ArenaAllocator.init(sfb.get());
-                defer arena.deinit();
-
-                switch (bun.sourcemap.parseUrl(bun.default_allocator, arena.allocator(), url)) {
-                    .fail => {
-                        return null;
-                    },
-                    .success => |parsed| {
-                        const ptr = bun.default_allocator.create(ParsedSourceMap) catch bun.outOfMemory();
-                        ptr.* = parsed;
-                        return ptr;
-                    },
-                }
-            }
-
-            return null;
-        }
-
-        pub fn deinit(provider: *SourceProviderMap) void {
-            _ = provider;
-            @panic("TODO");
-        }
-    };
-
     pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
         const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
         this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
@@ -291,12 +244,12 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
-    pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
+    pub fn get(this: *SavedSourceMap, path: string, contents: SourceMap.SourceContentHandling) ?*ParsedSourceMap {
         const hash = bun.hash(path);
         const mapping = this.map.getEntry(hash) orelse return null;
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
+                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
             },
             Value.Tag.SavedMappings => {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
@@ -307,13 +260,13 @@ pub const SavedSourceMap = struct {
                     return null;
                 };
                 mapping.value_ptr.* = Value.init(result).ptr();
-                return result.*;
+                return result;
             },
             Value.Tag.SourceProviderMap => {
                 var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
-                if (ptr.toParsedSourceMap()) |result| {
+                if (ptr.toParsedSourceMap(contents)) |result| {
                     mapping.value_ptr.* = Value.init(result).ptr();
-                    return result.*;
+                    return result;
                 } else {
                     // does not have a valid source map
                     _ = this.map.remove(hash);
@@ -334,12 +287,20 @@ pub const SavedSourceMap = struct {
         path: []const u8,
         line: i32,
         column: i32,
-    ) ?SourceMap.Mapping {
+        source_handling: SourceMap.SourceContentHandling,
+    ) ?SourceMap.Mapping.Lookup {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        const parsed_mappings = this.get(path) orelse return null;
-        return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
+        const parsed_mapping = this.get(path, source_handling) orelse
+            return null;
+        const mapping = SourceMap.Mapping.find(parsed_mapping.mappings, line, column) orelse
+            return null;
+
+        return .{
+            .mapping = mapping,
+            .source_map = parsed_mapping,
+        };
     }
 };
 const uws = bun.uws;
@@ -621,6 +582,7 @@ pub const VirtualMachine = struct {
     /// only use it through
     /// source_mappings
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
+    source_mappings: SavedSourceMap = undefined,
 
     arena: *Arena = undefined,
     has_loaded: bool = false,
@@ -669,8 +631,6 @@ pub const VirtualMachine = struct {
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
-
-    source_mappings: SavedSourceMap = undefined,
 
     active_tasks: usize = 0,
 
@@ -2807,7 +2767,12 @@ pub const VirtualMachine = struct {
                 sourceURL.slice(),
                 @max(frame.position.line, 0),
                 @max(frame.position.column_start, 0),
-            )) |mapping| {
+                .no_source_contents,
+            )) |lookup| {
+                if (lookup.displaySourceURLIfNeeded()) |source_url| {
+                    frame.source_url = source_url;
+                }
+                const mapping = lookup.mapping;
                 frame.position.line = mapping.original.lines;
                 frame.position.column_start = mapping.original.columns;
                 frame.remapped = true;
@@ -2896,27 +2861,43 @@ pub const VirtualMachine = struct {
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
 
-        const mapping_ = if (top.remapped)
-            SourceMap.Mapping{
-                .generated = .{},
-                .original = .{
-                    .lines = @max(top.position.line, 0),
-                    .columns = @max(top.position.column_start, 0),
+        const maybe_lookup = if (top.remapped)
+            SourceMap.Mapping.Lookup{
+                .mapping = .{
+                    .generated = .{},
+                    .original = .{
+                        .lines = @max(top.position.line, 0),
+                        .columns = @max(top.position.column_start, 0),
+                    },
+                    .source_index = 0,
                 },
-                .source_index = 0,
+                // this pointer is not read if `top.remapped`
+                .source_map = undefined,
             }
         else
             this.source_mappings.resolveMapping(
                 top_source_url.slice(),
                 @max(top.position.line, 0),
                 @max(top.position.column_start, 0),
+                .source_contents,
             );
 
-        if (mapping_) |mapping| {
-            var log = logger.Log.init(default_allocator);
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
-            must_reset_parser_arena_later.* = true;
-            const code = original_source.source_code.toUTF8(bun.default_allocator);
+        if (maybe_lookup) |lookup| {
+            const mapping = lookup.mapping;
+
+            const code = code: {
+                if (top.remapped or lookup.source_map.external_source_names.len == 0) {
+                    var log = logger.Log.init(default_allocator);
+                    var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+                    must_reset_parser_arena_later.* = true;
+                    break :code original_source.source_code.toUTF8(bun.default_allocator);
+                } else {
+                    break :code ZigString.Slice.initStatic(
+                        lookup.getSourceCode() orelse
+                            @panic("TODO: what if this failed"),
+                    );
+                }
+            };
             defer code.deinit();
 
             top.position.line = mapping.original.lines;
@@ -2972,7 +2953,12 @@ pub const VirtualMachine = struct {
                     source_url.slice(),
                     @max(frame.position.line, 0),
                     @max(frame.position.column_start, 0),
-                )) |mapping| {
+                    .no_source_contents,
+                )) |lookup| {
+                    if (lookup.displaySourceURLIfNeeded()) |src| {
+                        frame.source_url = src;
+                    }
+                    const mapping = lookup.mapping;
                     frame.position.line = mapping.original.lines;
                     frame.remapped = true;
                     frame.position.column_start = mapping.original.columns;

@@ -292,11 +292,12 @@ extern "C" int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
     return connect$NOCANCEL(fd, addr, addrlen);
 }
 
-extern "C" int accept$NOCANCEL(int fd, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen);
-extern "C" int accept(int fd, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen)
-{
-    return accept$NOCANCEL(fd, addr, addrlen);
-}
+// We cannot use accept() due to an obscure linking issue with WebKit
+// extern "C" int accept$NOCANCEL(int fd, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen);
+// extern "C" int accept(int fd, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen)
+// {
+//     return accept$NOCANCEL(fd, addr, addrlen);
+// }
 
 extern "C" int close$NOCANCEL(int fd);
 extern "C" int close(int fd)

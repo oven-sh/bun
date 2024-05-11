@@ -3,7 +3,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(Bun_VERSION "1.1.8")
-set(WEBKIT_TAG 413f6fc119cfca98d5063049ce444cc4eb56f0a4)
+set(WEBKIT_TAG 7c97f5e74577f7240e3e29f456fa1d26fb28c790)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -1123,7 +1123,7 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 
-    target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
+    target_link_options(${bun} PUBLIC "-fno-keep-static-consts" "-fuse-ld=lld" "-Wl,--dead-strip-duplicates" "-Wl,--deduplicate-strings" "-Wl,--icf=safe")
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()
 
@@ -1161,6 +1161,7 @@ if(UNIX AND NOT APPLE)
         "-rdynamic"
         "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
+        "-Wl,--icf=safe"
     )
 
     target_link_libraries(${bun} PRIVATE "c")

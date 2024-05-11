@@ -1126,8 +1126,6 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
 
-    # Must be anbled after macOS 14
-    # target_link_options(${bun} PUBLIC "-Wl,-ld_classic")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")

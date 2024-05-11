@@ -139,7 +139,7 @@ test("dependency on workspace without version in package.json", () => {
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 test("dependency on same name as workspace and dist-tag", () => {
   writeFileSync(

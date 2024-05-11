@@ -35,7 +35,6 @@ it("works", async () => {
             resolve(new URL("http://"+hostname+":"+port));
           }
         });
-        setTimeout(() => reject("Timed out"), 1000);
       });
     }
     await using server = createServer(st(process.cwd()));

@@ -1,7 +1,6 @@
 import { bunExe } from "bun:harness";
 import { bunEnv, tmpdirSync } from "harness";
-import { createTest } from "node-harness";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import { expect, it } from "bun:test";
 import * as path from "node:path";
 
 it("works", async () => {

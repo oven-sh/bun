@@ -1,7 +1,6 @@
 import { bunExe } from "bun:harness";
 import { bunEnv, tmpdirSync } from "harness";
-import { createTest } from "node-harness";
-const { describe, expect, it } = createTest(import.meta.path);
+import { expect, it } from "bun:test";
 import * as path from "node:path";
 
 it.skipIf(!bunEnv.TEST_INFO_AZURE_SERVICE_BUS)("works", async () => {

@@ -268,6 +268,158 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 
 #include <dlfcn.h>
 #include <cstdint>
+#include <sys/cdefs.h>
+#include <sys/types.h>
+#include <sys/_types/_socklen_t.h>
+#include <sys/_types/_fd_def.h>
+#include <sys/_types/_pid_t.h>
+#include <stdarg.h>
+
+#pragma mark - Aliases
+// To get the list of symbols from bun, run:
+//
+//    nm -g $(which bun-debug)
+//
+// To get the list of $NOCANCEL symbols, run:
+//
+//    curl https://raw.githubusercontent.com/apple-oss-distributions/xnu/main/bsd/kern/syscalls.master | grep _nocancel
+//
+// This enforces we only use the $NOCANCEL version of these syscalls without having to change every call site.
+// It would be better to do this via `-alias` in the linker, but for reasons that aren't clear, that doesn't work.
+extern "C" int connect$NOCANCEL(int fd, const struct sockaddr* addr, socklen_t addrlen);
+extern "C" int connect(int fd, const struct sockaddr* addr, socklen_t addrlen)
+{
+    return connect$NOCANCEL(fd, addr, addrlen);
+}
+
+extern "C" int accept$NOCANCEL(int fd, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen);
+extern "C" int accept(int fd, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen)
+{
+    return accept$NOCANCEL(fd, addr, addrlen);
+}
+
+extern "C" int close$NOCANCEL(int fd);
+extern "C" int close(int fd)
+{
+    return close$NOCANCEL(fd);
+}
+
+extern "C" int fcntl$NOCANCEL(int fd, int cmd, ...);
+extern "C" int fcntl(int fd, int cmd, ...)
+{
+    va_list va;
+    va_start(va, cmd);
+    return fcntl$NOCANCEL(fd, cmd, va_arg(va, long));
+}
+extern "C" int fsync$NOCANCEL(int fd);
+extern "C" int fsync(int fd)
+{
+    return fsync$NOCANCEL(fd);
+}
+
+extern "C" int openat$NOCANCEL(int fd, const char* path, int flags, ...);
+extern "C" int openat(int fd, const char* path, int flags, int mode)
+{
+    return openat$NOCANCEL(fd, path, flags, mode);
+}
+
+#ifndef AT_FDCWD
+#define AT_FDCWD -2
+#endif
+
+extern "C" int open(const char* path, int flags, ...)
+{
+    va_list va;
+    va_start(va, flags);
+    return openat$NOCANCEL(AT_FDCWD, path, flags, va_arg(va, void*));
+}
+
+extern "C" int read$NOCANCEL(int fd, void* buf, size_t count);
+extern "C" int read(int fd, void* buf, size_t count)
+{
+    return read$NOCANCEL(fd, buf, count);
+}
+
+extern "C" int write$NOCANCEL(int fd, const void* buf, size_t count);
+extern "C" int write(int fd, const void* buf, size_t count)
+{
+    return write$NOCANCEL(fd, buf, count);
+}
+
+extern "C" int recvfrom$NOCANCEL(int fd, void* buf, size_t count, int flags, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen);
+extern "C" int recvfrom(int fd, void* buf, size_t count, int flags, struct sockaddr* __restrict addr, socklen_t* __restrict addrlen)
+{
+    return recvfrom$NOCANCEL(fd, buf, count, flags, addr, addrlen);
+}
+
+extern "C" int recv$NOCANCEL(int fd, void* buf, size_t count, int flags);
+extern "C" int recv(int fd, void* buf, size_t count, int flags)
+{
+    return recv$NOCANCEL(fd, buf, count, flags);
+}
+
+extern "C" int sendmsg$NOCANCEL(int fd, const struct msghdr* msg, int flags);
+extern "C" int sendmsg(int fd, const struct msghdr* msg, int flags)
+{
+    return sendmsg$NOCANCEL(fd, msg, flags);
+}
+
+typedef unsigned int nfds_t;
+extern "C" int poll$NOCANCEL(struct pollfd* fds, unsigned int nfds, int timeout);
+extern "C" int poll(struct pollfd* fds, unsigned int nfds, int timeout)
+{
+    return poll$NOCANCEL(fds, nfds, timeout);
+}
+
+extern "C" int select$NOCANCEL(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout);
+extern "C" int select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* exceptfds, struct timeval* timeout)
+{
+    return select$NOCANCEL(nfds, readfds, writefds, exceptfds, timeout);
+}
+
+extern "C" int pread$NOCANCEL(int fd, void* buf, size_t count, off_t offset);
+extern "C" int pread(int fd, void* buf, size_t count, off_t offset)
+{
+    return pread$NOCANCEL(fd, buf, count, offset);
+}
+
+extern "C" int pwrite$NOCANCEL(int fd, const void* buf, size_t count, off_t offset);
+extern "C" int pwrite(int fd, const void* buf, size_t count, off_t offset)
+{
+    return pwrite$NOCANCEL(fd, buf, count, offset);
+}
+
+extern "C" int pwritev$NOCANCEL(int fd, const struct iovec* iov, int iovcnt, off_t offset);
+extern "C" int pwritev(int fd, const struct iovec* iov, int iovcnt, off_t offset)
+{
+    return pwritev$NOCANCEL(fd, iov, iovcnt, offset);
+}
+
+extern "C" int readv$NOCANCEL(int fd, const struct iovec* iov, int iovcnt);
+extern "C" int readv(int fd, const struct iovec* iov, int iovcnt)
+{
+    return readv$NOCANCEL(fd, iov, iovcnt);
+}
+
+extern "C" int msync$NOCANCEL(void* addr, size_t length, int flags);
+extern "C" int msync(void* addr, size_t length, int flags)
+{
+    return msync$NOCANCEL(addr, length, flags);
+}
+
+extern "C" int writev$NOCANCEL(int fd, const struct iovec* iov, int iovcnt);
+extern "C" int writev(int fd, const struct iovec* iov, int iovcnt)
+{
+    return writev$NOCANCEL(fd, iov, iovcnt);
+}
+
+extern "C" int waitpid$NOCANCEL(pid_t pid, int* status, int options);
+extern "C" int waitpid(pid_t pid, int* status, int options)
+{
+    return waitpid$NOCANCEL(pid, status, options);
+}
+
+#pragma mark - Overrides
 
 extern "C" int pthread_self_is_exiting_np()
 {

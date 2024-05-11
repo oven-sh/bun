@@ -378,7 +378,8 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
 
           for (const depId of pkg.dependencies) {
             const dep = lockfile.dependencies[depId];
-            if (dep.behavior.optional || (dep.behavior.dev && pkg.id !== 0)) continue;
+            const depPkg = lockfile.packages[dep.package_id];
+            if (shouldSkip(depPkg, dep)) continue;
             try {
               require.resolve(join(dep.name, "package.json"), { paths: [treeDepPath] });
             } catch (e) {

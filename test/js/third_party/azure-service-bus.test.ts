@@ -3,6 +3,7 @@ import { bunEnv, tmpdirSync } from "harness";
 import { expect, it } from "bun:test";
 import * as path from "node:path";
 
+// prettier-ignore
 it.skipIf(!bunEnv.TEST_INFO_AZURE_SERVICE_BUS)("works", async () => {
   const package_dir = tmpdirSync("bun-test-");
 
@@ -52,4 +53,6 @@ it.skipIf(!bunEnv.TEST_INFO_AZURE_SERVICE_BUS)("works", async () => {
   out = await new Response(stdout).text();
   expect(out).toEqual("Message sent\n");
   expect(await exited).toBe(0);
-});
+}, 10_000);
+// this takes ~4s locally so increase the time to try and ensure its
+// not flaky in a higher pressure environment

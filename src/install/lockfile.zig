@@ -319,6 +319,9 @@ pub const Tree = struct {
         depth: usize,
     };
 
+    // max number of node_modules folders
+    pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
+
     pub const Iterator = struct {
         trees: []const Tree,
         dependency_ids: []const DependencyID,
@@ -330,8 +333,7 @@ pub const Tree = struct {
         last_parent: Id = invalid_id,
         string_buf: string,
 
-        // max number of node_modules folders
-        depth_stack: [(bun.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
+        depth_stack: [max_depth]Id = undefined,
 
         pub fn init(lockfile: *const Lockfile) Iterator {
             var iter = Iterator{
@@ -370,41 +372,18 @@ pub const Tree = struct {
             }
 
             const tree = this.trees[this.tree_id];
-            var depth: usize = 0;
 
-            {
-                var parent_id = tree.id;
-                var path_written: usize = "node_modules".len;
-                this.depth_stack[0] = 0;
-
-                if (tree.id > 0) {
-                    var depth_buf_len: usize = 1;
-                    while (parent_id > 0 and parent_id < @as(Id, @intCast(this.trees.len))) {
-                        this.depth_stack[depth_buf_len] = parent_id;
-                        parent_id = this.trees[parent_id].parent;
-                        depth_buf_len += 1;
-                    }
-                    depth_buf_len -= 1;
-                    depth = depth_buf_len;
-                    while (depth_buf_len > 0) : (depth_buf_len -= 1) {
-                        this.path_buf[path_written] = std.fs.path.sep;
-                        path_written += 1;
-
-                        const tree_id = this.depth_stack[depth_buf_len];
-                        const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(this.string_buf);
-                        @memcpy(this.path_buf[path_written..][0..name.len], name);
-                        path_written += name.len;
-
-                        @memcpy(this.path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
-                        path_written += "/node_modules".len;
-                    }
-                }
-                this.path_buf[path_written] = 0;
-                this.path_buf_len = path_written;
-            }
+            const relative_path, const depth = tree.relativePathAndDepth(
+                this.trees,
+                this.dependencies,
+                this.string_buf,
+                &this.path_buf,
+                &this.depth_stack,
+            );
 
             this.tree_id += 1;
-            const relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
+            this.path_buf_len = relative_path.len;
+
             return .{
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
@@ -413,6 +392,50 @@ pub const Tree = struct {
             };
         }
     };
+
+    /// Returns relative path and the depth of the tree
+    pub fn relativePathAndDepth(
+        tree: *const Tree,
+        trees: []const Tree,
+        dependencies: []const Dependency,
+        string_buf: string,
+        path_buf: *bun.PathBuffer,
+        depth_buf: *[max_depth]Id,
+    ) struct { stringZ, usize } {
+        var depth: usize = 0;
+
+        var parent_id = tree.id;
+        var path_written: usize = "node_modules".len;
+
+        depth_buf[0] = 0;
+
+        if (tree.id > 0) {
+            var depth_buf_len: usize = 1;
+            while (parent_id > 0 and parent_id < trees.len) {
+                depth_buf[depth_buf_len] = parent_id;
+                parent_id = trees[parent_id].parent;
+                depth_buf_len += 1;
+            }
+            depth_buf_len -= 1;
+            depth = depth_buf_len;
+            while (depth_buf_len > 0) : (depth_buf_len -= 1) {
+                path_buf[path_written] = std.fs.path.sep;
+                path_written += 1;
+
+                const id = depth_buf[depth_buf_len];
+                const name = dependencies[trees[id].dependency_id].name.slice(string_buf);
+                @memcpy(path_buf[path_written..][0..name.len], name);
+                path_written += name.len;
+
+                @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
+                path_written += "/node_modules".len;
+            }
+        }
+        path_buf[path_written] = 0;
+        const rel = path_buf[0..path_written :0];
+
+        return .{ rel, depth };
+    }
 
     const Builder = struct {
         allocator: Allocator,
@@ -517,22 +540,18 @@ pub const Tree = struct {
             if (pid >= max_package_id) continue;
 
             const dependency = builder.dependencies[dep_id];
-            // Do not hoist aliased packages
-            const destination = if (dependency.name_hash != name_hashes[pid])
-                next.id
-            else
-                next.hoistDependency(
-                    true,
-                    pid,
-                    dep_id,
-                    &dependency,
-                    dependency_lists,
-                    trees,
-                    builder,
-                ) catch |err| return err;
-            switch (destination) {
+
+            switch (next.hoistDependency(
+                true,
+                pid,
+                dep_id,
+                &dependency,
+                dependency_lists,
+                trees,
+                builder,
+            ) catch |err| return err) {
                 Tree.dependency_loop, Tree.hoisted => continue,
-                else => {
+                else => |destination| {
                     dependency_lists[destination].append(builder.allocator, dep_id) catch unreachable;
                     trees[destination].dependencies.len += 1;
                     if (builder.resolution_lists[pid].len > 0) {
@@ -1732,6 +1751,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .trusted_dependencies = null,
         .workspace_paths = .{},
         .workspace_versions = .{},
+        .overrides = .{},
+        .meta_hash = zero_hash,
     };
 }
 
@@ -6074,6 +6095,67 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                     }
                     try w.endArray();
                 },
+            }
+        }
+    }
+    {
+        try w.objectField("trees");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        const trees = this.buffers.trees.items;
+        const string_buf = this.buffers.string_bytes.items;
+        const dependencies = this.buffers.dependencies.items;
+        const hoisted_deps = this.buffers.hoisted_dependencies.items;
+        const resolutions = this.buffers.resolutions.items;
+        var depth_buf: [Tree.max_depth]Tree.Id = undefined;
+        var path_buf: bun.PathBuffer = undefined;
+        @memcpy(path_buf[0.."node_modules".len], "node_modules");
+
+        for (0..this.buffers.trees.items.len) |tree_id| {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const tree = this.buffers.trees.items[tree_id];
+
+            try w.objectField("id");
+            try w.write(tree_id);
+
+            const relative_path, const depth = tree.relativePathAndDepth(
+                trees,
+                dependencies,
+                string_buf,
+                &path_buf,
+                &depth_buf,
+            );
+
+            try w.objectField("path");
+            try w.write(relative_path);
+
+            try w.objectField("depth");
+            try w.write(depth);
+
+            try w.objectField("dependencies");
+            {
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                for (tree.dependencies.get(hoisted_deps)) |tree_dep_id| {
+                    const dep = dependencies[tree_dep_id];
+                    const package_id = resolutions[tree_dep_id];
+
+                    try w.objectField(dep.name.slice(sb));
+                    {
+                        try w.beginObject();
+                        defer w.endObject() catch {};
+
+                        try w.objectField("id");
+                        try w.write(tree_dep_id);
+
+                        try w.objectField("package_id");
+                        try w.write(package_id);
+                    }
+                }
             }
         }
     }

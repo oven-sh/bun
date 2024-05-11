@@ -505,6 +505,2163 @@ exports[`ssr works for 100-ish requests 1`] = `
     "universalify": 152,
     "gopd": 299
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "@types/node": {
+          "id": 0,
+          "package_id": 164
+        },
+        "@types/react": {
+          "id": 1,
+          "package_id": 441
+        },
+        "@types/react-dom": {
+          "id": 2,
+          "package_id": 440
+        },
+        "autoprefixer": {
+          "id": 3,
+          "package_id": 432
+        },
+        "bun-types": {
+          "id": 4,
+          "package_id": 431
+        },
+        "eslint": {
+          "id": 5,
+          "package_id": 222
+        },
+        "eslint-config-next": {
+          "id": 6,
+          "package_id": 221
+        },
+        "next": {
+          "id": 7,
+          "package_id": 203
+        },
+        "postcss": {
+          "id": 8,
+          "package_id": 39
+        },
+        "puppeteer": {
+          "id": 9,
+          "package_id": 89
+        },
+        "react": {
+          "id": 10,
+          "package_id": 88
+        },
+        "react-dom": {
+          "id": 11,
+          "package_id": 84
+        },
+        "tailwindcss": {
+          "id": 12,
+          "package_id": 2
+        },
+        "typescript": {
+          "id": 13,
+          "package_id": 1
+        },
+        "@types/prop-types": {
+          "id": 823,
+          "package_id": 444
+        },
+        "@types/scheduler": {
+          "id": 824,
+          "package_id": 443
+        },
+        "csstype": {
+          "id": 825,
+          "package_id": 442
+        },
+        "browserslist": {
+          "id": 808,
+          "package_id": 436
+        },
+        "caniuse-lite": {
+          "id": 809,
+          "package_id": 435
+        },
+        "fraction.js": {
+          "id": 810,
+          "package_id": 434
+        },
+        "normalize-range": {
+          "id": 811,
+          "package_id": 433
+        },
+        "picocolors": {
+          "id": 812,
+          "package_id": 41
+        },
+        "postcss-value-parser": {
+          "id": 813,
+          "package_id": 51
+        },
+        "@eslint-community/eslint-utils": {
+          "id": 316,
+          "package_id": 285
+        },
+        "@eslint-community/regexpp": {
+          "id": 317,
+          "package_id": 284
+        },
+        "@eslint/eslintrc": {
+          "id": 318,
+          "package_id": 282
+        },
+        "@eslint/js": {
+          "id": 319,
+          "package_id": 281
+        },
+        "@humanwhocodes/config-array": {
+          "id": 320,
+          "package_id": 279
+        },
+        "@humanwhocodes/module-importer": {
+          "id": 321,
+          "package_id": 278
+        },
+        "@nodelib/fs.walk": {
+          "id": 322,
+          "package_id": 67
+        },
+        "ajv": {
+          "id": 323,
+          "package_id": 273
+        },
+        "chalk": {
+          "id": 324,
+          "package_id": 270
+        },
+        "cross-spawn": {
+          "id": 325,
+          "package_id": 264
+        },
+        "debug": {
+          "id": 326,
+          "package_id": 132
+        },
+        "doctrine": {
+          "id": 327,
+          "package_id": 263
+        },
+        "escape-string-regexp": {
+          "id": 328,
+          "package_id": 262
+        },
+        "eslint-scope": {
+          "id": 329,
+          "package_id": 260
+        },
+        "eslint-visitor-keys": {
+          "id": 330,
+          "package_id": 257
+        },
+        "espree": {
+          "id": 331,
+          "package_id": 256
+        },
+        "esquery": {
+          "id": 332,
+          "package_id": 255
+        },
+        "esutils": {
+          "id": 333,
+          "package_id": 144
+        },
+        "fast-deep-equal": {
+          "id": 334,
+          "package_id": 254
+        },
+        "file-entry-cache": {
+          "id": 335,
+          "package_id": 247
+        },
+        "find-up": {
+          "id": 336,
+          "package_id": 241
+        },
+        "glob-parent": {
+          "id": 337,
+          "package_id": 63
+        },
+        "globals": {
+          "id": 338,
+          "package_id": 239
+        },
+        "graphemer": {
+          "id": 339,
+          "package_id": 238
+        },
+        "ignore": {
+          "id": 340,
+          "package_id": 237
+        },
+        "imurmurhash": {
+          "id": 341,
+          "package_id": 236
+        },
+        "is-glob": {
+          "id": 342,
+          "package_id": 61
+        },
+        "is-path-inside": {
+          "id": 343,
+          "package_id": 235
+        },
+        "js-yaml": {
+          "id": 344,
+          "package_id": 196
+        },
+        "json-stable-stringify-without-jsonify": {
+          "id": 345,
+          "package_id": 234
+        },
+        "levn": {
+          "id": 346,
+          "package_id": 226
+        },
+        "lodash.merge": {
+          "id": 347,
+          "package_id": 233
+        },
+        "minimatch": {
+          "id": 348,
+          "package_id": 232
+        },
+        "natural-compare": {
+          "id": 349,
+          "package_id": 231
+        },
+        "optionator": {
+          "id": 350,
+          "package_id": 224
+        },
+        "strip-ansi": {
+          "id": 351,
+          "package_id": 98
+        },
+        "text-table": {
+          "id": 352,
+          "package_id": 223
+        },
+        "@next/eslint-plugin-next": {
+          "id": 305,
+          "package_id": 413
+        },
+        "@rushstack/eslint-patch": {
+          "id": 306,
+          "package_id": 412
+        },
+        "@typescript-eslint/parser": {
+          "id": 307,
+          "package_id": 400
+        },
+        "eslint-import-resolver-node": {
+          "id": 308,
+          "package_id": 393
+        },
+        "eslint-import-resolver-typescript": {
+          "id": 309,
+          "package_id": 395
+        },
+        "eslint-plugin-import": {
+          "id": 310,
+          "package_id": 383
+        },
+        "eslint-plugin-jsx-a11y": {
+          "id": 311,
+          "package_id": 371
+        },
+        "eslint-plugin-react": {
+          "id": 312,
+          "package_id": 287
+        },
+        "eslint-plugin-react-hooks": {
+          "id": 313,
+          "package_id": 286
+        },
+        "@next/env": {
+          "id": 278,
+          "package_id": 220
+        },
+        "@swc/helpers": {
+          "id": 279,
+          "package_id": 219
+        },
+        "busboy": {
+          "id": 280,
+          "package_id": 217
+        },
+        "graceful-fs": {
+          "id": 282,
+          "package_id": 154
+        },
+        "styled-jsx": {
+          "id": 284,
+          "package_id": 213
+        },
+        "@next/swc-darwin-arm64": {
+          "id": 285,
+          "package_id": 212
+        },
+        "@next/swc-darwin-x64": {
+          "id": 286,
+          "package_id": 211
+        },
+        "@next/swc-linux-arm64-gnu": {
+          "id": 287,
+          "package_id": 210
+        },
+        "@next/swc-linux-arm64-musl": {
+          "id": 288,
+          "package_id": 209
+        },
+        "@next/swc-linux-x64-gnu": {
+          "id": 289,
+          "package_id": 208
+        },
+        "@next/swc-linux-x64-musl": {
+          "id": 290,
+          "package_id": 207
+        },
+        "@next/swc-win32-arm64-msvc": {
+          "id": 291,
+          "package_id": 206
+        },
+        "@next/swc-win32-ia32-msvc": {
+          "id": 292,
+          "package_id": 205
+        },
+        "@next/swc-win32-x64-msvc": {
+          "id": 293,
+          "package_id": 204
+        },
+        "nanoid": {
+          "id": 74,
+          "package_id": 42
+        },
+        "source-map-js": {
+          "id": 76,
+          "package_id": 40
+        },
+        "cosmiconfig": {
+          "id": 125,
+          "package_id": 181
+        },
+        "puppeteer-core": {
+          "id": 126,
+          "package_id": 170
+        },
+        "@puppeteer/browsers": {
+          "id": 127,
+          "package_id": 90
+        },
+        "loose-envify": {
+          "id": 124,
+          "package_id": 86
+        },
+        "scheduler": {
+          "id": 120,
+          "package_id": 85
+        },
+        "@alloc/quick-lru": {
+          "id": 14,
+          "package_id": 83
+        },
+        "arg": {
+          "id": 15,
+          "package_id": 82
+        },
+        "chokidar": {
+          "id": 16,
+          "package_id": 76
+        },
+        "didyoumean": {
+          "id": 17,
+          "package_id": 75
+        },
+        "dlv": {
+          "id": 18,
+          "package_id": 74
+        },
+        "fast-glob": {
+          "id": 19,
+          "package_id": 64
+        },
+        "jiti": {
+          "id": 22,
+          "package_id": 60
+        },
+        "lilconfig": {
+          "id": 23,
+          "package_id": 45
+        },
+        "micromatch": {
+          "id": 24,
+          "package_id": 54
+        },
+        "normalize-path": {
+          "id": 25,
+          "package_id": 53
+        },
+        "object-hash": {
+          "id": 26,
+          "package_id": 52
+        },
+        "postcss-import": {
+          "id": 29,
+          "package_id": 48
+        },
+        "postcss-js": {
+          "id": 30,
+          "package_id": 46
+        },
+        "postcss-load-config": {
+          "id": 31,
+          "package_id": 43
+        },
+        "postcss-nested": {
+          "id": 32,
+          "package_id": 38
+        },
+        "postcss-selector-parser": {
+          "id": 33,
+          "package_id": 35
+        },
+        "resolve": {
+          "id": 34,
+          "package_id": 29
+        },
+        "sucrase": {
+          "id": 35,
+          "package_id": 3
+        },
+        "electron-to-chromium": {
+          "id": 816,
+          "package_id": 439
+        },
+        "node-releases": {
+          "id": 817,
+          "package_id": 438
+        },
+        "update-browserslist-db": {
+          "id": 818,
+          "package_id": 437
+        },
+        "import-fresh": {
+          "id": 411,
+          "package_id": 198
+        },
+        "strip-json-comments": {
+          "id": 414,
+          "package_id": 283
+        },
+        "@humanwhocodes/object-schema": {
+          "id": 403,
+          "package_id": 280
+        },
+        "@nodelib/fs.scandir": {
+          "id": 101,
+          "package_id": 70
+        },
+        "fastq": {
+          "id": 102,
+          "package_id": 68
+        },
+        "fast-json-stable-stringify": {
+          "id": 399,
+          "package_id": 277
+        },
+        "json-schema-traverse": {
+          "id": 400,
+          "package_id": 276
+        },
+        "uri-js": {
+          "id": 401,
+          "package_id": 274
+        },
+        "ansi-styles": {
+          "id": 395,
+          "package_id": 107
+        },
+        "supports-color": {
+          "id": 396,
+          "package_id": 271
+        },
+        "path-key": {
+          "id": 390,
+          "package_id": 269
+        },
+        "shebang-command": {
+          "id": 391,
+          "package_id": 267
+        },
+        "which": {
+          "id": 392,
+          "package_id": 265
+        },
+        "ms": {
+          "id": 191,
+          "package_id": 133
+        },
+        "esrecurse": {
+          "id": 386,
+          "package_id": 261
+        },
+        "estraverse": {
+          "id": 387,
+          "package_id": 145
+        },
+        "acorn": {
+          "id": 382,
+          "package_id": 259
+        },
+        "acorn-jsx": {
+          "id": 383,
+          "package_id": 258
+        },
+        "flat-cache": {
+          "id": 369,
+          "package_id": 248
+        },
+        "locate-path": {
+          "id": 364,
+          "package_id": 243
+        },
+        "path-exists": {
+          "id": 365,
+          "package_id": 242
+        },
+        "type-fest": {
+          "id": 363,
+          "package_id": 240
+        },
+        "is-extglob": {
+          "id": 93,
+          "package_id": 62
+        },
+        "argparse": {
+          "id": 274,
+          "package_id": 197
+        },
+        "prelude-ls": {
+          "id": 359,
+          "package_id": 228
+        },
+        "type-check": {
+          "id": 360,
+          "package_id": 227
+        },
+        "brace-expansion": {
+          "id": 362,
+          "package_id": 17
+        },
+        "deep-is": {
+          "id": 354,
+          "package_id": 230
+        },
+        "@aashutoshrathi/word-wrap": {
+          "id": 355,
+          "package_id": 229
+        },
+        "fast-levenshtein": {
+          "id": 358,
+          "package_id": 225
+        },
+        "ansi-regex": {
+          "id": 148,
+          "package_id": 99
+        },
+        "glob": {
+          "id": 781,
+          "package_id": 414
+        },
+        "@typescript-eslint/scope-manager": {
+          "id": 755,
+          "package_id": 411
+        },
+        "@typescript-eslint/types": {
+          "id": 756,
+          "package_id": 402
+        },
+        "@typescript-eslint/typescript-estree": {
+          "id": 757,
+          "package_id": 403
+        },
+        "@typescript-eslint/visitor-keys": {
+          "id": 758,
+          "package_id": 401
+        },
+        "is-core-module": {
+          "id": 736,
+          "package_id": 32
+        },
+        "enhanced-resolve": {
+          "id": 744,
+          "package_id": 398
+        },
+        "eslint-module-utils": {
+          "id": 745,
+          "package_id": 390
+        },
+        "get-tsconfig": {
+          "id": 747,
+          "package_id": 396
+        },
+        "array-includes": {
+          "id": 706,
+          "package_id": 354
+        },
+        "array.prototype.findlastindex": {
+          "id": 707,
+          "package_id": 394
+        },
+        "array.prototype.flat": {
+          "id": 708,
+          "package_id": 352
+        },
+        "array.prototype.flatmap": {
+          "id": 709,
+          "package_id": 370
+        },
+        "has": {
+          "id": 714,
+          "package_id": 33
+        },
+        "object.fromentries": {
+          "id": 718,
+          "package_id": 349
+        },
+        "object.groupby": {
+          "id": 719,
+          "package_id": 389
+        },
+        "object.values": {
+          "id": 720,
+          "package_id": 347
+        },
+        "semver": {
+          "id": 721,
+          "package_id": 343
+        },
+        "tsconfig-paths": {
+          "id": 722,
+          "package_id": 384
+        },
+        "@babel/runtime": {
+          "id": 685,
+          "package_id": 381
+        },
+        "aria-query": {
+          "id": 686,
+          "package_id": 380
+        },
+        "ast-types-flow": {
+          "id": 689,
+          "package_id": 379
+        },
+        "axe-core": {
+          "id": 690,
+          "package_id": 378
+        },
+        "axobject-query": {
+          "id": 691,
+          "package_id": 376
+        },
+        "damerau-levenshtein": {
+          "id": 692,
+          "package_id": 375
+        },
+        "emoji-regex": {
+          "id": 693,
+          "package_id": 374
+        },
+        "jsx-ast-utils": {
+          "id": 695,
+          "package_id": 351
+        },
+        "language-tags": {
+          "id": 696,
+          "package_id": 372
+        },
+        "object.entries": {
+          "id": 698,
+          "package_id": 350
+        },
+        "array.prototype.tosorted": {
+          "id": 420,
+          "package_id": 369
+        },
+        "es-iterator-helpers": {
+          "id": 422,
+          "package_id": 355
+        },
+        "object.hasown": {
+          "id": 428,
+          "package_id": 348
+        },
+        "prop-types": {
+          "id": 430,
+          "package_id": 345
+        },
+        "string.prototype.matchall": {
+          "id": 433,
+          "package_id": 288
+        },
+        "tslib": {
+          "id": 304,
+          "package_id": 147
+        },
+        "streamsearch": {
+          "id": 303,
+          "package_id": 218
+        },
+        "client-only": {
+          "id": 298,
+          "package_id": 214
+        },
+        "env-paths": {
+          "id": 253,
+          "package_id": 202
+        },
+        "parse-json": {
+          "id": 256,
+          "package_id": 182
+        },
+        "chromium-bidi": {
+          "id": 238,
+          "package_id": 178
+        },
+        "cross-fetch": {
+          "id": 239,
+          "package_id": 173
+        },
+        "devtools-protocol": {
+          "id": 241,
+          "package_id": 172
+        },
+        "ws": {
+          "id": 242,
+          "package_id": 171
+        },
+        "extract-zip": {
+          "id": 129,
+          "package_id": 162
+        },
+        "progress": {
+          "id": 130,
+          "package_id": 161
+        },
+        "proxy-agent": {
+          "id": 131,
+          "package_id": 127
+        },
+        "tar-fs": {
+          "id": 132,
+          "package_id": 115
+        },
+        "unbzip2-stream": {
+          "id": 133,
+          "package_id": 110
+        },
+        "yargs": {
+          "id": 134,
+          "package_id": 94
+        },
+        "js-tokens": {
+          "id": 123,
+          "package_id": 87
+        },
+        "anymatch": {
+          "id": 107,
+          "package_id": 81
+        },
+        "braces": {
+          "id": 108,
+          "package_id": 56
+        },
+        "is-binary-path": {
+          "id": 110,
+          "package_id": 79
+        },
+        "readdirp": {
+          "id": 113,
+          "package_id": 78
+        },
+        "fsevents": {
+          "id": 114,
+          "package_id": 77
+        },
+        "@nodelib/fs.stat": {
+          "id": 95,
+          "package_id": 73
+        },
+        "merge2": {
+          "id": 98,
+          "package_id": 65
+        },
+        "picomatch": {
+          "id": 89,
+          "package_id": 55
+        },
+        "read-cache": {
+          "id": 84,
+          "package_id": 49
+        },
+        "camelcase-css": {
+          "id": 81,
+          "package_id": 47
+        },
+        "yaml": {
+          "id": 78,
+          "package_id": 44
+        },
+        "cssesc": {
+          "id": 70,
+          "package_id": 37
+        },
+        "util-deprecate": {
+          "id": 71,
+          "package_id": 36
+        },
+        "path-parse": {
+          "id": 66,
+          "package_id": 31
+        },
+        "supports-preserve-symlinks-flag": {
+          "id": 67,
+          "package_id": 30
+        },
+        "@jridgewell/gen-mapping": {
+          "id": 36,
+          "package_id": 24
+        },
+        "commander": {
+          "id": 37,
+          "package_id": 23
+        },
+        "lines-and-columns": {
+          "id": 39,
+          "package_id": 11
+        },
+        "mz": {
+          "id": 40,
+          "package_id": 6
+        },
+        "pirates": {
+          "id": 41,
+          "package_id": 5
+        },
+        "ts-interface-checker": {
+          "id": 42,
+          "package_id": 4
+        },
+        "escalade": {
+          "id": 819,
+          "package_id": 104
+        },
+        "parent-module": {
+          "id": 275,
+          "package_id": 200
+        },
+        "resolve-from": {
+          "id": 276,
+          "package_id": 199
+        },
+        "run-parallel": {
+          "id": 105,
+          "package_id": 71
+        },
+        "reusify": {
+          "id": 103,
+          "package_id": 69
+        },
+        "punycode": {
+          "id": 402,
+          "package_id": 275
+        },
+        "color-convert": {
+          "id": 155,
+          "package_id": 108
+        },
+        "has-flag": {
+          "id": 397,
+          "package_id": 272
+        },
+        "shebang-regex": {
+          "id": 394,
+          "package_id": 268
+        },
+        "isexe": {
+          "id": 393,
+          "package_id": 266
+        },
+        "flatted": {
+          "id": 370,
+          "package_id": 253
+        },
+        "keyv": {
+          "id": 371,
+          "package_id": 251
+        },
+        "rimraf": {
+          "id": 372,
+          "package_id": 249
+        },
+        "p-locate": {
+          "id": 366,
+          "package_id": 244
+        },
+        "balanced-match": {
+          "id": 56,
+          "package_id": 19
+        },
+        "concat-map": {
+          "id": 57,
+          "package_id": 18
+        },
+        "foreground-child": {
+          "id": 782,
+          "package_id": 429
+        },
+        "jackspeak": {
+          "id": 783,
+          "package_id": 420
+        },
+        "minipass": {
+          "id": 785,
+          "package_id": 416
+        },
+        "path-scurry": {
+          "id": 786,
+          "package_id": 415
+        },
+        "globby": {
+          "id": 766,
+          "package_id": 406
+        },
+        "ts-api-utils": {
+          "id": 769,
+          "package_id": 404
+        },
+        "tapable": {
+          "id": 754,
+          "package_id": 399
+        },
+        "resolve-pkg-maps": {
+          "id": 752,
+          "package_id": 397
+        },
+        "call-bind": {
+          "id": 623,
+          "package_id": 294
+        },
+        "define-properties": {
+          "id": 624,
+          "package_id": 301
+        },
+        "es-abstract": {
+          "id": 625,
+          "package_id": 304
+        },
+        "get-intrinsic": {
+          "id": 626,
+          "package_id": 291
+        },
+        "is-string": {
+          "id": 627,
+          "package_id": 313
+        },
+        "es-shim-unscopables": {
+          "id": 741,
+          "package_id": 353
+        },
+        "function-bind": {
+          "id": 69,
+          "package_id": 34
+        },
+        "@types/json5": {
+          "id": 724,
+          "package_id": 388
+        },
+        "json5": {
+          "id": 725,
+          "package_id": 387
+        },
+        "minimist": {
+          "id": 726,
+          "package_id": 386
+        },
+        "strip-bom": {
+          "id": 727,
+          "package_id": 385
+        },
+        "regenerator-runtime": {
+          "id": 705,
+          "package_id": 382
+        },
+        "dequal": {
+          "id": 704,
+          "package_id": 377
+        },
+        "object.assign": {
+          "id": 616,
+          "package_id": 330
+        },
+        "language-subtag-registry": {
+          "id": 702,
+          "package_id": 373
+        },
+        "asynciterator.prototype": {
+          "id": 628,
+          "package_id": 367
+        },
+        "es-set-tostringtag": {
+          "id": 632,
+          "package_id": 340
+        },
+        "globalthis": {
+          "id": 635,
+          "package_id": 335
+        },
+        "has-property-descriptors": {
+          "id": 636,
+          "package_id": 296
+        },
+        "has-proto": {
+          "id": 637,
+          "package_id": 293
+        },
+        "has-symbols": {
+          "id": 638,
+          "package_id": 292
+        },
+        "internal-slot": {
+          "id": 639,
+          "package_id": 303
+        },
+        "iterator.prototype": {
+          "id": 640,
+          "package_id": 356
+        },
+        "safe-array-concat": {
+          "id": 641,
+          "package_id": 328
+        },
+        "object-assign": {
+          "id": 601,
+          "package_id": 10
+        },
+        "react-is": {
+          "id": 602,
+          "package_id": 346
+        },
+        "regexp.prototype.flags": {
+          "id": 441,
+          "package_id": 300
+        },
+        "set-function-name": {
+          "id": 442,
+          "package_id": 295
+        },
+        "side-channel": {
+          "id": 443,
+          "package_id": 289
+        },
+        "@babel/code-frame": {
+          "id": 258,
+          "package_id": 186
+        },
+        "error-ex": {
+          "id": 259,
+          "package_id": 184
+        },
+        "json-parse-even-better-errors": {
+          "id": 260,
+          "package_id": 183
+        },
+        "mitt": {
+          "id": 250,
+          "package_id": 180
+        },
+        "urlpattern-polyfill": {
+          "id": 251,
+          "package_id": 179
+        },
+        "node-fetch": {
+          "id": 245,
+          "package_id": 174
+        },
+        "get-stream": {
+          "id": 229,
+          "package_id": 169
+        },
+        "yauzl": {
+          "id": 230,
+          "package_id": 165
+        },
+        "@types/yauzl": {
+          "id": 231,
+          "package_id": 163
+        },
+        "agent-base": {
+          "id": 178,
+          "package_id": 134
+        },
+        "http-proxy-agent": {
+          "id": 180,
+          "package_id": 160
+        },
+        "https-proxy-agent": {
+          "id": 181,
+          "package_id": 159
+        },
+        "lru-cache": {
+          "id": 182,
+          "package_id": 158
+        },
+        "pac-proxy-agent": {
+          "id": 183,
+          "package_id": 136
+        },
+        "proxy-from-env": {
+          "id": 184,
+          "package_id": 135
+        },
+        "socks-proxy-agent": {
+          "id": 185,
+          "package_id": 128
+        },
+        "pump": {
+          "id": 161,
+          "package_id": 125
+        },
+        "tar-stream": {
+          "id": 162,
+          "package_id": 123
+        },
+        "bare-fs": {
+          "id": 163,
+          "package_id": 118
+        },
+        "bare-path": {
+          "id": 164,
+          "package_id": 116
+        },
+        "buffer": {
+          "id": 157,
+          "package_id": 112
+        },
+        "through": {
+          "id": 158,
+          "package_id": 111
+        },
+        "cliui": {
+          "id": 138,
+          "package_id": 105
+        },
+        "get-caller-file": {
+          "id": 140,
+          "package_id": 103
+        },
+        "require-directory": {
+          "id": 141,
+          "package_id": 102
+        },
+        "string-width": {
+          "id": 142,
+          "package_id": 97
+        },
+        "y18n": {
+          "id": 143,
+          "package_id": 96
+        },
+        "yargs-parser": {
+          "id": 144,
+          "package_id": 95
+        },
+        "fill-range": {
+          "id": 90,
+          "package_id": 57
+        },
+        "binary-extensions": {
+          "id": 116,
+          "package_id": 80
+        },
+        "pify": {
+          "id": 87,
+          "package_id": 50
+        },
+        "@jridgewell/set-array": {
+          "id": 60,
+          "package_id": 28
+        },
+        "@jridgewell/sourcemap-codec": {
+          "id": 61,
+          "package_id": 26
+        },
+        "@jridgewell/trace-mapping": {
+          "id": 62,
+          "package_id": 25
+        },
+        "fs.realpath": {
+          "id": 48,
+          "package_id": 22
+        },
+        "inflight": {
+          "id": 49,
+          "package_id": 21
+        },
+        "inherits": {
+          "id": 50,
+          "package_id": 20
+        },
+        "once": {
+          "id": 52,
+          "package_id": 14
+        },
+        "path-is-absolute": {
+          "id": 53,
+          "package_id": 13
+        },
+        "any-promise": {
+          "id": 43,
+          "package_id": 9
+        },
+        "thenify-all": {
+          "id": 45,
+          "package_id": 7
+        },
+        "callsites": {
+          "id": 277,
+          "package_id": 201
+        },
+        "queue-microtask": {
+          "id": 106,
+          "package_id": 72
+        },
+        "color-name": {
+          "id": 156,
+          "package_id": 109
+        },
+        "json-buffer": {
+          "id": 380,
+          "package_id": 252
+        },
+        "p-limit": {
+          "id": 367,
+          "package_id": 245
+        },
+        "signal-exit": {
+          "id": 807,
+          "package_id": 430
+        },
+        "@isaacs/cliui": {
+          "id": 791,
+          "package_id": 422
+        },
+        "@pkgjs/parseargs": {
+          "id": 792,
+          "package_id": 421
+        },
+        "array-union": {
+          "id": 772,
+          "package_id": 410
+        },
+        "dir-glob": {
+          "id": 773,
+          "package_id": 408
+        },
+        "slash": {
+          "id": 777,
+          "package_id": 407
+        },
+        "define-data-property": {
+          "id": 464,
+          "package_id": 298
+        },
+        "object-keys": {
+          "id": 466,
+          "package_id": 302
+        },
+        "array-buffer-byte-length": {
+          "id": 470,
+          "package_id": 342
+        },
+        "arraybuffer.prototype.slice": {
+          "id": 471,
+          "package_id": 341
+        },
+        "available-typed-arrays": {
+          "id": 472,
+          "package_id": 309
+        },
+        "es-to-primitive": {
+          "id": 475,
+          "package_id": 338
+        },
+        "function.prototype.name": {
+          "id": 476,
+          "package_id": 337
+        },
+        "get-symbol-description": {
+          "id": 478,
+          "package_id": 336
+        },
+        "gopd": {
+          "id": 480,
+          "package_id": 299
+        },
+        "is-array-buffer": {
+          "id": 486,
+          "package_id": 334
+        },
+        "is-callable": {
+          "id": 487,
+          "package_id": 308
+        },
+        "is-negative-zero": {
+          "id": 488,
+          "package_id": 333
+        },
+        "is-regex": {
+          "id": 489,
+          "package_id": 327
+        },
+        "is-shared-array-buffer": {
+          "id": 490,
+          "package_id": 332
+        },
+        "is-typed-array": {
+          "id": 492,
+          "package_id": 319
+        },
+        "is-weakref": {
+          "id": 493,
+          "package_id": 331
+        },
+        "object-inspect": {
+          "id": 494,
+          "package_id": 290
+        },
+        "safe-regex-test": {
+          "id": 499,
+          "package_id": 326
+        },
+        "string.prototype.trim": {
+          "id": 500,
+          "package_id": 325
+        },
+        "string.prototype.trimend": {
+          "id": 501,
+          "package_id": 324
+        },
+        "string.prototype.trimstart": {
+          "id": 502,
+          "package_id": 323
+        },
+        "typed-array-buffer": {
+          "id": 503,
+          "package_id": 322
+        },
+        "typed-array-byte-length": {
+          "id": 504,
+          "package_id": 321
+        },
+        "typed-array-byte-offset": {
+          "id": 505,
+          "package_id": 320
+        },
+        "typed-array-length": {
+          "id": 506,
+          "package_id": 318
+        },
+        "unbox-primitive": {
+          "id": 507,
+          "package_id": 310
+        },
+        "which-typed-array": {
+          "id": 508,
+          "package_id": 305
+        },
+        "has-tostringtag": {
+          "id": 526,
+          "package_id": 306
+        },
+        "reflect.getprototypeof": {
+          "id": 645,
+          "package_id": 357
+        },
+        "isarray": {
+          "id": 564,
+          "package_id": 329
+        },
+        "functions-have-names": {
+          "id": 454,
+          "package_id": 297
+        },
+        "@babel/highlight": {
+          "id": 263,
+          "package_id": 194
+        },
+        "is-arrayish": {
+          "id": 262,
+          "package_id": 185
+        },
+        "whatwg-url": {
+          "id": 246,
+          "package_id": 175
+        },
+        "fd-slicer": {
+          "id": 233,
+          "package_id": 167
+        },
+        "buffer-crc32": {
+          "id": 234,
+          "package_id": 166
+        },
+        "@tootallnate/quickjs-emscripten": {
+          "id": 193,
+          "package_id": 157
+        },
+        "get-uri": {
+          "id": 196,
+          "package_id": 150
+        },
+        "pac-resolver": {
+          "id": 199,
+          "package_id": 137
+        },
+        "socks": {
+          "id": 188,
+          "package_id": 129
+        },
+        "end-of-stream": {
+          "id": 175,
+          "package_id": 126
+        },
+        "b4a": {
+          "id": 172,
+          "package_id": 124
+        },
+        "fast-fifo": {
+          "id": 173,
+          "package_id": 121
+        },
+        "streamx": {
+          "id": 174,
+          "package_id": 119
+        },
+        "bare-events": {
+          "id": 166,
+          "package_id": 122
+        },
+        "bare-os": {
+          "id": 167,
+          "package_id": 117
+        },
+        "base64-js": {
+          "id": 159,
+          "package_id": 114
+        },
+        "ieee754": {
+          "id": 160,
+          "package_id": 113
+        },
+        "wrap-ansi": {
+          "id": 151,
+          "package_id": 106
+        },
+        "is-fullwidth-code-point": {
+          "id": 146,
+          "package_id": 100
+        },
+        "yallist": {
+          "id": 137,
+          "package_id": 93
+        },
+        "to-regex-range": {
+          "id": 91,
+          "package_id": 58
+        },
+        "@jridgewell/resolve-uri": {
+          "id": 63,
+          "package_id": 27
+        },
+        "wrappy": {
+          "id": 59,
+          "package_id": 15
+        },
+        "thenify": {
+          "id": 46,
+          "package_id": 8
+        },
+        "yocto-queue": {
+          "id": 368,
+          "package_id": 246
+        },
+        "path-type": {
+          "id": 778,
+          "package_id": 409
+        },
+        "is-date-object": {
+          "id": 582,
+          "package_id": 339
+        },
+        "is-symbol": {
+          "id": 583,
+          "package_id": 312
+        },
+        "for-each": {
+          "id": 541,
+          "package_id": 307
+        },
+        "has-bigints": {
+          "id": 517,
+          "package_id": 317
+        },
+        "which-boxed-primitive": {
+          "id": 519,
+          "package_id": 311
+        },
+        "which-builtin-type": {
+          "id": 652,
+          "package_id": 358
+        },
+        "@babel/helper-validator-identifier": {
+          "id": 271,
+          "package_id": 195
+        },
+        "tr46": {
+          "id": 248,
+          "package_id": 177
+        },
+        "webidl-conversions": {
+          "id": 249,
+          "package_id": 176
+        },
+        "pend": {
+          "id": 235,
+          "package_id": 168
+        },
+        "basic-ftp": {
+          "id": 216,
+          "package_id": 156
+        },
+        "data-uri-to-buffer": {
+          "id": 217,
+          "package_id": 155
+        },
+        "fs-extra": {
+          "id": 219,
+          "package_id": 151
+        },
+        "degenerator": {
+          "id": 201,
+          "package_id": 140
+        },
+        "ip": {
+          "id": 202,
+          "package_id": 139
+        },
+        "netmask": {
+          "id": 203,
+          "package_id": 138
+        },
+        "smart-buffer": {
+          "id": 190,
+          "package_id": 130
+        },
+        "queue-tick": {
+          "id": 171,
+          "package_id": 120
+        },
+        "is-number": {
+          "id": 92,
+          "package_id": 59
+        },
+        "eastasianwidth": {
+          "id": 803,
+          "package_id": 427
+        },
+        "is-bigint": {
+          "id": 520,
+          "package_id": 316
+        },
+        "is-boolean-object": {
+          "id": 521,
+          "package_id": 315
+        },
+        "is-number-object": {
+          "id": 522,
+          "package_id": 314
+        },
+        "is-async-function": {
+          "id": 655,
+          "package_id": 366
+        },
+        "is-finalizationregistry": {
+          "id": 657,
+          "package_id": 365
+        },
+        "is-generator-function": {
+          "id": 658,
+          "package_id": 364
+        },
+        "which-collection": {
+          "id": 663,
+          "package_id": 359
+        },
+        "jsonfile": {
+          "id": 221,
+          "package_id": 153
+        },
+        "universalify": {
+          "id": 222,
+          "package_id": 152
+        },
+        "ast-types": {
+          "id": 204,
+          "package_id": 146
+        },
+        "escodegen": {
+          "id": 205,
+          "package_id": 142
+        },
+        "esprima": {
+          "id": 206,
+          "package_id": 141
+        },
+        "is-map": {
+          "id": 665,
+          "package_id": 363
+        },
+        "is-set": {
+          "id": 666,
+          "package_id": 362
+        },
+        "is-weakmap": {
+          "id": 667,
+          "package_id": 361
+        },
+        "is-weakset": {
+          "id": 668,
+          "package_id": 360
+        },
+        "source-map": {
+          "id": 210,
+          "package_id": 143
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/next/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "caniuse-lite": {
+          "id": 281,
+          "package_id": 216
+        },
+        "postcss": {
+          "id": 283,
+          "package_id": 215
+        }
+      }
+    },
+    {
+      "id": 2,
+      "path": "node_modules/@humanwhocodes/config-array/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "minimatch": {
+          "id": 405,
+          "package_id": 16
+        }
+      }
+    },
+    {
+      "id": 3,
+      "path": "node_modules/eslint-import-resolver-node/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "debug": {
+          "id": 735,
+          "package_id": 391
+        }
+      }
+    },
+    {
+      "id": 4,
+      "path": "node_modules/eslint-plugin-import/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "debug": {
+          "id": 710,
+          "package_id": 391
+        },
+        "doctrine": {
+          "id": 711,
+          "package_id": 368
+        }
+      }
+    },
+    {
+      "id": 5,
+      "path": "node_modules/eslint-plugin-react/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "doctrine": {
+          "id": 421,
+          "package_id": 368
+        },
+        "resolve": {
+          "id": 431,
+          "package_id": 344
+        }
+      }
+    },
+    {
+      "id": 6,
+      "path": "node_modules/@puppeteer/browsers/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "semver": {
+          "id": 135,
+          "package_id": 91
+        }
+      }
+    },
+    {
+      "id": 7,
+      "path": "node_modules/chokidar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "glob-parent": {
+          "id": 109,
+          "package_id": 66
+        }
+      }
+    },
+    {
+      "id": 8,
+      "path": "node_modules/fast-glob/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "glob-parent": {
+          "id": 97,
+          "package_id": 66
+        }
+      }
+    },
+    {
+      "id": 9,
+      "path": "node_modules/sucrase/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "glob": {
+          "id": 38,
+          "package_id": 12
+        }
+      }
+    },
+    {
+      "id": 10,
+      "path": "node_modules/glob/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "minimatch": {
+          "id": 784,
+          "package_id": 418
+        }
+      }
+    },
+    {
+      "id": 11,
+      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "semver": {
+          "id": 768,
+          "package_id": 405
+        }
+      }
+    },
+    {
+      "id": 12,
+      "path": "node_modules/eslint-import-resolver-node/node_modules/debug/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ms": {
+          "id": 734,
+          "package_id": 392
+        }
+      }
+    },
+    {
+      "id": 13,
+      "path": "node_modules/eslint-module-utils/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "debug": {
+          "id": 733,
+          "package_id": 391
+        }
+      }
+    },
+    {
+      "id": 14,
+      "path": "node_modules/eslint-plugin-import/node_modules/debug/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ms": {
+          "id": 734,
+          "package_id": 392
+        }
+      }
+    },
+    {
+      "id": 15,
+      "path": "node_modules/@puppeteer/browsers/node_modules/semver/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "lru-cache": {
+          "id": 136,
+          "package_id": 92
+        }
+      }
+    },
+    {
+      "id": 16,
+      "path": "node_modules/sucrase/node_modules/glob/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "minimatch": {
+          "id": 51,
+          "package_id": 16
+        }
+      }
+    },
+    {
+      "id": 17,
+      "path": "node_modules/rimraf/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "glob": {
+          "id": 373,
+          "package_id": 250
+        }
+      }
+    },
+    {
+      "id": 18,
+      "path": "node_modules/glob/node_modules/minimatch/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "brace-expansion": {
+          "id": 789,
+          "package_id": 419
+        }
+      }
+    },
+    {
+      "id": 19,
+      "path": "node_modules/path-scurry/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lru-cache": {
+          "id": 787,
+          "package_id": 417
+        }
+      }
+    },
+    {
+      "id": 20,
+      "path": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "lru-cache": {
+          "id": 771,
+          "package_id": 92
+        }
+      }
+    },
+    {
+      "id": 21,
+      "path": "node_modules/eslint-module-utils/node_modules/debug/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ms": {
+          "id": 734,
+          "package_id": 392
+        }
+      }
+    },
+    {
+      "id": 22,
+      "path": "node_modules/@babel/code-frame/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "chalk": {
+          "id": 264,
+          "package_id": 187
+        }
+      }
+    },
+    {
+      "id": 23,
+      "path": "node_modules/pac-proxy-agent/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "http-proxy-agent": {
+          "id": 197,
+          "package_id": 149
+        },
+        "https-proxy-agent": {
+          "id": 198,
+          "package_id": 148
+        }
+      }
+    },
+    {
+      "id": 24,
+      "path": "node_modules/string-width/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "emoji-regex": {
+          "id": 145,
+          "package_id": 101
+        }
+      }
+    },
+    {
+      "id": 25,
+      "path": "node_modules/@isaacs/cliui/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "string-width": {
+          "id": 793,
+          "package_id": 426
+        },
+        "string-width-cjs": {
+          "id": 794,
+          "package_id": 97
+        },
+        "strip-ansi": {
+          "id": 795,
+          "package_id": 424
+        },
+        "strip-ansi-cjs": {
+          "id": 796,
+          "package_id": 98
+        },
+        "wrap-ansi": {
+          "id": 797,
+          "package_id": 423
+        },
+        "wrap-ansi-cjs": {
+          "id": 798,
+          "package_id": 106
+        }
+      }
+    },
+    {
+      "id": 26,
+      "path": "node_modules/@babel/highlight/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "chalk": {
+          "id": 272,
+          "package_id": 187
+        }
+      }
+    },
+    {
+      "id": 27,
+      "path": "node_modules/@babel/code-frame/node_modules/chalk/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ansi-styles": {
+          "id": 265,
+          "package_id": 191
+        },
+        "escape-string-regexp": {
+          "id": 266,
+          "package_id": 190
+        },
+        "supports-color": {
+          "id": 267,
+          "package_id": 188
+        }
+      }
+    },
+    {
+      "id": 28,
+      "path": "node_modules/socks/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "ip": {
+          "id": 189,
+          "package_id": 131
+        }
+      }
+    },
+    {
+      "id": 29,
+      "path": "node_modules/@isaacs/cliui/node_modules/string-width-cjs/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "emoji-regex": {
+          "id": 145,
+          "package_id": 101
+        },
+        "strip-ansi": {
+          "id": 147,
+          "package_id": 98
+        }
+      }
+    },
+    {
+      "id": 30,
+      "path": "node_modules/@isaacs/cliui/node_modules/strip-ansi/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ansi-regex": {
+          "id": 802,
+          "package_id": 425
+        }
+      }
+    },
+    {
+      "id": 31,
+      "path": "node_modules/@isaacs/cliui/node_modules/wrap-ansi/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ansi-styles": {
+          "id": 799,
+          "package_id": 428
+        }
+      }
+    },
+    {
+      "id": 32,
+      "path": "node_modules/@isaacs/cliui/node_modules/wrap-ansi-cjs/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "string-width": {
+          "id": 153,
+          "package_id": 97
+        },
+        "strip-ansi": {
+          "id": 154,
+          "package_id": 98
+        }
+      }
+    },
+    {
+      "id": 33,
+      "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules",
+      "depth": 2,
+      "dependencies": {
+        "ansi-styles": {
+          "id": 265,
+          "package_id": 191
+        },
+        "escape-string-regexp": {
+          "id": 266,
+          "package_id": 190
+        },
+        "supports-color": {
+          "id": 267,
+          "package_id": 188
+        }
+      }
+    },
+    {
+      "id": 34,
+      "path": "node_modules/@babel/code-frame/node_modules/chalk/node_modules/ansi-styles/node_modules",
+      "depth": 3,
+      "dependencies": {
+        "color-convert": {
+          "id": 269,
+          "package_id": 192
+        }
+      }
+    },
+    {
+      "id": 35,
+      "path": "node_modules/@babel/code-frame/node_modules/chalk/node_modules/supports-color/node_modules",
+      "depth": 3,
+      "dependencies": {
+        "has-flag": {
+          "id": 268,
+          "package_id": 189
+        }
+      }
+    },
+    {
+      "id": 36,
+      "path": "node_modules/@isaacs/cliui/node_modules/wrap-ansi-cjs/node_modules/string-width/node_modules",
+      "depth": 3,
+      "dependencies": {
+        "emoji-regex": {
+          "id": 145,
+          "package_id": 101
+        }
+      }
+    },
+    {
+      "id": 37,
+      "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules",
+      "depth": 3,
+      "dependencies": {
+        "color-convert": {
+          "id": 269,
+          "package_id": 192
+        }
+      }
+    },
+    {
+      "id": 38,
+      "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/supports-color/node_modules",
+      "depth": 3,
+      "dependencies": {
+        "has-flag": {
+          "id": 268,
+          "package_id": 189
+        }
+      }
+    },
+    {
+      "id": 39,
+      "path": "node_modules/@babel/code-frame/node_modules/chalk/node_modules/ansi-styles/node_modules/color-convert/node_modules",
+      "depth": 4,
+      "dependencies": {
+        "color-name": {
+          "id": 270,
+          "package_id": 193
+        }
+      }
+    },
+    {
+      "id": 40,
+      "path": "node_modules/@babel/highlight/node_modules/chalk/node_modules/ansi-styles/node_modules/color-convert/node_modules",
+      "depth": 4,
+      "dependencies": {
+        "color-name": {
+          "id": 270,
+          "package_id": 193
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,

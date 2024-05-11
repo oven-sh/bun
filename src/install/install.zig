@@ -11203,15 +11203,18 @@ pub const bun_install_js_bindings = struct {
     const JSGlobalObject = JSC.JSGlobalObject;
 
     pub fn generate(global: *JSGlobalObject) JSValue {
-        const obj = JSValue.createEmptyObject(global, 3);
+        const obj = JSValue.createEmptyObject(global, 2);
         const printLockfileAsJSON = ZigString.static("printLockfileAsJSON");
         obj.put(global, printLockfileAsJSON, JSC.createCallback(global, printLockfileAsJSON, 1, jsPrintLockfileAsJSON));
+        const compareLockfileToNodeModules = ZigString.static("compareLockfileToNodeModules");
+        obj.put(global, compareLockfileToNodeModules, JSC.createCallback(global, compareLockfileToNodeModules, 1, jsCompareLockfileToNodeModules));
         return obj;
     }
 
     pub fn jsPrintLockfileAsJSON(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         const allocator = bun.default_allocator;
         var log = logger.Log.init(allocator);
+        defer log.deinit();
 
         const args = callFrame.arguments(1).slice();
         const cwd = args[0].toSliceOrNull(globalObject) orelse return .undefined;
@@ -11262,5 +11265,58 @@ pub const bun_install_js_bindings = struct {
         var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
         return str.toJS(globalObject);
+    }
+
+    pub fn jsCompareLockfileToNodeModules(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const allocator = bun.default_allocator;
+        var log = logger.Log.init(allocator);
+        defer log.deinit();
+
+        const args = callFrame.arguments(1).slice();
+        const cwd = args[0].toSliceOrNull(globalObject) orelse return .false;
+        defer cwd.deinit();
+
+        const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);
+
+        var lockfile: Lockfile = undefined;
+        lockfile.initEmpty(allocator);
+
+        const load_result = lockfile.loadFromDisk(allocator, &log, lockfile_path);
+
+        switch (load_result) {
+            .err => |err| {
+                globalObject.throw("Failed to load lockfile from disk: {s}, \"{s}\"", .{ @errorName(err.value), lockfile_path });
+                return .zero;
+            },
+            .not_found => {
+                globalObject.throw("Lockfile not found: \"{s}\"", .{lockfile_path});
+                return .zero;
+            },
+            .ok => {},
+        }
+
+        var depth_buf: [Lockfile.Tree.max_depth]Lockfile.Tree.Id = undefined;
+        var path_buf: bun.PathBuffer = undefined;
+        @memcpy(path_buf[0.."node_modules".len], "node_modules");
+
+        for (0..lockfile.buffers.trees.items.len) |tree_id| {
+            const tree = lockfile.buffers.trees.items[tree_id];
+
+            const relative_path, const depth = tree.relativePathAndDepth(
+                lockfile.buffers.trees.items,
+                lockfile.buffers.dependencies.items,
+                lockfile.buffers.string_bytes.items,
+                &path_buf,
+                &depth_buf,
+            );
+
+            std.debug.print("tree: {d}\n  path: {s}\n  depth: {d}\n", .{
+                tree_id,
+                relative_path,
+                depth,
+            });
+        }
+
+        return .true;
     }
 };

@@ -9,6 +9,23 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -89,6 +106,23 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -169,6 +203,23 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -249,6 +300,23 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -329,6 +397,23 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -409,6 +494,23 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -492,6 +594,34 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -587,6 +717,34 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -682,6 +840,34 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -777,6 +963,34 @@ exports[`dependency on workspace without version in package.json: version: 1.1.1
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -872,6 +1086,34 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -967,6 +1209,34 @@ exports[`dependency on workspace without version in package.json: version: *+bui
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -1062,6 +1332,34 @@ exports[`dependency on workspace without version in package.json: version: lates
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -1157,6 +1455,34 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,
@@ -1252,6 +1578,34 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
     "foo": 0,
     "bar": 2
   },
+  "trees": [
+    {
+      "id": 0,
+      "path": "node_modules",
+      "depth": 0,
+      "dependencies": {
+        "bar": {
+          "id": 0,
+          "package_id": 2
+        },
+        "lodash": {
+          "id": 1,
+          "package_id": 1
+        }
+      }
+    },
+    {
+      "id": 1,
+      "path": "node_modules/bar/node_modules",
+      "depth": 1,
+      "dependencies": {
+        "lodash": {
+          "id": 2,
+          "package_id": 3
+        }
+      }
+    }
+  ],
   "packages": [
     {
       "id": 0,

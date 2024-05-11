@@ -27,26 +27,26 @@ var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
 
-beforeAll(async () => {
-  verdaccioServer = fork(
-    require.resolve("verdaccio/bin/verdaccio"),
-    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: "bun" },
-  );
+// beforeAll(async () => {
+//   verdaccioServer = fork(
+//     require.resolve("verdaccio/bin/verdaccio"),
+//     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
+//     { silent: true, execPath: "bun" },
+//   );
 
-  await new Promise<void>(done => {
-    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-      if (msg.verdaccio_started) {
-        console.log("Verdaccio started");
-        done();
-      }
-    });
-  });
-});
+//   await new Promise<void>(done => {
+//     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
+//       if (msg.verdaccio_started) {
+//         console.log("Verdaccio started");
+//         done();
+//       }
+//     });
+//   });
+// });
 
-afterAll(() => {
-  verdaccioServer.kill();
-});
+// afterAll(() => {
+//   verdaccioServer.kill();
+// });
 
 beforeEach(async () => {
   packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");

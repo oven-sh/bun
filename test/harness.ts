@@ -305,6 +305,100 @@ export function ospath(path: string) {
   return path;
 }
 
+/**
+ * Iterates through each tree in the lockfile, checking for each package
+ * on disk. Also requires each package dependency. Not tested well for
+ * non-npm packages (links, folders, git dependencies, etc.)
+ */
+export async function toMatchNodeModulesAt(lockfile: any, root: string) {
+  function shouldSkip(pkg: any, dep: any): boolean {
+    return (
+      !pkg ||
+      !pkg.resolution ||
+      dep.behavior.optional ||
+      (dep.behavior.dev && pkg.id !== 0) ||
+      (pkg.arch && pkg.arch !== process.arch)
+    );
+  }
+  for (const { path, dependencies } of lockfile.trees) {
+    for (const { package_id, id } of Object.values(dependencies) as any[]) {
+      const treeDep = lockfile.dependencies[id];
+      const pkg = lockfile.packages[package_id];
+      if (shouldSkip(pkg, treeDep)) continue;
+
+      const treeDepPath = join(root, path, treeDep.name);
+
+      switch (pkg.resolution.tag) {
+        case "npm":
+          const onDisk = await Bun.file(join(treeDepPath, "package.json")).json();
+          if (!Bun.deepMatch({ name: pkg.name, version: pkg.resolution.value }, onDisk)) {
+            return {
+              pass: false,
+              message: () => `
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: pkg.name, version: pkg.resolution.value })}       
+Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
+            };
+          }
+
+          for (const depId of pkg.dependencies) {
+            const dep = lockfile.dependencies[depId];
+            const depPkg = lockfile.packages[dep.package_id];
+            if (shouldSkip(depPkg, dep)) continue;
+
+            try {
+              const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
+              switch (depPkg.resolution.tag) {
+                case "npm":
+                  const name = dep.is_alias ? dep.npm.name : dep.name;
+                  if (!Bun.deepMatch({ name: name, version: depPkg.resolution.value }, resolved)) {
+                    return {
+                      pass: false,
+                      message: () =>
+                        `Expected ${dep.name} to have version ${depPkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
+                    };
+                  }
+                  break;
+              }
+            } catch (e) {
+              return {
+                pass: false,
+                message: () => `Expected ${dep.name} to be resolvable in ${treeDepPath}`,
+              };
+            }
+          }
+          break;
+
+        default:
+          if (!fs.existsSync(treeDepPath)) {
+            return {
+              pass: false,
+              message: () => `Expected ${pkg.resolution.tag} "${treeDepPath}" to exist`,
+            };
+          }
+
+          for (const depId of pkg.dependencies) {
+            const dep = lockfile.dependencies[depId];
+            if (dep.behavior.optional || (dep.behavior.dev && pkg.id !== 0)) continue;
+            try {
+              require.resolve(join(dep.name, "package.json"), { paths: [treeDepPath] });
+            } catch (e) {
+              return {
+                pass: false,
+                message: () => `Expected ${dep.name} to be resolvable in ${treeDepPath}`,
+              };
+            }
+          }
+
+          break;
+      }
+    }
+  }
+
+  return {
+    pass: true,
+  };
+}
+
 export async function toHaveBins(actual: string[], expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 

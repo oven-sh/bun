@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+platform=$(uname -ms)
+
 if [[ ${OS:-} = Windows_NT ]]; then
+  if [[ $platform != MINGW64* ]]; then
     powershell -c "irm bun.sh/install.ps1|iex"
     exit $?
+  fi
 fi
 
 # Reset
@@ -56,7 +60,7 @@ if [[ $# -gt 2 ]]; then
     error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
 fi
 
-case $(uname -ms) in
+case $platform in
 'Darwin x86_64')
     target=darwin-x64
     ;;
@@ -65,6 +69,9 @@ case $(uname -ms) in
     ;;
 'Linux aarch64' | 'Linux arm64')
     target=linux-aarch64
+    ;;
+'MINGW64'*)
+    target=windows-x64
     ;;
 'Linux x86_64' | *)
     target=linux-x64

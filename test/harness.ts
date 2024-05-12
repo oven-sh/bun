@@ -323,38 +323,40 @@ export async function toMatchNodeModulesAt(lockfile: any, root: string) {
   for (const { path, dependencies } of lockfile.trees) {
     for (const { package_id, id } of Object.values(dependencies) as any[]) {
       const treeDep = lockfile.dependencies[id];
-      const pkg = lockfile.packages[package_id];
-      if (shouldSkip(pkg, treeDep)) continue;
+      const treePkg = lockfile.packages[package_id];
+      if (shouldSkip(treePkg, treeDep)) continue;
 
       const treeDepPath = join(root, path, treeDep.name);
 
-      switch (pkg.resolution.tag) {
+      switch (treePkg.resolution.tag) {
         case "npm":
           const onDisk = await Bun.file(join(treeDepPath, "package.json")).json();
-          if (!Bun.deepMatch({ name: pkg.name, version: pkg.resolution.value }, onDisk)) {
+          if (!Bun.deepMatch({ name: treePkg.name, version: treePkg.resolution.value }, onDisk)) {
             return {
               pass: false,
               message: () => `
-Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: pkg.name, version: pkg.resolution.value })}       
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}       
 Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             };
           }
 
-          for (const depId of pkg.dependencies) {
+          // Ok, we've confirmed the package exists and has the correct version. Now go through
+          // each of its transitive dependencies and confirm the same.
+          for (const depId of treePkg.dependencies) {
             const dep = lockfile.dependencies[depId];
-            const depPkg = lockfile.packages[dep.package_id];
-            if (shouldSkip(depPkg, dep)) continue;
+            const pkg = lockfile.packages[dep.package_id];
+            if (shouldSkip(pkg, dep)) continue;
 
             try {
               const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
-              switch (depPkg.resolution.tag) {
+              switch (pkg.resolution.tag) {
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
-                  if (!Bun.deepMatch({ name: name, version: depPkg.resolution.value }, resolved)) {
+                  if (!Bun.deepMatch({ name: name, version: pkg.resolution.value }, resolved)) {
                     return {
                       pass: false,
                       message: () =>
-                        `Expected ${dep.name} to have version ${depPkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
+                        `Expected ${dep.name} to have version ${pkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
                     };
                   }
                   break;
@@ -372,14 +374,14 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
           if (!fs.existsSync(treeDepPath)) {
             return {
               pass: false,
-              message: () => `Expected ${pkg.resolution.tag} "${treeDepPath}" to exist`,
+              message: () => `Expected ${treePkg.resolution.tag} "${treeDepPath}" to exist`,
             };
           }
 
-          for (const depId of pkg.dependencies) {
+          for (const depId of treePkg.dependencies) {
             const dep = lockfile.dependencies[depId];
-            const depPkg = lockfile.packages[dep.package_id];
-            if (shouldSkip(depPkg, dep)) continue;
+            const pkg = lockfile.packages[dep.package_id];
+            if (shouldSkip(pkg, dep)) continue;
             try {
               require.resolve(join(dep.name, "package.json"), { paths: [treeDepPath] });
             } catch (e) {

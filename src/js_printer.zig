@@ -5865,7 +5865,7 @@ pub fn getSourceMapBuilder(
     return .{
         .source_map = SourceMap.Chunk.Builder.SourceMapper.init(
             opts.allocator,
-            is_bun_platform,
+            is_bun_platform and generate_source_map == .lazy,
         ),
         .cover_lines_without_mappings = true,
         .approximate_input_line_count = tree.approximate_newline_count,

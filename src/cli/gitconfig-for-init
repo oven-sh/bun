@@ -1,0 +1,4 @@
+# Use `bun` as the textconv for `bun.lockb` files
+[diff "lockb"]
+textconv = bun
+binary = true

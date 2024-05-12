@@ -324,12 +324,12 @@ void JSEventTarget::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSEventTargetOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSEventTargetOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsEventTarget = jsCast<JSEventTarget*>(handle.slot()->asCell());
     if (jsEventTarget->wrapped().isFiringEventListeners()) {
         if (UNLIKELY(reason))
-            *reason = "EventTarget firing event listeners";
+            *reason = "EventTarget firing event listeners"_s;
         return true;
     }
     UNUSED_PARAM(visitor);

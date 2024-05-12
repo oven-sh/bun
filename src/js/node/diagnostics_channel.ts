@@ -3,20 +3,18 @@
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
 
-const ArrayPrototypeAt = (array, index) => array[index];
-const ArrayPrototypeIndexOf = (array, value) => array.indexOf(value);
-const ArrayPrototypePush = (array, value) => array.push(value);
-const ArrayPrototypeSplice = (array, start, deleteCount) => array.splice(start, deleteCount);
+const ArrayPrototypeAt = Array.prototype.at;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
-const ReflectApply = $getByIdDirect(Reflect, "apply");
 const PromiseResolve = Promise.resolve;
 const PromiseReject = Promise.reject;
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
 // TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
-class WeakReference extends WeakRef {
+class WeakReference<T extends WeakKey> extends WeakRef<T> {
   #refs = 0;
 
   get() {
@@ -58,7 +56,7 @@ class WeakRefMap extends SafeMap {
 }
 
 function markActive(channel) {
-  ObjectSetPrototypeOf(channel, ActiveChannel.prototype);
+  ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
 }
@@ -66,7 +64,7 @@ function markActive(channel) {
 function maybeMarkInactive(channel) {
   // When there are no more active subscribers or bound, restore to fast prototype.
   if (!channel._subscribers.length && !channel._stores.size) {
-    ObjectSetPrototypeOf(channel, Channel.prototype);
+    ObjectSetPrototypeOf.$call(null, channel, Channel.prototype);
     channel._subscribers = undefined;
     channel._stores = undefined;
   }
@@ -94,15 +92,15 @@ class ActiveChannel {
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
-    ArrayPrototypePush(this._subscribers, subscription);
+    $arrayPush(this._subscribers, subscription);
     channels.incRef(this.name);
   }
 
   unsubscribe(subscription) {
-    const index = ArrayPrototypeIndexOf(this._subscribers, subscription);
+    const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
     if (index === -1) return false;
 
-    ArrayPrototypeSplice(this._subscribers, index, 1);
+    ArrayPrototypeSplice.$call(this._subscribers, index, 1);
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -147,7 +145,7 @@ class ActiveChannel {
   runStores(data, fn, thisArg, ...args) {
     let run = () => {
       this.publish(data);
-      return ReflectApply(fn, thisArg, args);
+      return fn.$apply(thisArg, args);
     };
 
     for (const entry of this._stores.entries()) {
@@ -170,7 +168,7 @@ class Channel {
   }
 
   static [SymbolHasInstance](instance) {
-    const prototype = ObjectGetPrototypeOf(instance);
+    const prototype = ObjectGetPrototypeOf.$call(null, instance);
     return prototype === Channel.prototype || prototype === ActiveChannel.prototype;
   }
 
@@ -199,7 +197,7 @@ class Channel {
   publish() {}
 
   runStores(data, fn, thisArg, ...args) {
-    return ReflectApply(fn, thisArg, args);
+    return fn.$apply(thisArg, args);
   }
 }
 
@@ -293,7 +291,7 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        const result = ReflectApply(fn, thisArg, args);
+        const result = fn.$apply(thisArg, args);
         context.result = result;
         return result;
       } catch (err) {
@@ -328,7 +326,7 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        let promise = ReflectApply(fn, thisArg, args);
+        let promise = fn.$apply(thisArg, args);
         // Convert thenables to native promises
         if (!(promise instanceof Promise)) {
           promise = PromiseResolve(promise);
@@ -359,7 +357,7 @@ class TracingChannel {
       asyncStart.runStores(context, () => {
         try {
           if (callback) {
-            return ReflectApply(callback, this, arguments);
+            return callback.$apply(this, arguments);
           }
         } finally {
           asyncEnd.publish(context);
@@ -367,15 +365,15 @@ class TracingChannel {
       });
     }
 
-    const callback = ArrayPrototypeAt(args, position);
+    const callback = ArrayPrototypeAt.$call(args, position);
     if (typeof callback !== "function") {
       throw new ERR_INVALID_ARG_TYPE("callback", ["function"], callback);
     }
-    ArrayPrototypeSplice(args, position, 1, wrappedCallback);
+    ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
 
     return start.runStores(context, () => {
       try {
-        return ReflectApply(fn, thisArg, args);
+        return fn.$apply(thisArg, args);
       } catch (err) {
         context.error = err;
         error.publish(context);

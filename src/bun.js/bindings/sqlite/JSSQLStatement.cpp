@@ -639,8 +639,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
             columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8({name, len}))
-            );
+                Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -781,9 +780,9 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
         if (roped.is8Bit() && roped.containsOnlyASCII()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.characters8()), roped.length(), transientOrStatic));
+            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.span8().data()), roped.length(), transientOrStatic));
         } else if (!roped.is8Bit()) {
-            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.characters16(), roped.length() * 2, transientOrStatic));
+            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.span16().data(), roped.length() * 2, transientOrStatic));
         } else {
             auto utf8 = roped.utf8();
             CHECK_BIND(sqlite3_bind_text(stmt, i, utf8.data(), utf8.length(), SQLITE_TRANSIENT));
@@ -1110,7 +1109,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, error ? sqliteString(error) : String::fromUTF8(reinterpret_cast<const LChar*>(sqlite3_errmsg(db)))));
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, error ? sqliteString(error) : String::fromUTF8(sqlite3_errmsg(db))));
         return JSValue::encode(JSC::jsUndefined());
     }
 
@@ -1176,9 +1175,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     if (
         // fast path: ascii latin1 string is utf8
-        sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
+        sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length())) {
 
-        sqlStringHead = reinterpret_cast<const char*>(sqlString.characters8());
+        sqlStringHead = reinterpret_cast<const char*>(sqlString.span8().data());
         end = sqlStringHead + sqlString.length();
     } else {
         // slow path: utf16 or latin1 string with supplemental characters
@@ -1460,8 +1459,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int rc = SQLITE_OK;
     if (
         // fast path: ascii latin1 string is utf8
-        sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length())) {
-        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), flags, &statement, nullptr);
+        sqlString.is8Bit() && simdutf::validate_ascii(reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length())) {
+        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.span8().data()), sqlString.length(), flags, &statement, nullptr);
     } else {
         // slow path: utf16 or latin1 string with supplemental characters
         CString utf8 = sqlString.utf8();

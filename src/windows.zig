@@ -91,10 +91,10 @@ pub extern "kernel32" fn SetFileValidData(
     validDataLength: c_longlong,
 ) callconv(windows.WINAPI) win32.BOOL;
 
-pub extern fn CommandLineToArgvW(
+pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
-) [*]win32.LPWSTR;
+) callconv(windows.WINAPI) ?[*]win32.LPWSTR;
 
 pub extern fn GetFileType(
     hFile: win32.HANDLE,
@@ -3047,6 +3047,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .RETRY => .AGAIN,
         .DIRECTORY_NOT_EMPTY => .NOTEMPTY,
         .FILE_TOO_LARGE => .@"2BIG",
+        .NOT_SAME_DEVICE => .XDEV,
         .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
             break :brk .BUSY;
@@ -3080,7 +3081,7 @@ pub extern "kernel32" fn GetTempPathW(
 pub extern "kernel32" fn CreateJobObjectA(
     lpJobAttributes: ?*anyopaque, // [in, optional]
     lpName: ?LPCSTR, // [in, optional]
-) callconv(windows.WINAPI) HANDLE;
+) callconv(windows.WINAPI) ?HANDLE;
 
 pub extern "kernel32" fn AssignProcessToJobObject(
     hJob: HANDLE, // [in]
@@ -3524,3 +3525,6 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
 
     return .{ .result = {} };
 }
+
+pub const EXCEPTION_CONTINUE_EXECUTION = -1;
+pub const MS_VC_EXCEPTION = 0x406d1388;

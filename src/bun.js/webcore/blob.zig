@@ -1146,6 +1146,7 @@ pub const Blob = struct {
                 return .zero;
             };
         };
+        defer source_blob.detach();
 
         const destination_store = destination_blob.store;
         if (destination_store) |store| {
@@ -1583,7 +1584,7 @@ pub const Blob = struct {
         data: Data,
 
         mime_type: MimeType = MimeType.none,
-        ref_count: u32 = 0,
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
@@ -1602,8 +1603,8 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
-            assert(this.ref_count > 0);
-            this.ref_count += 1;
+            const old = this.ref_count.fetchAdd(1, .Monotonic);
+            assert(old > 0);
         }
 
         pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
@@ -1634,7 +1635,7 @@ pub const Blob = struct {
                     ),
                 },
                 .allocator = allocator,
-                .ref_count = 1,
+                .ref_count = std.atomic.Value(u32).init(1),
             });
             return store;
         }
@@ -1645,7 +1646,7 @@ pub const Blob = struct {
                     .bytes = ByteStore.init(bytes, allocator),
                 },
                 .allocator = allocator,
-                .ref_count = 1,
+                .ref_count = std.atomic.Value(u32).init(1),
             });
             return store;
         }
@@ -1658,9 +1659,9 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
-            assert(this.ref_count >= 1);
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
+            const old = this.ref_count.fetchSub(1, .Monotonic);
+            assert(old >= 1);
+            if (old == 1) {
                 this.deinit();
             }
         }
@@ -2828,6 +2829,20 @@ pub const Blob = struct {
         return stream;
     }
 
+    pub fn toStreamWithOffset(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
+        const args = callframe.arguments(1).slice();
+
+        return JSC.WebCore.ReadableStream.fromFileBlobWithOffset(
+            globalThis,
+            this,
+            @intCast(args[0].toInt64()),
+        );
+    }
+
     fn promisified(
         value: JSC.JSValue,
         global: *JSGlobalObject,
@@ -3507,7 +3522,7 @@ pub const Blob = struct {
                                     .bytes = result,
                                 },
                                 .allocator = bun.default_allocator,
-                                .ref_count = 1,
+                                .ref_count = std.atomic.Value(u32).init(1),
                             },
                         );
                         var blob = initWithStore(store, globalThis);
@@ -3962,14 +3977,10 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.StringObject,
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
-                    var sliced = top_value.toSlice(global, bun.default_allocator);
-                    const is_all_ascii = !sliced.isAllocated();
-                    if (!sliced.isAllocated() and sliced.len > 0) {
-                        sliced.ptr = @as([*]const u8, @ptrCast((try bun.default_allocator.dupe(u8, sliced.slice())).ptr));
-                        sliced.allocator = NullableAllocator.init(bun.default_allocator);
-                    }
-
-                    return Blob.initWithAllASCII(@constCast(sliced.slice()), bun.default_allocator, global, is_all_ascii);
+                    var str = top_value.toBunString(global);
+                    defer str.deref();
+                    const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
+                    return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
                 },
 
                 JSC.JSValue.JSType.ArrayBuffer,

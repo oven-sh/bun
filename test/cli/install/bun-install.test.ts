@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink } from "harness";
+import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
 import {
@@ -43,6 +43,47 @@ beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
+
+it("should not error when package.json has comments and trailing commas", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    `
+    {
+      // such comment!
+      "name": "foo",
+      /** even multi-line comment!! */
+      "version": "0.0.1",
+      "dependencies": {
+        "bar": "^1",
+      },
+    }
+`,
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain('error: No version matching "^1" found for specifier "bar" (but package exists)');
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toBeEmpty();
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toEqual([`${root_url}/bar`]);
+  expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
 
 describe("chooses", () => {
   async function runTest(latest: string, range: string, chosen = "0.0.5") {
@@ -191,6 +232,156 @@ registry = "http://${server.hostname}:${server.port}/"
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
+});
+
+it("should work when moving workspace packages", async () => {
+  const package_dir = tempDirWithFiles("lol", {
+    "package.json": JSON.stringify({
+      "name": "my-workspace",
+      private: "true",
+      version: "0.0.1",
+      "devDependencies": {
+        "@repo/ui": "*",
+        "@repo/eslint-config": "*",
+        "@repo/typescript-config": "*",
+      },
+      workspaces: ["packages/*"],
+    }),
+    packages: {
+      "eslint-config": {
+        "package.json": JSON.stringify({
+          name: "@repo/eslint-config",
+          "version": "0.0.0",
+          private: "true",
+        }),
+      },
+      "typescript-config": {
+        "package.json": JSON.stringify({
+          "name": "@repo/typescript-config",
+          "version": "0.0.0",
+          private: "true",
+        }),
+      },
+      "ui": {
+        "package.json": JSON.stringify({
+          name: "@repo/ui",
+          version: "0.0.0",
+          private: "true",
+          devDependencies: {
+            "@repo/eslint-config": "*",
+            "@repo/typescript-config": "*",
+          },
+        }),
+      },
+    },
+  });
+
+  await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
+
+  await Bun.$/* sh */ `
+  mkdir config
+
+  # change workspaces from "packages/*" to "config/*"
+  echo ${JSON.stringify({
+    "name": "my-workspace",
+    version: "0.0.1",
+    workspaces: ["config/*"],
+    "devDependencies": {
+      "@repo/ui": "*",
+      "@repo/eslint-config": "*",
+      "@repo/typescript-config": "*",
+    },
+  })} > package.json
+
+  mv packages/typescript-config config/
+  mv packages/eslint-config config/
+  mv packages/ui config/
+
+  rm -rf packages
+  rm -rf apps
+  `
+    .env(bunEnv)
+    .cwd(package_dir);
+
+  await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
+});
+
+it("should work when renaming a single workspace package", async () => {
+  const package_dir = tempDirWithFiles("lol", {
+    "package.json": JSON.stringify({
+      "name": "my-workspace",
+      private: "true",
+      version: "0.0.1",
+      "devDependencies": {
+        "@repo/ui": "*",
+        "@repo/eslint-config": "*",
+        "@repo/typescript-config": "*",
+      },
+      workspaces: ["packages/*"],
+    }),
+    packages: {
+      "eslint-config": {
+        "package.json": JSON.stringify({
+          name: "@repo/eslint-config",
+          "version": "0.0.0",
+          private: "true",
+        }),
+      },
+      "typescript-config": {
+        "package.json": JSON.stringify({
+          "name": "@repo/typescript-config",
+          "version": "0.0.0",
+          private: "true",
+        }),
+      },
+      "ui": {
+        "package.json": JSON.stringify({
+          name: "@repo/ui",
+          version: "0.0.0",
+          private: "true",
+          devDependencies: {
+            "@repo/eslint-config": "*",
+            "@repo/typescript-config": "*",
+          },
+        }),
+      },
+    },
+  });
+
+  await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
+
+  await Bun.$/* sh */ `
+  echo ${JSON.stringify({
+    "name": "my-workspace",
+    version: "0.0.1",
+    workspaces: ["packages/*"],
+    "devDependencies": {
+      "@repo/ui": "*",
+      "@repo/eslint-config-lol": "*",
+      "@repo/typescript-config": "*",
+    },
+  })} > package.json
+
+  echo ${JSON.stringify({
+    name: "@repo/eslint-config-lol",
+    "version": "0.0.0",
+    private: "true",
+  })} > packages/eslint-config/package.json
+
+  echo ${JSON.stringify({
+    name: "@repo/ui",
+    version: "0.0.0",
+    private: "true",
+    devDependencies: {
+      "@repo/eslint-config-lol": "*",
+      "@repo/typescript-config": "*",
+    },
+  })} > packages/ui/package.json
+  `
+    .env(bunEnv)
+    .cwd(package_dir);
+
+  await Bun.$`${bunExe()} i`.env(bunEnv).cwd(package_dir);
 });
 
 it("should handle missing package", async () => {
@@ -6762,6 +6953,218 @@ it("should handle installing packages from inside a workspace without prefix", a
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle installing workspaces with more complicated globs", async () => {
+  const package_dir = tempDirWithFiles("complicated-glob", {
+    "package.json": JSON.stringify({
+      name: "package3",
+      version: "0.0.1",
+      workspaces: ["packages/**/*"],
+    }),
+    "packages": {
+      "frontend": {
+        "package.json": JSON.stringify({
+          name: "frontend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+            "components": "workspace:*",
+          },
+        }),
+        "components": {
+          "package.json": JSON.stringify({
+            name: "components",
+            version: "0.0.1",
+            dependencies: {
+              "types": "workspace:*",
+            },
+          }),
+        },
+      },
+      "backend": {
+        "package.json": JSON.stringify({
+          name: "backend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+      "types": {
+        "package.json": JSON.stringify({
+          name: "types",
+          version: "0.0.1",
+          dependencies: {},
+        }),
+      },
+    },
+  });
+
+  const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+  const err1 = stderr.toString();
+  expect(err1).toContain("Saved lockfile");
+  expect(
+    stdout
+      .toString()
+      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+      .split(/\r?\n/)
+      .sort(),
+  ).toEqual(
+    [
+      "",
+      ` + backend@workspace:packages/backend`,
+      ` + components@workspace:packages/frontend/components`,
+      ` + frontend@workspace:packages/frontend`,
+      ` + types@workspace:packages/types`,
+      "",
+      " 4 packages installed",
+    ].sort(),
+  );
+});
+
+it("should handle installing workspaces with multiple glob patterns", async () => {
+  const package_dir = tempDirWithFiles("multi-glob", {
+    "package.json": JSON.stringify({
+      name: "main",
+      version: "0.0.1",
+      workspaces: ["backend/**/*", "client/**/*", "types/**/*"],
+    }),
+    "backend": {
+      "server": {
+        "package.json": JSON.stringify({
+          name: "server",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+            "db": "workspace:*",
+          },
+        }),
+      },
+      "db": {
+        "package.json": JSON.stringify({
+          name: "db",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+    },
+    "client": {
+      "clientlib": {
+        "package.json": JSON.stringify({
+          name: "clientlib",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+    },
+    "types": {
+      "types": {
+        "package.json": JSON.stringify({
+          name: "types",
+          version: "0.0.1",
+          dependencies: {},
+        }),
+      },
+    },
+  });
+
+  console.log("TEMPDIR", package_dir);
+
+  const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+  const err1 = stderr.toString();
+  expect(err1).toContain("Saved lockfile");
+  expect(
+    stdout
+      .toString()
+      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+      .split(/\r?\n/)
+      .sort(),
+  ).toEqual(
+    [
+      "",
+      " + clientlib@workspace:client/clientlib",
+      " + db@workspace:backend/db",
+      " + server@workspace:backend/server",
+      " + types@workspace:types/types",
+      "",
+      " 4 packages installed",
+    ].sort(),
+  );
+});
+
+it.todo("should handle installing workspaces with absolute glob patterns", async () => {
+  const package_dir = tempDirWithFiles("absolute-glob", {
+    "package.json": base =>
+      JSON.stringify({
+        name: "package3",
+        version: "0.0.1",
+        workspaces: [join(base, "packages/**/*")],
+      }),
+    "packages": {
+      "frontend": {
+        "package.json": JSON.stringify({
+          name: "frontend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+            "components": "workspace:*",
+          },
+        }),
+        "components": {
+          "package.json": JSON.stringify({
+            name: "components",
+            version: "0.0.1",
+            dependencies: {
+              "types": "workspace:*",
+            },
+          }),
+        },
+      },
+      "backend": {
+        "package.json": JSON.stringify({
+          name: "backend",
+          version: "0.0.1",
+          dependencies: {
+            "types": "workspace:*",
+          },
+        }),
+      },
+      "types": {
+        "package.json": JSON.stringify({
+          name: "types",
+          version: "0.0.1",
+          dependencies: {},
+        }),
+      },
+    },
+  });
+  console.log("TEMP DIR", package_dir);
+
+  const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
+  const err1 = stderr.toString();
+  expect(err1).toContain("Saved lockfile");
+  expect(
+    stdout
+      .toString()
+      .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+      .split(/\r?\n/)
+      .sort(),
+  ).toEqual(
+    [
+      "",
+      ` + backend@workspace:packages/backend`,
+      ` + components@workspace:packages/frontend/components`,
+      ` + frontend@workspace:packages/frontend`,
+      ` + types@workspace:packages/types`,
+      "",
+      " 4 packages installed",
+    ].sort(),
+  );
 });
 
 it("should handle installing packages inside workspaces with difference versions", async () => {

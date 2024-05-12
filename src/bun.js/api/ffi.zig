@@ -273,19 +273,39 @@ pub const FFI = struct {
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
-        const allocator = VirtualMachine.get().allocator;
+        const vm = VirtualMachine.get();
+        const allocator = bun.default_allocator;
         var name_slice = name_str.toSlice(allocator);
         defer name_slice.deinit();
-
-        if (name_slice.len == 0) {
-            return JSC.toInvalidArguments("Invalid library name", .{}, global);
-        }
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
-        const name = name_slice.slice();
+        var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        const name = brk: {
+            if (JSC.ModuleLoader.resolveEmbeddedFile(
+                vm,
+                name_slice.slice(),
+                switch (Environment.os) {
+                    .linux => "so",
+                    .mac => "dylib",
+                    .windows => "dll",
+                    else => @compileError("TODO"),
+                },
+            )) |resolved| {
+                @memcpy(filepath_buf[0..resolved.len], resolved);
+                filepath_buf[resolved.len] = 0;
+                break :brk filepath_buf[0..resolved.len];
+            }
+
+            break :brk name_slice.slice();
+        };
+
+        if (name.len == 0) {
+            return JSC.toInvalidArguments("Invalid library name", .{}, global);
+        }
+
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
@@ -329,7 +349,7 @@ pub const FFI = struct {
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name_slice.slice() }, global);
+                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name }, global);
                     for (symbols.values()) |*value| {
                         allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
@@ -346,7 +366,7 @@ pub const FFI = struct {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
-                    name_slice.slice(),
+                    name,
                 }, global);
                 for (symbols.values()) |*value| {
                     allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
@@ -620,7 +640,7 @@ pub const FFI = struct {
             .skip_empty_name = true,
 
             .include_value = true,
-        }).init(global, object.asObjectRef());
+        }).init(global, object);
         defer symbols_iter.deinit();
 
         try symbols.ensureTotalCapacity(allocator, symbols_iter.len);

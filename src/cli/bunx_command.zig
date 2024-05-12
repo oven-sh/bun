@@ -9,7 +9,8 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const cli = @import("../cli.zig");
+const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 const debug = Output.scoped(.bunx, false);
@@ -81,7 +82,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create(default_allocator);
         bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
-        const expr = try bun.JSON.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -147,7 +148,7 @@ pub const BunxCommand = struct {
                 bun.pathLiteral("{s}/package.json"),
                 .{tempdir_name},
             ) catch unreachable;
-            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
+            const target_package_json_fd = bun.sys.openat(bun.FD.cwd(), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
             const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
             const is_stale = is_stale: {
@@ -185,7 +186,7 @@ pub const BunxCommand = struct {
             .{ tempdir_name, package_name },
         ) catch unreachable;
 
-        return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
+        return try getBinNameFromSubpath(bundler, bun.FD.cwd(), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -220,6 +221,8 @@ pub const BunxCommand = struct {
         var maybe_package_name: ?string = null;
         var verbose_install = false;
         var silent_install = false;
+        var has_version = false;
+        var has_revision = false;
         {
             var found_subcommand_name = false;
 
@@ -230,7 +233,11 @@ pub const BunxCommand = struct {
                 }
 
                 if (positional.len > 0 and positional[0] == '-') {
-                    if (strings.eqlComptime(positional, "--verbose")) {
+                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
+                        has_version = true;
+                    } else if (strings.eqlComptime(positional, "--revision")) {
+                        has_revision = true;
+                    } else if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
                     } else if (strings.eqlComptime(positional, "--silent")) {
                         silent_install = true;
@@ -249,7 +256,13 @@ pub const BunxCommand = struct {
 
         // check if package_name_for_update_request is empty string or " "
         if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-            exitWithUsage();
+            if (has_revision) {
+                cli.printRevisionAndExit();
+            } else if (has_version) {
+                cli.printVersionAndExit();
+            } else {
+                exitWithUsage();
+            }
         }
 
         const package_name = maybe_package_name.?;

@@ -50,6 +50,14 @@ else
 
 pub const os_name = Environment.os.nameString();
 
+// Bun v1.0.0 (Linux x64 baseline)
+// Bun v1.0.0-debug (Linux x64)
+// Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
+pub const unhandled_error_bun_version_string = "Bun v" ++
+    (if (Environment.is_canary) package_json_version_with_revision else package_json_version) ++
+    " (" ++ Environment.os.displayString() ++ " " ++ arch_name ++
+    (if (Environment.baseline) " baseline)" else ")");
+
 pub const arch_name = if (Environment.isX64)
     "x64"
 else if (Environment.isX86)
@@ -72,9 +80,8 @@ pub fn setThreadName(name: [:0]const u8) void {
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
-        var name_buf: [1024]u16 = undefined;
-        const name_wide = bun.strings.convertUTF8toUTF16InBufferZ(&name_buf, name);
-        _ = SetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), name_wide);
+        // TODO: use SetThreadDescription or NtSetInformationThread with 0x26 (ThreadNameInformation)
+        // without causing exit code 0xC0000409 (stack buffer overrun) in child process
     }
 }
 
@@ -99,8 +106,21 @@ pub fn exit(code: u8) noreturn {
     exitWide(@as(u32, code));
 }
 
+var is_exiting = std.atomic.Value(bool).init(false);
+export fn bun_is_exiting() c_int {
+    return @intFromBool(isExiting());
+}
+pub fn isExiting() bool {
+    return is_exiting.load(.Monotonic);
+}
+
 pub fn exitWide(code: u32) noreturn {
-    std.c.exit(@bitCast(code));
+    is_exiting.store(true, .Monotonic);
+
+    if (comptime Environment.isMac) {
+        std.c.exit(@bitCast(code));
+    }
+    bun.C.quick_exit(@bitCast(code));
 }
 
 pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {

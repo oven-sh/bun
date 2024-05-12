@@ -28,6 +28,7 @@ import fs, {
   mkdtempSync,
   mkdtemp,
   constants,
+  Dir,
   Dirent,
   Stats,
   realpathSync,
@@ -36,6 +37,7 @@ import fs, {
   writevSync,
   readvSync,
   fstatSync,
+  fdatasync,
   fdatasyncSync,
   openAsBlob,
 } from "node:fs";
@@ -46,7 +48,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { Dir, ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
+import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -1044,6 +1046,19 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with offset + length passed but not position", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+    {
+      const count = readSync(fd, four, 0, 4);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -1802,6 +1817,24 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it(
+    "correctly handles file descriptors with an offset",
+    done => {
+      const path = `${tmpdir()}/bun-fs-createReadStream-${Date.now()}.txt`;
+      const fd = fs.openSync(path, "w+");
+
+      const stream = fs.createReadStream("", { fd: fd, start: 2 });
+      stream.on("data", chunk => {
+        expect(chunk.toString()).toBe("llo, world!");
+        done();
+      });
+      stream.on("error", done);
+
+      fs.writeSync(fd, "Hello, world!");
+    },
+    { timeout: 100 },
+  );
 });
 
 describe("fs.WriteStream", () => {
@@ -2997,4 +3030,23 @@ it("fs.close with one arg works", () => {
   const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
   const fd = fs.openSync(filepath, "w+");
   fs.close(fd);
+});
+
+it("existsSync should never throw ENAMETOOLONG", () => {
+  expect(existsSync(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises exists should never throw ENAMETOOLONG", async () => {
+  expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
+  try {
+    await _promises.fdatasync(500);
+  } catch (e) {
+    expect(typeof e.fd).toBe("number");
+    expect(e.fd).toBe(500);
+    return;
+  }
+  expect.unreachable();
 });

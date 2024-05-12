@@ -96,6 +96,7 @@ typedef struct ResolvedSource {
     uint32_t commonJSExportsLen;
     uint32_t hash;
     void* allocator;
+    JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool needsDeref;
 } ResolvedSource;

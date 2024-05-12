@@ -1,0 +1,42 @@
+
+framework = "next"
+origin = "http://localhost:5000"
+inline.array = [1234, 4, 5, 6]
+
+
+[macros]
+react-relay = { "graphql" = "node_modules/bun-macro-relay/bun-macro-relay.tsx" }
+
+[install.scopes]
+"@mybigcompany2" = { "token" = "123456", "url" = "https://registry.mybigcompany.com" }
+"@mybigcompany3" = { "token" = "123456", "url" = "https://registry.mybigcompany.com", "three" = 4 }
+
+
+[install.scopes."@mybigcompany"]
+token = "123456"
+url = "https://registry.mybigcompany.com"
+
+[bundle.packages]
+"@emotion/react" = true
+
+[install.cache]
+dir = "C:\\Windows\\System32"
+dir2 = "C:\\Windows\\System32\\🏳️‍🌈"
+
+[dev]
+foo = 123
+"foo.bar" = "baz"
+"abba.baba" = "baba"
+dabba = -123
+doo = 123.456
+one.two.three = 4
+
+[[array]]
+entry_one = "one"
+entry_two = "two"
+
+[[array]]
+entry_one = "three"
+
+[[array.nested]]
+entry_one = "four"

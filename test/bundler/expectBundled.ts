@@ -813,6 +813,9 @@ function expectBundled(
 
             return testRef(id, opts);
           }
+          if (allErrors.length === 0) {
+            throw new Error("Bundle Failed\ncode: " + exitCode + "\nstdout: " + stdout + "\nstderr: " + stderr);
+          }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
           throw new Error("Bundle Failed\n" + stderr?.toUnixString());
@@ -1291,6 +1294,8 @@ for (const [key, blob] of build.outputs) {
             const lines = stderr!
               .toUnixString()
               .split("\n")
+              // remove `Bun v1.0.0...` line
+              .slice(0, -2)
               .filter(Boolean)
               .map(x => x.trim())
               .reverse();

@@ -78,7 +78,8 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
-            gnu-sed --force
+            golang \
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -134,7 +135,8 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
-            gnu-sed --force
+            golang \
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -215,7 +217,8 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
-            gnu-sed --force
+            golang \
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -304,4 +307,4 @@ jobs:
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 
-            **[View logs](${{ github.event.workflow_run.html_url }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**

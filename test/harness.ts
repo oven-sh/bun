@@ -1,9 +1,12 @@
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
-import { isAbsolute, sep, join, dirname } from "path";
+import { isAbsolute, join, dirname } from "path";
 import fs, { openSync, closeSync } from "node:fs";
 import os from "node:os";
+import { heapStats } from "bun:jsc";
+
+type Awaitable<T> = T | Promise<T>;
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
@@ -114,12 +117,17 @@ export function hideFromStackTrace(block: CallableFunction) {
 }
 
 type DirectoryTree = {
-  [name: string]: string | Buffer | DirectoryTree;
+  [name: string]:
+    | string
+    | Buffer
+    | DirectoryTree
+    | ((opts: { root: string }) => Awaitable<string | Buffer | DirectoryTree>);
 };
 
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
-  function makeTree(base: string, tree: DirectoryTree) {
-    for (const [name, contents] of Object.entries(tree)) {
+  async function makeTree(base: string, tree: DirectoryTree) {
+    for (const [name, raw_contents] of Object.entries(tree)) {
+      const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
@@ -257,11 +265,11 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
 }
 
 export function randomPort(): number {
-  return 1024 + Math.floor(Math.random() * 65535);
+  return 1024 + Math.floor(Math.random() * (65535 - 1024));
 }
 
 expect.extend({
-  toRun(cmds: string[]) {
+  toRun(cmds: string[], optionalStdout?: string) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
@@ -272,6 +280,14 @@ expect.extend({
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+      };
+    }
+
+    if (optionalStdout) {
+      return {
+        pass: result.stdout.toString("utf-8") === optionalStdout,
+        message: () =>
+          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
       };
     }
 
@@ -507,7 +523,6 @@ function failTestsOnBlockingWriteCall() {
 
 failTestsOnBlockingWriteCall();
 
-import { heapStats } from "bun:jsc";
 export function dumpStats() {
   const stats = heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;
@@ -646,4 +661,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
     }
   }
   return flat;
+}
+
+export function tmpdirSync(pattern: string) {
+  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }

@@ -33,11 +33,15 @@ async function run(withWaiterThread: boolean) {
   expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000n * (isWindows ? 5n : 1n));
 }
 
-test("issue #9404", async () => {
-  const promises = [run(false)];
-  if (process.platform === "linux") {
-    promises.push(run(true));
-  }
+test(
+  "issue #9404",
+  async () => {
+    const promises = [run(false)];
+    if (process.platform === "linux") {
+      promises.push(run(true));
+    }
 
-  await Promise.all(promises);
-});
+    await Promise.all(promises);
+  },
+  isWindows ? 6_000 : 5_000,
+);

@@ -16,7 +16,7 @@ ARG BUILD_MACHINE_ARCH=x86_64
 ARG BUILDARCH=amd64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG GIT_SHA=""
-ARG BUN_VERSION="bun-v1.0.30"
+ARG BUN_VERSION="bun-v1.1.4"
 ARG BUN_DOWNLOAD_URL_BASE="https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${BUN_VERSION}"
 ARG CANARY=0
 ARG ASSERTIONS=OFF
@@ -51,10 +51,10 @@ ENV CPU_TARGET=${CPU_TARGET}
 ENV BUILDARCH=${BUILDARCH}
 ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
 
-ENV CXX=clang++-16
-ENV CC=clang-16
-ENV AR=/usr/bin/llvm-ar-16
-ENV LD=lld-16
+ENV CXX=clang++-${LLVM_VERSION}
+ENV CC=clang-${LLVM_VERSION}
+ENV AR=/usr/bin/llvm-ar-${LLVM_VERSION}
+ENV LD=lld-${LLVM_VERSION}
 
 ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
 ENV SCCACHE_REGION=${SCCACHE_REGION}
@@ -63,8 +63,7 @@ ENV SCCACHE_ENDPOINT=${SCCACHE_ENDPOINT}
 ENV AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
 ENV AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
 
-RUN apt-get update -y \
-  && install_packages \
+RUN install_packages \
   ca-certificates \
   curl \
   gnupg \
@@ -88,6 +87,8 @@ RUN apt-get update -y \
   lld-${LLVM_VERSION} \
   lldb-${LLVM_VERSION} \
   clangd-${LLVM_VERSION} \
+  libc++-${LLVM_VERSION}-dev \
+  libc++abi-${LLVM_VERSION}-dev \
   make \
   cmake \
   ninja-build \
@@ -104,14 +105,16 @@ RUN apt-get update -y \
   perl \
   python3 \
   ruby \
+  ruby-dev \
   golang \
-  nodejs \
-  && ln -s /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
-  && ln -s /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
-  && ln -s /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
-  && ln -s /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
-  && ln -s /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
-  && ln -s /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+  nodejs && \
+  for f in /usr/lib/llvm-${LLVM_VERSION}/bin/*; do ln -sf "$f" /usr/bin; done \
+  && ln -sf /usr/bin/clang-${LLVM_VERSION} /usr/bin/clang \
+  && ln -sf /usr/bin/clang++-${LLVM_VERSION} /usr/bin/clang++ \
+  && ln -sf /usr/bin/lld-${LLVM_VERSION} /usr/bin/lld \
+  && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
+  && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
+  && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \

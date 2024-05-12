@@ -2,11 +2,23 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.4")
-set(WEBKIT_TAG e3a2d89a0b1644cc8d5c245bd2ffee4d4bd6c1d5)
+set(Bun_VERSION "1.1.8")
+set(WEBKIT_TAG 413f6fc119cfca98d5063049ce444cc4eb56f0a4)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
+
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# WebKit uses -std=gnu++20 on non-macOS non-Windows
+# If we do not set this, it will crash at startup on the first memory allocation.
+if(NOT WIN32 AND NOT APPLE)
+    set(CMAKE_CXX_EXTENSIONS ON)
+endif()
 
 # --- Build Type ---
 if(NOT CMAKE_BUILD_TYPE)
@@ -51,11 +63,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    if(ARCH STREQUAL "x86_64")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
-    else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
-    endif()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -93,7 +101,7 @@ endif()
 # any case possible. Sorry for the complexity...
 #
 # Bun and WebKit must be compiled with the same compiler, so we do as much as we can to ensure that
-# the compiler used for the prebuilt WebKit, LLVM 16, is the one that we detect in this process.
+# the compiler used for the prebuilt WebKit is the same as we install as a dependency.
 #
 # It has to be done before project() is called, so that CMake doesnt pick a compiler for us, but even then
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
@@ -213,12 +221,6 @@ else()
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-ar binary"
     )
 endif()
-
-set(CMAKE_COLOR_DIAGNOSTICS ON)
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD_REQUIRED ON)
 
 project(Bun VERSION "${Bun_VERSION}")
 
@@ -1103,15 +1105,15 @@ else()
     target_compile_options(${bun} PUBLIC
         -fPIC
         -mtune=${CPU_TARGET}
-        -fconstexpr-steps=1271242
-        -fconstexpr-depth=27
+        -fconstexpr-steps=2542484
+        -fconstexpr-depth=54
         -fno-exceptions
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
+        -mno-omit-leaf-frame-pointer
     )
-    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()
 
 if(APPLE)
@@ -1130,7 +1132,6 @@ if(UNIX AND NOT APPLE)
         "-fuse-ld=lld"
         "-static-libstdc++"
         "-static-libgcc"
-        "-fuse-ld=lld"
         "-Wl,-z,now"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
@@ -1140,19 +1141,21 @@ if(UNIX AND NOT APPLE)
         "-Wl,--wrap=stat64"
         "-Wl,--wrap=pow"
         "-Wl,--wrap=exp"
+        "-Wl,--wrap=expf"
         "-Wl,--wrap=log"
         "-Wl,--wrap=log2"
         "-Wl,--wrap=lstat"
+        "-Wl,--wrap=stat64"
         "-Wl,--wrap=stat"
         "-Wl,--wrap=fstat"
         "-Wl,--wrap=fstatat"
         "-Wl,--wrap=lstat64"
-        "-Wl,--wrap=stat64"
         "-Wl,--wrap=fstat64"
         "-Wl,--wrap=fstatat64"
         "-Wl,--wrap=mknod"
         "-Wl,--wrap=mknodat"
         "-Wl,--wrap=statx"
+        "-Wl,--wrap=fmod"
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"

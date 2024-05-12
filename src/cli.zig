@@ -46,6 +46,7 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
+    pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
     pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
@@ -207,9 +208,8 @@ pub const Arguments = struct {
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
-        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
+    } ++ auto_only_params;
 
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
@@ -249,18 +249,6 @@ pub const Arguments = struct {
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
-
-    fn printVersionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
-        Global.exit(0);
-    }
-
-    fn printRevisionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
-        Global.exit(0);
-    }
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
         var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
@@ -417,12 +405,12 @@ pub const Arguments = struct {
         }
 
         var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
+        if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
                 bun.sys.chdir(out).unwrap() catch |err| {
-                    Output.prettyErrorln("{}\n", .{err});
+                    Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
                 break :brk try allocator.dupe(u8, out);
@@ -559,7 +547,11 @@ pub const Arguments = struct {
                     ctx.runtime_options.eval.script = port_str;
                     ctx.runtime_options.eval.eval_and_print = true;
                 } else {
-                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
+                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
+                        Global.exit(1);
+                    };
                 }
             }
 
@@ -582,7 +574,7 @@ pub const Arguments = struct {
                 } else if (enum_value.len == 0) {
                     ctx.debug.global_cache = options.GlobalCache.force;
                 } else {
-                    Output.prettyErrorln("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
+                    Output.errGeneric("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
                     Global.exit(1);
                 }
             }
@@ -670,7 +662,21 @@ pub const Arguments = struct {
             }
 
             const TargetMatcher = strings.ExactSizeMatcher(8);
-            if (args.option("--target")) |_target| {
+            if (args.option("--target")) |_target| brk: {
+                if (comptime cmd == .BuildCommand) {
+                    if (args.flag("--compile")) {
+                        if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
+                            ctx.bundler_options.compile_target = Cli.CompileTarget.from(_target[3..]);
+                            if (!ctx.bundler_options.compile_target.isSupported()) {
+                                Output.errGeneric("Unsupported compile target: {}\n", .{ctx.bundler_options.compile_target});
+                                Global.exit(1);
+                            }
+                            opts.target = .bun;
+                            break :brk;
+                        }
+                    }
+                }
+
                 opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
                     TargetMatcher.case("browser") => Api.Target.browser,
                     TargetMatcher.case("node") => Api.Target.node,
@@ -727,15 +733,15 @@ pub const Arguments = struct {
             }
 
             if (args.option("--entry-naming")) |entry_naming| {
-                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(entry_naming) });
             }
 
             if (args.option("--chunk-naming")) |chunk_naming| {
-                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(chunk_naming) });
             }
 
             if (args.option("--asset-naming")) |asset_naming| {
-                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -1175,6 +1181,7 @@ pub const Command = struct {
 
         pub const BundlerOptions = struct {
             compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
 
             outdir: []const u8 = "",
             outfile: []const u8 = "",
@@ -2018,6 +2025,37 @@ pub const Command = struct {
         ReservedCommand,
         ExecCommand,
 
+        /// Used by crash reports.
+        ///
+        /// This must be kept in sync with
+        pub fn char(this: Tag) u8 {
+            return switch (this) {
+                .AddCommand => 'I',
+                .AutoCommand => 'a',
+                .BuildCommand => 'b',
+                .BunxCommand => 'B',
+                .CreateCommand => 'c',
+                .DiscordCommand => 'D',
+                .GetCompletionsCommand => 'g',
+                .HelpCommand => 'h',
+                .InitCommand => 'j',
+                .InstallCommand => 'i',
+                .InstallCompletionsCommand => 'C',
+                .LinkCommand => 'l',
+                .PackageManagerCommand => 'P',
+                .RemoveCommand => 'R',
+                .RunCommand => 'r',
+                .RunAsNodeCommand => 'n',
+                .TestCommand => 't',
+                .UnlinkCommand => 'U',
+                .UpdateCommand => 'u',
+                .UpgradeCommand => 'p',
+                .ReplCommand => 'G',
+                .ReservedCommand => 'w',
+                .ExecCommand => 'e',
+            };
+        }
+
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return comptime &switch (cmd) {
                 .AutoCommand => Arguments.auto_params,
@@ -2155,7 +2193,7 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
                         \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
                         \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
                         \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
                     ;
@@ -2290,3 +2328,15 @@ pub const Command = struct {
         });
     };
 };
+
+pub fn printVersionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+    Global.exit(0);
+}
+
+pub fn printRevisionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
+    Global.exit(0);
+}

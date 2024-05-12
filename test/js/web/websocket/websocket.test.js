@@ -141,8 +141,8 @@ describe("WebSocket", () => {
         const client = WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("Failed to connect");
+        expect(result.code).toBe(1015);
+        expect(result.reason).toBe("TLS handshake failed");
       }
 
       {
@@ -150,8 +150,8 @@ describe("WebSocket", () => {
         const client = WebSocket(url, { tls: { rejectUnauthorized: true } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("Failed to connect");
+        expect(result.code).toBe(1015);
+        expect(result.reason).toBe("TLS handshake failed");
       }
     } finally {
       server.stop(true);
@@ -261,8 +261,8 @@ describe("WebSocket", () => {
         const client = WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("Failed to connect");
+        expect(result.code).toBe(1015);
+        expect(result.reason).toBe("TLS handshake failed");
       }
     } finally {
       server.stop(true);
@@ -464,34 +464,38 @@ describe("WebSocket", () => {
     gc(true);
   });
 
-  it("should report failing websocket construction to onerror/onclose", async () => {
-    let did_report_error = false;
-    let did_report_close = false;
+  // If this test fails locally, check that ATT DNS error assist is disabled
+  // or, make sure that your DNS server is pointed to a DNS server that does not mitm your requests
+  it("should report failing websocket connection in onerror and onclose for DNS resolution error", async () => {
+    const url = `ws://aposdkpaosdkpasodk.com`;
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
 
-    try {
-      const url = `wss://some-random-domain.smth`;
-      await new Promise((resolve, reject) => {
-        const ws = new WebSocket(url, {});
-        let timeout = setTimeout(() => {
-          reject.call();
-        }, 500);
-
-        ws.onclose = () => {
-          did_report_close = true;
-          clearTimeout(timeout);
-          resolve.call();
-        };
-
-        ws.onerror = () => {
-          did_report_error = true;
-        };
-      });
-    } finally {
-    }
-
-    expect(did_report_error).toBe(true);
-    expect(did_report_close).toBe(true);
+    const ws = new WebSocket(url, {});
+    ws.onopen = () => reject(new Error("should not be called"));
+    ws.onmessage = () => reject(new Error("should not be called"));
+    ws.onerror = () => {
+      resolve();
+    };
+    ws.onclose = () => resolve2();
+    await Promise.all([promise, promise2]);
   });
+});
+
+// We want to test that the `onConnectError` callback gets called.
+it("should report failing websocket connection in onerror and onclose for connection refused", async () => {
+  const url = `ws://localhost:65412`;
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
+
+  const ws = new WebSocket(url, {});
+  ws.onopen = () => reject(new Error("should not be called"));
+  ws.onmessage = () => reject(new Error("should not be called"));
+  ws.onerror = () => {
+    resolve();
+  };
+  ws.onclose = () => resolve2();
+  await Promise.all([promise, promise2]);
 });
 
 describe("websocket in subprocess", () => {
@@ -541,11 +545,9 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    if (isWindows) {
-      expect(await subprocess.exited).toBe(1);
-    } else {
-      expect(await subprocess.exited).toBe(143);
-    }
+    expect(await subprocess.exited).toBe(143); // 128 + 15 (SIGTERM)
+    expect(subprocess.exitCode).toBe(null);
+    expect(subprocess.signalCode).toBe("SIGTERM");
   });
 
   it("should exit with invalid url", async () => {

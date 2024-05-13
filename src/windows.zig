@@ -3405,6 +3405,18 @@ pub extern "kernel32" fn GetThreadDescription(
     *PWSTR, // [out]
 ) std.os.windows.HRESULT;
 
+pub extern "kernel32" fn GetLongPathNameW(
+    lpszShortPath: LPCWSTR,
+    lpszLongPath: LPWSTR,
+    cchBuffer: DWORD,
+) DWORD;
+
+pub extern "kernel32" fn GetLongPathNameA(
+    lpszShortPath: LPCSTR,
+    lpszLongPath: LPSTR,
+    cchBuffer: DWORD,
+) DWORD;
+
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;

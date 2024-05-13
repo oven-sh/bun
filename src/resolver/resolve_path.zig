@@ -1842,7 +1842,7 @@ pub const PosixToWinNormalizer = struct {
 
     // underlying implementation:
 
-    fn resolveWithExternalBuf(
+    pub fn resolveWithExternalBuf(
         buf: *Buf,
         source_dir: []const u8,
         maybe_posix_path: []const u8,
@@ -1856,11 +1856,16 @@ pub const PosixToWinNormalizer = struct {
                     const source_root = windowsFilesystemRoot(source_dir);
                     @memcpy(buf[0..source_root.len], source_root);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    buf[source_root.len + maybe_posix_path.len - 1] = 0;
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
-                    return res;
+                    return ensureLongPath(buf, res);
                 }
             }
+
+            @memcpy(buf.ptr, maybe_posix_path);
+            buf[maybe_posix_path.len] = 0;
+            return ensureLongPath(buf, buf[0..maybe_posix_path.len :0]);
         }
         return maybe_posix_path;
     }
@@ -1881,11 +1886,16 @@ pub const PosixToWinNormalizer = struct {
                     const source_root = windowsFilesystemRoot(cwd);
                     assert(source_root.ptr == source_root.ptr);
                     @memcpy(buf[source_root.len..][0 .. maybe_posix_path.len - 1], maybe_posix_path[1..]);
-                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1];
+                    buf[source_root.len + maybe_posix_path.len - 1] = 0;
+                    const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
-                    return res;
+                    return ensureLongPath(buf, res);
                 }
             }
+
+            @memcpy(buf.ptr, maybe_posix_path);
+            buf[maybe_posix_path.len] = 0;
+            return ensureLongPath(buf, buf[0..maybe_posix_path.len :0]);
         }
 
         return maybe_posix_path;
@@ -1910,14 +1920,46 @@ pub const PosixToWinNormalizer = struct {
                     buf[source_root.len + maybe_posix_path.len - 1] = 0;
                     const res = buf[0 .. source_root.len + maybe_posix_path.len - 1 :0];
                     assert(!bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, res));
-                    return res;
+                    return ensureLongPath(buf, res);
                 }
             }
+
+            @memcpy(buf.ptr, maybe_posix_path);
+            buf[maybe_posix_path.len] = 0;
+            return ensureLongPath(buf, buf[0..maybe_posix_path.len :0]);
         }
 
         @memcpy(buf.ptr, maybe_posix_path);
         buf[maybe_posix_path.len] = 0;
         return buf[0..maybe_posix_path.len :0];
+    }
+
+    /// `res` needs to exist in `buf` and needs to start at the beginning
+    pub fn ensureLongPath(buf: anytype, res: [:0]const u8) [:0]u8 {
+        assert(buf.ptr == res.ptr);
+        if (bun.Environment.isWindows) {
+            const long_path_len = bun.windows.GetLongPathNameA(
+                @ptrCast(buf.ptr),
+                // it's safe to use the same buffer
+                @ptrCast(buf.ptr),
+                @intCast(buf.len),
+            );
+
+            if (long_path_len == 0) {
+                // Length 0 means there was an error. This could happen
+                // if the file/dir does not exist, or permissions are missing
+                // for any component in the path. In this case, ignore the
+                // error and return the normalized path.
+                //
+                // If it doesn't exist, but the 8.3 path does, it will resolve
+                // correctly because the dir cache will cache it.
+                return buf[0..res.len :0];
+            }
+
+            return buf[0..long_path_len :0];
+        }
+
+        return buf[0..res.len :0];
     }
 };
 

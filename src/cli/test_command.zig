@@ -1074,6 +1074,11 @@ pub const TestCommand = struct {
 
                 vm.onUnhandledRejectionCtx = null;
                 vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+                if (module.tests.items.len > 0) {
+                    if (jest.DescribeScope.runGlobalCallbacks(vm.global, .beforeEachFile)) |err| {
+                        _ = vm.uncaughtException(vm.global, err, true);
+                    }
+                }
                 module.runTests(vm.global);
                 vm.eventLoop().tick();
 
@@ -1095,6 +1100,16 @@ pub const TestCommand = struct {
                     while (prev_unhandled_count < vm.unhandled_error_counter) {
                         vm.global.handleRejectedPromises();
                         prev_unhandled_count = vm.unhandled_error_counter;
+                    }
+                }
+
+                if (jest.Jest.runner.?.global_callbacks.afterEachFile.items.len > 0) {
+                    if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterEachFile)) |err| {
+                        _ = vm.uncaughtException(vm.global, err, true);
+                    }
+
+                    while (vm.active_tasks > 0) : (vm.eventLoop().flushImmediateQueue()) {
+                        vm.eventLoop().tick();
                     }
                 }
 

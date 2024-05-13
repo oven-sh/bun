@@ -4,13 +4,15 @@ import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick, isWindows, tmpdirSync } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows, bunExe, bunEnv } from "harness";
 import net from "net";
 
 const tmp_dir = tmpdirSync();
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
-
+const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
+const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
+const fetchFixture5 = join(import.meta.dir, "fetch-leak-test-fixture-5.js");
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
@@ -1994,5 +1996,64 @@ describe("http/1.1 response body length", () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
+  });
+});
+describe("fetch Response life cycle", () => {
+  it("should not keep Response alive if not consumed", async () => {
+    const serverProcess = Bun.spawn({
+      cmd: [bunExe(), fetchFixture3],
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    async function getServerUrl() {
+      const reader = serverProcess.stdout.getReader();
+      const { done, value } = await reader.read();
+      return new TextDecoder().decode(value);
+    }
+    const serverUrl = await getServerUrl();
+    const clientProcess = Bun.spawn({
+      cmd: [bunExe(), fetchFixture4, serverUrl],
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    try {
+      expect(await clientProcess.exited).toBe(0);
+    } finally {
+      serverProcess.kill();
+    }
+  });
+
+  it("should keep Response promise alive if consumed", async () => {
+    const serverProcess = Bun.spawn({
+      cmd: [bunExe(), fetchFixture3],
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    async function getServerUrl() {
+      const reader = serverProcess.stdout.getReader();
+      const { done, value } = await reader.read();
+      return new TextDecoder().decode(value);
+    }
+    const serverUrl = await getServerUrl();
+    const clientProcess = Bun.spawn({
+      cmd: [bunExe(), fetchFixture5, serverUrl],
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    try {
+      expect(await clientProcess.exited).toBe(0);
+    } finally {
+      serverProcess.kill();
+    }
   });
 });

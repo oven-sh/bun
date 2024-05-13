@@ -312,3 +312,7 @@ it.todo("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
 });
+
+it("should import short paths", () => {
+  expect(require("./LONGJA~1.JS")).toBeDefined();
+});

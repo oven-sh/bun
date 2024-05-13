@@ -1658,6 +1658,8 @@ pub const Query = struct {
 
         const Formatter = struct {
             group: *const Group,
+            buf: string,
+
             pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
                 const this = formatter.group;
 
@@ -1666,32 +1668,31 @@ pub const Query = struct {
                 }
 
                 if (this.tail == null and this.head.tail == null) {
-                    try std.fmt.format(writer, "{}", .{this.head.fmt(this.input)});
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buf)});
                     return;
                 }
 
                 var list = &this.head;
                 while (list.next) |next| {
-                    try std.fmt.format(writer, "{} && ", .{list.fmt(this.input)});
+                    try std.fmt.format(writer, "{} && ", .{list.fmt(formatter.buf)});
                     list = next;
                 }
 
-                try std.fmt.format(writer, "{}", .{list.fmt(this.input)});
+                try std.fmt.format(writer, "{}", .{list.fmt(formatter.buf)});
             }
         };
 
-        pub fn fmt(this: *const Group) @This().Formatter {
-            return .{ .group = this };
+        pub fn fmt(this: *const Group, buf: string) @This().Formatter {
+            return .{
+                .group = this,
+                .buf = buf,
+            };
         }
 
         pub fn jsonStringify(this: *const Group, writer: anytype) !void {
             const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
             defer bun.default_allocator.free(temp);
             try std.json.encodeJsonString(temp, .{}, writer);
-        }
-
-        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try this.fmt().format("", .{}, writer);
         }
 
         pub fn deinit(this: *Group) void {

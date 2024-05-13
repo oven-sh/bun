@@ -133,6 +133,8 @@ jobs:
           exit 1
   test-node:
     name: Node.js Tests
+    # TODO: enable when we start paying attention to the results. In the meantime, this causes CI to queue jobs wasting developer time.
+    if: 0
     runs-on: ${{ inputs.runs-on }}
     steps:
       - if: ${{ runner.os == 'Windows' }}

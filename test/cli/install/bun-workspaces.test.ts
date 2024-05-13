@@ -1,10 +1,12 @@
 import { spawnSync } from "bun";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tmpdirSync, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { beforeEach, test, expect } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
-const { printLockfileAsJSON } = install_test_helpers;
+const { parseLockfile } = install_test_helpers;
+
+expect.extend({ toMatchNodeModulesAt });
 
 var testCounter: number = 0;
 
@@ -44,8 +46,24 @@ test("dependency on workspace without version in package.json", () => {
 
   mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
 
-  const shouldWork: string[] = ["*", "*.*.*", "latest", "", "=*", "kjwoehcojrgjoj", "*.1.*", "*-pre"];
-  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.1", "*-pre+build", "*+build"];
+  const shouldWork: string[] = [
+    "*",
+    "*.*.*",
+    "=*",
+    "kjwoehcojrgjoj", // dist-tag does not exist, should choose local workspace
+    "*.1.*",
+    "*-pre",
+  ];
+  const shouldNotWork: string[] = [
+    "1",
+    "1.*",
+    "1.1.*",
+    "1.1.1",
+    "*-pre+build",
+    "*+build",
+    "latest", // dist-tag exists, should choose package from npm
+    "",
+  ];
 
   for (const version of shouldWork) {
     writeFileSync(
@@ -67,7 +85,9 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+    expect(lockfile).toMatchSnapshot(`version: ${version}`);
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -106,7 +126,9 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+    expect(lockfile).toMatchSnapshot(`version: ${version}`);
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -123,4 +145,58 @@ test("dependency on workspace without version in package.json", () => {
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
+}, 20_000);
+
+test("dependency on same name as workspace and dist-tag", () => {
+  writeFileSync(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      workspaces: ["packages/*"],
+    }),
+  );
+
+  mkdirSync(join(packageDir, "packages", "mono"), { recursive: true });
+  writeFileSync(
+    join(packageDir, "packages", "mono", "package.json"),
+    JSON.stringify({
+      name: "lodash",
+      version: "4.17.21",
+    }),
+  );
+
+  mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
+  writeFileSync(
+    join(packageDir, "packages", "bar", "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "1.0.0",
+      dependencies: {
+        lodash: "latest",
+      },
+    }),
+  );
+
+  const { stdout, exitCode } = spawnSync({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stderr: "inherit",
+    stdout: "pipe",
+    env,
+  });
+
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchSnapshot("with version");
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+
+  const out = stdout.toString();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " + bar@workspace:packages/bar",
+    " + lodash@workspace:packages/mono",
+    "",
+    " 3 packages installed",
+  ]);
+
+  expect(exitCode).toBe(0);
 });

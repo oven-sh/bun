@@ -45,7 +45,10 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
 };
 
 export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
-  printLockfileAsJSON: (cwd: string) => string;
+  /**
+   * Returns the lockfile at the given path as an object.
+   */
+  parseLockfile: (cwd: string) => object;
 };
 
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(

@@ -1,7 +1,6 @@
 name: Prefilled crash report
 description: Report a crash in Bun
 labels:
-  - bug
   - crash
 body:
   - type: markdown

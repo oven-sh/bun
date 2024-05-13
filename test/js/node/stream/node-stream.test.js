@@ -590,7 +590,7 @@ it("should send Readable events in the right order", async () => {
 });
 
 it("emits newListener event _before_ adding the listener", () => {
-  const cb = jest.fn((event) => {
+  const cb = jest.fn(event => {
     expect(stream.listenerCount(event)).toBe(0);
   });
   const stream = new Stream();

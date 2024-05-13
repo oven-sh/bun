@@ -5015,8 +5015,10 @@ pub const Package = extern struct {
                     @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                     stream.pos = end_pos;
                     if (comptime strings.eqlComptime(field.name, "meta")) {
-                        var iter = std.mem.reverseIterator(value);
-                        while (iter.next()) |meta| {
+                        // need to check if any values were created from an older version of bun
+                        // (currently just `has_install_script`). If any are found, the values need
+                        // to be updated before saving the lockfile.
+                        for (value) |*meta| {
                             if (meta.needsUpdate()) {
                                 needs_update = true;
                                 break;

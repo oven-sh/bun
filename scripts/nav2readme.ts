@@ -55,7 +55,8 @@ async function getGuides() {
       md += `\n- ${normalizeSectionName(dirname)} ` + "\n";
       prevDirname = dirname;
     }
-    md += `  - [${name}](https://bun.sh/docs/guides/${path.basename(file, path.extname(file))})` + "\n";
+    md +=
+      `  - [${name}](https://bun.sh/guides/${path.dirname(file)}/${path.basename(file, path.extname(file))})` + "\n";
   }
 
   return md;

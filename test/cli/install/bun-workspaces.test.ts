@@ -1,10 +1,12 @@
 import { spawnSync } from "bun";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tmpdirSync, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { beforeEach, test, expect } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
-const { printLockfileAsJSON } = install_test_helpers;
+const { parseLockfile } = install_test_helpers;
+
+expect.extend({ toMatchNodeModulesAt });
 
 var testCounter: number = 0;
 
@@ -83,7 +85,9 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+    expect(lockfile).toMatchSnapshot(`version: ${version}`);
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -122,7 +126,9 @@ test("dependency on workspace without version in package.json", () => {
       env,
     });
 
-    expect(printLockfileAsJSON(packageDir)).toMatchSnapshot(`version: ${version}`);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+    expect(lockfile).toMatchSnapshot(`version: ${version}`);
 
     const out = stdout.toString();
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -139,7 +145,7 @@ test("dependency on workspace without version in package.json", () => {
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
-});
+}, 20_000);
 
 test("dependency on same name as workspace and dist-tag", () => {
   writeFileSync(
@@ -179,7 +185,9 @@ test("dependency on same name as workspace and dist-tag", () => {
     env,
   });
 
-  expect(printLockfileAsJSON(packageDir)).toMatchSnapshot("with version");
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchSnapshot("with version");
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
 
   const out = stdout.toString();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([

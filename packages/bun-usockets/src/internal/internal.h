@@ -120,6 +120,7 @@ struct us_socket_t {
   unsigned short
       low_prio_state; /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2
                          = was in low-prio queue in this iteration */
+  unsigned char resolving;
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
 };

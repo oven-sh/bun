@@ -165,6 +165,10 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     }
 }
 
+void us_internal_handle_dns_results(struct us_loop_t *loop) {
+    
+}
+
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
@@ -198,6 +202,7 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
     us_internal_handle_low_priority_sockets(loop);
+    us_internal_handle_dns_results(loop);
     loop->data.pre_cb(loop);
 }
 

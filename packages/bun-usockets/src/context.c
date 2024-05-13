@@ -350,26 +350,70 @@ struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_
     }
 #endif
 
+    /*
+    Asynchronous connect and Happy Eyeballs v2 sketch:
+
+    Connect function (this function)
+    1. Allocate the socket object
+    2. Allocate the state machine object, with initial state "waiting for dns"
+    3. Start DNS resolution with global DNS resolver
+    4. Return the socket object to the user
+
+    When DNS resolution completes
+    1. Start an IPv6 connection attempt
+    2. Set a timer to fire once after 50ms to attempt the first IPv4 connection
+    3. Set a timer to fire every 250ms to attempt the next IP in the list
+
+    When a connection attempt succeeds
+    1. Close all other connection attempts
+    2. Set the socket to connected state
+    3. Free the state machine object
+    4. Call the user callback. This can, for example, resolve a JS promise
+
+
+    Additional thoughts:
+    This function should probably take a callback that is called when the connection is established
+    (this is theoretically optional, as the onDrain callback should be called when the connection is established and the socket is writable)
+
+    */
+
+    struct us_socket_t *s = (struct us_socket_t *)us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
+    s->resolving = 1;
+    s->context = context;
+
+    return s;
+}
+
+void us_internal_socket_after_resolve(struct us_socket_t *s, ... /* TODO dns result */) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(host, port, source_host, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        return 0;
+        // TODO figure out how to signal error
+        // perror("Failed to create connect socket");
+        // perror("connect socket error");
+        exit(1);
+        // return 0;
     }
 
     /* Connect sockets are semi-sockets just like listen sockets */
-    struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, context->loop, LIBUS_SOCKET_WRITABLE);
-
-    struct us_socket_t *connect_socket = (struct us_socket_t *) p;
+    us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 
     /* Link it into context so that timeout fires properly */
-    connect_socket->context = context;
-    connect_socket->timeout = 255;
-    connect_socket->long_timeout = 255;
-    connect_socket->low_prio_state = 0;
-    us_internal_socket_context_link_socket(context, connect_socket);
+    s->timeout = 255;
+    s->long_timeout = 255;
+    s->low_prio_state = 0;
+    us_internal_socket_context_link_socket(s->context, s);
 
-    return connect_socket;
+    // mark the socket object as ready for use
+    s->resolving = 0;
+}
+
+// called asynchronously when DNS resolution completes
+void us_dns_callback(struct us_socket_t *s, void *result) {
+    /*
+    1. enqueue the socket for connection 
+    2. wake up the event loop
+    */
 }
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {

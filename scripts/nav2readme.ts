@@ -6,8 +6,9 @@
 //
 //
 import nav from "../docs/nav";
-
-function getMarkdown() {
+import { readdirSync } from "fs";
+import path from "path";
+function getQuickLinks() {
   let md = "";
 
   for (const item of nav.items) {
@@ -16,6 +17,45 @@ function getMarkdown() {
     } else {
       md += `  - [${item.title}](https://bun.sh/docs/${item.slug})` + "\n";
     }
+  }
+
+  return md;
+}
+
+async function getGuides() {
+  let md = "";
+  const basePath = path.join(import.meta.dirname, "..", "docs/guides");
+  const allGuides = readdirSync(basePath, { withFileTypes: true, recursive: true });
+  const promises: Promise<{ name: string; file: string }>[] = [];
+  for (const guide of allGuides) {
+    if (guide.isFile() && guide.name.endsWith(".md")) {
+      const joined = path.join(basePath, guide.name);
+      promises.push(
+        Bun.file(joined)
+          .text()
+          .then(text => {
+            const nameI = text.indexOf("name: ");
+            const name = text.slice(nameI + "name: ".length, text.indexOf("\n", nameI)).trim();
+            return {
+              name,
+              file: guide.name,
+            };
+          }),
+      );
+    }
+  }
+
+  const files = await Promise.all(promises);
+  md += "## Guides " + "\n";
+  files.sort((a, b) => a.file.localeCompare(b.file));
+  let prevDirname = "";
+  for (const { name, file } of files) {
+    const dirname = path.basename(path.dirname(file));
+    if (dirname !== prevDirname) {
+      md += `\n- ${normalizeSectionName(dirname)} ` + "\n";
+      prevDirname = dirname;
+    }
+    md += `  - [${name}](https://bun.sh/docs/guides/${path.basename(file, path.extname(file))})` + "\n";
   }
 
   return md;
@@ -34,7 +74,25 @@ if (contributing === -1) {
   throw new Error("Could not find ## Contributing in README");
 }
 
+const guides = await getGuides();
+
 const combined =
-  [text.slice(0, start), getMarkdown(), text.slice(contributing)].map(text => text.trim()).join("\n\n") + "\n";
+  [text.slice(0, start), getQuickLinks(), guides, text.slice(contributing)].map(text => text.trim()).join("\n\n") +
+  "\n";
 
 await Bun.write(Bun.fileURLToPath(import.meta.resolve("../README.md")), combined);
+
+function normalizeSectionName(name: string) {
+  if (name.includes("-")) {
+    return name
+      .split("-")
+      .map((s, i) => (i === 0 ? s.charAt(0).toUpperCase() + s.slice(1) : s))
+      .join(" ");
+  }
+
+  name = name.charAt(0).toUpperCase() + name.slice(1);
+  name = name.replaceAll("Https", "HTTPS");
+  name = name.replaceAll("Http", "HTTP");
+  name = name.replaceAll("Websocket", "WebSocket");
+  return name;
+}

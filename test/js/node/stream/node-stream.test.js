@@ -1,4 +1,4 @@
-import { expect, describe, it } from "bun:test";
+import { expect, describe, it, jest } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
@@ -590,9 +590,11 @@ it("should send Readable events in the right order", async () => {
 });
 
 it("emits newListener event _before_ adding the listener", () => {
-  const stream = new Stream();
-  stream.on("newListener", event => {
+  const cb = jest.fn((event) => {
     expect(stream.listenerCount(event)).toBe(0);
   });
+  const stream = new Stream();
+  stream.on("newListener", cb);
   stream.on("foo", () => {});
+  expect(cb).toHaveBeenCalled();
 });

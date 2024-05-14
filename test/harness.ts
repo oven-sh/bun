@@ -763,3 +763,15 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 export function tmpdirSync(pattern: string) {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }
+
+export async function runBunAdd(env: NodeJS.ProcessEnv, cwd: string, specifier: string) {
+  const { exited } = Bun.spawn({
+    cmd: [bunExe(), "add", specifier],
+    cwd,
+    stdout: "inherit",
+    stdin: "ignore",
+    stderr: "inherit",
+    env,
+  });
+  expect(await exited).toBe(0);
+}

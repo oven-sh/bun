@@ -13,11 +13,10 @@ it("works", async () => {
   const fixture_data = `
     import axios from 'axios';
     import { http, passthrough, HttpResponse } from 'msw'
-
     import { setupServer } from 'msw/node'
 
     const server = setupServer(...[
-      http.get('https://swapi.dev/api/people/', () => {
+      http.get('http://localhost/', () => {
         // return passthrough()
         return HttpResponse.json({ results: [{}, {}] })
       }),
@@ -26,7 +25,7 @@ it("works", async () => {
       onUnhandledRequest: 'warn',
     });
 
-    axios.get('https://swapi.dev/api/people/?page=2')
+    axios.get('http://localhost/?page=2')
       .then(function (response) {
         // handle success
         console.log(response.data.results.length);
@@ -35,7 +34,7 @@ it("works", async () => {
         // handle error
         console.log(error?.message);
       });
-    `;
+  `;
   await Bun.write(fixture_path, fixture_data);
 
   let { stdout, stderr, exited } = Bun.spawn({

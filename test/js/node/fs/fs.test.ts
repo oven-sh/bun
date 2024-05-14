@@ -28,6 +28,7 @@ import fs, {
   mkdtempSync,
   mkdtemp,
   constants,
+  Dir,
   Dirent,
   Stats,
   realpathSync,
@@ -36,6 +37,7 @@ import fs, {
   writevSync,
   readvSync,
   fstatSync,
+  fdatasync,
   fdatasyncSync,
   openAsBlob,
 } from "node:fs";
@@ -46,7 +48,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { Dir, ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
+import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -1815,6 +1817,24 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it(
+    "correctly handles file descriptors with an offset",
+    done => {
+      const path = `${tmpdir()}/bun-fs-createReadStream-${Date.now()}.txt`;
+      const fd = fs.openSync(path, "w+");
+
+      const stream = fs.createReadStream("", { fd: fd, start: 2 });
+      stream.on("data", chunk => {
+        expect(chunk.toString()).toBe("llo, world!");
+        done();
+      });
+      stream.on("error", done);
+
+      fs.writeSync(fd, "Hello, world!");
+    },
+    { timeout: 100 },
+  );
 });
 
 describe("fs.WriteStream", () => {

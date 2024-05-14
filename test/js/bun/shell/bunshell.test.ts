@@ -101,8 +101,8 @@ describe("bunshell", () => {
       const buf = new Uint8Array(1);
 
       expect(async () => {
-        await TestBuilder.command`echo hi > \\${buf}`.run();
-      }).toThrow("Redirection with no file");
+        await TestBuilder.command`echo hi > \\${buf}`.error("Redirection with no file").run();
+      });
     });
 
     test("in command position", async () => {
@@ -350,6 +350,32 @@ describe("bunshell", () => {
     const haha = "noice";
     const { stdout } = await $`echo $(echo noice)`;
     expect(stdout.toString()).toEqual(`noice\n`);
+  });
+
+  describe("tilde_expansion", () => {
+    describe("with paths", async () => {
+      TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("normal");
+      TestBuilder.command`echo ~/Do"cu"me"nts"`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("compound word");
+      TestBuilder.command`echo ~/LOL hi hello`.stdout(`${process.env.HOME}/LOL hi hello\n`).runAsTest("multiple words");
+    });
+
+    describe("normal", async () => {
+      TestBuilder.command`echo ~`.stdout(`${process.env.HOME}\n`).runAsTest("lone tilde");
+      TestBuilder.command`echo ~~`.stdout(`~~\n`).runAsTest("double tilde");
+      TestBuilder.command`echo ~ hi hello`.stdout(`${process.env.HOME} hi hello\n`).runAsTest("multiple words");
+    });
+
+    TestBuilder.command`HOME="" USERPROFILE="" && echo ~ && echo ~/Documents`
+      .stdout("\n/Documents\n")
+      .runAsTest("empty $HOME or $USERPROFILE");
+
+    describe("modified $HOME or $USERPROFILE", async () => {
+      TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~`.stdout("lmao\n").runAsTest("1");
+
+      TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~ && echo ~/Documents`
+        .stdout("lmao\nlmao/Documents\n")
+        .runAsTest("2");
+    });
   });
 
   // Ported from GNU bash "quote.tests"

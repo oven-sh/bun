@@ -234,8 +234,8 @@ pub const ServerConfig = struct {
         secure_options: u32 = 0,
         request_cert: i32 = 0,
         reject_unauthorized: i32 = 0,
-        ssl_ciphers: [*c]const u8 = null,
-        protos: [*c]const u8 = null,
+        ssl_ciphers: ?[*:0]const u8 = null,
+        protos: ?[*:0]const u8 = null,
         protos_len: usize = 0,
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
@@ -294,8 +294,8 @@ pub const ServerConfig = struct {
             };
 
             inline for (fields) |field| {
-                if (@field(this, field) != null) {
-                    const slice = std.mem.span(@field(this, field));
+                if (@field(this, field)) |slice_ptr| {
+                    const slice = std.mem.span(slice_ptr);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
                     }
@@ -3930,7 +3930,7 @@ pub const ServerWebSocket = struct {
             }
 
             if (error_handler.isEmptyOrUndefinedOrNull()) {
-                vm.onError(globalObject, err_value);
+                _ = vm.uncaughtException(globalObject, err_value, false);
             } else {
                 const corky = [_]JSValue{err_value};
                 corker.args = &corky;
@@ -3997,7 +3997,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err_value| {
             if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                vm.onError(globalObject, err_value);
+                _ = vm.uncaughtException(globalObject, err_value, false);
             } else {
                 const args = [_]JSValue{err_value};
                 corker.args = &args;
@@ -4049,7 +4049,7 @@ pub const ServerWebSocket = struct {
 
             if (result.toError()) |err_value| {
                 if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                    vm.onError(globalObject, err_value);
+                    _ = vm.uncaughtException(globalObject, err_value, false);
                 } else {
                     const args = [_]JSValue{err_value};
                     corker.args = &args;

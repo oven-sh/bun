@@ -417,6 +417,7 @@ describe("signal", () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR1"],
       env: bunEnv,
+      stderr: "inherit",
     });
 
     expect(await child.exited).toBe(0);
@@ -572,3 +573,42 @@ if (isWindows) {
     expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
   });
 }
+
+it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallback.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('uncaughtException', fn)", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtException.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("aborts when the uncaughtException handler throws", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
+    stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(1);
+  expect(await new Response(proc.stderr).text()).toContain("bar");
+});
+
+it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
+    stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(1);
+  expect(await new Response(proc.stderr).text()).toContain("bar");
+});
+
+it("process.hasUncaughtExceptionCaptureCallback", () => {
+  process.setUncaughtExceptionCaptureCallback(null);
+  expect(process.hasUncaughtExceptionCaptureCallback()).toBe(false);
+  process.setUncaughtExceptionCaptureCallback(() => {});
+  expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
+  process.setUncaughtExceptionCaptureCallback(null);
+});

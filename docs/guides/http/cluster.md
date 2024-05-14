@@ -3,7 +3,7 @@ name: Start a cluster of HTTP servers
 description: Run multiple concurrent HTTP servers via the "reusePort" option to share the same port across multiple processes
 ---
 
-To run multiple concurrent HTTP servers, use the `reusePort` option in `Bun.serve()` to share the same port across multiple processes.
+To run multiple HTTP servers concurrently, use the `reusePort` option in `Bun.serve()` which shares the same port across multiple processes.
 
 This automatically load balances incoming requests across multiple instances of Bun.
 

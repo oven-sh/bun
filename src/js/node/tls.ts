@@ -686,6 +686,9 @@ function normalizeConnectArgs(listArgs) {
 // tls.connect(path[, options][, callback])
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
+  if (typeof args[0] !== "object") {
+    return new TLSSocket().connect(...args);
+  }
   let [options, callback] = normalizeConnectArgs(args);
   const { ALPNProtocols } = options;
   if (ALPNProtocols) {

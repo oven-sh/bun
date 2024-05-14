@@ -1,26 +1,13 @@
 import { bunExe } from "bun:harness";
-import { bunEnv, tmpdirSync } from "harness";
-import { createTest } from "node-harness";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import { bunEnv, runBunInstall, tmpdirSync } from "harness";
+import { expect, it } from "bun:test";
 import * as path from "node:path";
 
 it("works", async () => {
   const package_dir = tmpdirSync("bun-test-");
 
-  let { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "add", "st@3.0.0"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  let err = await new Response(stderr).text();
-  expect(err).not.toContain("panic:");
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("warn:");
-  let out = await new Response(stdout).text();
-  await exited;
+  await Bun.write(path.join(package_dir, "package.json"), `{ "dependencies": { "st": "3.0.0" } }`);
+  await runBunInstall(bunEnv, package_dir);
 
   const fixture_path = path.join(package_dir, "index.ts");
   const fixture_data = String.raw`
@@ -46,16 +33,16 @@ it("works", async () => {
   `;
   await Bun.write(fixture_path, fixture_data);
 
-  ({ stdout, stderr } = Bun.spawn({
+  let { stdout, stderr } = Bun.spawn({
     cmd: [bunExe(), "run", fixture_path],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "ignore",
     stderr: "pipe",
     env: bunEnv,
-  }));
+  });
   // err = await new Response(stderr).text();
   // expect(err).toBeEmpty();
-  out = await new Response(stdout).text();
+  let out = await new Response(stdout).text();
   expect(out).toEqual(fixture_data + "\n");
 });

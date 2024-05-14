@@ -46,13 +46,10 @@ public:
     ~SourceProvider();
     unsigned hash() const override;
     StringView source() const override { return StringView(m_source.get()); }
+
     RefPtr<JSC::CachedBytecode> cachedBytecode()
     {
-        // if (m_resolvedSource.bytecodecache_fd == 0) {
         return nullptr;
-        // }
-
-        // return m_cachedBytecode;
     };
 
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&,
@@ -71,11 +68,13 @@ private:
         const SourceOrigin& sourceOrigin, WTF::String&& sourceURL,
         const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType)
         : Base(sourceOrigin, WTFMove(sourceURL), String(), taintedness, startPosition, sourceType)
+        , m_globalObject(globalObject)
         , m_source(sourceImpl)
     {
         m_resolvedSource = resolvedSource;
     }
 
+    Zig::GlobalObject* m_globalObject;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;

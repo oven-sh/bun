@@ -66,7 +66,8 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
-extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, void* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
@@ -110,6 +111,13 @@ Ref<SourceProvider> SourceProvider::create(
     return provider;
 }
 
+SourceProvider::~SourceProvider() {
+    if(m_resolvedSource.already_bundled) {
+        BunString str = Bun::toString(sourceURL());
+        Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
+    }
+}
+
 unsigned SourceProvider::hash() const
 {
     if (m_hash) {
@@ -147,9 +155,8 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
 }
-SourceProvider::~SourceProvider()
-{
-}
+
+
 void SourceProvider::commitCachedBytecode()
 {
     // if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode || !m_cachedBytecode->hasUpdates())

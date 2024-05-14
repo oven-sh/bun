@@ -182,9 +182,24 @@ pub const SavedSourceMap = struct {
         SourceProviderMap,
     });
 
+    pub const MissingSourceMapNoteInfo = struct {
+        pub var storage: bun.PathBuffer = undefined;
+        pub var path: ?[]const u8 = "";
+    };
+
     pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
         const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
         this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    }
+
+    pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        const entry = this.map.getEntry(bun.hash(path)) orelse return;
+        const old_value = Value.from(entry.value_ptr.*);
+        if (old_value.get(SourceProviderMap)) |prov| {
+            if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                this.map.removeByPtr(entry.key_ptr);
+            }
+        }
     }
 
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
@@ -265,6 +280,12 @@ pub const SavedSourceMap = struct {
                 } else {
                     // does not have a valid source map. let's not try again
                     _ = this.map.remove(hash);
+
+                    // Store path for a user note.
+                    const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+                    @memcpy(storage, path);
+                    MissingSourceMapNoteInfo.path = storage;
+
                     return null;
                 }
             },
@@ -2779,7 +2800,13 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
+    pub fn remapZigException(
+        this: *VirtualMachine,
+        exception: *ZigException,
+        error_instance: JSValue,
+        exception_list: ?*ExceptionList,
+        must_reset_parser_arena_later: *bool,
+    ) void {
         error_instance.toZigException(this.global, exception);
 
         // defer this so that it copies correctly
@@ -3897,6 +3924,13 @@ export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_pro
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
+}
+
+export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 pub export var isBunTest: bool = false;

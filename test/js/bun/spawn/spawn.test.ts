@@ -1,16 +1,22 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { closeSync, fstatSync, openSync } from "fs";
-import { gcTick as _gcTick, bunEnv, bunExe, isLinux, isMacOS, isPosix, isWindows, withoutAggressiveGC } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import {
+  gcTick as _gcTick,
+  bunEnv,
+  bunExe,
+  isMacOS,
+  isPosix,
+  isWindows,
+  tmpdirSync,
+  withoutAggressiveGC,
+} from "harness";
+import { rmSync, writeFileSync } from "node:fs";
 import path from "path";
 let tmp;
 
 beforeAll(() => {
-  tmp = path.join(tmpdir(), "bun-spawn-" + Date.now().toString(32)) + path.sep;
-  rmSync(tmp, { force: true, recursive: true });
-  mkdirSync(tmp, { recursive: true });
+  tmp = tmpdirSync();
 });
 
 function createHugeString() {

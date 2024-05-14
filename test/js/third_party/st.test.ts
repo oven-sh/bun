@@ -5,7 +5,7 @@ const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTe
 import * as path from "node:path";
 
 it("works", async () => {
-  const package_dir = tmpdirSync("bun-test-");
+  const package_dir = tmpdirSync();
 
   let { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "add", "st@3.0.0"],

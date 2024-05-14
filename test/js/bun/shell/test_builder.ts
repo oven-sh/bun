@@ -4,6 +4,7 @@ import { ShellPromise, ShellExpression } from "bun";
 import { join } from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
+import { tmpdirSync } from "harness";
 // import { bunExe } from "harness";
 
 export function createTestBuilder(path: string) {
@@ -187,8 +188,7 @@ export function createTestBuilder(path: string) {
     }
 
     static tmpdir(): string {
-      const tmp = os.tmpdir();
-      return fs.mkdtempSync(join(tmp, "test_builder"));
+      return tmpdirSync();
     }
 
     setTempdir(tempdir: string): this {

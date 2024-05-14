@@ -1,10 +1,9 @@
 import { bunExe } from "bun:harness";
-import { bunEnv, tmpdirSync } from "harness";
+import { expect, it } from "bun:test";
+import { bunEnv, isBunCI, tmpdirSync } from "harness";
 import * as path from "node:path";
-import { createTest } from "node-harness";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
-it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", async () => {
+it.skipIf(!isBunCI && !process.env.TEST_INFO_STRIPE)("should be able to query a charge", async () => {
   const package_dir = tmpdirSync("bun-test-");
 
   await Bun.write(
@@ -16,18 +15,15 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", asy
     }),
   );
 
-  let { stdout, stderr } = Bun.spawn({
+  let { exited } = Bun.spawn({
     cmd: [bunExe(), "install"],
-    stdout: "pipe",
+    stdout: "inherit",
+    cwd: package_dir,
     stdin: "ignore",
-    stderr: "pipe",
+    stderr: "inherit",
     env: bunEnv,
   });
-  let err = await new Response(stderr).text();
-  expect(err).not.toContain("panic:");
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("warn:");
-  let out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
 
   // prettier-ignore
   const [access_token, charge_id, account_id] = process.env.TEST_INFO_STRIPE?.split(",");
@@ -35,7 +31,7 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", asy
   const fixture_path = path.join(package_dir, "index.js");
   await Bun.write(
     fixture_path,
-    String.raw`
+    `
     const Stripe = require("stripe");
     const stripe = Stripe("${access_token}");
 
@@ -48,16 +44,20 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", asy
       });
     `,
   );
+  let stdout, stderr;
 
-  ({ stdout, stderr } = Bun.spawn({
+  ({ stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "run", fixture_path],
     stdout: "pipe",
     stdin: "ignore",
     stderr: "pipe",
+    cwd: package_dir,
     env: bunEnv,
   }));
-  out = await new Response(stdout).text();
+  let out = await new Response(stdout).text();
   expect(out).toBeEmpty();
-  err = await new Response(stderr).text();
+  let err = await new Response(stderr).text();
   expect(err).toContain(`error: No such charge: '${charge_id}'\n`);
+
+  expect(await exited).toBe(1);
 });

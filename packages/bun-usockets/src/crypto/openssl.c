@@ -1519,7 +1519,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
     int port, const char *source_host, int options, int socket_ext_size) {
   return (struct us_internal_ssl_socket_t *)us_socket_context_connect(
-      0, &context->sc, host, port, source_host, options,
+      0, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size);
 }

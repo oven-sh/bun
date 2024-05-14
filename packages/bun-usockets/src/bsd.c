@@ -905,7 +905,7 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
             return LIBUS_SOCKET_ERROR;
         }
 
-        int resultFd = bsd_create_socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        int resultFd = bsd_create_socket(rp->ai_family, SOCK_STREAM, 0);
         if (resultFd < 0) {
             return LIBUS_SOCKET_ERROR;
         }
@@ -915,7 +915,7 @@ static int bsd_do_connect(struct addrinfo *rp, int *fd)
     return LIBUS_SOCKET_ERROR;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int options) {
 #ifdef _WIN32
     // The caller (sometimes) uses NULL to indicate localhost. This works fine with getaddrinfo, but not with WSAConnectByName
     if (!host) {
@@ -974,50 +974,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, co
     }
     return s;
 #else
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    if (getaddrinfo(host, port_string, &hints, &result) != 0) {
-        return LIBUS_SOCKET_ERROR;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addrinfo->ai_family, SOCK_STREAM, 0);
     if (fd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (source_host) {
-        struct addrinfo *interface_result;
-        if (!getaddrinfo(source_host, NULL, NULL, &interface_result)) {
-            int ret = bind(fd, interface_result->ai_addr, (socklen_t) interface_result->ai_addrlen);
-            freeaddrinfo(interface_result);
-            if (ret == LIBUS_SOCKET_ERROR) {
-                bsd_close_socket(fd);
-                freeaddrinfo(result);
-                return LIBUS_SOCKET_ERROR;
-            }
-        }
-
-        if (bsd_do_connect_raw(result, fd) != 0) {
-            bsd_close_socket(fd);
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
-    } else {
-        if (bsd_do_connect(result, &fd) != 0) {
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
+    if (bsd_do_connect(addrinfo, &fd) != 0) {
+        us_internal_freeaddrinfo(addrinfo);
+        return LIBUS_SOCKET_ERROR;
     }
     
     
-    freeaddrinfo(result);
+    us_internal_freeaddrinfo(addrinfo);
     return fd;
 #endif
 }

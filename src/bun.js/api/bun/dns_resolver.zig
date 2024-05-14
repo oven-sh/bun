@@ -1168,6 +1168,60 @@ pub const GlobalData = struct {
     }
 };
 
+pub const InternalDNS = struct {
+    const AddrinfoRequest = struct {
+        host: [:0]const u8,
+        port: u16,
+        socket: *bun.uws.Socket,
+    };
+
+    extern fn us_internal_dns_callback(socket: *bun.uws.Socket, addrinfo: *std.c.addrinfo) void;
+
+    fn workPoolCallback(req: AddrinfoRequest) void {
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
+
+        // var hints = std.mem.zeroes(std.c.addrinfo);
+        // hints.socktype = std.c.SOCK.STREAM;
+
+        var addrinfo: ?*std.c.addrinfo = null;
+        const err = std.c.getaddrinfo(
+            req.host,
+            if (port.len > 0) portZ.ptr else null,
+            null,
+            &addrinfo,
+        );
+
+        // assert success
+        // TODO figure out how to return errors later
+        bun.assert(@intFromEnum(err) == 0 and addrinfo != null);
+
+        us_internal_dns_callback(req.socket, addrinfo.?);
+
+        bun.default_allocator.free(req.host);
+
+        // if (@intFromEnum(err) != 0 or addrinfo == null) {
+        //     this.* = .{ .err = @intFromEnum(err) };
+        //     return;
+        // }
+    }
+
+    export fn Bun__getaddrinfo(host: [*:0]const u8, port: u16, socket: *bun.uws.Socket) void {
+        const req = AddrinfoRequest{
+            .host = bun.default_allocator.dupeZ(u8, std.mem.span(host)) catch bun.outOfMemory(),
+            .port = port,
+            .socket = socket,
+        };
+        bun.JSC.WorkPool.go(bun.default_allocator, AddrinfoRequest, req, workPoolCallback) catch bun.outOfMemory();
+    }
+
+    export fn Bun__freeaddrinfo(addrinfo: *std.c.addrinfo) void {
+        std.c.freeaddrinfo(addrinfo);
+    }
+};
+
 pub const DNSResolver = struct {
     const log = Output.scoped(.DNSResolver, false);
 
@@ -2543,3 +2597,8 @@ pub const DNSResolver = struct {
 
     // }
 };
+
+comptime {
+    _ = &InternalDNS.Bun__getaddrinfo;
+    _ = &InternalDNS.Bun__freeaddrinfo;
+}

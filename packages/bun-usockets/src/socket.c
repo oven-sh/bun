@@ -30,7 +30,7 @@
 
 int us_socket_local_port(int ssl, struct us_socket_t *s) {
     struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
+    if (s->connect_state || bsd_local_addr(us_poll_fd(&s->p), &addr)) {
         return -1;
     } else {
         return bsd_addr_get_port(&addr);
@@ -44,7 +44,7 @@ void us_socket_shutdown_read(int ssl, struct us_socket_t *s) {
 
 void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    if (!s->connect_state && (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr))) {
         *length = 0;
     } else {
         *length = bsd_addr_get_ip_length(&addr);
@@ -54,7 +54,7 @@ void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *le
 
 void us_socket_local_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    if (!s->connect_state && (bsd_local_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr))) {
         *length = 0;
     } else {
         *length = bsd_addr_get_ip_length(&addr);
@@ -83,23 +83,33 @@ void us_socket_long_timeout(int ssl, struct us_socket_t *s, unsigned int minutes
 }
 
 void us_socket_flush(int ssl, struct us_socket_t *s) {
+    if (s->connect_state) {
+        return;
+    }
     if (!us_socket_is_shut_down(0, s)) {
         bsd_socket_flush(us_poll_fd((struct us_poll_t *) s));
     }
 }
 
 int us_socket_is_closed(int ssl, struct us_socket_t *s) {
+    if (s->connect_state) {
+        // TODO should we signal that the socket is closed even if there is potentially outstanding work?
+        return s->connect_state->closed;
+    }
     return s->prev == (struct us_socket_t *) s->context;
 }
 
 int us_socket_is_established(int ssl, struct us_socket_t *s) {
+    if (s->connect_state) return 0;
     /* Everything that is not POLL_TYPE_SEMI_SOCKET is established */
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
 /* Exactly the same as us_socket_close but does not emit on_close event */
 struct us_socket_t *us_socket_close_connecting(int ssl, struct us_socket_t *s) {
-    if (!us_socket_is_closed(0, s)) {
+    if (s->connect_state) {
+        s->connect_state->closed = 1;
+    } else if (!us_socket_is_closed(0, s)) {
         us_internal_socket_context_unlink_socket(s->context, s);
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
@@ -118,6 +128,10 @@ struct us_socket_t *us_socket_close_connecting(int ssl, struct us_socket_t *s) {
 
 /* Same as above but emits on_close */
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
+    if (s->connect_state) {
+        // TODO not sure if this state should be reachable
+        __builtin_trap();
+    }
     if (!us_socket_is_closed(0, s)) {
         if (s->low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
@@ -158,6 +172,10 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
 // - does not emit on_close event
 // - does not close
 struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
+    if (s->connect_state) {
+        // sockets in connecting state should not be detached
+        __builtin_trap();
+    }
     if (!us_socket_is_closed(0, s)) {
         if (s->low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
@@ -221,6 +239,10 @@ struct us_socket_t *us_socket_pair(struct us_socket_context_t *ctx, int socket_e
 
 /* This is not available for SSL sockets as it makes no sense. */
 int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
+    if (s->connect_state) {
+        // socket isn't ready yet, we can't write
+        return 0;
+    }
 
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return 0;
@@ -272,6 +294,9 @@ void *us_socket_get_native_handle(int ssl, struct us_socket_t *s) {
         return us_internal_ssl_socket_get_native_handle((struct us_internal_ssl_socket_t *) s);
     }
 #endif
+    if (s->connect_state) {
+        return (void*)-1;
+    }
 
     return (void *) (uintptr_t) us_poll_fd((struct us_poll_t *) s);
 }
@@ -282,6 +307,10 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         return us_internal_ssl_socket_write((struct us_internal_ssl_socket_t *) s, data, length, msg_more);
     }
 #endif
+    if (s->connect_state) {
+        // socket isn't ready yet, we can't write
+        return 0;
+    }
 
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return 0;
@@ -312,6 +341,10 @@ int us_socket_is_shut_down(int ssl, struct us_socket_t *s) {
         return us_internal_ssl_socket_is_shut_down((struct us_internal_ssl_socket_t *) s);
     }
 #endif
+    if (s->connect_state) {
+        // TODO is this right? What if the socket is closed while connecting?
+        return 0;
+    }
 
     return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
 }
@@ -323,6 +356,10 @@ void us_socket_shutdown(int ssl, struct us_socket_t *s) {
         return;
     }
 #endif
+    if (s->connect_state) {
+        s->connect_state->shutdown = 1;
+        return;
+    }
 
     /* Todo: should we emit on_close if calling shutdown on an already half-closed socket?
      * We need more states in that case, we need to track RECEIVED_FIN
@@ -368,6 +405,9 @@ int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int le
 
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
 {
+    if (s->connect_state) {
+        return 0;
+    }
     // This function is manual inlining + modification of
     //      us_socket_remote_address
     //      AsyncSocket::getRemoteAddress

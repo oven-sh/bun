@@ -19,6 +19,7 @@
 #include "internal/internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
@@ -343,10 +344,13 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *source_host, int options, int socket_ext_size) {
+extern void Bun__getaddrinfo(const char* host, int port, struct us_socket_t *s);
+extern void Bun__freeaddrinfo(struct addrinfo* addrinfo);
+
+struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, source_host, options, socket_ext_size);
+        return (struct us_socket_t *) us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, NULL, options, socket_ext_size);
     }
 #endif
 
@@ -378,20 +382,22 @@ struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_
     */
 
     struct us_socket_t *s = (struct us_socket_t *)us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    s->resolving = 1;
+    s->connect_state = malloc(sizeof(struct us_connect_state_t));
+    s->connect_state->addrinfo = NULL;
+    s->connect_state->options = options;
+    s->connect_state->closed = 0;
     s->context = context;
+
+    Bun__getaddrinfo(host, port, s);
 
     return s;
 }
 
-void us_internal_socket_after_resolve(struct us_socket_t *s, ... /* TODO dns result */) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(host, port, source_host, options);
+void us_internal_socket_after_resolve(struct us_socket_t *s) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(s->connect_state->addrinfo, s->connect_state->options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         // TODO figure out how to signal error
-        // perror("Failed to create connect socket");
-        // perror("connect socket error");
-        exit(1);
-        // return 0;
+        __builtin_trap();
     }
 
     /* Connect sockets are semi-sockets just like listen sockets */
@@ -404,16 +410,24 @@ void us_internal_socket_after_resolve(struct us_socket_t *s, ... /* TODO dns res
     s->low_prio_state = 0;
     us_internal_socket_context_link_socket(s->context, s);
 
-    // mark the socket object as ready for use
-    s->resolving = 0;
+    // connect state is no longer needed, free it
+    free(s->connect_state);
+    s->connect_state = NULL;
 }
 
 // called asynchronously when DNS resolution completes
-void us_dns_callback(struct us_socket_t *s, void *result) {
-    /*
-    1. enqueue the socket for connection 
-    2. wake up the event loop
-    */
+void us_internal_dns_callback(struct us_socket_t *s, struct addrinfo *addrinfo) {
+    s->connect_state->addrinfo = addrinfo;
+    struct us_loop_t *loop = s->context->loop;
+    pthread_mutex_lock(&loop->data.mutex);
+    s->next = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = s;
+    pthread_mutex_unlock(&loop->data.mutex);
+    us_wakeup_loop(loop);
+}
+
+void us_internal_freeaddrinfo(struct addrinfo *addrinfo) {
+    Bun__freeaddrinfo(addrinfo);
 }
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {

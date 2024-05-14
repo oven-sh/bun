@@ -40,6 +40,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.post_cb = post_cb;
     loop->data.iteration_nr = 0;
 
+    pthread_mutex_init(&loop->data.mutex, 0);
+
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 }
@@ -166,7 +168,16 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 }
 
 void us_internal_handle_dns_results(struct us_loop_t *loop) {
-    
+    pthread_mutex_lock(&loop->data.mutex);
+    struct us_socket_t *s = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = NULL;
+    pthread_mutex_unlock(&loop->data.mutex);
+
+    while (s) {
+        struct us_socket_t *next = s->next;
+        us_internal_socket_after_resolve(s);
+        s = next;
+    }
 }
 
 /* Note: Properly takes the linked list and timeout sweep into account */

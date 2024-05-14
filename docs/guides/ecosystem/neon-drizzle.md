@@ -1,14 +1,10 @@
 ---
-name: Use Neon Postgres using Drizzle ORM with Bun
+name: Use Neon Postgres through Drizzle ORM
 ---
 
-[Neon](https://neon.tech/) is a fully managed serverless Postgres. Neon separates compute and storage to offer modern developer features such as autoscaling, branching, bottomless storage, and more. 
+[Neon](https://neon.tech/) is a fully managed serverless Postgres, separating compute and storage to offer features like autoscaling, branching and bottomless storage. Neon can be used from Bun directly using the `@neondatabase/serverless` driver or through an ORM like `Drizzle`. 
 
-Neon can be used from Bun directly using the `@neondatabase/serverless` driver or through an ORM like `Drizzle`. Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb).
-
----
-
-Get started by creating a project directory, initializing the directory using `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/). 
+Drizzle ORM supports both a SQL-like "query builder" API and an ORM-like [Queries API](https://orm.drizzle.team/docs/rqb). Get started by creating a project directory, initializing the directory using `bun init`, and installing Drizzle and the [Neon serverless driver](https://github.com/neondatabase/serverless/). 
 
 ```sh
 $ mkdir bun-drizzle-neon

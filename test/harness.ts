@@ -761,5 +761,5 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test.") {
-  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), "bun.test."));
+  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }

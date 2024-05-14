@@ -764,14 +764,18 @@ export function tmpdirSync(pattern: string = "bun.test.") {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }
 
-export async function runBunAdd(env: NodeJS.ProcessEnv, cwd: string, specifier: string) {
-  const { exited } = Bun.spawn({
-    cmd: [bunExe(), "add", specifier],
+export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
+  const { stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "install"],
     cwd,
-    stdout: "inherit",
+    stdout: "pipe",
     stdin: "ignore",
-    stderr: "inherit",
+    stderr: "pipe",
     env,
   });
+  let err = await new Response(stderr).text();
+  expect(err).not.toContain("panic:");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
   expect(await exited).toBe(0);
 }

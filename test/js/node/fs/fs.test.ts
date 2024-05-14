@@ -2619,6 +2619,21 @@ describe("utimesSync", () => {
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
+
+  it("works with whole numbers", () => {
+    const atime = Math.floor(Date.now() / 1000);
+    const mtime = Math.floor(Date.now() / 1000);
+
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, atime, mtime);
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime.getTime() / 1000).toEqual(mtime);
+    expect(newStats.atime.getTime() / 1000).toEqual(atime);
+  });
 });
 
 it("createReadStream on a large file emits readable event correctly", () => {

@@ -2345,6 +2345,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     switch (char) {
                         // possibly double bracket open
                         '[' => {
+                            comptime assertSpecialChar('[');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.peek()) |p| {
                                 if (p.escaped or p.char != '[') break :escaped;
@@ -2371,6 +2373,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             break :escaped;
                         },
                         ']' => {
+                            comptime assertSpecialChar(']');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.peek()) |p| {
                                 if (p.escaped or p.char != ']') break :escaped;
@@ -2398,6 +2402,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
 
                         '#' => {
+                            comptime assertSpecialChar('#');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             const whitespace_preceding =
                                 if (self.chars.prev) |prev|
@@ -2410,12 +2416,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         ';' => {
+                            comptime assertSpecialChar(';');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
                             try self.tokens.append(.Semicolon);
                             continue;
                         },
                         '\n' => {
+                            comptime assertSpecialChar('\n');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word_impl(true, true, false);
                             try self.tokens.append(.Newline);
@@ -2424,6 +2434,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // glob asterisks
                         '*' => {
+                            comptime assertSpecialChar('*');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.peek()) |next| {
                                 if (!next.escaped and next.char == '*') {
@@ -2440,18 +2452,24 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // brace expansion syntax
                         '{' => {
+                            comptime assertSpecialChar('{');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(false);
                             try self.tokens.append(.BraceBegin);
                             continue;
                         },
                         ',' => {
+                            comptime assertSpecialChar(',');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(false);
                             try self.tokens.append(.Comma);
                             continue;
                         },
                         '}' => {
+                            comptime assertSpecialChar('}');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(false);
                             try self.tokens.append(.BraceEnd);
@@ -2460,6 +2478,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // Command substitution
                         '`' => {
+                            comptime assertSpecialChar('`');
+
                             if (self.chars.state == .Single) break :escaped;
                             if (self.in_subshell == .backtick) {
                                 try self.break_word(true);
@@ -2474,6 +2494,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
                         // Command substitution/vars
                         '$' => {
+                            comptime assertSpecialChar('$');
+
                             if (self.chars.state == .Single) break :escaped;
 
                             const peeked = self.peek() orelse InputChar{ .char = 0 };
@@ -2509,12 +2531,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         '(' => {
+                            comptime assertSpecialChar('(');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
                             try self.eat_subshell(.normal);
                             continue;
                         },
                         ')' => {
+                            comptime assertSpecialChar(')');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.in_subshell != .dollar and self.in_subshell != .normal) {
                                 self.add_error("Unexpected ')'");
@@ -2544,6 +2570,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
 
                         '0'...'9' => {
+                            comptime for ('0'..'9') |c| assertSpecialChar(c);
+
                             if (self.chars.state != .Normal) break :escaped;
                             const snapshot = self.make_snapshot();
                             if (self.eat_redirect(input)) |redirect| {
@@ -2557,6 +2585,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // Operators
                         '|' => {
+                            comptime assertSpecialChar('|');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
 
@@ -2577,6 +2607,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         '>' => {
+                            comptime assertSpecialChar('>');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word_impl(true, false, true);
                             const redirect = self.eat_simple_redirect(.out);
@@ -2584,6 +2616,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         '<' => {
+                            comptime assertSpecialChar('<');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word_impl(true, false, true);
                             const redirect = self.eat_simple_redirect(.in);
@@ -2591,6 +2625,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         '&' => {
+                            comptime assertSpecialChar('&');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
 
@@ -2619,6 +2655,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // 2. State switchers
                         '\'' => {
+                            comptime assertSpecialChar('\'');
+
                             if (self.chars.state == .Single) {
                                 self.chars.state = .Normal;
                                 continue;
@@ -2630,6 +2668,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             break :escaped;
                         },
                         '"' => {
+                            comptime assertSpecialChar('"');
+
                             if (self.chars.state == .Single) break :escaped;
                             if (self.chars.state == .Normal) {
                                 try self.break_word(false);
@@ -2644,6 +2684,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // 3. Word breakers
                         ' ' => {
+                            comptime assertSpecialChar(' ');
+
                             if (self.chars.state == .Normal) {
                                 try self.break_word_impl(true, true, false);
                                 continue;
@@ -3961,7 +4003,18 @@ pub const ShellSrcBuilder = struct {
 };
 
 /// Characters that need to escaped
-const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"', ' ', '\'' };
+const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\' };
+const SPECIAL_CHARS_TABLE: std.bit_set.IntegerBitSet(256) = brk: {
+    var table = std.bit_set.IntegerBitSet(256).initEmpty();
+    for (SPECIAL_CHARS) |c| {
+        table.set(c);
+    }
+    break :brk table;
+};
+pub fn assertSpecialChar(c: u8) void {
+    comptime bun.assert(@inComptime());
+    bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
+}
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
@@ -4070,38 +4123,10 @@ pub fn needsEscapeBunstr(bunstr: bun.String) bool {
     return needsEscapeUtf8AsciiLatin1(bunstr.byteSlice());
 }
 
-pub fn needsEscapeUTF16Slow(str: []const u16) bool {
-    for (str) |codeunit| {
-        inline for (SPECIAL_CHARS) |spc| {
-            if (@as(u16, @intCast(spc)) == codeunit) return true;
-        }
-    }
-
-    return false;
-}
-
 pub fn needsEscapeUTF16(str: []const u16) bool {
-    if (str.len < 64) return needsEscapeUTF16Slow(str);
-
-    const needles = comptime brk: {
-        var needles: [SPECIAL_CHARS.len]@Vector(8, u16) = undefined;
-        for (SPECIAL_CHARS, 0..) |c, i| {
-            needles[i] = @splat(@as(u16, @intCast(c)));
-        }
-        break :brk needles;
-    };
-
-    var i: usize = 0;
-    while (i + 8 <= str.len) : (i += 8) {
-        const haystack: @Vector(8, u16) = str[i..][0..8].*;
-
-        inline for (needles) |needle| {
-            const result = haystack == needle;
-            if (std.simd.firstTrue(result) != null) return true;
-        }
+    for (str) |codeunit| {
+        if (codeunit < 0xff and SPECIAL_CHARS_TABLE.isSet(codeunit)) return true;
     }
-
-    if (i < str.len) return needsEscapeUTF16Slow(str[i..]);
 
     return false;
 }
@@ -4111,36 +4136,8 @@ pub fn needsEscapeUTF16(str: []const u16) bool {
 /// false positives, but it is faster than running the shell lexer through the
 /// input string for a more correct implementation.
 pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
-    if (str.len < 128) return needsEscapeUtf8AsciiLatin1Slow(str);
-
-    const needles = comptime brk: {
-        var needles: [SPECIAL_CHARS.len]@Vector(16, u8) = undefined;
-        for (SPECIAL_CHARS, 0..) |c, i| {
-            needles[i] = @splat(c);
-        }
-        break :brk needles;
-    };
-
-    var i: usize = 0;
-    while (i + 16 <= str.len) : (i += 16) {
-        const haystack: @Vector(16, u8) = str[i..][0..16].*;
-
-        inline for (needles) |needle| {
-            const result = haystack == needle;
-            if (std.simd.firstTrue(result) != null) return true;
-        }
-    }
-
-    if (i < str.len) return needsEscapeUtf8AsciiLatin1Slow(str[i..]);
-
-    return false;
-}
-
-pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     for (str) |c| {
-        inline for (SPECIAL_CHARS) |spc| {
-            if (spc == c) return true;
-        }
+        if (SPECIAL_CHARS_TABLE.isSet(c)) return true;
     }
     return false;
 }

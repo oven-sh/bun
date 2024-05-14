@@ -1,14 +1,13 @@
 import { bunExe } from "bun:harness";
-import { bunEnv, runBunAdd, tmpdirSync } from "harness";
+import { bunEnv, runBunInstall, tmpdirSync } from "harness";
 import { expect, it } from "bun:test";
 import * as path from "node:path";
 
 it("works", async () => {
   const package_dir = tmpdirSync("bun-test-");
 
-  await runBunAdd(bunEnv, package_dir, "axios@1.6.8");
-
-  await runBunAdd(bunEnv, package_dir, "msw@2.3.0");
+  await Bun.write(path.join(package_dir, "package.json"), `{ "dependencies": { "axios": "1.6.8", "msw": "2.3.0" } }`);
+  await runBunInstall(bunEnv, package_dir);
 
   const fixture_path = path.join(package_dir, "index.ts");
   const fixture_data = `

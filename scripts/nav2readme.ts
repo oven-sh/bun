@@ -11,6 +11,7 @@ import path from "path";
 function getQuickLinks() {
   let md = "";
 
+  // This ordering is intentional
   for (const item of nav.items) {
     if (item.type === "divider") {
       md += "\n" + `- ${item.title}` + "\n";
@@ -47,7 +48,20 @@ async function getGuides() {
 
   const files = await Promise.all(promises);
   md += "## Guides " + "\n";
-  files.sort((a, b) => a.file.localeCompare(b.file));
+  // The guides ordering is not as intentional
+  // They should be grouped by category
+  // and then by name within the category
+  files.sort((a, b) => {
+    const aDir = path.basename(path.dirname(a.file)).toLowerCase();
+    const bDir = path.basename(path.dirname(b.file)).toLowerCase();
+    let cmp = aDir.localeCompare(bDir);
+    if (cmp !== 0) {
+      return cmp;
+    }
+
+    return a.name.localeCompare(b.name);
+  });
+
   let prevDirname = "";
   for (const { name, file } of files) {
     const dirname = path.basename(path.dirname(file));

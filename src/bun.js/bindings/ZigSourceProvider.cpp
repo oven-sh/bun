@@ -239,8 +239,7 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 }
 
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider) {
-    // TODO(@paperdave): does this clone the data? i sure hope not.
-    return Bun::toStringRef(provider->source().toString());
+    return Bun::toStringView(provider->source());
 }
 
 }; // namespace Zig

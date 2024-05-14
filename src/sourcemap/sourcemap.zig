@@ -43,6 +43,20 @@ const ParseUrlResultType = enum {
     all,
     mappings_only,
     sources_only,
+
+    pub fn GetSourceMapType(comptime t: ParseUrlResultType) type {
+        return switch (t) {
+            .all, .mappings_only => *Mapping.ParsedSourceMap,
+            .sources_only => []?[]const u8,
+        };
+    }
+
+    pub fn ParseType(comptime t: ParseUrlResultType) type {
+        return switch (t) {
+            .all, .mappings_only => Mapping.ParsedSourceMap,
+            .sources_only => []?[]const u8,
+        };
+    }
 };
 
 /// Parses an inline source map url like `data:application/json,....`
@@ -56,8 +70,9 @@ pub fn parseUrl(
     alloc: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
-    result: ParseUrlResultType,
-) Mapping.ParseResult {
+    comptime result: ParseUrlResultType,
+    err: *Mapping.ParseError,
+) !result.ParseType() {
     const json_bytes = json_bytes: {
         const data_prefix = "data:application/json";
         if (bun.strings.hasPrefixComptime(source, data_prefix) and source.len > (data_prefix.len + 1)) try_data_url: {
@@ -70,12 +85,13 @@ pub fn parseUrl(
                     const len = bun.base64.decodeLen(base64_data);
                     const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
                     const decoded = bun.base64.decode(bytes, base64_data);
-                    if (decoded.fail) return .{ .fail = .{
-                        .msg = "Invalid Base64",
-                        .err = error.InvalidBase64,
-                        .value = 0,
-                        .loc = .{ .start = 0 },
-                    } };
+                    if (decoded.fail) {
+                        return err.fail(error.InvalidBase64, .{
+                            .msg = "Invalid Base64",
+                            .value = 0,
+                            .loc = .{ .start = 0 },
+                        });
+                    }
                     break :json_bytes bytes[0..decoded.written];
                 },
                 ',' => break :json_bytes source[data_prefix.len + 1 ..],
@@ -83,14 +99,14 @@ pub fn parseUrl(
             }
         }
 
-        return .{ .fail = .{
+        return err.fail(error.UnsupportedFormat, .{
             .msg = "Unsupported source map type",
-            .err = error.UnsupportedFormat,
             .value = 0,
             .loc = .{ .start = 0 },
-        } };
+        });
     };
-    return parseJSON(alloc, arena, json_bytes, result);
+
+    return parseJSON(alloc, arena, json_bytes, result, err);
 }
 
 /// Parses a JSON source-map
@@ -103,19 +119,15 @@ pub fn parseJSON(
     alloc: std.mem.Allocator,
     arena: std.mem.Allocator,
     source: []const u8,
-    result: ParseUrlResultType,
-) Mapping.ParseResult {
+    comptime result: ParseUrlResultType,
+    err: *Mapping.ParseError,
+) !result.ParseType() {
     const json_src = bun.logger.Source.initPathString("", source);
     var log = bun.logger.Log.init(arena);
     defer log.deinit();
 
     var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
-        return .{ .fail = .{
-            .msg = "Invalid JSON",
-            .err = error.InvalidJSON,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } };
+        return err.fail(error.InvalidJSON, .{});
     };
 
     // the allocator given to the JS parser is not respected for all parts
@@ -127,95 +139,64 @@ pub fn parseJSON(
 
     if (json.get("version")) |version| {
         if (version.data != .e_number or version.data.e_number.value != 3.0) {
-            return .{ .fail = .{
-                .msg = "Unsupported source map version",
-                .err = error.UnsupportedVersion,
-                .value = 0,
-                .loc = .{ .start = 0 },
-            } };
+            return err.fail(error.UnsupportedVersion, .{});
         }
     }
 
     const mappings_str = json.get("mappings") orelse {
-        return .{ .fail = .{
-            .msg = "Missing source mappings",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } };
+        return err.fail(error.UnsupportedVersion, .{});
     };
 
     if (mappings_str.data != .e_string) {
-        return .{ .fail = .{
-            .msg = "Missing source mappings",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } };
+        return err.fail(error.InvalidSourceMap, .{});
     }
 
-    const sources_content = switch ((json.get("sourcesContent") orelse {
-        return .{ .fail = .{
-            .msg = "Missing sourcesContent",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } };
-    }).data) {
+    const sources_content = switch ((json.get("sourcesContent") orelse return error.InvalidSourceMap).data) {
         .e_array => |arr| arr,
-        else => return .{ .fail = .{
-            .msg = "Missing sourcesContent",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } },
+        else => return err.fail(error.InvalidSourceMap, .{}),
     };
 
-    const sources_paths = switch ((json.get("sources") orelse {
-        return .{ .fail = .{
-            .msg = "Missing sources",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } };
-    }).data) {
+    const sources_paths = switch ((json.get("sources") orelse return error.InvalidSourceMap).data) {
         .e_array => |arr| arr,
-        else => return .{ .fail = .{
-            .msg = "Missing sources",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } },
+        else => return err.fail(error.InvalidSourceMap, .{}),
     };
 
     if (sources_content.items.len != sources_paths.items.len) {
-        return .{ .fail = .{
+        return err.fail(error.InvalidSourceMap, .{
             .msg = "sources.length != sourcesContent.length",
-            .err = error.InvalidSourceMap,
-            .value = 0,
-            .loc = .{ .start = 0 },
-        } };
+        });
     }
 
-    const source_contents_slice = if (result != .mappings_only)
-        alloc.alloc(?[]const u8, sources_content.items.len) catch bun.outOfMemory()
-    else
-        undefined;
-    const source_paths_slice = alloc.alloc([]const u8, sources_content.items.len) catch bun.outOfMemory();
-
     var i: usize = 0;
-    for (sources_paths.items.slice()) |item| {
+
+    const source_contents_slice = if (result != .mappings_only)
+        alloc.alloc(?[]const u8, sources_content.items.len) catch bun.outOfMemory();
+    errdefer if (result != .mappings_only) {
+        for (source_contents_slice[0..i]) |item_nullable| if (item_nullable) |item| {
+            if (item.len > 0)
+                alloc.free(item);
+        };
+        alloc.free(source_contents_slice);
+    };
+
+    const source_paths_slice = if (result != .sources_only)
+        alloc.alloc([]const u8, sources_content.items.len) catch bun.outOfMemory();
+    errdefer if (result != .sources_only) {
+        for (source_paths_slice[0..i]) |item| alloc.free(item);
+        alloc.free(source_paths_slice);
+    };
+
+    if (result != .sources_only) for (sources_paths.items.slice()) |item| {
         if (item.data != .e_string) {
             for (source_paths_slice[0..i]) |slice| alloc.free(slice);
             alloc.free(source_paths_slice);
             if (result != .mappings_only) alloc.free(source_contents_slice);
 
-            return .{ .fail = .{
+            return err.fail(error.InvalidSourceMap, .{
                 .msg = "Expected string in sources",
-                .err = error.InvalidSourceMap,
                 .value = 0,
                 .loc = .{ .start = 0 },
-            } };
+            });
         }
 
         const utf16_decode = bun.js_lexer.decodeUTF8(item.data.e_string.string(arena) catch bun.outOfMemory(), arena) catch bun.outOfMemory();
@@ -225,82 +206,64 @@ pub fn parseJSON(
             alloc.free(source_paths_slice);
             if (result != .mappings_only) alloc.free(source_contents_slice);
 
-            return .{ .fail = .{
+            return err.fail(error.InvalidSourceMap, .{
                 .msg = "Expected string in sources",
-                .err = error.InvalidSourceMap,
                 .value = 0,
                 .loc = .{ .start = 0 },
-            } };
+            });
         };
 
         i += 1;
-    }
+    };
 
-    i = 0;
+    var j: usize = 0;
     if (result != .mappings_only) {
         for (sources_content.items.slice()) |item| {
-            if (item.data != .e_string) {
-                for (source_paths_slice) |slice| alloc.free(slice);
-                for (source_contents_slice[0..i]) |slice|
-                    if (slice) |s| alloc.free(s);
-                alloc.free(source_paths_slice);
-                alloc.free(source_contents_slice);
+            defer j += 1;
 
-                return .{ .fail = .{
-                    .msg = "Expected string in sources",
-                    .err = error.InvalidSourceMap,
-                    .value = 0,
-                    .loc = .{ .start = 0 },
-                } };
+            if (item.data != .e_string) {
+                source_contents_slice[j] = null;
+                continue;
             }
 
-            const utf16_decode = bun.js_lexer.decodeUTF8(item.data.e_string.string(arena) catch bun.outOfMemory(), arena) catch bun.outOfMemory();
-            defer arena.free(utf16_decode);
-            source_contents_slice[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch {
-                for (source_paths_slice) |slice| alloc.free(slice);
-                for (source_contents_slice[0..i]) |slice|
-                    if (slice) |s| alloc.free(s);
-                alloc.free(source_paths_slice);
-                alloc.free(source_contents_slice);
+            const str = item.data.e_string.string(arena) catch bun.outOfMemory();
+            if (str.len == 0) {
+                source_contents_slice[j] = "";
+                continue;
+            }
 
-                return .{ .fail = .{
+            const utf16_decode = bun.js_lexer.decodeUTF8(str, arena) catch bun.outOfMemory();
+            defer arena.free(utf16_decode);
+
+            source_contents_slice[j] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch {
+                return err.fail(error.InvalidSourceMap, .{
                     .msg = "Expected string in sources",
-                    .err = error.InvalidSourceMap,
                     .value = 0,
                     .loc = .{ .start = 0 },
-                } };
+                });
             };
-
-            i += 1;
+            bun.assert(source_contents_slice[j].?.len > 0);
         }
     }
 
-    switch (Mapping.parse(
+    if (result == .sources_only) {
+        return source_contents_slice;
+    }
+
+    var map = try Mapping.parse(
         alloc,
         mappings_str.data.e_string.slice(arena),
         null,
         std.math.maxInt(i32),
         std.math.maxInt(i32),
-    )) {
-        .fail => |f| {
-            for (source_paths_slice) |slice| alloc.free(slice);
-            if (result != .mappings_only)
-                for (source_contents_slice) |slice|
-                    if (slice) |s| alloc.free(s);
-            alloc.free(source_paths_slice);
-            if (result != .mappings_only) alloc.free(source_contents_slice);
-            return .{ .fail = f };
-        },
-        .success => |map_const| {
-            var map = map_const;
-            map.external_source_names = source_paths_slice;
-            map.source_contents = if (result != .mappings_only)
-                Mapping.ParsedSourceMap.SourceContentPtr.fromSources(source_contents_slice.ptr)
-            else
-                .{ .data = 0, .state = .unloaded };
-            return .{ .success = map };
-        },
-    }
+        err,
+    );
+    map.external_source_names = source_paths_slice;
+    map.source_contents = if (result != .mappings_only)
+        Mapping.ParsedSourceMap.SourceContentPtr.fromSources(source_contents_slice.ptr)
+    else
+        .{ .data = 0, .state = .unloaded };
+    return map;
 }
 
 pub const Mapping = struct {
@@ -314,34 +277,73 @@ pub const Mapping = struct {
 
         /// This creates a bun.String if the source remap *changes* the source url,
         /// a case that happens only when the source map points to another file.
-        pub fn displaySourceURLIfNeeded(lookup: Lookup) ?bun.String {
+        pub fn displaySourceURLIfNeeded(lookup: Lookup, base_filename: []const u8) ?bun.String {
             // See doc comment on `external_source_names`
-            if (lookup.source_map.external_source_names.len == 0) return null;
-
-            // if crash here, then sourcemap is corrupt and remapping code did not catch this
-            assert(lookup.mapping.source_index < lookup.source_map.external_source_names.len);
+            if (lookup.source_map.external_source_names.len == 0)
+                return null;
+            if (lookup.mapping.source_index >= lookup.source_map.external_source_names.len)
+                return null;
 
             const name = lookup.source_map.external_source_names[@intCast(lookup.mapping.source_index)];
+
+            if (std.fs.path.isAbsolute(base_filename)) {
+                const dir = bun.path.dirname(base_filename, .auto);
+                return bun.String.init(bun.path.joinAbs(dir, .auto, name));
+            }
+
             return bun.String.init(name);
         }
 
         /// Only valid if `lookup.source_map.isExternal()`
         /// This has the possibility of invoking a call to the filesystem.
-        pub fn getSourceCode(lookup: Lookup) ?[]const u8 {
+        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?[]const u8 {
             assert(lookup.source_map.isExternal());
+            if (lookup.mapping.source_index >= lookup.source_map.external_source_names.len)
+                return null;
 
             if (lookup.source_map.source_contents.state == .unloaded) {
-                @panic("TODO: transition from .unloaded -> load source maps contents");
+                const map = lookup.source_map.source_contents.provider().getSourceMap(
+                    base_filename,
+                    if (lookup.source_map.source_contents.load_from_separate_file)
+                        .is_external_map
+                    else
+                        .is_inline_map,
+                    .sources_only,
+                ) orelse return null;
+                assert(map.len == lookup.source_map.external_source_names.len);
+                lookup.source_map.source_contents = Mapping.ParsedSourceMap.SourceContentPtr.fromSources(map.ptr);
             }
 
             const sources = lookup.source_map.externalSourceContents();
             const i = lookup.mapping.source_index;
             if (i >= sources.len or i < 0) return null; // invalid source map
             if (sources[@intCast(i)]) |s| {
+                if (s.len == 0) return null;
                 return s;
             }
 
-            @panic("TODO: load source from disk using name");
+            const name = lookup.source_map.external_source_names[@intCast(i)];
+
+            var buf: bun.PathBuffer = undefined;
+            const normalized = bun.path.joinAbsStringBufZ(
+                bun.path.dirname(base_filename, .auto),
+                &buf,
+                &.{name},
+                .loose,
+            );
+            const bytes = switch (bun.sys.File.readFrom(
+                std.fs.cwd(),
+                normalized,
+                bun.default_allocator,
+            )) {
+                .result => |r| r,
+                .err => {
+                    sources[@intCast(i)] = "";
+                    return null;
+                },
+            };
+            sources[@intCast(i)] = bytes;
+            return bytes;
         }
     };
 
@@ -401,17 +403,20 @@ pub const Mapping = struct {
         return null;
     }
 
+    /// On error, `err` is populated with error information.
     pub fn parse(
         allocator: std.mem.Allocator,
         bytes: []const u8,
         estimated_mapping_count: ?usize,
         sources_count: i32,
         input_line_count: usize,
-    ) ParseResult {
+        err: *ParseError,
+    ) !ParsedSourceMap {
         var mapping = Mapping.List{};
         if (estimated_mapping_count) |count| {
-            mapping.ensureTotalCapacity(allocator, count) catch unreachable;
+            mapping.ensureTotalCapacity(allocator, count) catch bun.outOfMemory();
         }
+        errdefer mapping.deinit(allocator);
 
         var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
         var original = LineColumnOffset{ .lines = 0, .columns = 0 };
@@ -444,28 +449,22 @@ pub const Mapping = struct {
             const generated_column_delta = decodeVLQ(remain, 0);
 
             if (generated_column_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Missing generated column value",
-                        .err = error.MissingGeneratedColumnValue,
-                        .value = generated.columns,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.MissingGeneratedColumnValue, .{
+                    .msg = "Missing generated column value",
+                    .value = generated.columns,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
 
             needs_sort = needs_sort or generated_column_delta.value < 0;
 
             generated.columns += generated_column_delta.value;
             if (generated.columns < 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid generated column value",
-                        .err = error.InvalidGeneratedColumnValue,
-                        .value = generated.columns,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.InvalidGeneratedColumnValue, .{
+                    .msg = "Invalid generated column value",
+                    .value = generated.columns,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
 
             remain = remain[generated_column_delta.start..];
@@ -491,81 +490,59 @@ pub const Mapping = struct {
             // Read the original source
             const source_index_delta = decodeVLQ(remain, 0);
             if (source_index_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid source index delta",
-                        .err = error.InvalidSourceIndexDelta,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.InvalidSourceIndexDelta, .{
+                    .msg = "Invalid source index delta",
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
             source_index += source_index_delta.value;
 
             if (source_index < 0 or source_index > sources_count) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid source index value",
-                        .err = error.InvalidSourceIndexValue,
-                        .value = source_index,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.InvalidSourceIndexValue, .{
+                    .msg = "Invalid source index value",
+                    .value = source_index,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
             remain = remain[source_index_delta.start..];
-
-            // // "AAAA" is extremely common
-            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
-
-            // }
 
             // Read the original line
             const original_line_delta = decodeVLQ(remain, 0);
             if (original_line_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Missing original line",
-                        .err = error.MissingOriginalLine,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.MissingOriginalLine, .{
+                    .msg = "Missing original line",
+                    .err = error.MissingOriginalLine,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
 
             original.lines += original_line_delta.value;
             if (original.lines < 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid original line value",
-                        .err = error.InvalidOriginalLineValue,
-                        .value = original.lines,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.InvalidOriginalLineValue, .{
+                    .msg = "Invalid original line value",
+                    .value = original.lines,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
             remain = remain[original_line_delta.start..];
 
             // Read the original column
             const original_column_delta = decodeVLQ(remain, 0);
             if (original_column_delta.start == 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Missing original column value",
-                        .err = error.MissingOriginalColumnValue,
-                        .value = original.columns,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.MissingOriginalColumnValue, .{
+                    .msg = "Missing original column value",
+                    .value = original.columns,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
 
             original.columns += original_column_delta.value;
             if (original.columns < 0) {
-                return .{
-                    .fail = .{
-                        .msg = "Invalid original column value",
-                        .err = error.InvalidOriginalColumnValue,
-                        .value = original.columns,
-                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                    },
-                };
+                return err.fail(error.InvalidOriginalColumnValue, .{
+                    .msg = "Invalid original column value",
+                    .value = original.columns,
+                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                });
             }
             remain = remain[original_column_delta.start..];
 
@@ -576,14 +553,11 @@ pub const Mapping = struct {
                     },
                     ';' => {},
                     else => |c| {
-                        return .{
-                            .fail = .{
-                                .msg = "Invalid character after mapping",
-                                .err = error.InvalidSourceMap,
-                                .value = @as(i32, @intCast(c)),
-                                .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                            },
-                        };
+                        return err.fail(error.InvalidSourceMap, .{
+                            .msg = "Invalid character after mapping",
+                            .value = @as(i32, @intCast(c)),
+                            .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                        });
                     },
                 }
             }
@@ -591,35 +565,38 @@ pub const Mapping = struct {
                 .generated = generated,
                 .original = original,
                 .source_index = source_index,
-            }) catch unreachable;
+            }) catch bun.outOfMemory();
         }
 
-        return ParseResult{
-            .success = .{
-                .mappings = mapping,
-                .input_line_count = input_line_count,
-            },
+        return .{
+            .mappings = mapping,
+            .input_line_count = input_line_count,
         };
     }
 
-    pub const ParseResult = union(enum) {
-        fail: struct {
-            loc: Logger.Loc,
-            err: anyerror,
-            value: i32 = 0,
-            msg: []const u8 = "",
+    pub const ParseError = struct {
+        loc: Logger.Loc = Logger.Loc.Empty,
+        err: anyerror = error.Unexpected,
+        value: i32 = 0,
+        msg: []const u8 = "",
 
-            pub fn toData(this: @This(), path: []const u8) Logger.Data {
-                return Logger.Data{
-                    .location = Logger.Location{
-                        .file = path,
-                        .offset = this.loc.toUsize(),
-                    },
-                    .text = this.msg,
-                };
-            }
-        },
-        success: ParsedSourceMap,
+        pub fn fail(undefined_ptr: *ParseError, comptime err_tag: anytype, data: ParseError) @Type(.{
+            .ErrorSet = &.{.{ .name = @errorName(err_tag) }},
+        }) {
+            undefined_ptr.* = data;
+            undefined_ptr.err = err_tag;
+            return err_tag;
+        }
+
+        pub fn toData(this: @This(), path: []const u8) Logger.Data {
+            return .{
+                .location = .{
+                    .file = path,
+                    .offset = this.loc.toUsize(),
+                },
+                .text = this.msg,
+            };
+        }
     };
 
     pub const ParsedSourceMap = struct {
@@ -642,11 +619,16 @@ pub const Mapping = struct {
         /// sourcemap directly; and 2. not yet loaded.
         ///
         /// Only valid if `external_source_names` has entries.
+        ///
+        /// `.load_from_map_file = true` means the file should load via a `.map`
+        /// file adacent to the source file, where `false` means there is an
+        /// inline source map to use.
         source_contents: SourceContentPtr = .{ .state = .invalid, .data = 0 },
 
-        const SourceContentPtr = packed struct {
+        const SourceContentPtr = packed struct(u64) {
+            load_from_separate_file: bool = false,
             state: State,
-            data: u62,
+            data: u61,
 
             const State = enum(u2) { loaded, unloaded, invalid };
 
@@ -654,7 +636,7 @@ pub const Mapping = struct {
                 return .{ .state = .unloaded, .data = @intCast(@intFromPtr(p)) };
             }
 
-            fn fromSources(p: [*]const ?[]const u8) SourceContentPtr {
+            fn fromSources(p: [*]?[]const u8) SourceContentPtr {
                 return .{ .state = .loaded, .data = @intCast(@intFromPtr(p)) };
             }
 
@@ -663,7 +645,7 @@ pub const Mapping = struct {
                 return @ptrFromInt(sc.data);
             }
 
-            fn sources(sc: SourceContentPtr) [*]const ?[]const u8 {
+            fn sources(sc: SourceContentPtr) [*]?[]const u8 {
                 bun.assert(sc.state == .loaded);
                 return @ptrFromInt(sc.data);
             }
@@ -673,21 +655,32 @@ pub const Mapping = struct {
             return psm.external_source_names.len != 0;
         }
 
-        pub fn externalSourceContents(psm: *ParsedSourceMap) []const ?[]const u8 {
+        pub fn externalSourceContents(psm: *ParsedSourceMap) []?[]const u8 {
             return psm.source_contents.sources()[0..psm.external_source_names.len];
         }
 
         pub fn deinit(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
             this.mappings.deinit(allocator);
-            // if (this.external_source_names.len > 0) {
-            //     bun.assert(this.external_source_contents.len > 0);
-            //     for (this.external_source_names) |name| allocator.free(name);
-            //     for (this.external_source_contents) |content| allocator.free(content);
-            //     allocator.free(this.external_source_names);
-            //     allocator.free(this.external_source_contents);
-            // }
+
+            if (this.external_source_names.len > 0) {
+                for (this.external_source_names) |name| allocator.free(name);
+                allocator.free(this.external_source_names);
+            }
+
+            switch (this.source_contents.state) {
+                .invalid, .unloaded => {},
+                .loaded => {
+                    bun.assert(this.external_source_names.len > 0);
+                    const slice = this.externalSourceContents();
+                    for (slice) |maybe_item| if (maybe_item) |item| {
+                        if (item.len > 0)
+                            allocator.free(item);
+                    };
+                    allocator.free(slice);
+                },
+            }
+
             allocator.destroy(this);
-            @panic("TODO: this destructor");
         }
     };
 };
@@ -701,6 +694,12 @@ pub const SourceContentHandling = enum {
     source_contents,
 };
 
+pub const SourceMapLoadHint = enum {
+    none,
+    is_inline_map,
+    is_external_map,
+};
+
 /// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
 /// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
 ///
@@ -708,52 +707,116 @@ pub const SourceContentHandling = enum {
 pub const SourceProviderMap = opaque {
     extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
 
-    pub fn toParsedSourceMap(provider: *SourceProviderMap, contents: SourceContentHandling) ?*Mapping.ParsedSourceMap {
-        const bun_str = ZigSourceProvider__getSourceSlice(provider);
-        defer bun_str.deref();
-        bun.assert(bun_str.tag == .WTFStringImpl);
-        const wtf = bun_str.value.WTFStringImpl;
+    fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
+        const needle = comptime bun.strings.literal(T, "//# sourceMappingURL=");
+        const found = bun.strings.indexOfT(T, source, needle) orelse return null;
+        const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
+        const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
+        return switch (T) {
+            u8 => bun.JSC.ZigString.Slice.initStatic(url),
+            u16 => bun.JSC.ZigString.Slice.init(
+                alloc,
+                bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
+            ),
+            else => @compileError("Not Supported"),
+        };
+    }
 
-        // TODO: do not use toUTF8()
-        const utf8 = wtf.toUTF8(bun.default_allocator);
-        defer utf8.deinit();
-        const bytes = utf8.slice();
+    /// The last two arguments to this specify loading hints
+    pub fn getSourceMap(
+        provider: *SourceProviderMap,
+        source_filename: []const u8,
+        load_hint: SourceMapLoadHint,
+        comptime result: ParseUrlResultType,
+    ) ?result.GetSourceMapType() {
+        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(sfb.get());
+        defer arena.deinit();
 
-        // TODO: use smarter technique
-        if (std.mem.indexOf(u8, bytes, "//# sourceMappingURL=")) |index| {
-            const end = std.mem.indexOfAnyPos(u8, bytes, index + "//# sourceMappingURL=".len, " \n\r") orelse bytes.len;
-            const url = bytes[index + "//# sourceMappingURL=".len .. end];
+        var load_from_separate_file = false;
 
-            var sfb = std.heap.stackFallback(32768, bun.default_allocator);
-            var arena = bun.ArenaAllocator.init(sfb.get());
-            defer arena.deinit();
+        const parsed = parsed: {
+            // try to get an inline source map
+            if (load_hint != .is_external_map) try_inline: {
+                const source = ZigSourceProvider__getSourceSlice(provider);
+                defer source.deref();
+                bun.assert(source.tag == .StaticZigString);
 
-            switch (parseUrl(
-                bun.default_allocator,
-                arena.allocator(),
-                url,
-                // only aquire sourcemap if the load request desires one
-                switch (contents) {
+                const found_url = (if (source.is8Bit())
+                    findSourceMappingURL(u8, source.latin1(), arena.allocator())
+                else
+                    findSourceMappingURL(u16, source.utf16(), arena.allocator())) orelse
+                    break :try_inline;
+                defer found_url.deinit();
+
+                var err_data: Mapping.ParseError = undefined;
+                break :parsed parseUrl(
+                    bun.default_allocator,
+                    arena.allocator(),
+                    found_url.slice(),
+                    result,
+                    &err_data,
+                ) catch return null;
+            }
+
+            // try to load a .map file
+            if (load_hint != .is_inline_map) try_external: {
+                var load_path_buf: bun.PathBuffer = undefined;
+                if (source_filename.len + 4 > load_path_buf.len)
+                    break :try_external;
+                @memcpy(load_path_buf[0..source_filename.len], source_filename);
+                @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
+
+                const data = switch (bun.sys.File.readFrom(
+                    std.fs.cwd(),
+                    load_path_buf[0 .. source_filename.len + 4],
+                    arena.allocator(),
+                )) {
+                    .err => break :try_external,
+                    .result => |data| data,
+                };
+
+                load_from_separate_file = true;
+
+                var err_data: Mapping.ParseError = undefined;
+                break :parsed parseJSON(
+                    bun.default_allocator,
+                    arena.allocator(),
+                    data,
+                    result,
+                    &err_data,
+                ) catch return null;
+            }
+
+            return null;
+        };
+
+        if (result == .sources_only) return parsed;
+
+        const ptr = bun.default_allocator.create(Mapping.ParsedSourceMap) catch bun.outOfMemory();
+        ptr.* = parsed;
+        if (ptr.source_contents.state == .unloaded) {
+            ptr.source_contents = Mapping.ParsedSourceMap.SourceContentPtr.fromProvider(provider);
+            ptr.source_contents.load_from_separate_file = load_from_separate_file;
+        }
+        return ptr;
+    }
+
+    pub fn toParsedSourceMap(
+        provider: *SourceProviderMap,
+        source_filename: []const u8,
+        source_handling: SourceContentHandling,
+    ) ?*Mapping.ParsedSourceMap {
+        return switch (source_handling) {
+            inline else => |tag| provider.getSourceMap(
+                source_filename,
+                .none,
+                switch (tag) {
                     .no_source_contents => .mappings_only,
                     .source_contents => .all,
                 },
-            )) {
-                .fail => {
-                    return null;
-                },
-                .success => |parsed| {
-                    const ptr = bun.default_allocator.create(Mapping.ParsedSourceMap) catch bun.outOfMemory();
-                    ptr.* = parsed;
-                    if (ptr.source_contents.state == .unloaded)
-                        ptr.source_contents = Mapping.ParsedSourceMap.SourceContentPtr.fromProvider(provider);
-                    return ptr;
-                },
-            }
-        }
-
-        // TODO: look for file of same filename.
-
-        return null;
+            ),
+        };
     }
 };
 

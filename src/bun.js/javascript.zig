@@ -143,37 +143,32 @@ pub const SavedSourceMap = struct {
             default_allocator.free(this.data[0..this.len()]);
         }
 
-        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
-            const result = SourceMap.Mapping.parse(
+        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) !ParsedSourceMap {
+            var err_data: SourceMap.Mapping.ParseError = undefined;
+            return SourceMap.Mapping.parse(
                 allocator,
                 this.data[vlq_offset..this.len()],
                 @as(usize, @bitCast(this.data[8..16].*)),
                 1,
                 @as(usize, @bitCast(this.data[16..24].*)),
-            );
-            switch (result) {
-                .fail => |fail| {
-                    if (Output.enable_ansi_colors_stderr) {
-                        try fail.toData(path).writeFormat(
-                            Output.errorWriter(),
-                            logger.Kind.warn,
-                            true,
-                        );
-                    } else {
-                        try fail.toData(path).writeFormat(
-                            Output.errorWriter(),
-                            logger.Kind.warn,
+                &err_data,
+            ) catch |err| {
+                if (Output.enable_ansi_colors_stderr) {
+                    try err_data.toData(path).writeFormat(
+                        Output.errorWriter(),
+                        logger.Kind.warn,
+                        true,
+                    );
+                } else {
+                    try err_data.toData(path).writeFormat(
+                        Output.errorWriter(),
+                        logger.Kind.warn,
 
-                            false,
-                        );
-                    }
-
-                    return fail.err;
-                },
-                .success => |success| {
-                    return success;
-                },
-            }
+                        false,
+                    );
+                }
+                return err;
+            };
         }
     };
 
@@ -264,7 +259,7 @@ pub const SavedSourceMap = struct {
             },
             Value.Tag.SourceProviderMap => {
                 var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
-                if (ptr.toParsedSourceMap(contents)) |result| {
+                if (ptr.toParsedSourceMap(path, contents)) |result| {
                     mapping.value_ptr.* = Value.init(result).ptr();
                     return result;
                 } else {
@@ -2769,7 +2764,8 @@ pub const VirtualMachine = struct {
                 @max(frame.position.column_start, 0),
                 .no_source_contents,
             )) |lookup| {
-                if (lookup.displaySourceURLIfNeeded()) |source_url| {
+                if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
+                    frame.source_url.deref();
                     frame.source_url = source_url;
                 }
                 const mapping = lookup.mapping;
@@ -2785,6 +2781,7 @@ pub const VirtualMachine = struct {
 
     pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
         error_instance.toZigException(this.global, exception);
+
         // defer this so that it copies correctly
         defer {
             if (exception_list) |list| {
@@ -2885,18 +2882,22 @@ pub const VirtualMachine = struct {
         if (maybe_lookup) |lookup| {
             const mapping = lookup.mapping;
 
+            if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
+                top.source_url.deref();
+                top.source_url = src;
+            }
+
             const code = code: {
-                if (top.remapped or lookup.source_map.external_source_names.len == 0) {
-                    var log = logger.Log.init(default_allocator);
-                    var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
-                    must_reset_parser_arena_later.* = true;
-                    break :code original_source.source_code.toUTF8(bun.default_allocator);
-                } else {
-                    break :code ZigString.Slice.initStatic(
-                        lookup.getSourceCode() orelse
-                            @panic("TODO: what if this failed"),
-                    );
+                if (!top.remapped and lookup.source_map.isExternal()) {
+                    if (lookup.getSourceCode(top_source_url.slice())) |src| {
+                        break :code ZigString.Slice.initStatic(src);
+                    }
                 }
+
+                var log = logger.Log.init(default_allocator);
+                var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+                must_reset_parser_arena_later.* = true;
+                break :code original_source.source_code.toUTF8(bun.default_allocator);
             };
             defer code.deinit();
 
@@ -2955,7 +2956,8 @@ pub const VirtualMachine = struct {
                     @max(frame.position.column_start, 0),
                     .no_source_contents,
                 )) |lookup| {
-                    if (lookup.displaySourceURLIfNeeded()) |src| {
+                    if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
+                        frame.source_url.deref();
                         frame.source_url = src;
                     }
                     const mapping = lookup.mapping;
@@ -3890,8 +3892,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
     };
 }
 
-export fn Bun__addSourceProviderSourceMap(bun_vm: *anyopaque, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
-    const vm: *VirtualMachine = @alignCast(@ptrCast(bun_vm));
+export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
     var sfb = std.heap.stackFallback(4096, bun.default_allocator);
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();

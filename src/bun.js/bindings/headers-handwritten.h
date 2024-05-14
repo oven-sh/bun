@@ -279,6 +279,10 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toStringRef(WTF::String& wtfString);
 BunString toStringRef(const WTF::String& wtfString);
 BunString toStringRef(WTF::StringImpl* wtfString);
+
+// This creates a detached string view, which cannot be ref/unref.
+// Be very careful using this, and ensure the memory owner does not get destroyed.
+BunString toStringView(WTF::StringView view);
 }
 
 using Uint8Array_alias = JSC::JSUint8Array;

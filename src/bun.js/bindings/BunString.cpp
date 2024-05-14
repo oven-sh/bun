@@ -196,6 +196,22 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
+BunString toStringView(StringView view) {
+    view.is8Bit();
+    return {
+        BunStringTag::StaticZigString,
+        { .zig = {
+            .ptr = (const LChar*)(view.is8Bit()
+                ? (size_t)view.rawCharacters()
+                : ((size_t)view.rawCharacters() + (static_cast<uint64_t>(1) << 63))
+            ),
+            .len = view.length()
+        } }
+    };
+}
+
+
+
 }
 
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)

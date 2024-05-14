@@ -241,6 +241,7 @@ bun upgrade --canary
   - [Hot reload an HTTP server](https://bun.sh/guides/http/hot)
   - [Proxy HTTP requests using fetch()](https://bun.sh/guides/http/proxy)
   - [Send an HTTP request using fetch](https://bun.sh/guides/http/fetch)
+  - [Start a cluster of HTTP servers](https://bun.sh/guides/http/cluster)
   - [Stream a file as an HTTP Response](https://bun.sh/guides/http/stream-file)
   - [Streaming HTTP Server with Async Iterators](https://bun.sh/guides/http/stream-iterator)
   - [Streaming HTTP Server with Node.js Streams](https://bun.sh/guides/http/stream-node-streams-in-bun)

@@ -897,7 +897,7 @@ fn HandlerCallback(
                     this.global.bunVM().waitForPromise(promise);
                     const fail = promise.status(this.global.vm()) == .Rejected;
                     if (fail) {
-                        this.global.bunVM().runErrorHandler(promise.result(this.global.vm()), null);
+                        _ = this.global.bunVM().unhandledRejection(this.global, promise.result(this.global.vm()), promise.asValue(this.global));
                     }
                     return fail;
                 }

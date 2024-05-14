@@ -21,6 +21,7 @@ pub const BunObject = struct {
     pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
     pub const jest = @import("../test/jest.zig").Jest.call;
     pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
+    pub const udpSocket = JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false);
     pub const mmap = Bun.mmapFile;
     pub const nanoseconds = Bun.nanoseconds;
     pub const openInEditor = Bun.openInEditor;
@@ -134,6 +135,7 @@ pub const BunObject = struct {
         @export(BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
         @export(BunObject.jest, .{ .name = callbackName("jest") });
         @export(BunObject.listen, .{ .name = callbackName("listen") });
+        @export(BunObject.udpSocket, .{ .name = callbackName("udpSocket") });
         @export(BunObject.mmap, .{ .name = callbackName("mmap") });
         @export(BunObject.nanoseconds, .{ .name = callbackName("nanoseconds") });
         @export(BunObject.openInEditor, .{ .name = callbackName("openInEditor") });
@@ -824,7 +826,7 @@ pub fn getMain(
             }
 
             const fd = bun.sys.openatA(
-                if (comptime Environment.isWindows) bun.invalid_fd else bun.toFD(std.fs.cwd().fd),
+                if (comptime Environment.isWindows) bun.invalid_fd else bun.FD.cwd(),
                 vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.
@@ -3683,7 +3685,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            globalThis.bunVM().onUnhandledError(globalThis, args.ptr[0]);
+            _ = globalThis.bunVM().uncaughtException(globalThis, args.ptr[0], true);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -3785,7 +3787,7 @@ pub const Timer = struct {
             }
 
             if (result.isAnyError()) {
-                vm.onUnhandledError(globalThis, result);
+                _ = vm.uncaughtException(globalThis, result, false);
                 this.deinit();
                 return;
             }
@@ -3794,7 +3796,7 @@ pub const Timer = struct {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();
-                        vm.onUnhandledError(globalThis, promise.result(globalThis.vm()));
+                        _ = vm.unhandledRejection(globalThis, promise.result(globalThis.vm()), promise.asValue(globalThis));
                     },
                     .Fulfilled => {
                         this.deinit();
@@ -5263,7 +5265,7 @@ pub const EnvironmentVariables = struct {
 };
 
 export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.runErrorHandlerWithDedupe(globalObject.bunVM(), err, null);
+    _ = JSC.VirtualMachine.get().uncaughtException(globalObject, err, false);
 }
 
 comptime {

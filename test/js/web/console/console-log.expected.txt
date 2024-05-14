@@ -279,3 +279,8 @@ custom inspect
 0.30000000000000004
 Hello World 123
 Hello %vWorld 123
+Hello NaN %i
+Hello NaN % 1
+Hello NaN %j 1
+Hello \5 6,
+Hello %i 5 6

@@ -536,6 +536,60 @@ test("glob.scan('.')", async () => {
   expect(entries).toContain("README.md");
 });
 
+describe("literal fast path", async () => {
+  let tempdir = "";
+  beforeAll(() => {
+    tempdir = tempDirWithFiles("glob-scan-literal-fast-path", {
+      "packages": {
+        "a": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "b": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "c": {
+          "package.json": "hi",
+          "foo": "bar",
+        },
+        "foo": "bar",
+      },
+      "foo": "bar",
+    });
+  });
+
+  test("works", async () => {
+    const glob = new Glob("packages/*/package.json");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(
+      [
+        `packages${path.sep}a${path.sep}package.json`,
+        `packages${path.sep}b${path.sep}package.json`,
+        `packages${path.sep}c${path.sep}package.json`,
+      ].sort(),
+    );
+  });
+
+  test("works 2", async () => {
+    const glob = new Glob("packages/*/foo");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual(
+      [
+        `packages${path.sep}a${path.sep}foo`,
+        `packages${path.sep}b${path.sep}foo`,
+        `packages${path.sep}c${path.sep}foo`,
+      ].sort(),
+    );
+  });
+
+  test("works3", async () => {
+    const glob = new Glob("packages/foo");
+    const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
+    expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
+  });
+});
+
 function makeTmpdir(): string {
   const tmp = os.tmpdir();
   return fs.mkdtempSync(path.join(tmp, "test_builder"));
@@ -571,7 +625,7 @@ describe("absolute path pattern", async () => {
     expect(entries.sort()).toEqual(files.sort());
   });
 
-  test("works **", async () => {
+  test("works **/", async () => {
     const tmpdir = makeTmpdir();
     const files = [
       `${tmpdir}${path.sep}bunx-foo`,
@@ -585,6 +639,35 @@ describe("absolute path pattern", async () => {
     const glob = new Glob(`${path.join(tmpdir, "**")}${path.sep}`);
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
     expect(entries.sort()).toEqual(files.slice(0, 3).sort());
+  });
+
+  test("works **", async () => {
+    const tmpdir = makeTmpdir();
+    const files = [
+      `${tmpdir}${path.sep}bunx-foo`,
+      `${tmpdir}${path.sep}bunx-bar`,
+      `${tmpdir}${path.sep}bunx-baz`,
+      `${tmpdir}${path.sep}foo`,
+      `${tmpdir}${path.sep}bar`,
+      `${tmpdir}${path.sep}bar`,
+    ];
+    await Bun.$`mkdir -p ${files.slice(0, 3)}; touch ${files.slice(3)}`;
+    const glob = new Glob(`${path.join(tmpdir, "**")}`);
+    const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
+    expect(entries.sort()).toEqual(files.slice(0, files.length - 1).sort());
+  });
+
+  test("non-special path as first component", async () => {
+    const glob = new Glob("/**lol");
+    const entries = await Array.fromAsync(glob.scan({ onlyFiles: false }));
+    expect(entries).toEqual([]);
+  });
+
+  test("doesn't exist, file pattern", async () => {
+    const tmpdir = makeTmpdir();
+    await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
+    const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
+    console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
   });
 });
 

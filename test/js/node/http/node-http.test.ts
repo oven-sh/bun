@@ -1,5 +1,5 @@
 // @ts-nocheck
-import {
+import http, {
   createServer,
   request,
   get,
@@ -21,10 +21,14 @@ import url from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import nodefs from "node:fs";
-import { join as joinPath } from "node:path";
+import * as path from "node:path";
 import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import { bunExe } from "bun:harness";
+import { bunEnv, tmpdirSync } from "harness";
+import * as stream from "node:stream";
+import * as zlib from "node:zlib";
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
@@ -136,6 +140,21 @@ describe("node:http", () => {
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
       listenResponse.close();
+    });
+
+    it("listen callback should be bound to server", async () => {
+      const server = createServer();
+      const { resolve, reject, promise } = Promise.withResolvers();
+      server.listen(0, function () {
+        try {
+          expect(this === server).toBeTrue();
+          resolve();
+        } catch (e) {
+          reject();
+        }
+      });
+      await promise;
+      server.close();
     });
 
     it("option method should be uppercase (#7250)", async () => {
@@ -799,14 +818,11 @@ describe("node:http", () => {
     it("should emit a socket event when connecting", async done => {
       runTest(done, async (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
-        await new Promise((resolve, reject) => {
-          req.on("error", reject);
-          req.on("socket", function onRequestSocket(socket) {
-            req.destroy();
-            done();
-            resolve();
-          });
+        req.on("socket", function onRequestSocket(socket) {
+          req.destroy();
+          done();
         });
+        req.end();
       });
     });
   });
@@ -967,24 +983,6 @@ describe("node:http", () => {
     });
   });
 
-  test("test server internal error, issue#4298", done => {
-    const server = createServer((req, res) => {
-      throw Error("throw an error here.");
-    });
-    server.listen({ port: 0 }, async (_err, host, port) => {
-      try {
-        await fetch(`http://${host}:${port}`).then(res => {
-          expect(res.status).toBe(500);
-          done();
-        });
-      } catch (err) {
-        done(err);
-      } finally {
-        server.close();
-      }
-    });
-  });
-
   test("test unix socket server", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {
@@ -1060,8 +1058,8 @@ describe("node:http", () => {
 });
 describe("node https server", async () => {
   const httpsOptions = {
-    key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.key")),
-    cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "cert.pem")),
+    key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),
+    cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
   };
   const createServer = onRequest => {
     return new Promise(resolve => {
@@ -1235,8 +1233,8 @@ describe("server.address should be valid IP", () => {
 it("should not accept untrusted certificates", async () => {
   const server = https.createServer(
     {
-      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.key")),
-      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl.crt")),
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.crt")),
       passphrase: "123123123",
     },
     (req, res) => {
@@ -1743,7 +1741,7 @@ it("#9242.4 ServerResponse has constructor", () => {
 if (process.platform !== "win32") {
   // By not timing out, this test passes.
   test(".unref() works", async () => {
-    expect([joinPath(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+    expect([path.join(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
   });
 }
 
@@ -1804,4 +1802,209 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
       }
       finish();
     });
+}, 20_000);
+
+it("should emit events in the right order", async () => {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    `[ "req", "socket" ]`,
+    `[ "req", "prefinish" ]`,
+    `[ "req", "finish" ]`,
+    `[ "req", "response" ]`,
+    "STATUS: 200",
+    // `[ "res", "resume" ]`,
+    // `[ "res", "readable" ]`,
+    // `[ "res", "end" ]`,
+    `[ "req", "close" ]`,
+    `[ "res", Symbol(kConstruct) ]`,
+    // `[ "res", "close" ]`,
+    "",
+  ]);
+});
+
+it("destroy should end download", async () => {
+  // just simulate some file that will take forever to download
+  const payload = Buffer.from("X".repeat(16 * 1024));
+
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      let running = true;
+      req.signal.onabort = () => (running = false);
+      return new Response(async function* () {
+        while (running) {
+          yield payload;
+          await Bun.sleep(10);
+        }
+      });
+    },
+  });
+
+  try {
+    let chunks = 0;
+
+    const { promise, resolve } = Promise.withResolvers();
+    const req = request(server.url, res => {
+      res.on("data", () => {
+        process.nextTick(resolve);
+        chunks++;
+      });
+    });
+    req.end();
+    // wait for the first chunk
+    await promise;
+    // should stop the download
+    req.destroy();
+    await Bun.sleep(200);
+    expect(chunks).toBeLessThanOrEqual(3);
+  } finally {
+    server.stop(true);
+  }
+});
+
+it("can send brotli from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send gzip from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "gzip");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createGzip()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send deflate from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "deflate");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createDeflate()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send brotli from Server and receive with Client", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      const passthrough = new stream.PassThrough();
+      passthrough.on("data", data => res.write(data));
+      passthrough.on("end", () => res.end());
+
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(passthrough);
+    });
+
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      let rawData = "";
+      const passthrough = stream.PassThrough();
+      passthrough.on("data", chunk => {
+        rawData += chunk;
+      });
+      passthrough.on("end", () => {
+        try {
+          expect(Buffer.from(rawData)).toEqual(Buffer.from("Hello World"));
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      res.pipe(zlib.createBrotliDecompress()).pipe(passthrough);
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("ServerResponse ClientRequest field exposes agent getter", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.end("world");
+    });
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      try {
+        expect(res.req.agent.protocol).toBe("http:");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
 });

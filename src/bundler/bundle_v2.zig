@@ -2109,7 +2109,7 @@ pub const BundleV2 = struct {
 
                 if (this.bun_watcher != null) {
                     if (empty_result.watcher_data.fd != .zero and empty_result.watcher_data.fd != bun.invalid_fd) {
-                        this.bun_watcher.?.addFile(
+                        _ = this.bun_watcher.?.addFile(
                             empty_result.watcher_data.fd,
                             input_files.items(.source)[empty_result.source_index.get()].path.text,
                             bun.hash32(input_files.items(.source)[empty_result.source_index.get()].path.text),
@@ -2117,7 +2117,7 @@ pub const BundleV2 = struct {
                             empty_result.watcher_data.dir_fd,
                             null,
                             false,
-                        ) catch {};
+                        );
                     }
                 }
             },
@@ -2128,7 +2128,7 @@ pub const BundleV2 = struct {
                     // to minimize contention, we add watcher here
                     if (this.bun_watcher != null) {
                         if (result.watcher_data.fd != .zero and result.watcher_data.fd != bun.invalid_fd) {
-                            this.bun_watcher.?.addFile(
+                            _ = this.bun_watcher.?.addFile(
                                 result.watcher_data.fd,
                                 result.source.path.text,
                                 bun.hash32(result.source.path.text),
@@ -2136,7 +2136,7 @@ pub const BundleV2 = struct {
                                 result.watcher_data.dir_fd,
                                 result.watcher_data.package_json,
                                 false,
-                            ) catch {};
+                            );
                         }
                     }
                 }
@@ -2580,7 +2580,7 @@ pub const ParseTask = struct {
             .json => {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
-                const root = (try resolver.caches.json.parseJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, bundler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
@@ -4165,7 +4165,7 @@ const LinkerContext = struct {
 
         const chunks: []Chunk = js_chunks.values();
 
-        var entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
+        const entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
         // Map from the entry point file to this chunk. We will need this later if
         // a file contains a dynamic import to this entry point, since we'll need
         // to look up the path for this chunk to use with the import.
@@ -4187,8 +4187,9 @@ const LinkerContext = struct {
             this.unique_key_buf = "";
         }
 
+        const kinds = this.graph.files.items(.entry_point_kind);
+        const output_paths = this.graph.entry_points.items(.output_path);
         for (chunks, 0..) |*chunk, chunk_id| {
-
             // Assign a unique key to each chunk. This key encodes the index directly so
             // we can easily recover it later without needing to look it up in a map. The
             // last 8 numbers of the key are the chunk index.
@@ -4196,31 +4197,33 @@ const LinkerContext = struct {
             if (this.unique_key_prefix.len == 0)
                 this.unique_key_prefix = chunk.unique_key[0..std.fmt.count("{any}", .{bun.fmt.hexIntLower(unique_key)})];
 
-            if (chunk.entry_point.is_entry_point) {
+            if (chunk.entry_point.is_entry_point and
+                kinds[chunk.entry_point.source_index] == .user_specified)
+            {
                 chunk.template = PathTemplate.file;
                 if (this.resolver.opts.entry_naming.len > 0)
                     chunk.template.data = this.resolver.opts.entry_naming;
-
-                const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
-                chunk.template.placeholder.name = pathname.base;
-                chunk.template.placeholder.ext = "js";
-
-                // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-                const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
-
-                var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
-                    try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
-                    return error.FailedToOpenEntryPointDirectory;
-                };
-                defer dir.close();
-
-                var real_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf));
             } else {
                 chunk.template = PathTemplate.chunk;
                 if (this.resolver.opts.chunk_naming.len > 0)
                     chunk.template.data = this.resolver.opts.chunk_naming;
             }
+
+            const pathname = Fs.PathName.init(output_paths[chunk.entry_point.entry_point_id].slice());
+            chunk.template.placeholder.name = pathname.base;
+            chunk.template.placeholder.ext = "js";
+
+            // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
+            const dir_path = if (pathname.dir.len > 0) pathname.dir else ".";
+
+            var dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
+                try this.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{s}: failed to open entry point directory: {s}", .{ @errorName(err), pathname.dir });
+                return error.FailedToOpenEntryPointDirectory;
+            };
+            defer dir.close();
+
+            var real_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf));
         }
 
         return chunks;
@@ -9023,6 +9026,12 @@ const LinkerContext = struct {
         {
             var path_names_map = bun.StringHashMap(void).init(c.allocator);
             defer path_names_map.deinit();
+
+            const DuplicateEntry = struct {
+                sources: std.ArrayListUnmanaged(*Chunk) = .{},
+            };
+            var duplicates_map: std.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
+
             // Compute the final hashes of each chunk. This can technically be done in
             // parallel but it probably doesn't matter so much because we're not hashing
             // that much data.
@@ -9030,22 +9039,79 @@ const LinkerContext = struct {
                 // TODO: non-isolated-hash
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
-                const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
+                const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch bun.outOfMemory();
                 bun.path.platformToPosixInPlace(u8, rel_path);
 
                 if ((try path_names_map.getOrPut(rel_path)).found_existing) {
-                    try c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Multiple files share the same output path: {s}", .{rel_path});
-                    return error.DuplicateOutputPath;
+                    // collect all duplicates in a list
+                    const dup = try duplicates_map.getOrPut(bun.default_allocator, rel_path);
+                    if (!dup.found_existing) dup.value_ptr.* = .{};
+                    try dup.value_ptr.sources.append(bun.default_allocator, chunk);
+                    continue;
                 }
+
                 // resolve any /./ and /../ occurrences
                 // use resolvePosix since we asserted above all seps are '/'
                 if (Environment.isWindows and std.mem.indexOf(u8, rel_path, "/./") != null) {
                     var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                    const rel_path_fixed = c.allocator.dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch unreachable;
+                    const rel_path_fixed = c.allocator.dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch bun.outOfMemory();
                     chunk.final_rel_path = rel_path_fixed;
                     continue;
                 }
                 chunk.final_rel_path = rel_path;
+            }
+
+            if (duplicates_map.count() > 0) {
+                var msg = std.ArrayList(u8).init(bun.default_allocator);
+                errdefer msg.deinit();
+
+                var entry_naming: ?[]const u8 = null;
+                var chunk_naming: ?[]const u8 = null;
+                var asset_naming: ?[]const u8 = null;
+
+                const writer = msg.writer();
+                try writer.print("Multiple files share the same output path\n", .{});
+
+                const kinds = c.graph.files.items(.entry_point_kind);
+
+                for (duplicates_map.keys(), duplicates_map.values()) |key, dup| {
+                    try writer.print("  {s}:\n", .{key});
+                    for (dup.sources.items) |chunk| {
+                        if (chunk.entry_point.is_entry_point) {
+                            if (kinds[chunk.entry_point.source_index] == .user_specified) {
+                                entry_naming = chunk.template.data;
+                            } else {
+                                chunk_naming = chunk.template.data;
+                            }
+                        } else {
+                            asset_naming = chunk.template.data;
+                        }
+
+                        const source_index = chunk.entry_point.source_index;
+                        const file: Logger.Source = c.parse_graph.input_files.items(.source)[source_index];
+                        try writer.print("    from input {s}\n", .{file.path.pretty});
+                    }
+                }
+
+                try c.log.addError(null, Logger.Loc.Empty, try msg.toOwnedSlice());
+
+                inline for (.{
+                    .{ .name = "entry", .template = entry_naming },
+                    .{ .name = "chunk", .template = chunk_naming },
+                    .{ .name = "asset", .template = asset_naming },
+                }) |x| brk: {
+                    const template = x.template orelse break :brk;
+                    const name = x.name;
+
+                    try c.log.addMsg(.{
+                        .kind = .note,
+                        .data = .{
+                            .text = try std.fmt.allocPrint(bun.default_allocator, name ++ " naming is '{s}', consider adding '[hash]' to make filenames unique", .{template}),
+                        },
+                    });
+                }
+
+                return error.DuplicateOutputPath;
             }
         }
 
@@ -11410,6 +11476,7 @@ pub const Chunk = struct {
     };
 
     pub const EntryPoint = packed struct(u64) {
+        /// Index into `Graph.input_files`
         source_index: Index.Int = 0,
         entry_point_id: ID = 0,
         is_entry_point: bool = false,
@@ -11582,8 +11649,13 @@ const ContentHasher = struct {
 // users can correctly put in a trailing slash if they want
 // this is just being nice
 fn cheapPrefixNormalizer(prefix: []const u8, suffix: []const u8) [2]string {
-    if (prefix.len == 0)
-        return .{ prefix, suffix };
+    if (prefix.len == 0) {
+        const suffix_no_slash = bun.strings.removeLeadingDotSlash(suffix);
+        return .{
+            if (strings.hasPrefixComptime(suffix_no_slash, "../")) "" else "./",
+            suffix_no_slash,
+        };
+    }
 
     // There are a few cases here we want to handle:
     // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"

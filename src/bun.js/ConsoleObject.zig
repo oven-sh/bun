@@ -359,11 +359,16 @@ const TablePrinter = struct {
                     // find or create the column for the property
                     const column: *Column = brk: {
                         const col_str = String.init(col_key);
+
                         for (columns.items[1..]) |*col| {
                             if (col.name.eql(col_str)) {
                                 break :brk col;
                             }
                         }
+
+                        // Need to ref this string because JSPropertyIterator
+                        // uses `toString` instead of `toStringRef` for property names
+                        col_str.ref();
 
                         try columns.append(.{ .name = col_str });
 
@@ -1240,7 +1245,6 @@ pub const Formatter = struct {
         var slice = slice_;
         var i: u32 = 0;
         var len: u32 = @as(u32, @truncate(slice.len));
-        var any_non_ascii = false;
         var hit_percent = false;
         while (i < len) : (i += 1) {
             if (hit_percent) {
@@ -1254,6 +1258,9 @@ pub const Formatter = struct {
                     if (i >= len)
                         break;
 
+                    if (this.remaining_values.len == 0)
+                        break;
+
                     const token: PercentTag = switch (slice[i]) {
                         's' => .s,
                         'f' => .f,
@@ -1261,16 +1268,21 @@ pub const Formatter = struct {
                         'O' => .O,
                         'd', 'i' => .i,
                         'c' => .c,
+                        '%' => {
+                            // print up to and including the first %
+                            const end = slice[0..i];
+                            writer.writeAll(end);
+                            // then skip the second % so we dont hit it again
+                            slice = slice[@min(slice.len, i + 1)..];
+                            i = 0;
+                            continue;
+                        },
                         else => continue,
                     };
 
                     // Flush everything up to the %
                     const end = slice[0 .. i - 1];
-                    if (!any_non_ascii)
-                        writer.writeAll(end)
-                    else
-                        writer.writeAll(end);
-                    any_non_ascii = false;
+                    writer.writeAll(end);
                     slice = slice[@min(slice.len, i + 1)..];
                     i = 0;
                     hit_percent = true;
@@ -1416,15 +1428,6 @@ pub const Formatter = struct {
                         },
                     }
                     if (this.remaining_values.len == 0) break;
-                },
-                '\\' => {
-                    i += 1;
-                    if (i >= len)
-                        break;
-                    if (slice[i] == '%') i += 2;
-                },
-                128...255 => {
-                    any_non_ascii = true;
                 },
                 else => {},
             }
@@ -1818,11 +1821,13 @@ pub const Formatter = struct {
 
     extern fn JSC__JSValue__callCustomInspectFunction(
         *JSC.JSGlobalObject,
+        *JSC.JSGlobalObject,
         JSValue,
         JSValue,
         depth: u32,
         max_depth: u32,
         colors: bool,
+        is_exception: *bool,
     ) JSValue;
 
     pub fn printAs(
@@ -2001,16 +2006,25 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
             },
             .CustomFormattedObject => {
+                var is_exception = false;
                 // Call custom inspect function. Will return the error if there is one
                 // we'll need to pass the callback through to the "this" value in here
                 const result = JSC__JSValue__callCustomInspectFunction(
+                    JSC.VirtualMachine.get().global,
                     this.globalThis,
                     this.custom_formatted_object.function,
                     this.custom_formatted_object.this,
                     this.max_depth -| this.depth,
                     this.max_depth,
                     enable_ansi_colors,
+                    &is_exception,
                 );
+                if (is_exception) {
+                    // Previously, this printed [native code]
+                    // TODO: in the future, should this throw when in Bun.inspect?
+                    writer.print("[custom formatter threw an exception]", .{});
+                    return;
+                }
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});

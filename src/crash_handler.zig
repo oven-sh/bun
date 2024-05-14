@@ -117,7 +117,13 @@ pub fn crashHandler(
                 panic_mutex.lock();
                 defer panic_mutex.unlock();
 
-                const writer = Output.errorWriter();
+                // Use an raw unbuffered writer to stderr to avoid losing information on
+                // panic in a panic. There is also a possibility that `Output` related code
+                // is not configured correctly, so that would also mask the message.
+                //
+                // Output.errorWriter() is not used here because it may not be configured
+                // if the program crashes immediatly at startup.
+                const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug
                 // builds Mainly, we demangle the backtrace immediately instead
@@ -140,10 +146,17 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.os.abort();
                     printMetadata(writer) catch std.os.abort();
-
-                    Output.flush();
                 } else {
-                    Output.err("oh no", "multiple threads are crashing", .{});
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                    }
+                    writer.writeAll("oh no") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.os.abort();
+                    } else {
+                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                    }
+                    writer.writeAll("multiple threads are crashing") catch std.os.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
@@ -173,10 +186,12 @@ pub fn crashHandler(
                         else => @compileError("TODO"),
                     }
 
-                    Output.prettyErrorln(":<r> {}", .{reason});
+                    writer.writeAll(": ") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r>", true)) catch std.os.abort();
+                    }
+                    writer.print("{}\n", .{reason}) catch std.os.abort();
                 }
-
-                Output.flush();
 
                 var addr_buf: [10]usize = undefined;
                 var trace_buf: std.builtin.StackTrace = undefined;
@@ -194,35 +209,39 @@ pub fn crashHandler(
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
 
-                    // TODO: REMOVE
                     trace_str_buf.writer().print("{}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
-                        .action = .open_issue,
+                        .action = .view_trace,
                     }}) catch std.os.abort();
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
+                        writer.writeAll("oh no") catch std.os.abort();
+                        if (Output.enable_ansi_colors) {
+                            writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.os.abort();
+                        } else {
+                            writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                        }
                         if (reason == .out_of_memory) {
-                            Output.err("oh no",
+                            writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            , .{});
+                            ) catch std.os.abort();
                         } else {
-                            Output.err("oh no",
+                            writer.writeAll(
                                 \\Bun has crashed. This indicates a bug in Bun, not your code.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            , .{});
+                            ) catch std.os.abort();
                         }
-                        Output.flush();
                     }
 
                     if (Output.enable_ansi_colors) {
@@ -247,8 +266,6 @@ pub fn crashHandler(
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
-
-                Output.flush();
             }
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
@@ -308,6 +325,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         error.InvalidArgument,
         error.@"Invalid Bunfig",
+        error.InstallFailed,
         => if (!show_trace) Global.exit(1),
 
         error.SyntaxError => {
@@ -462,7 +480,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
-                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
                         \\
                         \\<d>Current limit: {d}<r>
                         \\
@@ -507,14 +525,14 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     }
                 } else {
                     Output.errGeneric(
-                        "An unknown error ocurred <d>(<red>{s}<r><d>)<r>",
+                        "An unknown error occurred <d>(<red>{s}<r><d>)<r>",
                         .{@errorName(err)},
                     );
                     show_trace = true;
                 }
             } else {
                 Output.errGeneric(
-                    \\An unknown error ocurred <d>(<red>{s}<r><d>)<r>
+                    \\An unknown error occurred <d>(<red>{s}<r><d>)<r>
                 ,
                     .{@errorName(err)},
                 );
@@ -543,7 +561,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (bun.Environment.isDebug)
                     "'main' returned <red>error.{s}<r>"
                 else
-                    "An internal error ocurred (<red>{s}<r>)",
+                    "An internal error occurred (<red>{s}<r>)",
                 .{@errorName(err)},
             );
             show_trace = true;
@@ -598,8 +616,9 @@ else
     "x64";
 
 const metadata_version_line = std.fmt.comptimePrint(
-    "Bun v{s} {s} {s}{s}\n",
+    "Bun {s}v{s} {s} {s}{s}\n",
     .{
+        if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,
@@ -629,7 +648,25 @@ fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyop
     );
 }
 
-pub fn updatePosixSegfaultHandler(act: ?*const std.os.Sigaction) !void {
+var did_register_sigaltstack = false;
+var sigaltstack: [512 * 1024]u8 = undefined;
+
+pub fn updatePosixSegfaultHandler(act: ?*std.os.Sigaction) !void {
+    if (act) |act_| {
+        if (!did_register_sigaltstack) {
+            var stack: std.c.stack_t = .{
+                .flags = 0,
+                .size = sigaltstack.len,
+                .sp = &sigaltstack,
+            };
+
+            if (std.c.sigaltstack(&stack, null) == 0) {
+                act_.flags |= std.os.SA.ONSTACK;
+                did_register_sigaltstack = true;
+            }
+        }
+    }
+
     try std.os.sigaction(std.os.SIG.SEGV, act, null);
     try std.os.sigaction(std.os.SIG.ILL, act, null);
     try std.os.sigaction(std.os.SIG.BUS, act, null);
@@ -645,7 +682,7 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            const act = std.os.Sigaction{
+            var act = std.os.Sigaction{
                 .handler = .{ .sigaction = handleSegfaultPosix },
                 .mask = std.os.empty_sigset,
                 .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
@@ -666,7 +703,7 @@ pub fn resetSegfaultHandler() void {
         return;
     }
 
-    const act = std.os.Sigaction{
+    var act = std.os.Sigaction{
         .handler = .{ .handler = std.os.SIG.DFL },
         .mask = std.os.empty_sigset,
         .flags = 0,
@@ -766,7 +803,7 @@ fn waitForOtherThreadToFinishPanicking() void {
     }
 }
 
-/// Each platform is encoded is a single character. It is placed right after the
+/// Each platform is encoded as a single character. It is placed right after the
 /// slash after the version, so someone just reading the trace string can tell
 /// what platform it came from. L, M, and W are for Linux, macOS, and Windows,
 /// with capital letters indicating aarch64, lowercase indicating x86_64.
@@ -1415,13 +1452,17 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const obj = JSValue.createEmptyObject(global, 1);
+        const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
         obj.put(global, JSC.ZigString.static("features"), array);
+        obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
+        obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+        obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+        obj.put(global, JSC.ZigString.static("generated_at"), bun.JSC.JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };

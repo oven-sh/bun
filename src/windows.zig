@@ -91,10 +91,10 @@ pub extern "kernel32" fn SetFileValidData(
     validDataLength: c_longlong,
 ) callconv(windows.WINAPI) win32.BOOL;
 
-pub extern fn CommandLineToArgvW(
+pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
-) [*]win32.LPWSTR;
+) callconv(windows.WINAPI) ?[*]win32.LPWSTR;
 
 pub extern fn GetFileType(
     hFile: win32.HANDLE,
@@ -3047,6 +3047,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .RETRY => .AGAIN,
         .DIRECTORY_NOT_EMPTY => .NOTEMPTY,
         .FILE_TOO_LARGE => .@"2BIG",
+        .NOT_SAME_DEVICE => .XDEV,
         .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
             break :brk .BUSY;

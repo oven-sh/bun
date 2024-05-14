@@ -234,8 +234,8 @@ pub const ServerConfig = struct {
         secure_options: u32 = 0,
         request_cert: i32 = 0,
         reject_unauthorized: i32 = 0,
-        ssl_ciphers: [*c]const u8 = null,
-        protos: [*c]const u8 = null,
+        ssl_ciphers: ?[*:0]const u8 = null,
+        protos: ?[*:0]const u8 = null,
         protos_len: usize = 0,
         client_renegotiation_limit: u32 = 0,
         client_renegotiation_window: u32 = 0,
@@ -294,8 +294,8 @@ pub const ServerConfig = struct {
             };
 
             inline for (fields) |field| {
-                if (@field(this, field) != null) {
-                    const slice = std.mem.span(@field(this, field));
+                if (@field(this, field)) |slice_ptr| {
+                    const slice = std.mem.span(slice_ptr);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
                     }
@@ -560,13 +560,25 @@ pub const ServerConfig = struct {
             }
 
             if (obj.getTruthy(global, "requestCert")) |request_cert| {
-                result.request_cert = if (request_cert.asBoolean()) 1 else 0;
-                any = true;
+                if (request_cert.isBoolean()) {
+                    result.request_cert = if (request_cert.asBoolean()) 1 else 0;
+                    any = true;
+                } else {
+                    global.throw("Expected requestCert to be a boolean", .{});
+                    result.deinit();
+                    return null;
+                }
             }
 
             if (obj.getTruthy(global, "rejectUnauthorized")) |reject_unauthorized| {
-                result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
-                any = true;
+                if (reject_unauthorized.isBoolean()) {
+                    result.reject_unauthorized = if (reject_unauthorized.asBoolean()) 1 else 0;
+                    any = true;
+                } else {
+                    global.throw("Expected rejectUnauthorized to be a boolean", .{});
+                    result.deinit();
+                    return null;
+                }
             }
 
             if (obj.getTruthy(global, "ciphers")) |ssl_ciphers| {
@@ -720,8 +732,14 @@ pub const ServerConfig = struct {
                 }
 
                 if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
-                    result.low_memory_mode = low_memory_mode.toBoolean();
-                    any = true;
+                    if (low_memory_mode.isBoolean() or low_memory_mode.isUndefined()) {
+                        result.low_memory_mode = low_memory_mode.toBoolean();
+                        any = true;
+                    } else {
+                        global.throw("Expected lowMemoryMode to be a boolean", .{});
+                        result.deinit();
+                        return null;
+                    }
                 }
             }
 
@@ -1828,10 +1846,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.request_body) |body| {
                 ctxLog("finalizeWithoutDeinit: request_body != null", .{});
+                // Case 1:
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 // the promise is pending
-                if (body.value == .Locked and body.value.Locked.hasPendingPromise()) {
+                // Case 2:
+                // User ignored the body and the connection was aborted or ended
+                // Case 3:
+                // Stream was not consumed and the connection was aborted or ended
+                if (body.value == .Locked) {
                     body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                 }
             }
@@ -2800,10 +2823,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .Invalid => {
                                 this.readable_stream_ref.deinit();
                             },
-                            // toBlobIfPossible should've caught this
-                            .Blob, .File => unreachable,
-
-                            .JavaScript, .Direct => {
+                            // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
+                            .Blob,
+                            .File,
+                            // These are the common scenario:
+                            .JavaScript,
+                            .Direct,
+                            => {
                                 if (this.resp) |resp| {
                                     var pair = StreamPair{ .stream = stream, .this = this };
                                     resp.runCorkedWithType(*StreamPair, doRenderStream, &pair);
@@ -3488,6 +3514,8 @@ pub const WebSocketServer = struct {
 
         app: ?*anyopaque = null,
 
+        // Always set manually.
+        vm: *JSC.VirtualMachine = undefined,
         globalObject: *JSC.JSGlobalObject = undefined,
         active_connections: usize = 0,
 
@@ -3498,8 +3526,9 @@ pub const WebSocketServer = struct {
         } = .{},
 
         pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) ?Handler {
-            var handler = Handler{ .globalObject = globalObject };
             const vm = globalObject.vm();
+            var handler = Handler{ .globalObject = globalObject, .vm = VirtualMachine.get() };
+
             var valid = false;
 
             if (object.getTruthy(globalObject, "message")) |message_| {
@@ -3813,13 +3842,35 @@ const Corker = struct {
     }
 };
 
+// Let's keep this 3 pointers wide or less.
 pub const ServerWebSocket = struct {
     handler: *WebSocketServer.Handler,
     this_value: JSValue = .zero,
-    websocket: uws.AnyWebSocket = undefined,
-    closed: bool = false,
-    binary_type: JSC.BinaryType = .Buffer,
-    opened: bool = false,
+    flags: Flags = .{},
+
+    // We pack the per-socket data into this struct below
+    const Flags = packed struct(u64) {
+        ssl: bool = false,
+        closed: bool = false,
+        opened: bool = false,
+        binary_type: JSC.BinaryType = .Buffer,
+        packed_websocket_ptr: u57 = 0,
+
+        inline fn websocket(this: Flags) uws.AnyWebSocket {
+            // Ensure those other bits are zeroed out
+            const that = Flags{ .packed_websocket_ptr = this.packed_websocket_ptr };
+
+            return if (this.ssl) .{
+                .ssl = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
+            } else .{
+                .tcp = @ptrFromInt(@as(usize, that.packed_websocket_ptr)),
+            };
+        }
+    };
+
+    inline fn websocket(this: *const ServerWebSocket) uws.AnyWebSocket {
+        return this.flags.websocket();
+    }
 
     pub usingnamespace JSC.Codegen.JSServerWebSocket;
     pub usingnamespace bun.New(ServerWebSocket);
@@ -3829,19 +3880,20 @@ pub const ServerWebSocket = struct {
     pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
         log("OnOpen", .{});
 
-        this.websocket = ws;
-        this.closed = false;
+        this.flags.packed_websocket_ptr = @truncate(@intFromPtr(ws.raw()));
+        this.flags.closed = false;
+        this.flags.ssl = ws == .ssl;
 
         // the this value is initially set to whatever the user passed in
         const value_to_cache = this.this_value;
 
         var handler = this.handler;
         handler.active_connections +|= 1;
-        var globalObject = handler.globalObject;
+        const globalObject = handler.globalObject;
 
         const onOpenHandler = handler.onOpen;
         this.this_value = .zero;
-        this.opened = false;
+        this.flags.opened = false;
         if (value_to_cache != .zero) {
             const current_this = this.getThisValue();
             ServerWebSocket.dataSetCached(current_this, globalObject, value_to_cache);
@@ -3850,7 +3902,8 @@ pub const ServerWebSocket = struct {
         if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
         const this_value = this.getThisValue();
         var args = [_]JSValue{this_value};
-        const loop = globalObject.bunVM().eventLoop();
+        const vm = this.handler.vm;
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
 
@@ -3862,22 +3915,22 @@ pub const ServerWebSocket = struct {
         const error_handler = handler.onError;
         ws.cork(&corker, Corker.run);
         const result = corker.result;
-        this.opened = true;
+        this.flags.opened = true;
         if (result.toError()) |err_value| {
             log("onOpen exception", .{});
 
-            if (!this.closed) {
-                this.closed = true;
+            if (!this.flags.closed) {
+                this.flags.closed = true;
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
-                this.websocket.close();
+                this.websocket().close();
                 handler.active_connections -|= 1;
                 this_value.unprotect();
             }
 
             if (error_handler.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(err_value, null);
+                _ = vm.uncaughtException(globalObject, err_value, false);
             } else {
                 const corky = [_]JSValue{err_value};
                 corker.args = &corky;
@@ -3913,7 +3966,8 @@ pub const ServerWebSocket = struct {
         if (onMessageHandler.isEmptyOrUndefinedOrNull()) return;
         var globalObject = this.handler.globalObject;
         // This is the start of a task.
-        const loop = globalObject.bunVM().eventLoop();
+        const vm = this.handler.vm;
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
 
@@ -3925,24 +3979,7 @@ pub const ServerWebSocket = struct {
                     str.markUTF8();
                     break :brk str.toValueGC(globalObject);
                 },
-                .binary => if (this.binary_type == .Buffer)
-                    JSC.ArrayBuffer.create(
-                        globalObject,
-                        message,
-                        .Buffer,
-                    )
-                else if (this.binary_type == .Uint8Array)
-                    JSC.ArrayBuffer.create(
-                        globalObject,
-                        message,
-                        .Uint8Array,
-                    )
-                else
-                    JSC.ArrayBuffer.create(
-                        globalObject,
-                        message,
-                        .ArrayBuffer,
-                    ),
+                .binary => this.binaryToJS(globalObject, message),
                 else => unreachable,
             },
         };
@@ -3960,7 +3997,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err_value| {
             if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(err_value, null);
+                _ = vm.uncaughtException(globalObject, err_value, false);
             } else {
                 const args = [_]JSValue{err_value};
                 corker.args = &args;
@@ -3983,30 +4020,36 @@ pub const ServerWebSocket = struct {
             }
         }
     }
+
+    pub inline fn isClosed(this: *const ServerWebSocket) bool {
+        return this.flags.closed;
+    }
+
     pub fn onDrain(this: *ServerWebSocket, _: uws.AnyWebSocket) void {
         log("onDrain", .{});
 
         const handler = this.handler;
-        if (this.closed)
+        if (this.isClosed())
             return;
 
         if (handler.onDrain != .zero) {
-            var globalObject = handler.globalObject;
+            const globalObject = handler.globalObject;
 
             var corker = Corker{
                 .args = &[_]JSC.JSValue{this.this_value},
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
-            const loop = globalObject.bunVM().eventLoop();
+            const vm = JSC.VirtualMachine.get();
+            const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
-            this.websocket.cork(&corker, Corker.run);
+            this.websocket().cork(&corker, Corker.run);
             const result = corker.result;
 
             if (result.toError()) |err_value| {
                 if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                    globalObject.bunVM().runErrorHandler(err_value, null);
+                    _ = vm.uncaughtException(globalObject, err_value, false);
                 } else {
                     const args = [_]JSValue{err_value};
                     corker.args = &args;
@@ -4019,39 +4062,44 @@ pub const ServerWebSocket = struct {
         }
     }
 
+    fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) JSC.JSValue {
+        return switch (this.flags.binary_type) {
+            .Buffer => JSC.ArrayBuffer.create(
+                globalThis,
+                data,
+                .Buffer,
+            ),
+            .Uint8Array => JSC.ArrayBuffer.create(
+                globalThis,
+                data,
+                .Uint8Array,
+            ),
+            else => JSC.ArrayBuffer.create(
+                globalThis,
+                data,
+                .ArrayBuffer,
+            ),
+        };
+    }
+
     pub fn onPing(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
         log("onPing: {s}", .{data});
 
         var handler = this.handler;
         var cb = handler.onPing;
         if (cb.isEmptyOrUndefinedOrNull()) return;
-        var globalThis = handler.globalObject;
+        const globalThis = handler.globalObject;
+
+        const vm = JSC.VirtualMachine.get();
 
         // This is the start of a task.
-        const loop = globalThis.bunVM().eventLoop();
+        const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
 
         const result = cb.call(
             globalThis,
-            &[_]JSC.JSValue{ this.this_value, if (this.binary_type == .Buffer)
-                JSC.ArrayBuffer.create(
-                    globalThis,
-                    data,
-                    .Buffer,
-                )
-            else if (this.binary_type == .Uint8Array)
-                JSC.ArrayBuffer.create(
-                    globalThis,
-                    data,
-                    .Uint8Array,
-                )
-            else
-                JSC.ArrayBuffer.create(
-                    globalThis,
-                    data,
-                    .ArrayBuffer,
-                ) },
+            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
         );
 
         if (result.toError()) |err| {
@@ -4076,24 +4124,7 @@ pub const ServerWebSocket = struct {
 
         const result = cb.call(
             globalThis,
-            &[_]JSC.JSValue{ this.this_value, if (this.binary_type == .Buffer)
-                JSC.ArrayBuffer.create(
-                    globalThis,
-                    data,
-                    .Buffer,
-                )
-            else if (this.binary_type == .Uint8Array)
-                JSC.ArrayBuffer.create(
-                    globalThis,
-                    data,
-                    .Uint8Array,
-                )
-            else
-                JSC.ArrayBuffer.create(
-                    globalThis,
-                    data,
-                    .ArrayBuffer,
-                ) },
+            &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
         );
 
         if (result.toError()) |err| {
@@ -4105,8 +4136,8 @@ pub const ServerWebSocket = struct {
     pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
         log("onClose", .{});
         var handler = this.handler;
-        const was_closed = this.closed;
-        this.closed = true;
+        const was_closed = this.isClosed();
+        this.flags.closed = true;
         defer {
             if (!was_closed) {
                 handler.active_connections -|= 1;
@@ -4186,6 +4217,11 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("publish expects compress to be a boolean", .{});
+            return .zero;
+        }
+
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
@@ -4197,7 +4233,7 @@ pub const ServerWebSocket = struct {
             const buffer = array_buffer.slice();
 
             const result = if (!publish_to_self)
-                this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+                this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
             else
                 uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
@@ -4215,7 +4251,7 @@ pub const ServerWebSocket = struct {
             const buffer = string_slice.slice();
 
             const result = if (!publish_to_self)
-                this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+                this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
             else
                 uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
@@ -4263,6 +4299,11 @@ pub const ServerWebSocket = struct {
         var topic_slice = topic_value.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
 
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("publishText expects compress to be a boolean", .{});
+            return .zero;
+        }
+
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull() or !message_value.isString()) {
@@ -4276,7 +4317,7 @@ pub const ServerWebSocket = struct {
         const buffer = string_slice.slice();
 
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
@@ -4324,6 +4365,11 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("publishBinary expects compress to be a boolean", .{});
+            return .zero;
+        }
+
         const compress = args.len > 1 and compress_value.toBoolean();
 
         if (message_value.isEmptyOrUndefinedOrNull()) {
@@ -4337,7 +4383,7 @@ pub const ServerWebSocket = struct {
         const buffer = array_buffer.slice();
 
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
@@ -4377,7 +4423,7 @@ pub const ServerWebSocket = struct {
         }
 
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
@@ -4419,7 +4465,7 @@ pub const ServerWebSocket = struct {
             return JSC.JSValue.jsNumber(0);
         }
         const result = if (!publish_to_self)
-            this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+            this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else
             uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
@@ -4447,7 +4493,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsUndefined();
         }
 
@@ -4456,7 +4502,7 @@ pub const ServerWebSocket = struct {
             .this_value = this.this_value,
             .callback = callback,
         };
-        this.websocket.cork(&corker, Corker.run);
+        this.websocket().cork(&corker, Corker.run);
 
         const result = corker.result;
 
@@ -4484,13 +4530,18 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             log("send() closed", .{});
             return JSValue.jsNumber(0);
         }
 
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
+
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("send expects compress to be a boolean", .{});
+            return .zero;
+        }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
@@ -4500,7 +4551,7 @@ pub const ServerWebSocket = struct {
         }
 
         if (message_value.asArrayBuffer(globalThis)) |buffer| {
-            switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
+            switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
                 .backpressure => {
                     log("send() backpressure ({d} bytes)", .{buffer.len});
                     return JSValue.jsNumber(-1);
@@ -4521,7 +4572,7 @@ pub const ServerWebSocket = struct {
             defer string_slice.deinit();
 
             const buffer = string_slice.slice();
-            switch (this.websocket.send(buffer, .text, compress, true)) {
+            switch (this.websocket().send(buffer, .text, compress, true)) {
                 .backpressure => {
                     log("send() backpressure ({d} bytes string)", .{buffer.len});
                     return JSValue.jsNumber(-1);
@@ -4553,13 +4604,18 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             log("sendText() closed", .{});
             return JSValue.jsNumber(0);
         }
 
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
+
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("sendText expects compress to be a boolean", .{});
+            return .zero;
+        }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
@@ -4572,7 +4628,7 @@ pub const ServerWebSocket = struct {
         defer string_slice.deinit();
 
         const buffer = string_slice.slice();
-        switch (this.websocket.send(buffer, .text, compress, true)) {
+        switch (this.websocket().send(buffer, .text, compress, true)) {
             .backpressure => {
                 log("sendText() backpressure ({d} bytes string)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4594,7 +4650,7 @@ pub const ServerWebSocket = struct {
         message_str: *JSC.JSString,
         compress: bool,
     ) callconv(.C) JSValue {
-        if (this.closed) {
+        if (this.isClosed()) {
             log("sendText() closed", .{});
             return JSValue.jsNumber(0);
         }
@@ -4603,7 +4659,7 @@ pub const ServerWebSocket = struct {
         defer string_slice.deinit();
 
         const buffer = string_slice.slice();
-        switch (this.websocket.send(buffer, .text, compress, true)) {
+        switch (this.websocket().send(buffer, .text, compress, true)) {
             .backpressure => {
                 log("sendText() backpressure ({d} bytes string)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4632,13 +4688,18 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             log("sendBinary() closed", .{});
             return JSValue.jsNumber(0);
         }
 
         const message_value = args.ptr[0];
         const compress_value = args.ptr[1];
+
+        if (!compress_value.isBoolean() and !compress_value.isUndefined() and !compress_value.isEmpty()) {
+            globalThis.throw("sendBinary expects compress to be a boolean", .{});
+            return .zero;
+        }
 
         const compress = args.len > 1 and compress_value.toBoolean();
 
@@ -4647,7 +4708,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         };
 
-        switch (this.websocket.send(buffer.slice(), .binary, compress, true)) {
+        switch (this.websocket().send(buffer.slice(), .binary, compress, true)) {
             .backpressure => {
                 log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4669,14 +4730,14 @@ pub const ServerWebSocket = struct {
         array_buffer: *JSC.JSUint8Array,
         compress: bool,
     ) callconv(.C) JSValue {
-        if (this.closed) {
+        if (this.isClosed()) {
             log("sendBinary() closed", .{});
             return JSValue.jsNumber(0);
         }
 
         const buffer = array_buffer.slice();
 
-        switch (this.websocket.send(buffer, .binary, compress, true)) {
+        switch (this.websocket().send(buffer, .binary, compress, true)) {
             .backpressure => {
                 log("sendBinary() backpressure ({d} bytes)", .{buffer.len});
                 return JSValue.jsNumber(-1);
@@ -4717,7 +4778,7 @@ pub const ServerWebSocket = struct {
     ) JSValue {
         const args = callframe.arguments(2);
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsNumber(0);
         }
 
@@ -4726,7 +4787,7 @@ pub const ServerWebSocket = struct {
             if (value.asArrayBuffer(globalThis)) |data| {
                 const buffer = data.slice();
 
-                switch (this.websocket.send(buffer, opcode, false, true)) {
+                switch (this.websocket().send(buffer, opcode, false, true)) {
                     .backpressure => {
                         log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
                         return JSValue.jsNumber(-1);
@@ -4745,7 +4806,7 @@ pub const ServerWebSocket = struct {
                 defer string_value.deinit();
                 const buffer = string_value.slice();
 
-                switch (this.websocket.send(buffer, opcode, false, true)) {
+                switch (this.websocket().send(buffer, opcode, false, true)) {
                     .backpressure => {
                         log("{s}() backpressure ({d} bytes)", .{ name, buffer.len });
                         return JSValue.jsNumber(-1);
@@ -4765,7 +4826,7 @@ pub const ServerWebSocket = struct {
             }
         }
 
-        switch (this.websocket.send(&.{}, opcode, false, true)) {
+        switch (this.websocket().send(&.{}, opcode, false, true)) {
             .backpressure => {
                 log("{s}() backpressure ({d} bytes)", .{ name, 0 });
                 return JSValue.jsNumber(-1);
@@ -4805,7 +4866,7 @@ pub const ServerWebSocket = struct {
     ) callconv(.C) JSValue {
         log("getReadyState()", .{});
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsNumber(3);
         }
 
@@ -4820,7 +4881,7 @@ pub const ServerWebSocket = struct {
         const args = callframe.arguments(2);
         log("close()", .{});
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return .undefined;
         }
 
@@ -4851,8 +4912,8 @@ pub const ServerWebSocket = struct {
 
         defer message_value.deinit();
 
-        this.closed = true;
-        this.websocket.end(code, message_value.slice());
+        this.flags.closed = true;
+        this.websocket().end(code, message_value.slice());
         return .undefined;
     }
 
@@ -4866,13 +4927,13 @@ pub const ServerWebSocket = struct {
         _ = args;
         log("terminate()", .{});
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return .undefined;
         }
 
-        this.closed = true;
+        this.flags.closed = true;
         this.this_value.unprotect();
-        this.websocket.close();
+        this.websocket().close();
 
         return .undefined;
     }
@@ -4883,7 +4944,7 @@ pub const ServerWebSocket = struct {
     ) callconv(.C) JSValue {
         log("getBinaryType()", .{});
 
-        return switch (this.binary_type) {
+        return switch (this.flags.binary_type) {
             .Uint8Array => ZigString.static("uint8array").toValueGC(globalThis),
             .Buffer => ZigString.static("nodebuffer").toValueGC(globalThis),
             .ArrayBuffer => ZigString.static("arraybuffer").toValueGC(globalThis),
@@ -4902,7 +4963,7 @@ pub const ServerWebSocket = struct {
             // some other value which we don't support
             .Float64Array) {
             .ArrayBuffer, .Buffer, .Uint8Array => |val| {
-                this.binary_type = val;
+                this.flags.binary_type = val;
                 return true;
             },
             else => {
@@ -4919,11 +4980,11 @@ pub const ServerWebSocket = struct {
     ) callconv(.C) JSValue {
         log("getBufferedAmount()", .{});
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsNumber(0);
         }
 
-        return JSValue.jsNumber(this.websocket.getBufferedAmount());
+        return JSValue.jsNumber(this.websocket().getBufferedAmount());
     }
     pub fn subscribe(
         this: *ServerWebSocket,
@@ -4936,7 +4997,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsBoolean(true);
         }
 
@@ -4948,7 +5009,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        return JSValue.jsBoolean(this.websocket.subscribe(topic.slice()));
+        return JSValue.jsBoolean(this.websocket().subscribe(topic.slice()));
     }
     pub fn unsubscribe(
         this: *ServerWebSocket,
@@ -4961,7 +5022,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsBoolean(true);
         }
 
@@ -4973,7 +5034,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        return JSValue.jsBoolean(this.websocket.unsubscribe(topic.slice()));
+        return JSValue.jsBoolean(this.websocket().unsubscribe(topic.slice()));
     }
     pub fn isSubscribed(
         this: *ServerWebSocket,
@@ -4986,7 +5047,7 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsBoolean(false);
         }
 
@@ -4998,21 +5059,21 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        return JSValue.jsBoolean(this.websocket.isSubscribed(topic.slice()));
+        return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
     }
 
     pub fn getRemoteAddress(
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.closed) {
+        if (this.isClosed()) {
             return JSValue.jsUndefined();
         }
 
         var buf: [64]u8 = [_]u8{0} ** 64;
         var text_buf: [512]u8 = undefined;
 
-        const address_bytes = this.websocket.getRemoteAddress(&buf);
+        const address_bytes = this.websocket().getRemoteAddress(&buf);
         const address: std.net.Address = switch (address_bytes.len) {
             4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
             16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
@@ -5061,6 +5122,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         } = .{},
 
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
+        pub const dispose = JSC.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
         pub const doUpgrade = JSC.wrapInstanceMethod(ThisServer, "onUpgrade", false);
         pub const doPublish = JSC.wrapInstanceMethod(ThisServer, "publish", false);
         pub const doReload = onReload;
@@ -5481,6 +5543,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
                 this.stop(abrupt);
+            }
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
+            if (this.listener != null) {
+                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
+                this.thisObject = JSC.JSValue.jsUndefined();
+                this.stop(true);
             }
 
             return JSC.JSValue.jsUndefined();

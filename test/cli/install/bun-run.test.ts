@@ -17,15 +17,19 @@ beforeEach(async () => {
 for (let withRun of [false, true]) {
   describe(withRun ? "bun run" : "bun", () => {
     describe("should work with .", () => {
-      it("respecting 'main' field", async () => {
+      it("respecting 'main' field and allowing trailing commas/comments in package.json", async () => {
         await writeFile(join(run_dir, "test.js"), "console.log('Hello, world!');");
         await writeFile(
           join(run_dir, "package.json"),
-          JSON.stringify({
-            name: "test",
-            version: "0.0.0",
-            main: "test.js",
-          }),
+          `{
+            // single-line comment
+            "name": "test",
+            /** even multi-line comment!! 
+             * such feature much compatible very ecosystem 
+             */
+            "version": "0.0.0",
+            "main": "test.js",
+          }`,
         );
         const { stdout, stderr, exitCode } = spawnSync({
           cmd: [bunExe(), withRun ? "run" : "", "."].filter(Boolean),

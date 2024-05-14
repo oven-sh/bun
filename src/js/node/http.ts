@@ -337,7 +337,7 @@ class Agent extends EventEmitter {
 function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (typeof onListen === "function") {
     try {
-      onListen(err, hostname, port);
+      onListen.$apply(self, [err, hostname, port]);
     } catch (err) {
       self.emit("error", err);
     }
@@ -476,6 +476,15 @@ Server.prototype.close = function (optionalCallback?) {
   this.emit("close");
 };
 
+Server.prototype[Symbol.asyncDispose] = function () {
+  const { resolve, reject, promise } = Promise.withResolvers();
+  this.close(function (err, ...args) {
+    if (err) reject(err);
+    else resolve(...args);
+  });
+  return promise;
+};
+
 Server.prototype.address = function () {
   if (!this[serverSymbol]) return null;
   return this[serverSymbol].address;
@@ -576,6 +585,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
         const http_res = new ResponseClass(http_req, reply);
 
         http_req.socket[kInternalSocketData] = [_server, http_res, req];
+        server.emit("connection", http_req.socket);
 
         const rejectFn = err => reject(err);
         http_req.once("error", rejectFn);
@@ -1088,7 +1098,6 @@ Object.defineProperty(OutgoingMessage.prototype, "finished", {
 
 function emitCloseNT(self) {
   if (!self._closed) {
-    self.destroyed = true;
     self._closed = true;
     self.emit("close");
   }
@@ -1267,8 +1276,9 @@ ServerResponse.prototype.assignSocket = function (socket) {
     throw ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
-  socket.on("close", onServerResponseClose);
+  socket.on("close", () => onServerResponseClose.$call(socket));
   this.socket = socket;
+  this._writableState.autoDestroy = false;
   this.emit("socket", socket);
 };
 
@@ -1389,6 +1399,8 @@ class ClientRequest extends OutgoingMessage {
   #finished;
   #tls;
 
+  _httpMessage;
+
   get path() {
     return this.#path;
   }
@@ -1409,6 +1421,10 @@ class ClientRequest extends OutgoingMessage {
     return this.#protocol;
   }
 
+  get agent() {
+    return this.#agent;
+  }
+
   _write(chunk, encoding, callback) {
     if (!this.#bodyChunks) {
       this.#bodyChunks = [chunk];
@@ -1426,6 +1442,15 @@ class ClientRequest extends OutgoingMessage {
       return;
     }
     this.#bodyChunks.push(...chunks);
+    callback();
+  }
+  _destroy(err, callback) {
+    this.destroyed = true;
+    // If request is destroyed we abort the current response
+    this[kAbortController]?.abort?.();
+    if (err) {
+      this.emit("error", err);
+    }
     callback();
   }
 
@@ -1479,6 +1504,7 @@ class ClientRequest extends OutgoingMessage {
         fetchOptions.unix = socketPath;
       }
 
+      this._writableState.autoDestroy = false;
       //@ts-ignore
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
@@ -1498,6 +1524,7 @@ class ClientRequest extends OutgoingMessage {
         .finally(() => {
           this.#fetchRequest = null;
           this[kClearTimeout]();
+          emitCloseNT(this);
         });
     } catch (err) {
       if (!!$debug) globalReportError(err);
@@ -1513,7 +1540,7 @@ class ClientRequest extends OutgoingMessage {
 
   abort() {
     if (this.aborted) return;
-    this[kAbortController]!.abort();
+    this[kAbortController]?.abort?.();
     // TODO: Close stream if body streaming
   }
 
@@ -1746,14 +1773,11 @@ class ClientRequest extends OutgoingMessage {
     const { signal: _signal, ...optsWithoutSignal } = options;
     this.#options = optsWithoutSignal;
 
-    // needs to run on the next tick so that consumer has time to register the event handler
-    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L353
-    // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L865
+    this._httpMessage = this;
+
     process.nextTick(() => {
-      // this will be FakeSocket since we use fetch() atm under the hood.
       // Ref: https://github.com/nodejs/node/blob/f63e8b7fa7a4b5e041ddec67307609ec8837154f/lib/_http_client.js#L803-L839
       if (this.destroyed) return;
-      if (this.listenerCount("socket") === 0) return;
       this.emit("socket", this.socket);
     });
   }

@@ -265,11 +265,11 @@ export function fakeNodeRun(dir: string, file: string | string[], env?: Record<s
 }
 
 export function randomPort(): number {
-  return 1024 + Math.floor(Math.random() * 65535);
+  return 1024 + Math.floor(Math.random() * (65535 - 1024));
 }
 
 expect.extend({
-  toRun(cmds: string[]) {
+  toRun(cmds: string[], optionalStdout?: string) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
@@ -280,6 +280,14 @@ expect.extend({
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+      };
+    }
+
+    if (optionalStdout) {
+      return {
+        pass: result.stdout.toString("utf-8") === optionalStdout,
+        message: () =>
+          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
       };
     }
 
@@ -295,6 +303,103 @@ export function ospath(path: string) {
     return path.replace(/\//g, "\\");
   }
   return path;
+}
+
+/**
+ * Iterates through each tree in the lockfile, checking for each package
+ * on disk. Also requires each package dependency. Not tested well for
+ * non-npm packages (links, folders, git dependencies, etc.)
+ */
+export async function toMatchNodeModulesAt(lockfile: any, root: string) {
+  function shouldSkip(pkg: any, dep: any): boolean {
+    return (
+      !pkg ||
+      !pkg.resolution ||
+      dep.behavior.optional ||
+      (dep.behavior.dev && pkg.id !== 0) ||
+      (pkg.arch && pkg.arch !== process.arch)
+    );
+  }
+  for (const { path, dependencies } of lockfile.trees) {
+    for (const { package_id, id } of Object.values(dependencies) as any[]) {
+      const treeDep = lockfile.dependencies[id];
+      const treePkg = lockfile.packages[package_id];
+      if (shouldSkip(treePkg, treeDep)) continue;
+
+      const treeDepPath = join(root, path, treeDep.name);
+
+      switch (treePkg.resolution.tag) {
+        case "npm":
+          const onDisk = await Bun.file(join(treeDepPath, "package.json")).json();
+          if (!Bun.deepMatch({ name: treePkg.name, version: treePkg.resolution.value }, onDisk)) {
+            return {
+              pass: false,
+              message: () => `
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}       
+Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
+            };
+          }
+
+          // Ok, we've confirmed the package exists and has the correct version. Now go through
+          // each of its transitive dependencies and confirm the same.
+          for (const depId of treePkg.dependencies) {
+            const dep = lockfile.dependencies[depId];
+            const pkg = lockfile.packages[dep.package_id];
+            if (shouldSkip(pkg, dep)) continue;
+
+            try {
+              const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
+              switch (pkg.resolution.tag) {
+                case "npm":
+                  const name = dep.is_alias ? dep.npm.name : dep.name;
+                  if (!Bun.deepMatch({ name: name, version: pkg.resolution.value }, resolved)) {
+                    return {
+                      pass: false,
+                      message: () =>
+                        `Expected ${dep.name} to have version ${pkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
+                    };
+                  }
+                  break;
+              }
+            } catch (e) {
+              return {
+                pass: false,
+                message: () => `Expected ${dep.name} to be resolvable in ${treeDepPath}`,
+              };
+            }
+          }
+          break;
+
+        default:
+          if (!fs.existsSync(treeDepPath)) {
+            return {
+              pass: false,
+              message: () => `Expected ${treePkg.resolution.tag} "${treeDepPath}" to exist`,
+            };
+          }
+
+          for (const depId of treePkg.dependencies) {
+            const dep = lockfile.dependencies[depId];
+            const pkg = lockfile.packages[dep.package_id];
+            if (shouldSkip(pkg, dep)) continue;
+            try {
+              require.resolve(join(dep.name, "package.json"), { paths: [treeDepPath] });
+            } catch (e) {
+              return {
+                pass: false,
+                message: () => `Expected ${dep.name} to be resolvable in ${treeDepPath}`,
+              };
+            }
+          }
+
+          break;
+      }
+    }
+  }
+
+  return {
+    pass: true,
+  };
 }
 
 export async function toHaveBins(actual: string[], expectedBins: string[]) {

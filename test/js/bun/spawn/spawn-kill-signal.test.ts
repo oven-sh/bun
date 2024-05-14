@@ -22,7 +22,7 @@ describe("subprocess.kill", () => {
           proc.kill(...input);
 
           await promise;
-          expect(proc.exitCode).toBe(isWindows ? 1 : null);
+          expect(proc.exitCode).toBe(null);
           expect(proc.signalCode).toBe(key as any);
         });
       }
@@ -45,7 +45,7 @@ describe("subprocess.kill", () => {
 
         await promise;
 
-        expect(proc.exitCode).toBe(isWindows ? 1 : null);
+        expect(proc.exitCode).toBe(null);
         expect(proc.signalCode).toBe("SIGTERM");
       });
     }

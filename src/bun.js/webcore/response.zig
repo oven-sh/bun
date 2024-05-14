@@ -529,7 +529,7 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(_: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
 
             if (!response_init.isCell())
@@ -538,7 +538,7 @@ pub const Response = struct {
             if (response_init.jsType() == .DOMWrapper) {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
-                if (response_init.as(Request)) |req| {
+                if (response_init.asDirect(Request)) |req| {
                     if (req.headers) |headers| {
                         if (!headers.isEmpty()) {
                             result.headers = headers.cloneThis(ctx);
@@ -549,7 +549,7 @@ pub const Response = struct {
                     return result;
                 }
 
-                if (response_init.as(Response)) |resp| {
+                if (response_init.asDirect(Response)) |resp| {
                     return resp.init.clone(ctx);
                 }
             }
@@ -580,10 +580,8 @@ pub const Response = struct {
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {
-                var method_str = method_value.toSlice(ctx, allocator);
-                defer method_str.deinit();
-                if (method_str.len > 0) {
-                    result.method = Method.which(method_str.slice()) orelse .GET;
+                if (Method.fromJS(ctx, method_value)) |method| {
+                    result.method = method;
                 }
             }
 
@@ -1755,9 +1753,25 @@ pub const Fetch = struct {
         // TODO: move this into a DRYer implementation
         // The status quo is very repetitive and very bug prone
         if (first_arg.as(Request)) |request| {
+            const can_use_fast_getters = first_arg.asDirect(Request) == request;
+            const slow_getters: ?JSC.JSValue = if (can_use_fast_getters) null else first_arg;
             request.ensureURL() catch unreachable;
 
-            if (request.url.isEmpty()) {
+            var url_str = request.url;
+            var need_to_deinit_url_str = false;
+            defer if (need_to_deinit_url_str) url_str.deref();
+
+            if (!can_use_fast_getters) {
+                if (first_arg.fastGet(globalThis, .url)) |url_value| {
+                    url_str = url_value.toBunString(globalThis);
+                    need_to_deinit_url_str = true;
+                    if (globalThis.hasException()) {
+                        return .zero;
+                    }
+                }
+            }
+
+            if (url_str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1768,8 +1782,8 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             }
 
-            if (request.url.hasPrefixComptime("data:")) {
-                var url_slice = request.url.toUTF8WithoutRef(allocator);
+            if (url_str.hasPrefixComptime("data:")) {
+                var url_slice = url_str.toUTF8WithoutRef(allocator);
                 defer url_slice.deinit();
 
                 var data_url = DataURL.parseWithoutCheck(url_slice.slice()) catch {
@@ -1777,11 +1791,11 @@ pub const Fetch = struct {
                     return JSPromise.rejectedPromiseValue(globalThis, err);
                 };
 
-                data_url.url = request.url;
+                data_url.url = url_str;
                 return dataURLResponse(data_url, globalThis, allocator);
             }
 
-            url = ZigURL.fromString(allocator, request.url) catch {
+            url = ZigURL.fromString(allocator, url_str) catch {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
                 // clean hostname if any
                 if (hostname) |host| {
@@ -1799,15 +1813,17 @@ pub const Fetch = struct {
             if (!is_file_url) {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
-                        if (options.fastGet(ctx.ptr(), .method)) |method_| {
-                            var slice_ = method_.toSlice(ctx.ptr(), allocator);
-                            defer slice_.deinit();
-                            method = Method.which(slice_.slice()) orelse .GET;
-                        } else {
+                        if (options.fastGetOrElse(ctx.ptr(), .method, slow_getters)) |method_| {
+                            method = Method.fromJS(ctx, method_) orelse .GET;
+                        } else if (can_use_fast_getters) {
                             method = request.method;
                         }
 
-                        if (options.fastGet(ctx.ptr(), .body)) |body__| {
+                        if (options.fastGetOrElse(
+                            ctx.ptr(),
+                            .body,
+                            slow_getters,
+                        )) |body__| {
                             if (Body.Value.fromJS(ctx.ptr(), body__)) |body_const| {
                                 var body_value = body_const;
                                 // TODO: buffer ReadableStream?
@@ -1826,7 +1842,7 @@ pub const Fetch = struct {
                             body = request.body.value.useAsAnyBlob();
                         }
 
-                        if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
+                        if (options.fastGetOrElse(ctx.ptr(), .headers, slow_getters)) |headers_| {
                             if (headers_.as(FetchHeaders)) |headers__| {
                                 if (headers__.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                                     if (hostname) |host| {
@@ -1954,7 +1970,11 @@ pub const Fetch = struct {
                         }
                     }
                 } else {
-                    method = request.method;
+                    if (can_use_fast_getters) {
+                        method = request.method;
+                    } else if (first_arg.fastGet(globalThis, .method)) |method_value| {
+                        method = Method.fromJS(globalThis, method_value) orelse .GET;
+                    }
 
                     if (request.body.value == .Locked) {
                         if (request.body.value.Locked.readable.get()) |stream| {
@@ -1969,10 +1989,41 @@ pub const Fetch = struct {
                         }
                     }
 
-                    // TODO: remove second isDisturbed check in useAsAnyBlob
-                    body = request.body.value.useAsAnyBlob();
+                    // Support headers getter on subclass
+                    //
+                    // class MyRequest extends Request {
+                    //    get headers() {
+                    //      return {a: "1"};
+                    //    }
+                    // }
+                    //
+                    // fetch(request)
+                    var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
+                    defer {
+                        if (fetch_headers_to_deref) |fetch_headers| {
+                            fetch_headers.deref();
+                        }
+                    }
 
-                    if (request.headers) |head| {
+                    if (get_fetch_headers: {
+                        if (can_use_fast_getters)
+                            break :get_fetch_headers request.headers;
+
+                        if (first_arg.fastGet(globalThis, .headers)) |headers_value| {
+                            // Faster path: existing FetchHeaders object:
+                            if (FetchHeaders.cast(headers_value)) |fetch_headers| {
+                                break :get_fetch_headers fetch_headers;
+                            }
+
+                            // Slow path: create a new FetchHeaders:
+                            if (FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                fetch_headers_to_deref = fetch_headers;
+                                break :get_fetch_headers fetch_headers;
+                            }
+                        }
+
+                        break :get_fetch_headers null;
+                    }) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                             if (hostname) |host| {
                                 allocator.free(host);
@@ -1981,6 +2032,28 @@ pub const Fetch = struct {
                         }
                         headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
                     }
+
+                    // Creating headers can throw.
+                    if (globalThis.hasException()) {
+                        if (hostname) |host| {
+                            allocator.free(host);
+                            hostname = null;
+                        }
+                        return .zero;
+                    }
+
+                    // TODO: remove second isDisturbed check in useAsAnyBlob
+                    body = request.body.value.useAsAnyBlob();
+
+                    // Assume that useAsAnyBlob() has already thrown an error if it was going to.
+                    if (globalThis.hasException()) {
+                        if (hostname) |host| {
+                            allocator.free(host);
+                            hostname = null;
+                        }
+                        return .zero;
+                    }
+
                     if (request.signal) |signal_| {
                         _ = signal_.ref();
                         signal = signal_;
@@ -2028,9 +2101,10 @@ pub const Fetch = struct {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
                         if (options.fastGet(ctx.ptr(), .method)) |method_| {
-                            var slice_ = method_.toSlice(ctx.ptr(), allocator);
-                            defer slice_.deinit();
-                            method = Method.which(slice_.slice()) orelse .GET;
+                            method = Method.fromJS(ctx, method_) orelse .GET;
+                            if (globalThis.hasException()) {
+                                return .zero;
+                            }
                         }
 
                         if (options.fastGet(ctx.ptr(), .body)) |body__| {

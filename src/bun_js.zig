@@ -274,14 +274,21 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
-                vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
-                if (vm.hot_reload != .none) {
+                if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
                     vm.exit_handler.exit_code = 1;
                     vm.onExit();
+
+                    if (run.any_unhandled) {
+                        Output.prettyErrorln(
+                            "<r>\n<d>{s}<r>",
+                            .{Global.unhandled_error_bun_version_string},
+                        );
+                    }
                     Global.exit(1);
                 }
             }
@@ -307,6 +314,12 @@ pub const Run = struct {
             } else {
                 vm.exit_handler.exit_code = 1;
                 vm.onExit();
+                if (run.any_unhandled) {
+                    Output.prettyErrorln(
+                        "<r>\n<d>{s}<r>",
+                        .{Global.unhandled_error_bun_version_string},
+                    );
+                }
                 Global.exit(1);
             }
         }
@@ -325,7 +338,7 @@ pub const Run = struct {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
                 if (prev_promise.status(vm.global.vm()) == .Rejected) {
-                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
 
                 while (true) {
@@ -335,7 +348,7 @@ pub const Run = struct {
                         // Report exceptions in hot-reloaded modules
                         if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                             prev_promise = this.vm.pending_internal_promise;
-                            vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                            _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                             continue;
                         }
 
@@ -346,7 +359,7 @@ pub const Run = struct {
 
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
-                        vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                        _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                     }
 
                     vm.eventLoop().tickPossiblyForever();
@@ -354,7 +367,7 @@ pub const Run = struct {
 
                 if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;
-                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
@@ -403,6 +416,11 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
+
+            Output.prettyErrorln(
+                "<r>\n<d>{s}<r>",
+                .{Global.unhandled_error_bun_version_string},
+            );
         }
         const exit_code = this.vm.exit_handler.exit_code;
 

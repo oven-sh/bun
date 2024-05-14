@@ -1,5 +1,15 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isLinux, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  toBeValidBin,
+  toHaveBins,
+  writeShebangScript,
+  tmpdirSync,
+  toMatchNodeModulesAt,
+} from "harness";
 import { join, sep } from "path";
 import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
@@ -7,10 +17,13 @@ import { readdirSorted } from "../dummy.registry";
 import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
   toHaveBins,
+  toMatchNodeModulesAt,
 });
 
 var verdaccioServer: ChildProcess;
@@ -40,7 +53,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -879,6 +892,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
   expect(await exited).toBe(0);
 
+  let lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+
   // delete node_modules
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -918,6 +934,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
   ]);
   expect(await exited).toBe(0);
+
+  lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
 
   for (var i = 0; i < 100; i++) {
     // Situation:
@@ -4885,44 +4904,49 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
 
-      test("bun pm trust", async () => {
-        await writeFile(
-          join(packageDir, "package.json"),
-          JSON.stringify({
-            name: "foo",
-            version: "1.0.0",
-            dependencies: {
-              "uses-what-bin-slow": "1.0.0",
-            },
-          }),
-        );
+      test(
+        "bun pm trust",
+        async () => {
+          const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
+          await writeFile(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              version: "1.0.0",
+              dependencies: {
+                [dep]: "1.0.0",
+              },
+            }),
+          );
 
-        var { exited } = spawn({
-          cmd: [bunExe(), "install"],
-          cwd: packageDir,
-          stdout: "ignore",
-          stderr: "ignore",
-          env: testEnv,
-        });
+          var { exited } = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "ignore",
+            stderr: "ignore",
+            env: testEnv,
+          });
 
-        expect(await exited).toBe(0);
+          expect(await exited).toBe(0);
 
-        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeFalse();
+          expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
 
-        const proc = spawn({
-          cmd: [bunExe(), "pm", "trust", "--all"],
-          cwd: packageDir,
-          stdout: "ignore",
-          stderr: "ignore",
-          env: testEnv,
-        });
+          const proc = spawn({
+            cmd: [bunExe(), "pm", "trust", "--all"],
+            cwd: packageDir,
+            stdout: "ignore",
+            stderr: "ignore",
+            env: testEnv,
+          });
 
-        expect(await proc.exited).toBe(0);
+          expect(await proc.exited).toBe(0);
 
-        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeTrue();
+          expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeTrue();
 
-        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
-      });
+          expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
+        },
+        isWindows ? 10_000 : 5_000,
+      );
     });
   });
 

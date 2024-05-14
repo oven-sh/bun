@@ -52,6 +52,7 @@ pub const Classes = struct {
     pub const ResourceUsage = JSC.ResourceUsage;
     pub const TCPSocket = JSC.API.TCPSocket;
     pub const TLSSocket = JSC.API.TLSSocket;
+    pub const UDPSocket = JSC.API.UDPSocket;
     pub const TextDecoder = JSC.WebCore.TextDecoder;
     pub const Timeout = JSC.API.Bun.Timer.TimerObject;
     pub const BuildArtifact = JSC.API.BuildArtifact;
@@ -69,4 +70,6 @@ pub const Classes = struct {
     pub const FileInternalReadableStreamSource = JSC.WebCore.FileReader.Source;
     pub const BlobInternalReadableStreamSource = JSC.WebCore.ByteBlobLoader.Source;
     pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
+    pub const BrotliEncoder = JSC.API.BrotliEncoder;
+    pub const BrotliDecoder = JSC.API.BrotliDecoder;
 };

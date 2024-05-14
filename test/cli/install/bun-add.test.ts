@@ -1762,7 +1762,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).text()).toInclude("bun-add.test");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude("bun.test.");
 }
 
 it("should add dependency alongside peerDependencies", async () => {

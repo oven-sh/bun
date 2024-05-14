@@ -2895,7 +2895,7 @@ pub const VirtualMachine = struct {
                     },
                     .source_index = 0,
                 },
-                // this pointer is not read if `top.remapped`
+                // undefined is fine, because this pointer is never read if `top.remapped == true`
                 .source_map = undefined,
             }
         else
@@ -2909,9 +2909,11 @@ pub const VirtualMachine = struct {
         if (maybe_lookup) |lookup| {
             const mapping = lookup.mapping;
 
-            if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
-                top.source_url.deref();
-                top.source_url = src;
+            if (!top.remapped) {
+                if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
+                    top.source_url.deref();
+                    top.source_url = src;
+                }
             }
 
             const code = code: {

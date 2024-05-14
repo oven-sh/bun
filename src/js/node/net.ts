@@ -988,6 +988,7 @@ function createServer(options, connectionListener) {
 }
 
 function normalizeArgs(args) {
+  while (args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {

@@ -169,12 +169,12 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
 void us_internal_handle_dns_results(struct us_loop_t *loop) {
     pthread_mutex_lock(&loop->data.mutex);
-    struct us_socket_t *s = loop->data.dns_ready_head;
+    struct us_connecting_socket_t *s = loop->data.dns_ready_head;
     loop->data.dns_ready_head = NULL;
     pthread_mutex_unlock(&loop->data.mutex);
 
     while (s) {
-        struct us_socket_t *next = s->next;
+        struct us_connecting_socket_t *next = s->next;
         us_internal_socket_after_resolve(s);
         s = next;
     }
@@ -252,6 +252,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 if (error) {
                     /* Emit error, close without emitting on_close */
                     s->context->on_connect_error(s, 0);
+                    // TODO what do we do with the us_connecting_socket_t that may have a referene to this socket that we're closing?
                     us_socket_close_connecting(0, s);
                     s = NULL;
                 } else {

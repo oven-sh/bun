@@ -112,15 +112,9 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
 void us_internal_socket_context_unlink_socket(
     struct us_socket_context_t *context, struct us_socket_t *s);
 
-void us_internal_socket_after_resolve(struct us_socket_t *s);
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 
 void us_internal_freeaddrinfo(struct addrinfo *addrinfo);
-
-struct us_connect_state_t {
-    struct addrinfo *addrinfo;
-    int options;
-    unsigned int closed : 1, shutdown : 1;
-};
 
 /* Sockets are polls */
 struct us_socket_t {
@@ -130,9 +124,19 @@ struct us_socket_t {
   unsigned short
       low_prio_state; /* 0 = not in low-prio queue, 1 = is in low-prio queue, 2
                          = was in low-prio queue in this iteration */
-  struct us_connect_state_t *connect_state; 
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
+};
+
+struct us_connecting_socket_t {
+    alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo *addrinfo;
+    struct us_socket_context_t *context;
+    struct us_connecting_socket_t *next;
+    struct us_socket_t *socket;
+    int options;
+    int socket_ext_size;
+    unsigned int closed : 1, shutdown : 1, ssl : 1;
+    int error;
 };
 
 struct us_wrapped_socket_context_t {
@@ -328,9 +332,9 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     struct us_internal_ssl_socket_context_t *context, const char *path,
     size_t pathlen, int options, int socket_ext_size);
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
+struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, const char *source_host, int options, int socket_ext_size);
+    int port, int options, int socket_ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
@@ -349,6 +353,7 @@ us_internal_ssl_socket_context_ext(struct us_internal_ssl_socket_context_t *s);
 struct us_internal_ssl_socket_context_t *
 us_internal_ssl_socket_get_context(struct us_internal_ssl_socket_t *s);
 void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s);
+void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *c);
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s);
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s);
 

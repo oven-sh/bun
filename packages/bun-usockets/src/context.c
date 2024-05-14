@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <stdio.h>
 
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
@@ -344,84 +345,66 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-extern void Bun__getaddrinfo(const char* host, int port, struct us_socket_t *s);
+extern void Bun__getaddrinfo(const char* host, int port, struct us_connecting_socket_t *s);
 extern void Bun__freeaddrinfo(struct addrinfo* addrinfo);
 
-struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
+struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, NULL, options, socket_ext_size);
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size);
     }
 #endif
 
-    /*
-    Asynchronous connect and Happy Eyeballs v2 sketch:
+    struct us_connecting_socket_t *c = malloc(sizeof(struct us_connecting_socket_t) + socket_ext_size);
+    memset(c, 0, sizeof(struct us_connecting_socket_t));
+    c->socket_ext_size = socket_ext_size;
+    c->context = context;
+    c->options = options;
+    c->ssl = ssl > 0;
 
-    Connect function (this function)
-    1. Allocate the socket object
-    2. Allocate the state machine object, with initial state "waiting for dns"
-    3. Start DNS resolution with global DNS resolver
-    4. Return the socket object to the user
+    Bun__getaddrinfo(host, port, c);
 
-    When DNS resolution completes
-    1. Start an IPv6 connection attempt
-    2. Set a timer to fire once after 50ms to attempt the first IPv4 connection
-    3. Set a timer to fire every 250ms to attempt the next IP in the list
+    context->loop->num_polls++;
 
-    When a connection attempt succeeds
-    1. Close all other connection attempts
-    2. Set the socket to connected state
-    3. Free the state machine object
-    4. Call the user callback. This can, for example, resolve a JS promise
-
-
-    Additional thoughts:
-    This function should probably take a callback that is called when the connection is established
-    (this is theoretically optional, as the onDrain callback should be called when the connection is established and the socket is writable)
-
-    */
-
-    struct us_socket_t *s = (struct us_socket_t *)us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
-    s->connect_state = malloc(sizeof(struct us_connect_state_t));
-    s->connect_state->addrinfo = NULL;
-    s->connect_state->options = options;
-    s->connect_state->closed = 0;
-    s->context = context;
-
-    Bun__getaddrinfo(host, port, s);
-
-    return s;
+    return c;
 }
 
-void us_internal_socket_after_resolve(struct us_socket_t *s) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(s->connect_state->addrinfo, s->connect_state->options);
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(c->addrinfo, c->options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        // TODO figure out how to signal error
+        // TODO propagate errno
+        c->context->on_connect_error(NULL, 0);
         __builtin_trap();
     }
+
+    struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
+    s->context = c->context;
+    s->timeout = 255;
+    s->long_timeout = 255;
+    s->low_prio_state = 0;
+    us_internal_socket_context_link_socket(s->context, s);
+    // TODO check this
+    memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
 
     /* Connect sockets are semi-sockets just like listen sockets */
     us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 
-    /* Link it into context so that timeout fires properly */
-    s->timeout = 255;
-    s->long_timeout = 255;
-    s->low_prio_state = 0;
-    us_internal_socket_context_link_socket(s->context, s);
+    s->context->loop->num_polls--;
 
-    // connect state is no longer needed, free it
-    free(s->connect_state);
-    s->connect_state = NULL;
+    /* Link it into context so that timeout fires properly */
+
+    // store the socket so we can close it if we need to
+    c->socket = s;
 }
 
 // called asynchronously when DNS resolution completes
-void us_internal_dns_callback(struct us_socket_t *s, struct addrinfo *addrinfo) {
-    s->connect_state->addrinfo = addrinfo;
-    struct us_loop_t *loop = s->context->loop;
+void us_internal_dns_callback(struct us_connecting_socket_t *c, struct addrinfo *addrinfo) {
+    c->addrinfo = addrinfo;
+    struct us_loop_t *loop = c->context->loop;
     pthread_mutex_lock(&loop->data.mutex);
-    s->next = loop->data.dns_ready_head;
-    loop->data.dns_ready_head = s;
+    c->next = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = c;
     pthread_mutex_unlock(&loop->data.mutex);
     us_wakeup_loop(loop);
 }

@@ -1172,10 +1172,10 @@ pub const InternalDNS = struct {
     const AddrinfoRequest = struct {
         host: [:0]const u8,
         port: u16,
-        socket: *bun.uws.Socket,
+        socket: *bun.uws.ConnectingSocket,
     };
 
-    extern fn us_internal_dns_callback(socket: *bun.uws.Socket, addrinfo: *std.c.addrinfo) void;
+    extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, addrinfo: *std.c.addrinfo) void;
 
     fn workPoolCallback(req: AddrinfoRequest) void {
         var port_buf: [128]u8 = undefined;
@@ -1208,7 +1208,7 @@ pub const InternalDNS = struct {
         // }
     }
 
-    export fn Bun__getaddrinfo(host: [*:0]const u8, port: u16, socket: *bun.uws.Socket) void {
+    export fn Bun__getaddrinfo(host: [*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) void {
         const req = AddrinfoRequest{
             .host = bun.default_allocator.dupeZ(u8, std.mem.span(host)) catch bun.outOfMemory(),
             .port = port,

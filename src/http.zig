@@ -391,7 +391,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
         pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
-            log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
+            // log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
                 assert(!socket.isClosed());
@@ -403,7 +403,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and !socket.isClosedOrHasError() and socket.isEstablished()) {
                 if (this.pending_sockets.get()) |pending| {
-                    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
+                    socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
                     socket.flush();
                     socket.timeout(0);
                     socket.setTimeoutMinutes(5);
@@ -413,12 +413,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
 
-                    log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @intFromPtr(socket.socket) });
+                    // log("Keep-Alive release {s}:{d} (0x{})", .{ hostname, port, @intFromPtr(socket.socket) });
                     return;
                 }
             }
 
-            socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+            socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
             socket.close(0, null);
         }
 
@@ -436,7 +436,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     assert(context().pending_sockets.put(pooled));
                 }
 
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                 socket.close(0, null);
                 if (comptime Environment.allow_assert) {
                     assert(false);
@@ -455,7 +455,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     .code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code) :0],
                     .reason = if (ssl_error.code == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason) :0],
                 };
-                log("onHandshake(0x{}) authorized: {} error: {s}", .{ bun.fmt.hexIntUpper(@intFromPtr(socket.socket)), authorized, handshake_error.code });
+                // log("onHandshake(0x{}) authorized: {} error: {s}", .{ bun.fmt.hexIntUpper(@intFromPtr(socket.socket)), authorized, handshake_error.code });
 
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
@@ -472,7 +472,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                        socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                         if (client.state.stage != .done and client.state.stage != .fail)
                             client.fail(error.ConnectionRefused);
                         return;
@@ -485,7 +485,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 // we can reach here if we are aborted
                 if (!socket.isClosed()) {
-                    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                    socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                     socket.close(0, null);
                 }
             }
@@ -496,7 +496,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 _: ?*anyopaque,
             ) void {
                 var tagged = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
 
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onClose(comptime ssl, socket);
@@ -548,7 +548,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket: HTTPSocket,
             ) void {
                 var tagged = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
-                socket.ext(**anyopaque).?.* = bun.cast(
+                socket.ext(**anyopaque).* = bun.cast(
                     **anyopaque,
                     ActiveSocket.init(&dead_socket).ptr(),
                 );
@@ -588,7 +588,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 var tagged = ActiveSocket.from(@as(**anyopaque, @ptrCast(@alignCast(ptr))).*);
                 {
                     @setRuntimeSafety(false);
-                    socket.ext(**anyopaque).?.* = @as(**anyopaque, @ptrCast(@alignCast(ActiveSocket.init(dead_socket).ptrUnsafe())));
+                    socket.ext(**anyopaque).* = @as(**anyopaque, @ptrCast(@alignCast(ActiveSocket.init(dead_socket).ptrUnsafe())));
                 }
 
                 if (tagged.get(HTTPClient)) |client| {
@@ -623,12 +623,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     assert(context().pending_sockets.put(socket));
 
                     if (http_socket.isClosed()) {
-                        http_socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                        http_socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                         continue;
                     }
 
                     if (http_socket.isShutdown() or http_socket.getError() != 0) {
-                        http_socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+                        http_socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
                         http_socket.close(0, null);
                         continue;
                     }
@@ -663,7 +663,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             if (client.isKeepAlivePossible()) {
                 if (this.existingSocket(hostname, port)) |sock| {
-                    sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    sock.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
@@ -965,7 +965,9 @@ pub fn onOpen(
         }
     }
     if (client.signals.aborted != null) {
-        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+        // TODO fix this
+        @panic("NYI");
+        // socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
     }
     log("Connected {s} \n", .{client.url.href});
 
@@ -2177,7 +2179,7 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
 
     this.state.response_message_buffer.deinit();
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-    socket.ext(**anyopaque).?.* = bun.cast(
+    socket.ext(**anyopaque).* = bun.cast(
         **anyopaque,
         NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
     );
@@ -2584,7 +2586,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
     if (this.state.stage != .fail and this.state.stage != .done) {
         log("closeAndFail: {s}", .{@errorName(err)});
         if (!socket.isClosed()) {
-            socket.ext(**anyopaque).?.* = bun.cast(
+            socket.ext(**anyopaque).* = bun.cast(
                 **anyopaque,
                 NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
             );
@@ -2998,7 +3000,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const callback = this.result_callback;
 
         if (is_done) {
-            socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
+            socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(

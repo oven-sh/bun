@@ -1515,10 +1515,11 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
                                            socket_ext_size);
 }
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
+// TODO does this need more changes?
+struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, const char *source_host, int options, int socket_ext_size) {
-  return (struct us_internal_ssl_socket_t *)us_socket_context_connect(
+    int port, int options, int socket_ext_size) {
+  return us_socket_context_connect(
       0, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size);
@@ -1689,6 +1690,10 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
 
 void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s) {
   return s + 1;
+}
+
+void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *s) {
+  return (char*)(s + 1) + sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t);
 }
 
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {

@@ -35,7 +35,7 @@ struct us_internal_loop_data_t {
     struct us_socket_t *closed_head;
     struct us_socket_t *low_prio_head;
     int low_prio_budget;
-    struct us_socket_t *dns_ready_head;
+    struct us_connecting_socket_t *dns_ready_head;
     pthread_mutex_t mutex;
     /* We do not care if this flips or not, it doesn't matter */
     long long iteration_nr;

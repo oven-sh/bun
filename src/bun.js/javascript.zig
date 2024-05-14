@@ -890,7 +890,7 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
-        const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload() and Output.enable_ansi_colors;
+        const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload(Output.enable_ansi_colors);
         if (this.hot_reload == .watch) {
             Output.flush();
             bun.reloadProcess(
@@ -3589,7 +3589,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !this.bundler.env.hasSetNoClearTerminalOnReload();
+            clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(Output.enable_ansi_colors);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }

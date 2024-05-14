@@ -257,8 +257,8 @@ pub const Loader = struct {
     }
 
     /// Returns whether the `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` env var is set to something truthy
-    pub fn hasSetNoClearTerminalOnReload(this: *const Loader) bool {
-        return this.getAs(bool, "BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse false;
+    pub fn hasSetNoClearTerminalOnReload(this: *const Loader, default_value: bool) bool {
+        return this.getAs(bool, "BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse default_value;
     }
 
     pub fn get(this: *const Loader, key: string) ?string {

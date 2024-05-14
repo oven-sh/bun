@@ -319,6 +319,9 @@ pub const Tree = struct {
         depth: usize,
     };
 
+    // max number of node_modules folders
+    pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
+
     pub const Iterator = struct {
         trees: []const Tree,
         dependency_ids: []const DependencyID,
@@ -330,8 +333,7 @@ pub const Tree = struct {
         last_parent: Id = invalid_id,
         string_buf: string,
 
-        // max number of node_modules folders
-        depth_stack: [(bun.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
+        depth_stack: [max_depth]Id = undefined,
 
         pub fn init(lockfile: *const Lockfile) Iterator {
             var iter = Iterator{
@@ -370,41 +372,18 @@ pub const Tree = struct {
             }
 
             const tree = this.trees[this.tree_id];
-            var depth: usize = 0;
 
-            {
-                var parent_id = tree.id;
-                var path_written: usize = "node_modules".len;
-                this.depth_stack[0] = 0;
-
-                if (tree.id > 0) {
-                    var depth_buf_len: usize = 1;
-                    while (parent_id > 0 and parent_id < @as(Id, @intCast(this.trees.len))) {
-                        this.depth_stack[depth_buf_len] = parent_id;
-                        parent_id = this.trees[parent_id].parent;
-                        depth_buf_len += 1;
-                    }
-                    depth_buf_len -= 1;
-                    depth = depth_buf_len;
-                    while (depth_buf_len > 0) : (depth_buf_len -= 1) {
-                        this.path_buf[path_written] = std.fs.path.sep;
-                        path_written += 1;
-
-                        const tree_id = this.depth_stack[depth_buf_len];
-                        const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(this.string_buf);
-                        @memcpy(this.path_buf[path_written..][0..name.len], name);
-                        path_written += name.len;
-
-                        @memcpy(this.path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
-                        path_written += "/node_modules".len;
-                    }
-                }
-                this.path_buf[path_written] = 0;
-                this.path_buf_len = path_written;
-            }
+            const relative_path, const depth = tree.relativePathAndDepth(
+                this.trees,
+                this.dependencies,
+                this.string_buf,
+                &this.path_buf,
+                &this.depth_stack,
+            );
 
             this.tree_id += 1;
-            const relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
+            this.path_buf_len = relative_path.len;
+
             return .{
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
@@ -413,6 +392,50 @@ pub const Tree = struct {
             };
         }
     };
+
+    /// Returns relative path and the depth of the tree
+    pub fn relativePathAndDepth(
+        tree: *const Tree,
+        trees: []const Tree,
+        dependencies: []const Dependency,
+        string_buf: string,
+        path_buf: *bun.PathBuffer,
+        depth_buf: *[max_depth]Id,
+    ) struct { stringZ, usize } {
+        var depth: usize = 0;
+
+        var parent_id = tree.id;
+        var path_written: usize = "node_modules".len;
+
+        depth_buf[0] = 0;
+
+        if (tree.id > 0) {
+            var depth_buf_len: usize = 1;
+            while (parent_id > 0 and parent_id < trees.len) {
+                depth_buf[depth_buf_len] = parent_id;
+                parent_id = trees[parent_id].parent;
+                depth_buf_len += 1;
+            }
+            depth_buf_len -= 1;
+            depth = depth_buf_len;
+            while (depth_buf_len > 0) : (depth_buf_len -= 1) {
+                path_buf[path_written] = std.fs.path.sep;
+                path_written += 1;
+
+                const id = depth_buf[depth_buf_len];
+                const name = dependencies[trees[id].dependency_id].name.slice(string_buf);
+                @memcpy(path_buf[path_written..][0..name.len], name);
+                path_written += name.len;
+
+                @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
+                path_written += "/node_modules".len;
+            }
+        }
+        path_buf[path_written] = 0;
+        const rel = path_buf[0..path_written :0];
+
+        return .{ rel, depth };
+    }
 
     const Builder = struct {
         allocator: Allocator,
@@ -517,6 +540,7 @@ pub const Tree = struct {
             if (pid >= max_package_id) continue;
 
             const dependency = builder.dependencies[dep_id];
+
             // Do not hoist aliased packages
             const destination = if (dependency.name_hash != name_hashes[pid])
                 next.id
@@ -1732,6 +1756,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .trusted_dependencies = null,
         .workspace_paths = .{},
         .workspace_versions = .{},
+        .overrides = .{},
+        .meta_hash = zero_hash,
     };
 }
 
@@ -1759,8 +1785,8 @@ pub fn getPackageID(
                 return id;
             }
 
-            if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+            if (resolutions[id].tag == .npm and npm_version != null) {
+                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
@@ -1771,8 +1797,8 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+                if (resolutions[id].tag == .npm and npm_version != null) {
+                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1874,16 +1900,30 @@ pub const StringBuilder = struct {
     lockfile: *Lockfile,
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
+        this.assertNotAllocated();
+
         if (String.canInline(slice)) return;
         this._countWithHash(slice, String.Builder.stringHash(slice));
     }
 
     pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+        this.assertNotAllocated();
+
         if (String.canInline(slice)) return;
         this._countWithHash(slice, hash);
     }
 
+    inline fn assertNotAllocated(this: *const StringBuilder) void {
+        if (comptime Environment.allow_assert) {
+            if (this.ptr != null) {
+                Output.panic("StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before allocating.", .{});
+            }
+        }
+    }
+
     inline fn _countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+        this.assertNotAllocated();
+
         if (!this.lockfile.string_pool.contains(hash)) {
             this.cap += slice.len;
         }
@@ -3609,6 +3649,10 @@ pub const Package = extern struct {
             }
         }
 
+        if (comptime tag != null) {
+            bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
+        }
+
         switch (dependency_version.tag) {
             .folder => {
                 const relative = Path.relative(
@@ -3625,10 +3669,9 @@ pub const Package = extern struct {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
-            .npm => if (comptime tag != null)
-                unreachable
-            else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
+            .npm => {
+                const npm = dependency_version.value.npm;
+                if (workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) {
                     for (package_dependencies[0..dependencies_count]) |dep| {
                         // `dependencies` & `workspaces` defined within the same `package.json`
                         if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
@@ -3650,77 +3693,79 @@ pub const Package = extern struct {
                     }
                 }
             },
-            .workspace => if (workspace_path) |path| {
-                if (workspace_range) |range| {
-                    if (workspace_version) |ver| {
-                        if (range.satisfies(ver, buf, buf)) {
-                            dependency_version.literal = path;
-                            dependency_version.value.workspace = path;
+            .workspace => {
+                if (workspace_path) |path| {
+                    if (workspace_range) |range| {
+                        if (workspace_version) |ver| {
+                            if (range.satisfies(ver, buf, buf)) {
+                                dependency_version.literal = path;
+                                dependency_version.value.workspace = path;
+                            }
                         }
+                    } else {
+                        dependency_version.literal = path;
+                        dependency_version.value.workspace = path;
                     }
                 } else {
+                    const workspace = dependency_version.value.workspace.slice(buf);
+                    const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
+                        var buf2: bun.PathBuffer = undefined;
+                        break :brk Path.relativePlatform(
+                            FileSystem.instance.top_level_dir,
+                            Path.joinAbsStringBuf(
+                                FileSystem.instance.top_level_dir,
+                                &buf2,
+                                &[_]string{
+                                    source.path.name.dir,
+                                    workspace,
+                                },
+                                .auto,
+                            ),
+                            .posix,
+                            false,
+                        );
+                    });
+                    if (comptime Environment.allow_assert) {
+                        assert(path.len() > 0);
+                        assert(!std.fs.path.isAbsolute(path.slice(buf)));
+                    }
                     dependency_version.literal = path;
                     dependency_version.value.workspace = path;
-                }
-            } else {
-                const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
-                    var buf2: bun.PathBuffer = undefined;
-                    break :brk Path.relativePlatform(
-                        FileSystem.instance.top_level_dir,
-                        Path.joinAbsStringBuf(
-                            FileSystem.instance.top_level_dir,
-                            &buf2,
-                            &[_]string{
-                                source.path.name.dir,
-                                workspace,
-                            },
-                            .auto,
-                        ),
-                        .posix,
-                        false,
-                    );
-                });
-                if (comptime Environment.allow_assert) {
-                    assert(path.len() > 0);
-                    assert(!std.fs.path.isAbsolute(path.slice(buf)));
-                }
-                dependency_version.literal = path;
-                dependency_version.value.workspace = path;
 
-                const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
+                    const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                    const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
 
-                if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (switch (package_dep.version.tag) {
-                            // `dependencies` & `workspaces` defined within the same `package.json`
-                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
-                            // `workspace:*`
-                            .workspace => found_matching_workspace and
-                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
-                            else => false,
-                        }) {
-                            package_dep.version = dependency_version;
-                            workspace_entry.value_ptr.* = path;
-                            return null;
+                    if (workspace_version) |ver| {
+                        try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (switch (package_dep.version.tag) {
+                                // `dependencies` & `workspaces` defined within the same `package.json`
+                                .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                    package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                // `workspace:*`
+                                .workspace => found_matching_workspace and
+                                    String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                                else => false,
+                            }) {
+                                package_dep.version = dependency_version;
+                                workspace_entry.value_ptr.* = path;
+                                return null;
+                            }
                         }
-                    }
-                } else if (workspace_entry.found_existing) {
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (package_dep.version.tag == .workspace and
-                            String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
-                        {
-                            package_dep.version = dependency_version;
-                            return null;
+                    } else if (workspace_entry.found_existing) {
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (package_dep.version.tag == .workspace and
+                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
+                            {
+                                package_dep.version = dependency_version;
+                                return null;
+                            }
                         }
+                        return error.InstallFailed;
                     }
-                    return error.InstallFailed;
-                }
 
-                workspace_entry.value_ptr.* = path;
+                    workspace_entry.value_ptr.* = path;
+                }
             },
             else => {},
         }
@@ -4569,7 +4614,7 @@ pub const Package = extern struct {
         }
 
         total_dependencies_count = 0;
-        const in_workspace = lockfile.workspace_paths.contains(@as(u32, @truncate(package.name_hash)));
+        const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
@@ -5918,12 +5963,20 @@ pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
     return default_trusted_dependencies.has(name);
 }
 
-pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {
+pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: DependencyID, dep: Dependency, res: PackageID) !void {
     const sb = this.buffers.string_bytes.items;
     var buf: [2048]u8 = undefined;
 
     try w.beginObject();
     defer w.endObject() catch {};
+
+    try w.objectField("name");
+    try w.write(dep.name.slice(sb));
+
+    if (dep.version.tag == .npm and dep.version.value.npm.is_alias) {
+        try w.objectField("is_alias");
+        try w.write(true);
+    }
 
     try w.objectField("literal");
     try w.write(dep.version.literal.slice(sb));
@@ -5941,7 +5994,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version.fmt(sb)}));
         },
         .dist_tag => {
             try w.beginObject();
@@ -6013,12 +6066,25 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
         },
     }
 
-    try w.objectField("resolved_id");
-    try w.write(if (res) |r| if (r == invalid_package_id) null else r else null);
+    try w.objectField("package_id");
+    try w.write(if (res == invalid_package_id) null else res);
 
-    const behavior = try std.fmt.bufPrint(&buf, "{}", .{dep.behavior});
     try w.objectField("behavior");
-    try w.write(behavior);
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        const fields = @typeInfo(Behavior).Struct.fields;
+        inline for (fields[1 .. fields.len - 1]) |field| {
+            if (@field(dep.behavior, field.name)) {
+                try w.objectField(field.name);
+                try w.write(true);
+            }
+        }
+    }
+
+    try w.objectField("id");
+    try w.write(dep_id);
 }
 
 pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
@@ -6059,6 +6125,84 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         }
     }
     {
+        try w.objectField("trees");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        const trees = this.buffers.trees.items;
+        const string_buf = this.buffers.string_bytes.items;
+        const dependencies = this.buffers.dependencies.items;
+        const hoisted_deps = this.buffers.hoisted_dependencies.items;
+        const resolutions = this.buffers.resolutions.items;
+        var depth_buf: [Tree.max_depth]Tree.Id = undefined;
+        var path_buf: bun.PathBuffer = undefined;
+        @memcpy(path_buf[0.."node_modules".len], "node_modules");
+
+        for (0..this.buffers.trees.items.len) |tree_id| {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const tree = this.buffers.trees.items[tree_id];
+
+            try w.objectField("id");
+            try w.write(tree_id);
+
+            const relative_path, const depth = tree.relativePathAndDepth(
+                trees,
+                dependencies,
+                string_buf,
+                &path_buf,
+                &depth_buf,
+            );
+
+            try w.objectField("path");
+            const formatted = try std.fmt.bufPrint(&buf, "{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
+            try w.write(formatted);
+
+            try w.objectField("depth");
+            try w.write(depth);
+
+            try w.objectField("dependencies");
+            {
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                for (tree.dependencies.get(hoisted_deps)) |tree_dep_id| {
+                    const dep = dependencies[tree_dep_id];
+                    const package_id = resolutions[tree_dep_id];
+
+                    try w.objectField(dep.name.slice(sb));
+                    {
+                        try w.beginObject();
+                        defer w.endObject() catch {};
+
+                        try w.objectField("id");
+                        try w.write(tree_dep_id);
+
+                        try w.objectField("package_id");
+                        try w.write(package_id);
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        try w.objectField("dependencies");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        const dependencies = this.buffers.dependencies.items;
+        const resolutions = this.buffers.resolutions.items;
+
+        for (0..dependencies.len) |dep_id| {
+            const dep = dependencies[dep_id];
+            const res = resolutions[dep_id];
+            try this.jsonStringifyDependency(w, @intCast(dep_id), dep, res);
+        }
+    }
+
+    {
         try w.objectField("packages");
         try w.beginArray();
         defer w.endArray() catch {};
@@ -6078,22 +6222,26 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.write(pkg.name_hash);
 
             try w.objectField("resolution");
-            if (pkg.resolution.tag == .uninitialized) {
-                try w.write(null);
-            } else {
-                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .auto) });
-                try w.write(b);
+            {
+                const res = pkg.resolution;
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                try w.objectField("tag");
+                try w.write(@tagName(res.tag));
+
+                try w.objectField("value");
+                const formatted = try std.fmt.bufPrint(&buf, "{s}", .{res.fmt(sb, .posix)});
+                try w.write(formatted);
             }
 
             try w.objectField("dependencies");
             {
-                try w.beginObject();
-                defer w.endObject() catch {};
+                try w.beginArray();
+                defer w.endArray() catch {};
 
-                for (pkg.dependencies.get(this.buffers.dependencies.items), pkg.resolutions.get(this.buffers.resolutions.items)) |dep_, res| {
-                    const dep: Dependency = dep_;
-                    try w.objectField(dep.name.slice(sb));
-                    try this.jsonStringifyDependency(w, dep, res);
+                for (pkg.dependencies.off..pkg.dependencies.off + pkg.dependencies.len) |dep_id| {
+                    try w.write(dep_id);
                 }
             }
 

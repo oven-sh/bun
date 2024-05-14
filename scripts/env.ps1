@@ -1,7 +1,12 @@
 param(
-  [switch]$Baseline = $False
+  [switch]$Baseline = $false
 )
-$ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
+
+if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {
+  $Baseline = $true
+}
+
+$ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
 # it sets c compiler and flags
@@ -29,6 +34,8 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
+$ENV:BUN_DEV_ENV_SET = "Baseline=$Baseline";
+
 $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $ScriptDir '..' }
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
@@ -43,18 +50,18 @@ $CFLAGS = '/O2'
 $CXXFLAGS = '/O2'
 # $CXXFLAGS = '/O2 /MT'
 
-if ($Baseline) {
-  $CFLAGS += ' -march=nehalem'
-  $CXXFLAGS += ' -march=nehalem'
-}
+$CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
+
+$CFLAGS += " -march=${CPU_NAME}"
+$CXXFLAGS += " -march=${CPU_NAME}"
 
 $CMAKE_FLAGS = @(
   "-GNinja",
   "-DCMAKE_BUILD_TYPE=Release",
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
-  "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
-  "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
+  "-DCMAKE_C_FLAGS=$CFLAGS",
+  "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
 )
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
@@ -79,9 +86,10 @@ function Run() {
   $command = $args[0]
   $commandArgs = @()
   if ($args.Count -gt 1) {
-    $commandArgs = $args[1..($args.Count - 1)]
+    $commandArgs = @($args[1..($args.Count - 1)] | % {$_})
   }
 
+  write-host "> $command $commandArgs"
   & $command $commandArgs
   $result = $LASTEXITCODE
 

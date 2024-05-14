@@ -20,6 +20,15 @@ export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor")
 export const shellInternals = {
   lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
   parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
+  /**
+   * Checks if the given builtin is disabled on the current platform
+   *
+   * @example
+   * ```typescript
+   * const isDisabled = builtinDisabled("cp")
+   * ```
+   */
+  builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
 };
 
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
@@ -33,6 +42,13 @@ export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") a
 export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {
   openTempDirWithoutSharingDelete: () => void;
   closeTempDirHandle: () => void;
+};
+
+export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
+  /**
+   * Returns the lockfile at the given path as an object.
+   */
+  parseLockfile: (cwd: string) => object;
 };
 
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(

@@ -90,11 +90,3 @@ branch = bun
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "test/node.js/upstream"]
-	path = test/node.js/upstream
-	url = https://github.com/nodejs/node.git
-ignore = dirty
-depth = 1
-update = none
-shallow = true
-fetchRecurseSubmodules = false

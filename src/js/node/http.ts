@@ -818,11 +818,18 @@ Object.defineProperty(IncomingMessage.prototype, "statusCode", {
   get() {
     return this[reqSymbol].status;
   },
+  set(v) {
+    if (!(v in STATUS_CODES)) return;
+    this[reqSymbol].status = v;
+  },
 });
 
 Object.defineProperty(IncomingMessage.prototype, "statusMessage", {
   get() {
     return STATUS_CODES[this[reqSymbol].status];
+  },
+  set(v) {
+    //noop
   },
 });
 

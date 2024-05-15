@@ -607,7 +607,7 @@ for (const { body, fn } of bodyTypes) {
     });
 
     describe("new Response()", () => {
-      ["text", "arrayBuffer", "blob"].map(method => {
+      ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
           const result = new Response();
           expect(result).toHaveProperty("bodyUsed", false);
@@ -620,7 +620,7 @@ for (const { body, fn } of bodyTypes) {
     });
 
     describe('new Request(url, {method: "POST" })', () => {
-      ["text", "arrayBuffer", "blob"].map(method => {
+      ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
           const result = new Request("https://example.com", { method: "POST" });
           expect(result).toHaveProperty("bodyUsed", false);
@@ -633,7 +633,7 @@ for (const { body, fn } of bodyTypes) {
     });
 
     describe("new Request(url)", () => {
-      ["text", "arrayBuffer", "blob"].map(method => {
+      ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
           const result = new Request("https://example.com");
           expect(result).toHaveProperty("bodyUsed", false);

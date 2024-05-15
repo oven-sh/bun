@@ -10,6 +10,7 @@ var port = 0;
     Request.prototype.blob,
     Request.prototype.text,
     Request.prototype.json,
+    Request.prototype.bytes,
   ];
   const useRequestObjectValues = [true, false];
 

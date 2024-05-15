@@ -6,9 +6,8 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
-import { tmpdir } from "os";
+import { mkdir, rm, stat } from "fs/promises";
+import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -21,7 +20,7 @@ let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   $.nothrow();
-  temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  temp_dir = tmpdirSync();
   await mkdir(temp_dir, { recursive: true });
 
   for (const file of temp_files) {

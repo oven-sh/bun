@@ -533,7 +533,7 @@ it("#9242.10 PassThrough has constructor", () => {
 });
 
 it("should send Readable events in the right order", async () => {
-  const package_dir = tmpdirSync("bun-test-node-stream");
+  const package_dir = tmpdirSync();
   const fixture_path = join(package_dir, "fixture.js");
 
   await Bun.write(

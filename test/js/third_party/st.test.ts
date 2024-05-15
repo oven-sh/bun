@@ -4,7 +4,7 @@ import { expect, it } from "bun:test";
 import * as path from "node:path";
 
 it("works", async () => {
-  const package_dir = tmpdirSync("bun-test-");
+  const package_dir = tmpdirSync();
 
   await Bun.write(path.join(package_dir, "package.json"), `{ "dependencies": { "st": "3.0.0" } }`);
   await runBunInstall(bunEnv, package_dir);

@@ -1,14 +1,12 @@
 import { spawnSync } from "bun";
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunExe, bunEnv } from "harness";
-import { join } from "path";
-import { tmpdir } from "os";
+import { beforeEach, expect, test } from "bun:test";
+import { writeFileSync } from "fs";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 let cwd: string;
 
 beforeEach(() => {
-  cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));
+  cwd = tmpdirSync();
 });
 
 test("bad workspace path", () => {

@@ -16,7 +16,7 @@ function createTree(basedir: string, paths: string[]) {
 }
 var count = 0;
 function make(files: string[]) {
-  const dir = tmpdirSync();
+  const dir = tmpdirSync().replaceAll("\\", "/");
   rmSync(dir, {
     recursive: true,
     force: true,

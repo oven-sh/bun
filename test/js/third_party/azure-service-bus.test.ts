@@ -3,11 +3,12 @@ import { bunEnv, tmpdirSync } from "harness";
 import { expect, it } from "bun:test";
 import * as path from "node:path";
 
-it("works", async () => {
+// prettier-ignore
+it.skipIf(!bunEnv.TEST_INFO_AZURE_SERVICE_BUS)("works", async () => {
   const package_dir = tmpdirSync("bun-test-");
 
   let { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "add", "st@3.0.0"],
+    cmd: [bunExe(), "add", "@azure/service-bus@7.9.4"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "ignore",
@@ -23,24 +24,19 @@ it("works", async () => {
 
   const fixture_path = path.join(package_dir, "index.ts");
   const fixture_data = `
-    import { createServer } from "node:http";
-    import st from "st";
+    import { ServiceBusClient } from "@azure/service-bus";
 
-    function listen(server): Promise<URL> {
-      return new Promise((resolve, reject) => {
-        server.listen({ port: 0 }, (err, hostname, port) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(new URL("http://"+hostname+":"+port));
-          }
-        });
-      });
+    const connectionString = "${bunEnv.TEST_INFO_AZURE_SERVICE_BUS}";
+    const sbClient = new ServiceBusClient(connectionString);
+    const sender = sbClient.createSender("test");
+    
+    try {
+      await sender.sendMessages({ body: "Hello, world!" });
+      console.log("Message sent");
+      await sender.close();
+    } finally {
+      await sbClient.close();
     }
-    await using server = createServer(st(process.cwd()));
-    const url = await listen(server);
-    const res = await fetch(new URL("/index.ts", url));
-    console.log(await res.text());
   `;
   await Bun.write(fixture_path, fixture_data);
 
@@ -52,9 +48,11 @@ it("works", async () => {
     stderr: "pipe",
     env: bunEnv,
   }));
-  // err = await new Response(stderr).text();
-  // expect(err).toBeEmpty();
+  err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
   out = await new Response(stdout).text();
-  expect(out).toEqual(fixture_data + "\n");
+  expect(out).toEqual("Message sent\n");
   expect(await exited).toBe(0);
-});
+}, 10_000);
+// this takes ~4s locally so increase the time to try and ensure its
+// not flaky in a higher pressure environment

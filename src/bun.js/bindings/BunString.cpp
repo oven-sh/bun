@@ -197,9 +197,8 @@ BunString toStringRef(WTF::StringImpl* wtfString)
 }
 
 BunString toStringView(StringView view) {
-    view.is8Bit();
     return {
-        BunStringTag::StaticZigString,
+        BunStringTag::ZigString,
         { .zig = {
             .ptr = (const LChar*)(view.is8Bit()
                 ? (size_t)view.rawCharacters()
@@ -209,8 +208,6 @@ BunString toStringView(StringView view) {
         } }
     };
 }
-
-
 
 }
 

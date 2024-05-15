@@ -1,6 +1,6 @@
 import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, runBunInstall, toBeValidBin, toHaveBins, tmpdirSync } from "harness";
 import { access, writeFile, mkdir } from "fs/promises";
 import { basename, join } from "path";
 import {
@@ -55,19 +55,8 @@ it("should link and unlink workspace package", async () => {
       version: "0.0.1",
     }),
   );
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: link_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  expect(stderr).toBeDefined();
-  var err = await new Response(stderr).text();
+  let { out, err } = await runBunInstall(env, link_dir);
   expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun install", " Saved lockfile", ""]);
-  expect(stdout).toBeDefined();
-  var out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     ` + boba@workspace:packages/boba`,
@@ -75,16 +64,15 @@ it("should link and unlink workspace package", async () => {
     "",
     " 2 packages installed",
   ]);
-  expect(await exited).toBe(0);
 
-  ({ stdout, stderr, exited } = spawn({
+  let { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],
     cwd: join(link_dir, "packages", "moo"),
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
-  }));
+  });
 
   expect(stderr).toBeDefined();
   err = await new Response(stderr).text();

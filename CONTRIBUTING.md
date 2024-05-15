@@ -179,7 +179,7 @@ The binary will be located at `./build-release/bun` and `./build-release/bun-pro
 
 ### Download release build from pull requests
 
-To save you time spent building a release build locally, we provide a way to run release builds from pull requests. This is useful for testing changes before they are merged.
+To save you time spent building a release build locally, we provide a way to run release builds from pull requests. This is useful for manully testing changes in a release build before they are merged.
 
 To run a release build from a pull request, you can use the `bun-pr` npm package:
 

@@ -1083,7 +1083,7 @@ class ClientHttp2Session extends Http2Session {
 
     function onConnect() {
       this.#onConnect(arguments);
-      listener?.bind(this)(arguments);
+      listener?.$apply(this, arguments);
     }
 
     // h2 with ALPNProtocols

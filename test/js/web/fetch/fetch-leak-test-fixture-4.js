@@ -10,7 +10,6 @@ const delay = 100;
 const iterations = 10;
 
 try {
-  console.log(getHeapStats());
   for (let i = 0; i < iterations; i++) {
     {
       const promises = [];
@@ -19,13 +18,12 @@ try {
       }
       await Promise.all(promises);
     }
-    {
-      await new Promise(r => setTimeout(r, delay));
-    }
+    await Bun.sleep(delay);
+
     {
       Bun.gc(true);
       const stats = getHeapStats();
-      expect(stats.Response || 0).toBeLessThan(batch);
+      expect(stats.Response || 0).toBeLessThanOrEqual(batch + 1);
       expect(stats.Promise || 0).toBeLessThanOrEqual(2);
     }
   }

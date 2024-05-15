@@ -10,7 +10,6 @@ const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Response = WebCore.Response;
 const LOLHTML = bun.LOLHTML;
-const Body = JSC.WebCore.Body;
 
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
@@ -204,7 +203,7 @@ pub const HTMLRewriter = struct {
                     .init = .{
                         .status_code = 200,
                     },
-                    .body = Body.Value.initRef(body_value.value),
+                    .body = body_value,
                 });
                 defer resp.finalize();
                 const out_response_value = this.beginTransform(global, resp);
@@ -410,17 +409,19 @@ pub const HTMLRewriter = struct {
                 .init = .{
                     .status_code = 200,
                 },
-                .body = Body.Value.initRef(.{
-                    .Locked = .{
-                        .global = global,
-                        .task = sink,
+                .body = .{
+                    .value = .{
+                        .Locked = .{
+                            .global = global,
+                            .task = sink,
+                        },
                     },
-                }),
+                },
             });
 
             sink.response = result;
 
-            const input_size = original.body.value.size();
+            const input_size = original.body.len();
             sink.rewriter = builder.build(
                 .UTF8,
                 .{

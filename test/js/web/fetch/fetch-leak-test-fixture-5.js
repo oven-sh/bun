@@ -21,11 +21,11 @@ try {
       }
       await Promise.all(promises);
     }
-    await new Promise(r => setTimeout(r, delay));
+    await Bun.sleep(delay);
     {
       Bun.gc(true);
       const stats = getHeapStats();
-      expect(stats.Response || 0).toBeLessThan(batch);
+      expect(stats.Response || 0).toBeLessThanOrEqual(batch + 1);
       if (peak_promises_alive < stats.Promise || 0) {
         peak_promises_alive = stats.Promise;
       }

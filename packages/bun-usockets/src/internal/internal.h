@@ -71,6 +71,20 @@ enum {
 #define POLL_TYPE_POLLING_MASK 0b11000
 #define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
+/* Bun APIs implemented in Zig */
+void Bun__lock(uint32_t *lock);
+void Bun__unlock(uint32_t *lock);
+
+struct addrinfo_result {
+    struct addrinfo *info;
+    int error;
+};
+
+extern void Bun__addrinfo_get(const char* host, int port, struct us_connecting_socket_t *s);
+extern void Bun__addrinfo_freeRequest(void* addrinfo_req, int error);
+extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
+
+
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error,
                                      int events);

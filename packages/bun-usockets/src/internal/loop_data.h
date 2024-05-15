@@ -18,7 +18,7 @@
 #ifndef LOOP_DATA_H
 #define LOOP_DATA_H
 
-#include <pthread.h>
+#include <stdint.h>
 
 // IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
 struct us_internal_loop_data_t {
@@ -38,7 +38,7 @@ struct us_internal_loop_data_t {
     int low_prio_budget;
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;
-    pthread_mutex_t mutex;
+    uint32_t mutex;
     /* We do not care if this flips or not, it doesn't matter */
     long long iteration_nr;
 };

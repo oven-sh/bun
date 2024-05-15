@@ -41,7 +41,7 @@ pub const InternalLoopData = extern struct {
     low_prio_budget: i32,
     dns_ready_head: *ConnectingSocket,
     closed_connecting_head: *ConnectingSocket,
-    mutex: std.c.pthread_mutex_t,
+    mutex: u32, // this is actually a bun.Lock
 
     iteration_nr: c_longlong,
 

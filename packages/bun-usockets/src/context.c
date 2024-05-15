@@ -19,7 +19,6 @@
 #include "internal/internal.h"
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <errno.h>
 
 int default_is_low_prio_handler(struct us_socket_t *s) {
@@ -345,15 +344,6 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct addrinfo_result {
-    struct addrinfo *info;
-    int error;
-};
-
-extern void Bun__addrinfo_get(const char* host, int port, struct us_connecting_socket_t *s);
-extern void Bun__addrinfo_freeRequest(void* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
-
 struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
@@ -426,10 +416,10 @@ void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_r
     // this lock/unlock should probably be moved outside the loop in dns_resolver.zig
     // or we could use a concurrent datastructure for the dns_ready_head
     // PROBLEM: there could be multiple loops that are waiting for DNS resolution
-    pthread_mutex_lock(&loop->data.mutex);
+    Bun__lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;
-    pthread_mutex_unlock(&loop->data.mutex);
+    Bun__unlock(&loop->data.mutex);
     us_wakeup_loop(loop);
 }
 

@@ -38,6 +38,40 @@ afterAll(async () => {
 const BUN = bunExe();
 
 describe("bunshell", () => {
+  describe("exit codes", async () => {
+    const failing_cmds = [
+      process.platform === "win32" ? "cat ldkfjsldf" : null,
+      "touch -alskdjfakjfhasjfh",
+      "mkdir",
+      "export",
+      "cd lskfjlsdkjf",
+      process.platform !== "win32" ? "echo hi > /dev/full" : null,
+      "pwd sldfkj sfks jdflks flksd f",
+      "which",
+      "rm lskdjfskldjfksdjflkjsldfj",
+      "mv lskdjflskdjf lskdjflskjdlf",
+      "ls lksdjflksdjf",
+      "exit sldkfj sdjf ls f",
+      // "true",
+      // "false",
+      // "yes",
+      // "seq",
+      "dirname",
+      "basename",
+      "cp ksdjflksjdfks lkjsdflksjdfl",
+    ];
+
+    failing_cmds.forEach(cmdstr =>
+      !!cmdstr
+        ? TestBuilder.command`${{ raw: cmdstr }}`
+            .exitCode(c => c !== 0)
+            .stdout(() => {})
+            .stderr(() => {})
+            .runAsTest(cmdstr)
+        : "",
+    );
+  });
+
   describe("concurrency", () => {
     test("writing to stdout", async () => {
       await Promise.all([

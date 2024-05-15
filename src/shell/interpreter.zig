@@ -6995,7 +6995,7 @@ pub const Interpreter = struct {
             pub fn start(this: *Cd) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 if (args.len > 1) {
-                    this.writeStderrNonBlocking("too many arguments", .{});
+                    this.writeStderrNonBlocking("too many arguments\n", .{});
                     // yield execution
                     return Maybe(void).success;
                 }
@@ -7035,7 +7035,7 @@ pub const Interpreter = struct {
                 switch (errno) {
                     @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
                         if (!this.bltn.stderr.needsIO()) {
-                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
                             this.bltn.done(1);
@@ -7043,12 +7043,12 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
 
-                        this.writeStderrNonBlocking("not a directory: {s}", .{new_cwd_});
+                        this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
                         return Maybe(void).success;
                     },
                     @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
                         if (!this.bltn.stderr.needsIO()) {
-                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
                             this.bltn.done(1);
@@ -7056,7 +7056,7 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
 
-                        this.writeStderrNonBlocking("not a directory: {s}", .{new_cwd_});
+                        this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
                         return Maybe(void).success;
                     },
                     else => return Maybe(void).success,
@@ -7075,7 +7075,7 @@ pub const Interpreter = struct {
                 }
 
                 this.state = .done;
-                this.bltn.done(0);
+                this.bltn.done(1);
             }
 
             pub fn deinit(this: *Cd) void {

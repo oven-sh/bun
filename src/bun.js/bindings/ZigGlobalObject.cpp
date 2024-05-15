@@ -1530,7 +1530,7 @@ JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength)
+extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalObject* globalObject, size_t byteOffset, size_t byteLength, size_t totalLength, JSC::JSType type)
 {
 
 // Windows doesn't have mmap
@@ -1546,13 +1546,19 @@ extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalOb
         munmap(ptr, totalLength);
     }));
 
-    Structure* structure = globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default);
+    if (type == JSC::Uint8ArrayType) {
+        return JSValue::encode(JSC::JSUint8Array::create(globalObject->vm(), globalObject->m_typedArrayUint8.get(globalObject), WTFMove(buffer)));
+    } else if (type == JSC::ArrayBufferType) {
+        Structure* structure = globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default);
 
-    if (UNLIKELY(!structure)) {
-        return JSC::JSValue::encode(JSC::JSValue {});
+        if (UNLIKELY(!structure)) {
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTFMove(buffer)));
+    } else {
+        RELEASE_ASSERT_NOT_REACHED();
     }
-
-    return JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), structure, WTFMove(buffer)));
 #else
     return JSC::JSValue::encode(JSC::JSValue {});
 #endif

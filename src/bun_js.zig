@@ -284,14 +284,7 @@ pub const Run = struct {
                     vm.onExit();
 
                     if (run.any_unhandled) {
-                        const MissingSourceMapNoteInfo = bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo;
-                        if (MissingSourceMapNoteInfo.path) |note| {
-                            Output.note(
-                                "missing sourcemaps for {s}",
-                                .{note},
-                            );
-                            Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
-                        }
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                         Output.prettyErrorln(
                             "<r>\n<d>{s}<r>",
@@ -324,14 +317,7 @@ pub const Run = struct {
                 vm.exit_handler.exit_code = 1;
                 vm.onExit();
                 if (run.any_unhandled) {
-                    const MissingSourceMapNoteInfo = bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo;
-                    if (MissingSourceMapNoteInfo.path) |note| {
-                        Output.note(
-                            "missing sourcemaps for {s}",
-                            .{note},
-                        );
-                        Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
-                    }
+                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
                     Output.prettyErrorln(
                         "<r>\n<d>{s}<r>",
@@ -435,14 +421,7 @@ pub const Run = struct {
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
 
-            const MissingSourceMapNoteInfo = bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo;
-            if (MissingSourceMapNoteInfo.path) |note| {
-                Output.note(
-                    "missing sourcemaps for {s}",
-                    .{note},
-                );
-                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
-            }
+            bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
             Output.prettyErrorln(
                 "<r>\n<d>{s}<r>",

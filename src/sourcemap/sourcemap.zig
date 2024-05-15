@@ -640,12 +640,12 @@ pub const Mapping = struct {
                 return .{ .state = .loaded, .data = @intCast(@intFromPtr(p)) };
             }
 
-            fn provider(sc: SourceContentPtr) *SourceProviderMap {
+            pub fn provider(sc: SourceContentPtr) *SourceProviderMap {
                 bun.assert(sc.state == .unloaded);
                 return @ptrFromInt(sc.data);
             }
 
-            fn sources(sc: SourceContentPtr) [*]?[]const u8 {
+            pub fn sources(sc: SourceContentPtr) [*]?[]const u8 {
                 bun.assert(sc.state == .loaded);
                 return @ptrFromInt(sc.data);
             }
@@ -713,7 +713,7 @@ pub const SourceProviderMap = opaque {
         const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
         const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
         return switch (T) {
-            u8 => bun.JSC.ZigString.Slice.initStatic(url),
+            u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
             u16 => bun.JSC.ZigString.Slice.init(
                 alloc,
                 bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),

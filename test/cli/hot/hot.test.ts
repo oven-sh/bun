@@ -320,3 +320,127 @@ it("should hot reload when a file is renamed() into place", async () => {
     runner?.kill?.(9);
   }
 });
+
+it("should work with sourcemap generation", async () => {
+  writeFileSync(
+    hotRunnerRoot,
+    `// source content
+//
+//
+throw new Error('0');`,
+  );
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
+    env: bunEnv,
+    cwd,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  let reloadCounter = 0;
+  function onReload() {
+    writeFileSync(
+      hotRunnerRoot,
+      `// source content
+// etc etc
+// etc etc
+${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
+    );
+  }
+  let str = "";
+  for await (const chunk of runner.stderr) {
+    str += new TextDecoder().decode(chunk);
+    var any = false;
+    if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
+
+    let it = str.split("\n");
+    let line;
+    while ((line = it.shift())) {
+      if (!line.includes("error")) continue;
+      reloadCounter++;
+      str = "";
+
+      if (reloadCounter === 100) {
+        runner.kill();
+        break;
+      }
+
+      expect(line).toContain(`error: ${reloadCounter - 1}`);
+      let next = it.shift()!;
+      const col = next.match(/\s*at.*?:4:(\d+)$/)![1];
+      expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
+      any = true;
+    }
+
+    if (any) await onReload();
+  }
+  expect(reloadCounter).toBe(100);
+});
+
+it("should work with sourcemap loading", async () => {
+  let bundleIn = join(cwd, "bundle_in.ts");
+  rmSync(hotRunnerRoot);
+  writeFileSync(
+    bundleIn,
+    `// source content
+//
+//
+throw new Error('0');`,
+  );
+  await using bundler = spawn({
+    cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap", "--outfile", hotRunnerRoot],
+    env: bunEnv,
+    cwd,
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
+    env: bunEnv,
+    cwd,
+    stdout: "ignore",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  let reloadCounter = 0;
+  function onReload() {
+    writeFileSync(
+      bundleIn,
+      `// source content
+// etc etc
+// etc etc
+${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
+    );
+  }
+  let str = "";
+  for await (const chunk of runner.stderr) {
+    str += new TextDecoder().decode(chunk);
+    var any = false;
+    if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
+
+    let it = str.split("\n");
+    let line;
+    while ((line = it.shift())) {
+      if (!line.includes("error")) continue;
+      reloadCounter++;
+      str = "";
+
+      if (reloadCounter === 100) {
+        runner.kill();
+        break;
+      }
+
+      expect(line).toContain(`error: ${reloadCounter - 1}`);
+      let next = it.shift()!;
+      expect(next).toInclude("bundle_in.ts");
+      const col = next.match(/\s*at.*?:4:(\d+)$/)![1];
+      expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
+      any = true;
+    }
+
+    if (any) await onReload();
+  }
+  expect(reloadCounter).toBe(100);
+  bundler.kill();
+});

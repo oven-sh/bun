@@ -184,7 +184,17 @@ pub const SavedSourceMap = struct {
 
     pub const MissingSourceMapNoteInfo = struct {
         pub var storage: bun.PathBuffer = undefined;
-        pub var path: ?[]const u8 = "";
+        pub var path: ?[]const u8 = null;
+
+        pub fn print() void {
+            if (path) |note| {
+                Output.note(
+                    "missing sourcemaps for {s}",
+                    .{note},
+                );
+                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+            }
+        }
     };
 
     pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
@@ -198,6 +208,17 @@ pub const SavedSourceMap = struct {
         if (old_value.get(SourceProviderMap)) |prov| {
             if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
                 this.map.removeByPtr(entry.key_ptr);
+            }
+        } else if (old_value.get(ParsedSourceMap)) |map| {
+            if (map.source_contents.state == .unloaded and
+                @intFromPtr(map.source_contents.provider()) == @intFromPtr(opaque_source_provider))
+            {
+                this.map.removeByPtr(entry.key_ptr);
+            } else {
+                // not possible to know for sure this is the same map. also not worth
+                // knowing, because what will happen is one of:
+                // - a hot reload happens and replaces this entry.
+                // - the process exits, freeing the memory.
             }
         }
     }
@@ -222,6 +243,8 @@ pub const SavedSourceMap = struct {
                 } else if (value.get(SavedMappings)) |saved_mappings| {
                     var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                     saved.deinit();
+                } else if (value.get(SourceProviderMap)) |provider| {
+                    _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
                 }
             }
 
@@ -248,7 +271,7 @@ pub const SavedSourceMap = struct {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                 saved.deinit();
             } else if (old_value.get(SourceProviderMap)) |provider| {
-                _ = provider; // do nothing
+                _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
             }
         }
         entry.value_ptr.* = value.ptr();
@@ -2919,7 +2942,7 @@ pub const VirtualMachine = struct {
             const code = code: {
                 if (!top.remapped and lookup.source_map.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
-                        break :code ZigString.Slice.initStatic(src);
+                        break :code ZigString.Slice.fromUTF8NeverFree(src);
                     }
                 }
 

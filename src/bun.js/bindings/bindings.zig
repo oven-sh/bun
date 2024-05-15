@@ -421,16 +421,6 @@ pub const ZigString = extern struct {
             };
         }
 
-        /// Creates a `Slice` from bytes without an allocator, aka a string view.
-        /// This slice is only valid for the lifetime of the given input, and
-        /// will never be freed by this slice.
-        pub fn initStatic(input: []const u8) Slice {
-            return .{
-                .ptr = input.ptr,
-                .len = @as(u32, @truncate(input.len)),
-            };
-        }
-
         pub fn toZigString(this: Slice) ZigString {
             if (this.isAllocated())
                 return ZigString.initUTF8(this.ptr[0..this.len]);

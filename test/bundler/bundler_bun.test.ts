@@ -42,4 +42,61 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("bun/TargetBunNoSourcemapMessage", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        // this file has comments and weird whitespace, intentionally
+        // to make it obvious if sourcemaps were generated and mapped properly
+        if           (true) code();
+        function code() {
+          // hello world
+                  throw new
+            Error("Hello World");
+        }
+      `,
+    },
+    run: {
+      exitCode: 1,
+      verify({ stdio }) {
+        expect(stdio).toInclude("\nnote: missing sourcemaps for ");
+        expect(stdio).toInclude("\nnote: consider bundling with '--sourcemap' to get an unminified traces\n");
+      },
+    },
+  });
+  itBundled("bun/TargetBunSourcemapInline", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        // this file has comments and weird whitespace, intentionally
+        // to make it obvious if sourcemaps were generated and mapped properly
+        if           (true) code();
+        function code() {
+          // hello world
+                  throw   new
+            Error("Hello World");
+        }
+      `,
+    },
+    sourceMap: "inline",
+    run: {
+      exitCode: 1,
+      verify({ stdio }) {
+        assert(
+          stdio.startsWith(
+            stdio,
+            `1 | // this file has comments and weird whitespace, intentionally
+2 | // to make it obvious if sourcemaps were generated and mapped properly
+3 | if           (true) code();
+4 | function code() {
+5 |   // hello world
+6 |           throw   new
+                      ^
+error: Hello World`,
+          ),
+        );
+        expect(stdio).toInclude("/entry.ts:6:19");
+      },
+    },
+  });
 });

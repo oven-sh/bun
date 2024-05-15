@@ -307,6 +307,10 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
+  /** Expect a certain non-zero exit code */
+  exitCode?: number;
+  /** Run a function with stdout and stderr. Use expect to assert exact outputs */
+  validate?: (ctx: { stdout: string; stderr: string }) => void;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -1259,7 +1263,7 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
 
-        const { success, stdout, stderr } = Bun.spawnSync({
+        const { success, stdout, stderr, exitCode } = Bun.spawnSync({
           cmd: [
             ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
             ...(run.bunArgs ?? []),
@@ -1326,7 +1330,15 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          if (run.exitCode) {
+            expect(exitCode).toBe(run.exitCode);
+          } else {
+            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          }
+        }
+
+        if (run.validate) {
+          run.validate({ stderr, stdout });
         }
 
         if (run.stdout !== undefined) {

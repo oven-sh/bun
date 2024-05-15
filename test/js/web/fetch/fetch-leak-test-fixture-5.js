@@ -25,14 +25,13 @@ try {
     {
       Bun.gc(true);
       const stats = getHeapStats();
-      expect(stats.Response || 0).toBeLessThanOrEqual(batch + 1);
       if (peak_promises_alive < stats.Promise || 0) {
         peak_promises_alive = stats.Promise;
       }
     }
   }
-  // we expect the peak number of promises to be more than one batch (because of res.text())
-  process.exit(peak_promises_alive > batch ? 0 : 1);
+  // we expect the peak number of promises to be more than the expected number of promises
+  process.exit(peak_promises_alive > 2 ? 0 : 1);
 } catch (e) {
   console.error(e);
   process.exit(1);

@@ -1160,8 +1160,11 @@ pub const Resolver = struct {
         // Treating these paths as absolute paths on all platforms means Windows
         // users will not be able to accidentally make use of these paths.
         if (std.fs.path.isAbsolute(import_path)) {
+            var normalizer = ResolvePath.PosixToWinNormalizer{};
+            const abs_import_path = normalizer.resolve(source_dir, import_path);
+
             if (r.debug_logs) |*debug| {
-                debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{import_path});
+                debug.addNoteFmt("The import \"{s}\" is being treated as an absolute path", .{abs_import_path});
             }
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
@@ -1169,7 +1172,7 @@ pub const Resolver = struct {
                 const dir_info: *DirInfo = _dir_info;
                 if (dir_info.enclosing_tsconfig_json) |tsconfig| {
                     if (tsconfig.paths.count() > 0) {
-                        if (r.matchTSConfigPaths(tsconfig, import_path, kind)) |res| {
+                        if (r.matchTSConfigPaths(tsconfig, abs_import_path, kind)) |res| {
 
                             // We don't set the directory fd here because it might remap an entirely different directory
                             return .{
@@ -1187,26 +1190,25 @@ pub const Resolver = struct {
                 }
             }
 
-            if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(import_path)) {
+            if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(abs_import_path)) {
                 // If the string literal in the source text is an absolute path and has
                 // been marked as an external module, mark it as *not* an absolute path.
                 // That way we preserve the literal text in the output and don't generate
                 // a relative path from the output directory to that path.
                 if (r.debug_logs) |*debug| {
-                    debug.addNoteFmt("The path \"{s}\" is marked as external by the user", .{import_path});
+                    debug.addNoteFmt("The path \"{s}\" is marked as external by the user", .{abs_import_path});
                 }
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
+                        .path_pair = .{ .primary = Path.init(abs_import_path) },
                         .is_external = true,
                     },
                 };
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            var normalizer = ResolvePath.PosixToWinNormalizer{};
-            if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
+            if (r.loadAsFileOrDirectory(abs_import_path, kind)) |entry| {
                 return .{
                     .success = Result{
                         .dirname_fd = entry.dirname_fd,
@@ -1230,7 +1232,10 @@ pub const Resolver = struct {
 
         if (check_relative) {
             const parts = [_]string{ source_dir, import_path };
-            const abs_path = r.fs.absBuf(&parts, bufs(.relative_abs_path));
+            const joined = r.fs.absBufZ(&parts, bufs(.relative_abs_path));
+            const abs_path: []u8 = ResolvePath.PosixToWinNormalizer.ensureLongPath(bufs(.relative_abs_path), joined);
+            // var normalizer = ResolvePath.PosixToWinNormalizer{};
+            // const abs_path = normalizer.resolve(source_dir, joined);
 
             if (r.opts.external.abs_paths.count() > 0 and r.opts.external.abs_paths.contains(abs_path)) {
                 // If the string literal in the source text is an absolute path and has
@@ -2437,7 +2442,9 @@ pub const Resolver = struct {
             return r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false);
         } else {
             const paths = [_]string{ source_dir_info.abs_path, import_path };
-            const resolved = r.fs.absBuf(&paths, bufs(.resolve_without_remapping));
+            const joined = r.fs.absBuf(&paths, bufs(.resolve_without_remapping));
+            var normalizer = ResolvePath.PosixToWinNormalizer{};
+            const resolved = normalizer.resolve(source_dir_info.abs_path, joined);
             if (r.loadAsFileOrDirectory(resolved, kind)) |result| {
                 return .{ .success = result };
             }

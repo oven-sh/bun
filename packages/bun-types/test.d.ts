@@ -267,6 +267,14 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function beforeEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+
+  /**
+   *
+   * Run a function before each file. Equivalent to `beforeAll` except that it runs before each file instead of each test.
+   *
+   * @param fn the function to run
+   */
+  export function beforeEachFile(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   /**
    * Runs a function, once, after all the tests.
    *
@@ -293,6 +301,14 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+
+  /**
+   *
+   * Run a function after each file. Equivalent to `afterAll` except that it runs before each file instead of each test.
+   *
+   * @param fn the function to run
+   */
+  export function afterEachFile(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.

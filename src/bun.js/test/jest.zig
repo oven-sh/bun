@@ -88,8 +88,10 @@ pub const TestRunner = struct {
 
     global_callbacks: struct {
         beforeAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        beforeEachFile: std.ArrayListUnmanaged(JSC.JSValue) = .{},
         beforeEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
         afterEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+        afterEachFile: std.ArrayListUnmanaged(JSC.JSValue) = .{},
         afterAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
     } = .{},
 
@@ -315,7 +317,7 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 13);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 15);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
         module.put(
@@ -407,8 +409,8 @@ pub const Jest = struct {
             describe,
         );
 
-        inline for (.{ "beforeAll", "beforeEach", "afterAll", "afterEach" }) |name| {
-            const function = if (outside_of_test)
+        inline for (.{ "beforeAll", "beforeEachFile", "beforeEach", "afterAll", "afterEachFile", "afterEach" }) |name| {
+            const function = if (comptime outside_of_test or strings.eqlComptime(name, "beforeEachFile") or strings.eqlComptime(name, "afterEachFile"))
                 JSC.NewFunction(globalObject, null, 1, globalHook(name), false)
             else
                 JSC.NewRuntimeFunction(
@@ -845,6 +847,8 @@ pub const DescribeScope = struct {
         beforeEach,
         afterEach,
         afterAll,
+        beforeEachFile,
+        afterEachFile,
     };
 
     pub threadlocal var active: ?*DescribeScope = null;
@@ -966,6 +970,7 @@ pub const DescribeScope = struct {
     pub fn runGlobalCallbacks(globalThis: *JSC.JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
         // global callbacks
         var hooks = &@field(Jest.runner.?.global_callbacks, @tagName(hook));
+
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
                 hooks.clearAndFree(getAllocator(globalThis));

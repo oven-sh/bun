@@ -102,7 +102,7 @@ const LibInfo = struct {
         ) catch unreachable;
         const promise_value = request.head.promise.value();
 
-        // const hints = query.options.toLibC();
+        const hints = query.options.toLibC();
         const errno = getaddrinfo_async_start_(
             &request.backend.libinfo.machport,
             name_z.ptr,

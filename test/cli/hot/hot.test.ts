@@ -1,14 +1,13 @@
 import { spawn } from "bun";
 import { beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, tempDirWithFiles, bunRun, bunRunAsScript } from "harness";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 import { cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync, copyFileSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 
 let hotRunnerRoot: string = "",
   cwd = "";
 beforeEach(() => {
-  const hotPath = join(tmpdir(), "bun-hot-test-" + (Date.now() | 0) + "_" + Math.random().toString(36).slice(2));
+  const hotPath = tmpdirSync();
   hotRunnerRoot = join(hotPath, "hot-runner-root.js");
   rmSync(hotPath, { recursive: true, force: true });
   cpSync(import.meta.dir, hotPath, { recursive: true, force: true });

@@ -760,6 +760,27 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   return flat;
 }
 
-export function tmpdirSync(pattern: string) {
+export function tmpdirSync(pattern: string = "bun.test.") {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
+}
+
+export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(stdout).toBeDefined();
+  expect(stderr).toBeDefined();
+  let err = await new Response(stderr).text();
+  expect(err).not.toContain("panic:");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("warn:");
+  expect(err).toContain("Saved lockfile");
+  let out = await new Response(stdout).text();
+  expect(await exited).toBe(0);
+  return { out, err, exited };
 }

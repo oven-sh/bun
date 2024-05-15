@@ -367,6 +367,8 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
     c->context = context;
     c->options = options;
     c->ssl = ssl > 0;
+    c->timeout = 255;
+    c->long_timeout = 255;
 
     Bun__addrinfo_get(host, port, c);
 
@@ -393,8 +395,8 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
     s->context = c->context;
-    s->timeout = 255;
-    s->long_timeout = 255;
+    s->timeout = c->timeout;
+    s->long_timeout = c->long_timeout;
     s->low_prio_state = 0;
     us_internal_socket_context_link_socket(s->context, s);
     // TODO check this, specifically how it interacts with the SSL code

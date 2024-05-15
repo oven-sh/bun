@@ -42,6 +42,10 @@ void us_socket_shutdown_read(int ssl, struct us_socket_t *s) {
     bsd_shutdown_socket_read(us_poll_fd((struct us_poll_t *) s));
 }
 
+void us_connecting_socket_shutdown_read(int ssl, struct us_connecting_socket_t *c) {
+    c->shutdown_read = 1;
+}
+
 void us_socket_remote_address(int ssl, struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
@@ -78,11 +82,27 @@ void us_socket_timeout(int ssl, struct us_socket_t *s, unsigned int seconds) {
     }
 }
 
+void us_connecting_socket_timeout(int ssl, struct us_connecting_socket_t *c, unsigned int seconds) {
+    if (seconds) {
+        c->timeout = ((unsigned int)c->context->timestamp + ((seconds + 3) >> 2)) % 240;
+    } else {
+        c->timeout = 255;
+    }
+}
+
 void us_socket_long_timeout(int ssl, struct us_socket_t *s, unsigned int minutes) {
     if (minutes) {
         s->long_timeout = ((unsigned int)s->context->long_timestamp + minutes) % 240;
     } else {
         s->long_timeout = 255;
+    }
+}
+
+void us_connecting_socket_long_timeout(int ssl, struct us_connecting_socket_t *c, unsigned int minutes) {
+    if (minutes) {
+        c->long_timeout = ((unsigned int)c->context->long_timestamp + minutes) % 240;
+    } else {
+        c->long_timeout = 255;
     }
 }
 
@@ -96,13 +116,20 @@ int us_socket_is_closed(int ssl, struct us_socket_t *s) {
     return s->prev == (struct us_socket_t *) s->context;
 }
 
+int us_connecting_socket_is_closed(int ssl, struct us_connecting_socket_t *c) {
+    return c->closed;
+}
+
 int us_socket_is_established(int ssl, struct us_socket_t *s) {
     /* Everything that is not POLL_TYPE_SEMI_SOCKET is established */
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
-void us_socket_free_connecting(struct us_connecting_socket_t *c) {
-    free(c);
+void us_connecting_socket_free(struct us_connecting_socket_t *c) {
+    // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
+    // instead, we move it to a close list and free it after the iteration
+    c->next = c->context->loop->data.closed_connecting_head;
+    c->context->loop->data.closed_connecting_head = c;
 }
 
 void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
@@ -125,7 +152,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         s->prev = (struct us_socket_t *) s->context;
     }
 
-    us_socket_free_connecting(c);
+    us_connecting_socket_free(c);
 } 
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
@@ -333,6 +360,10 @@ int us_socket_is_shut_down(int ssl, struct us_socket_t *s) {
     return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
 }
 
+int us_connecting_socket_is_shut_down(int ssl, struct us_connecting_socket_t *c) {
+    return c->shutdown;
+}
+
 void us_socket_shutdown(int ssl, struct us_socket_t *s) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
@@ -348,6 +379,14 @@ void us_socket_shutdown(int ssl, struct us_socket_t *s) {
         us_poll_change(&s->p, s->context->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
+}
+
+void us_connecting_socket_shutdown(int ssl, struct us_connecting_socket_t *c) {
+    c->shutdown = 1;
+}
+
+int us_connecting_socket_get_error(int ssl, struct us_connecting_socket_t *c) {
+    return c->error;
 }
 
 /* 

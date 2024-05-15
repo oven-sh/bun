@@ -40,6 +40,7 @@ pub const InternalLoopData = extern struct {
     low_prio_head: ?*Socket,
     low_prio_budget: i32,
     dns_ready_head: *ConnectingSocket,
+    closed_connecting_head: *ConnectingSocket,
     mutex: std.c.pthread_mutex_t,
 
     iteration_nr: c_longlong,
@@ -92,24 +93,46 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub fn timeout(this: ThisSocket, seconds: c_uint) void {
-            const socket = this.socket.get() orelse return;
-            us_socket_timeout(comptime ssl_int, socket, seconds);
+            switch (this.socket) {
+                .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
+                .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
+            }
         }
 
         pub fn setTimeout(this: ThisSocket, seconds: c_uint) void {
-            const socket = this.socket.get() orelse return;
-            if (seconds > 240) {
-                us_socket_timeout(comptime ssl_int, socket, 0);
-                us_socket_long_timeout(comptime ssl_int, socket, seconds / 60);
-            } else {
-                us_socket_timeout(comptime ssl_int, socket, seconds);
-                us_socket_long_timeout(comptime ssl_int, socket, 0);
+            switch (this.socket) {
+                .done => |socket| {
+                    if (seconds > 240) {
+                        us_socket_timeout(comptime ssl_int, socket, 0);
+                        us_socket_long_timeout(comptime ssl_int, socket, seconds / 60);
+                    } else {
+                        us_socket_timeout(comptime ssl_int, socket, seconds);
+                        us_socket_long_timeout(comptime ssl_int, socket, 0);
+                    }
+                },
+                .connecting => |socket| {
+                    if (seconds > 240) {
+                        us_connecting_socket_timeout(comptime ssl_int, socket, 0);
+                        us_connecting_socket_long_timeout(comptime ssl_int, socket, seconds / 60);
+                    } else {
+                        us_connecting_socket_timeout(comptime ssl_int, socket, seconds);
+                        us_connecting_socket_long_timeout(comptime ssl_int, socket, 0);
+                    }
+                },
             }
         }
 
         pub fn setTimeoutMinutes(this: ThisSocket, minutes: c_uint) void {
-            const socket = this.socket.get() orelse return;
-            return us_socket_long_timeout(comptime ssl_int, socket, minutes);
+            switch (this.socket) {
+                .done => |socket| {
+                    us_socket_timeout(comptime ssl_int, socket, 0);
+                    us_socket_long_timeout(comptime ssl_int, socket, minutes);
+                },
+                .connecting => |socket| {
+                    us_connecting_socket_timeout(comptime ssl_int, socket, 0);
+                    us_connecting_socket_long_timeout(comptime ssl_int, socket, minutes);
+                },
+            }
         }
 
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
@@ -329,28 +352,57 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             );
         }
         pub fn shutdown(this: ThisSocket) void {
-            // TODO we should allow shutdown on connecting sockets
-            const socket = this.socket.get() orelse return;
             // debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket)});
-            return us_socket_shutdown(
-                comptime ssl_int,
-                socket,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_shutdown(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .connecting => |socket| {
+                    return us_connecting_socket_shutdown(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+            }
         }
+
         pub fn shutdownRead(this: ThisSocket) void {
-            const socket = this.socket.get() orelse return;
-            // debug("us_socket_shutdown_read({d})", .{@intFromPtr(this.socket)});
-            return us_socket_shutdown_read(
-                comptime ssl_int,
-                socket,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    // debug("us_socket_shutdown_read({d})", .{@intFromPtr(socket)});
+                    return us_socket_shutdown_read(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .connecting => |socket| {
+                    // debug("us_connecting_socket_shutdown_read({d})", .{@intFromPtr(socket)});
+                    return us_connecting_socket_shutdown_read(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+            }
         }
+
         pub fn isShutdown(this: ThisSocket) bool {
-            const socket = this.socket.get() orelse return false;
-            return us_socket_is_shut_down(
-                comptime ssl_int,
-                socket,
-            ) > 0;
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_is_shut_down(
+                        comptime ssl_int,
+                        socket,
+                    ) > 0;
+                },
+                .connecting => |socket| {
+                    return us_connecting_socket_is_shut_down(
+                        comptime ssl_int,
+                        socket,
+                    ) > 0;
+                },
+            }
         }
 
         pub fn isClosedOrHasError(this: ThisSocket) bool {
@@ -362,22 +414,39 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub fn getError(this: ThisSocket) i32 {
-            // TODO connecting socket can have error too
-            const socket = this.socket.get() orelse return 0;
-            return us_socket_get_error(
-                comptime ssl_int,
-                socket,
-            );
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_get_error(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+                .connecting => |socket| {
+                    return us_connecting_socket_get_error(
+                        comptime ssl_int,
+                        socket,
+                    );
+                },
+            }
         }
 
         pub fn isClosed(this: ThisSocket) bool {
-            // TODO connecting socket can be closed too
-            const socket = this.socket.get() orelse return false;
-            return us_socket_is_closed(
-                comptime ssl_int,
-                socket,
-            ) > 0;
+            switch (this.socket) {
+                .done => |socket| {
+                    return us_socket_is_closed(
+                        comptime ssl_int,
+                        socket,
+                    ) > 0;
+                },
+                .connecting => |socket| {
+                    return us_connecting_socket_is_closed(
+                        comptime ssl_int,
+                        socket,
+                    ) > 0;
+                },
+            }
         }
+
         pub fn close(this: ThisSocket, code: i32, reason: ?*anyopaque) void {
             // debug("us_socket_close({d})", .{@intFromPtr(this.socket)});
             switch (this.socket) {
@@ -1275,7 +1344,6 @@ pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, 
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) *ConnectingSocket;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
-pub extern fn us_connecting_socket_close(ssl: i32, s: *ConnectingSocket) void;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;
 pub extern fn us_socket_context_adopt_socket(ssl: i32, context: ?*SocketContext, s: ?*Socket, ext_size: i32) ?*Socket;
 pub extern fn us_create_child_socket_context(ssl: i32, context: ?*SocketContext, context_ext_size: i32) ?*SocketContext;
@@ -1372,9 +1440,7 @@ extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
 extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
 extern fn us_socket_long_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
 extern fn us_socket_ext(ssl: i32, s: ?*Socket) *anyopaque;
-extern fn us_connecting_socket_ext(ssl: i32, s: ?*ConnectingSocket) *anyopaque;
 extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
-extern fn us_connecting_socket_context(ssl: i32, s: ?*ConnectingSocket) ?*SocketContext;
 extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
 extern fn us_socket_raw_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
@@ -1383,6 +1449,18 @@ extern fn us_socket_shutdown_read(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_is_closed(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_close(ssl: i32, s: ?*Socket, code: i32, reason: ?*anyopaque) ?*Socket;
+
+extern fn us_connecting_socket_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
+extern fn us_connecting_socket_long_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
+extern fn us_connecting_socket_ext(ssl: i32, s: ?*ConnectingSocket) *anyopaque;
+extern fn us_connecting_socket_context(ssl: i32, s: ?*ConnectingSocket) ?*SocketContext;
+extern fn us_connecting_socket_shutdown(ssl: i32, s: ?*ConnectingSocket) void;
+extern fn us_connecting_socket_is_closed(ssl: i32, s: ?*ConnectingSocket) i32;
+extern fn us_connecting_socket_close(ssl: i32, s: ?*ConnectingSocket) void;
+extern fn us_connecting_socket_shutdown_read(ssl: i32, s: ?*ConnectingSocket) void;
+extern fn us_connecting_socket_is_shut_down(ssl: i32, s: ?*ConnectingSocket) i32;
+extern fn us_connecting_socket_get_error(ssl: i32, s: ?*ConnectingSocket) i32;
+
 // if a TLS socket calls this, it will start SSL instance and call open event will also do TLS handshake if required
 // will have no effect if the socket is closed or is not TLS
 extern fn us_socket_open(ssl: i32, s: ?*Socket, is_client: i32, ip: [*c]const u8, ip_length: i32) ?*Socket;

@@ -40,6 +40,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.post_cb = post_cb;
     loop->data.iteration_nr = 0;
 
+    loop->data.closed_connecting_head = 0;
+    loop->data.dns_ready_head = 0;
     pthread_mutex_init(&loop->data.mutex, 0);
 
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
@@ -183,22 +185,26 @@ void us_internal_handle_dns_results(struct us_loop_t *loop) {
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
-    if (loop->data.closed_head) {
-        for (struct us_socket_t *s = loop->data.closed_head; s; ) {
-            struct us_socket_t *next = s->next;
-            us_poll_free((struct us_poll_t *) s, loop);
-            s = next;
-        }
-        loop->data.closed_head = 0;
+    for (struct us_socket_t *s = loop->data.closed_head; s; ) {
+        struct us_socket_t *next = s->next;
+        us_poll_free((struct us_poll_t *) s, loop);
+        s = next;
     }
-    if (loop->data.closed_udp_head) {
-        for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
-            struct us_udp_socket_t *next = s->next;
-            us_poll_free((struct us_poll_t *) s, loop);
-            s = next;
-        }
-        loop->data.closed_udp_head = 0;
+    loop->data.closed_head = 0;
+
+    for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
+        struct us_udp_socket_t *next = s->next;
+        us_poll_free((struct us_poll_t *) s, loop);
+        s = next;
     }
+    loop->data.closed_udp_head = 0;
+
+    for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
+        struct us_connecting_socket_t *next = s->next;
+        free(s);
+        s = next;
+    }
+    loop->data.closed_connecting_head = 0;
 }
 
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
@@ -270,7 +276,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     s->context->on_open(s, 1, 0, 0);
 
                     // now that the socket is open, we can release the associated us_connecting_socket_t
-                    free(s->connect_state);
+                    us_connecting_socket_free(s->connect_state);
                     s->connect_state = NULL;
                 }
             } else {

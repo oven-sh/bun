@@ -1,7 +1,6 @@
-import { bunExe, bunEnv as env } from "harness";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { mkdir, writeFile } from "fs/promises";
 import { join, relative } from "path";
-import { tmpdir } from "os";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
 import { spawn } from "bun";
@@ -13,7 +12,7 @@ afterAll(dummyAfterAll);
 let remove_dir: string;
 
 beforeEach(async () => {
-  remove_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-remove.test"));
+  remove_dir = tmpdirSync();
   await dummyBeforeEach();
 });
 

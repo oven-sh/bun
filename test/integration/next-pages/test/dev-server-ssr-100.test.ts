@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync, rmSync } from "fs";
 import { join } from "path";
@@ -8,11 +8,9 @@ import { cp, rm } from "fs/promises";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
-import { tmpdir } from "node:os";
-
 expect.extend({ toMatchNodeModulesAt });
 
-let root = join(tmpdir(), "ssr" + Math.random().toString(36).slice(2, 4) + "-" + Date.now().toString(36).slice(2, 4));
+let root = tmpdirSync();
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });

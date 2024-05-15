@@ -1,9 +1,9 @@
 import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { spawnSync } from "bun";
 import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 describe("bun test", () => {
   test("can provide no arguments", () => {
@@ -889,7 +889,7 @@ describe("bun test", () => {
 });
 
 function createTest(input?: string | (string | { filename: string; contents: string })[], filename?: string): string {
-  const cwd = mkdtempSync(join(tmpdir(), "bun-test-"));
+  const cwd = tmpdirSync();
   const inputs = Array.isArray(input) ? input : [input ?? ""];
   for (const input of inputs) {
     const contents = typeof input === "string" ? input : input.contents;

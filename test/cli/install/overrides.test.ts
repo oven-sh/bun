@@ -1,8 +1,7 @@
-import { mkdtempSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { test, expect } from "bun:test";
 
 function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
@@ -51,7 +50,7 @@ function ensureLockfileDoesntChangeOnBunI(cwd: string) {
 }
 
 test("overrides affect your own packages", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -67,7 +66,7 @@ test("overrides affect your own packages", async () => {
 });
 
 test("overrides affects all dependencies", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -84,7 +83,7 @@ test("overrides affects all dependencies", async () => {
 });
 
 test("overrides being set later affects all dependencies", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -112,7 +111,7 @@ test("overrides being set later affects all dependencies", async () => {
 });
 
 test("overrides to npm specifier", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -137,7 +136,7 @@ test("overrides to npm specifier", async () => {
 });
 
 test("changing overrides makes the lockfile changed, prevent frozen install", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -163,7 +162,7 @@ test("changing overrides makes the lockfile changed, prevent frozen install", as
 });
 
 test("overrides reset when removed", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({

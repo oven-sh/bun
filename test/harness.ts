@@ -760,6 +760,6 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   return flat;
 }
 
-export function tmpdirSync(pattern: string) {
+export function tmpdirSync(pattern: string = "bun.test.") {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }

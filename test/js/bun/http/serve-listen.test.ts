@@ -1,15 +1,15 @@
 import { describe, test, expect } from "bun:test";
 import { file, serve } from "bun";
 import type { NetworkInterfaceInfo } from "node:os";
-import { tmpdir, networkInterfaces } from "node:os";
-import { mkdtempSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { tmpdirSync } from "harness";
 
 const networks = Object.values(networkInterfaces()).flat() as NetworkInterfaceInfo[];
 const hasIPv4 = networks.some(({ family }) => family === "IPv4");
 const hasIPv6 = networks.some(({ family }) => family === "IPv6");
 
-const unix = join(mkdtempSync(join(tmpdir(), "bun-serve-")), "unix.sock");
+const unix = join(tmpdirSync(), "unix.sock");
 const tls = {
   cert: file(new URL("./fixtures/cert.pem", import.meta.url)),
   key: file(new URL("./fixtures/cert.key", import.meta.url)),

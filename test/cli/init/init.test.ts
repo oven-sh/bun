@@ -1,10 +1,10 @@
 import fs from "fs";
 import path from "path";
-import os from "os";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
+import { test, expect } from "bun:test";
 
 test("bun init works", () => {
-  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
+  const temp = tmpdirSync();
 
   const out = Bun.spawnSync({
     cmd: [bunExe(), "init", "-y"],
@@ -40,7 +40,7 @@ test("bun init works", () => {
 }, 30_000);
 
 test("bun init with piped cli", () => {
-  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-init-X")));
+  const temp = tmpdirSync();
 
   const out = Bun.spawnSync({
     cmd: [bunExe(), "init"],

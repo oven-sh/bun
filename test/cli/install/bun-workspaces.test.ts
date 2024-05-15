@@ -15,7 +15,7 @@ var port: number = 4873;
 var packageDir: string;
 
 beforeEach(() => {
-  packageDir = tmpdirSync("bun-workspaces-" + testCounter++ + "-");
+  packageDir = tmpdirSync();
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   writeFileSync(

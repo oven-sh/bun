@@ -2,14 +2,13 @@ import { it, expect, afterEach } from "bun:test";
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { bunExe, bunEnv } from "harness";
+import { writeFileSync, rmSync } from "node:fs";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 let watchee: Subprocess;
 
 it("should watch files", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "bun-test-"));
+  const cwd = tmpdirSync();
   const path = join(cwd, "watchee.js");
 
   const updateFile = (i: number) => {

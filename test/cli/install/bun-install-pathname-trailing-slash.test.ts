@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { tmpdir } from "os";
 import { join } from "path";
 
 let package_dir: string;
 
 beforeEach(() => {
-  package_dir = tmpdirSync("bun-install-path");
+  package_dir = tmpdirSync();
 });
 
 // https://github.com/oven-sh/bun/issues/2462

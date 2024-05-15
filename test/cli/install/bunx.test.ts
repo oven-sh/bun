@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, isWindows } from "harness";
-import { mkdtemp, realpath, writeFile, rm } from "fs/promises";
+import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
+import { writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -29,9 +29,9 @@ beforeEach(async () => {
     }
   });
 
-  install_cache_dir = await mkdtemp(join(tmpdir(), "bun-install-cache-" + Math.random().toString(36).slice(2)));
-  current_tmpdir = await realpath(await mkdtemp(join(tmpdir(), "bun-x-tmpdir" + Math.random().toString(36).slice(2))));
-  x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test" + Math.random().toString(36).slice(2))));
+  install_cache_dir = tmpdirSync();
+  current_tmpdir = tmpdirSync();
+  x_dir = tmpdirSync();
 
   env.TEMP = current_tmpdir;
   env.BUN_TMPDIR = env.TMPDIR = current_tmpdir;

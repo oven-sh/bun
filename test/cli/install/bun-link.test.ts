@@ -1,9 +1,8 @@
 import { spawn, file } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env, toBeValidBin, toHaveBins } from "harness";
-import { access, mkdtemp, readlink, realpath, rm, writeFile, mkdir } from "fs/promises";
-import { basename, join, sep, dirname } from "path";
-import { tmpdir } from "os";
+import { bunExe, bunEnv as env, tmpdirSync, toBeValidBin, toHaveBins } from "harness";
+import { access, writeFile, mkdir } from "fs/promises";
+import { basename, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -24,7 +23,7 @@ expect.extend({
 });
 
 beforeEach(async () => {
-  link_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-link.test"));
+  link_dir = tmpdirSync();
   await dummyBeforeEach();
 });
 afterEach(async () => {

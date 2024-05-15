@@ -1,14 +1,13 @@
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
-import { tmpdir } from "os";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick, isWindows } from "harness";
+import { gc, withoutAggressiveGC, gcTick, isWindows, tmpdirSync } from "harness";
 import net from "net";
 
-const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
+const tmp_dir = tmpdirSync();
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
 

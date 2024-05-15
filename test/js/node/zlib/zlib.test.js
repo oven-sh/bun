@@ -153,7 +153,7 @@ describe("zlib.brotli", () => {
   });
 
   it("fully works as a stream.Transform", async () => {
-    const x_dir = tmpdirSync("bun.test.");
+    const x_dir = tmpdirSync();
     const out_path_c = resolve(x_dir, "this.js.br");
     const out_path_d = resolve(x_dir, "this.js");
 

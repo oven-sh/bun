@@ -382,7 +382,7 @@ it("should call close and exit before process exits", async () => {
 });
 
 it("it accepts stdio passthrough", async () => {
-  const package_dir = tmpdirSync("bun-node-child_process");
+  const package_dir = tmpdirSync();
 
   await fs.promises.writeFile(
     path.join(package_dir, "package.json"),

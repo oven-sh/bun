@@ -11,10 +11,8 @@ import {
   toMatchNodeModulesAt,
 } from "harness";
 import { join, sep } from "path";
-import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
-import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
@@ -53,7 +51,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
+  packageDir = tmpdirSync();
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(

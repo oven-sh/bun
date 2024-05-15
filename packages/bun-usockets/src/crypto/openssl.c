@@ -460,7 +460,8 @@ restart:
     // we need to check if we received a shutdown here
     if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
       s->received_ssl_shutdown = 1;
-      // we will only close after we handle the data and errors
+      us_internal_ssl_socket_close(s, 0, NULL);
+      return NULL;
     }
 
     if (just_read <= 0) {
@@ -561,10 +562,6 @@ restart:
     }
   }
 
-  // we received the shutdown after reading so we close
-  if (s->received_ssl_shutdown) {
-    return s;
-  }
   // trigger writable if we failed last write with want read
   if (s->ssl_write_wants_read) {
     s->ssl_write_wants_read = 0;

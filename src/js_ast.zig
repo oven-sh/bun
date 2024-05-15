@@ -2429,7 +2429,7 @@ pub const E = struct {
             {
                 s.resolveRopeIfNeeded(allocator);
 
-                const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
+                const decoded = js_lexer.decodeStringLiteralEscapeSequencesToUTF16(s.slice(allocator), allocator) catch unreachable;
                 defer allocator.free(decoded);
 
                 var out, const chars = bun.String.createUninitialized(.utf16, decoded.len);

@@ -143,32 +143,37 @@ pub const SavedSourceMap = struct {
             default_allocator.free(this.data[0..this.len()]);
         }
 
-        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) !ParsedSourceMap {
-            var err_data: SourceMap.Mapping.ParseError = undefined;
-            return SourceMap.Mapping.parse(
+        pub fn toMapping(this: SavedMappings, allocator: Allocator, path: string) anyerror!ParsedSourceMap {
+            const result = SourceMap.Mapping.parse(
                 allocator,
                 this.data[vlq_offset..this.len()],
                 @as(usize, @bitCast(this.data[8..16].*)),
                 1,
                 @as(usize, @bitCast(this.data[16..24].*)),
-                &err_data,
-            ) catch |err| {
-                if (Output.enable_ansi_colors_stderr) {
-                    try err_data.toData(path).writeFormat(
-                        Output.errorWriter(),
-                        logger.Kind.warn,
-                        true,
-                    );
-                } else {
-                    try err_data.toData(path).writeFormat(
-                        Output.errorWriter(),
-                        logger.Kind.warn,
+            );
+            switch (result) {
+                .fail => |fail| {
+                    if (Output.enable_ansi_colors_stderr) {
+                        try fail.toData(path).writeFormat(
+                            Output.errorWriter(),
+                            logger.Kind.warn,
+                            true,
+                        );
+                    } else {
+                        try fail.toData(path).writeFormat(
+                            Output.errorWriter(),
+                            logger.Kind.warn,
 
-                        false,
-                    );
-                }
-                return err;
-            };
+                            false,
+                        );
+                    }
+
+                    return fail.err;
+                },
+                .success => |success| {
+                    return success;
+                },
+            }
         }
     };
 

@@ -71,7 +71,6 @@ pub fn parseUrl(
     arena: std.mem.Allocator,
     source: []const u8,
     comptime result: ParseUrlResultType,
-    err: *Mapping.ParseError,
 ) !result.ParseType() {
     const json_bytes = json_bytes: {
         const data_prefix = "data:application/json";
@@ -86,11 +85,7 @@ pub fn parseUrl(
                     const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
                     const decoded = bun.base64.decode(bytes, base64_data);
                     if (decoded.fail) {
-                        return err.fail(error.InvalidBase64, .{
-                            .msg = "Invalid Base64",
-                            .value = 0,
-                            .loc = .{ .start = 0 },
-                        });
+                        return error.InvalidBase64;
                     }
                     break :json_bytes bytes[0..decoded.written];
                 },
@@ -99,14 +94,10 @@ pub fn parseUrl(
             }
         }
 
-        return err.fail(error.UnsupportedFormat, .{
-            .msg = "Unsupported source map type",
-            .value = 0,
-            .loc = .{ .start = 0 },
-        });
+        return error.UnsupportedFormat;
     };
 
-    return parseJSON(alloc, arena, json_bytes, result, err);
+    return parseJSON(alloc, arena, json_bytes, result);
 }
 
 /// Parses a JSON source-map
@@ -120,14 +111,13 @@ pub fn parseJSON(
     arena: std.mem.Allocator,
     source: []const u8,
     comptime result: ParseUrlResultType,
-    err: *Mapping.ParseError,
 ) !result.ParseType() {
     const json_src = bun.logger.Source.initPathString("sourcemap.json", source);
     var log = bun.logger.Log.init(arena);
     defer log.deinit();
 
     var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
-        return err.fail(error.InvalidJSON, .{});
+        return error.InvalidJSON;
     };
 
     // the allocator given to the JS parser is not respected for all parts
@@ -139,32 +129,30 @@ pub fn parseJSON(
 
     if (json.get("version")) |version| {
         if (version.data != .e_number or version.data.e_number.value != 3.0) {
-            return err.fail(error.UnsupportedVersion, .{});
+            return error.UnsupportedVersion;
         }
     }
 
     const mappings_str = json.get("mappings") orelse {
-        return err.fail(error.UnsupportedVersion, .{});
+        return error.UnsupportedVersion;
     };
 
     if (mappings_str.data != .e_string) {
-        return err.fail(error.InvalidSourceMap, .{});
+        return error.InvalidSourceMap;
     }
 
     const sources_content = switch ((json.get("sourcesContent") orelse return error.InvalidSourceMap).data) {
         .e_array => |arr| arr,
-        else => return err.fail(error.InvalidSourceMap, .{}),
+        else => return error.InvalidSourceMap,
     };
 
     const sources_paths = switch ((json.get("sources") orelse return error.InvalidSourceMap).data) {
         .e_array => |arr| arr,
-        else => return err.fail(error.InvalidSourceMap, .{}),
+        else => return error.InvalidSourceMap,
     };
 
     if (sources_content.items.len != sources_paths.items.len) {
-        return err.fail(error.InvalidSourceMap, .{
-            .msg = "sources.length != sourcesContent.length",
-        });
+        return error.InvalidSourceMap;
     }
 
     var i: usize = 0;
@@ -187,23 +175,13 @@ pub fn parseJSON(
     };
 
     if (result != .sources_only) for (sources_paths.items.slice()) |item| {
-        if (item.data != .e_string) {
-            return err.fail(error.InvalidSourceMap, .{
-                .msg = "Expected string in sources",
-                .value = 0,
-                .loc = .{ .start = 0 },
-            });
-        }
+        if (item.data != .e_string)
+            return error.InvalidSourceMap;
 
-        const utf16_decode = bun.js_lexer.decodeUTF8(item.data.e_string.string(arena) catch bun.outOfMemory(), arena) catch bun.outOfMemory();
+        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
         defer arena.free(utf16_decode);
-        source_paths_slice[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch {
-            return err.fail(error.InvalidSourceMap, .{
-                .msg = "Expected string in sources",
-                .value = 0,
-                .loc = .{ .start = 0 },
-            });
-        };
+        source_paths_slice[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
+            return error.InvalidSourceMap;
 
         i += 1;
     };
@@ -224,16 +202,12 @@ pub fn parseJSON(
                 continue;
             }
 
-            const utf16_decode = bun.js_lexer.decodeUTF8(str, arena) catch bun.outOfMemory();
+            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(str, arena);
             defer arena.free(utf16_decode);
 
-            source_contents_slice[j] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch {
-                return err.fail(error.InvalidSourceMap, .{
-                    .msg = "Expected string in sources",
-                    .value = 0,
-                    .loc = .{ .start = 0 },
-                });
-            };
+            source_contents_slice[j] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
+                return error.InvalidSourceMap;
+
             bun.assert(source_contents_slice[j].?.len > 0);
         }
     }
@@ -242,14 +216,16 @@ pub fn parseJSON(
         return source_contents_slice;
     }
 
-    var map = try Mapping.parse(
+    var map = switch (Mapping.parse(
         alloc,
         mappings_str.data.e_string.slice(arena),
         null,
         std.math.maxInt(i32),
         std.math.maxInt(i32),
-        err,
-    );
+    )) {
+        .success => |x| x,
+        .fail => |fail| return fail.err,
+    };
     map.external_source_names = source_paths_slice;
     map.source_contents = if (result != .mappings_only)
         Mapping.ParsedSourceMap.SourceContentPtr.fromSources(source_contents_slice.ptr)
@@ -395,20 +371,17 @@ pub const Mapping = struct {
         return null;
     }
 
-    /// On error, `err` is populated with error information.
     pub fn parse(
         allocator: std.mem.Allocator,
         bytes: []const u8,
         estimated_mapping_count: ?usize,
         sources_count: i32,
         input_line_count: usize,
-        err: *ParseError,
-    ) !ParsedSourceMap {
+    ) ParseResult {
         var mapping = Mapping.List{};
         if (estimated_mapping_count) |count| {
-            mapping.ensureTotalCapacity(allocator, count) catch bun.outOfMemory();
+            mapping.ensureTotalCapacity(allocator, count) catch unreachable;
         }
-        errdefer mapping.deinit(allocator);
 
         var generated = LineColumnOffset{ .lines = 0, .columns = 0 };
         var original = LineColumnOffset{ .lines = 0, .columns = 0 };
@@ -441,22 +414,28 @@ pub const Mapping = struct {
             const generated_column_delta = decodeVLQ(remain, 0);
 
             if (generated_column_delta.start == 0) {
-                return err.fail(error.MissingGeneratedColumnValue, .{
-                    .msg = "Missing generated column value",
-                    .value = generated.columns,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Missing generated column value",
+                        .err = error.MissingGeneratedColumnValue,
+                        .value = generated.columns,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
 
             needs_sort = needs_sort or generated_column_delta.value < 0;
 
             generated.columns += generated_column_delta.value;
             if (generated.columns < 0) {
-                return err.fail(error.InvalidGeneratedColumnValue, .{
-                    .msg = "Invalid generated column value",
-                    .value = generated.columns,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Invalid generated column value",
+                        .err = error.InvalidGeneratedColumnValue,
+                        .value = generated.columns,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
 
             remain = remain[generated_column_delta.start..];
@@ -482,59 +461,81 @@ pub const Mapping = struct {
             // Read the original source
             const source_index_delta = decodeVLQ(remain, 0);
             if (source_index_delta.start == 0) {
-                return err.fail(error.InvalidSourceIndexDelta, .{
-                    .msg = "Invalid source index delta",
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Invalid source index delta",
+                        .err = error.InvalidSourceIndexDelta,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
             source_index += source_index_delta.value;
 
             if (source_index < 0 or source_index > sources_count) {
-                return err.fail(error.InvalidSourceIndexValue, .{
-                    .msg = "Invalid source index value",
-                    .value = source_index,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Invalid source index value",
+                        .err = error.InvalidSourceIndexValue,
+                        .value = source_index,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
             remain = remain[source_index_delta.start..];
+
+            // // "AAAA" is extremely common
+            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
+
+            // }
 
             // Read the original line
             const original_line_delta = decodeVLQ(remain, 0);
             if (original_line_delta.start == 0) {
-                return err.fail(error.MissingOriginalLine, .{
-                    .msg = "Missing original line",
-                    .err = error.MissingOriginalLine,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Missing original line",
+                        .err = error.MissingOriginalLine,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
 
             original.lines += original_line_delta.value;
             if (original.lines < 0) {
-                return err.fail(error.InvalidOriginalLineValue, .{
-                    .msg = "Invalid original line value",
-                    .value = original.lines,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Invalid original line value",
+                        .err = error.InvalidOriginalLineValue,
+                        .value = original.lines,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
             remain = remain[original_line_delta.start..];
 
             // Read the original column
             const original_column_delta = decodeVLQ(remain, 0);
             if (original_column_delta.start == 0) {
-                return err.fail(error.MissingOriginalColumnValue, .{
-                    .msg = "Missing original column value",
-                    .value = original.columns,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Missing original column value",
+                        .err = error.MissingOriginalColumnValue,
+                        .value = original.columns,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
 
             original.columns += original_column_delta.value;
             if (original.columns < 0) {
-                return err.fail(error.InvalidOriginalColumnValue, .{
-                    .msg = "Invalid original column value",
-                    .value = original.columns,
-                    .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                });
+                return .{
+                    .fail = .{
+                        .msg = "Invalid original column value",
+                        .err = error.InvalidOriginalColumnValue,
+                        .value = original.columns,
+                        .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                    },
+                };
             }
             remain = remain[original_column_delta.start..];
 
@@ -545,11 +546,14 @@ pub const Mapping = struct {
                     },
                     ';' => {},
                     else => |c| {
-                        return err.fail(error.InvalidSourceMap, .{
-                            .msg = "Invalid character after mapping",
-                            .value = @as(i32, @intCast(c)),
-                            .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
-                        });
+                        return .{
+                            .fail = .{
+                                .msg = "Invalid character after mapping",
+                                .err = error.InvalidSourceMap,
+                                .value = @as(i32, @intCast(c)),
+                                .loc = .{ .start = @as(i32, @intCast(bytes.len - remain.len)) },
+                            },
+                        };
                     },
                 }
             }
@@ -557,38 +561,35 @@ pub const Mapping = struct {
                 .generated = generated,
                 .original = original,
                 .source_index = source_index,
-            }) catch bun.outOfMemory();
+            }) catch unreachable;
         }
 
-        return .{
-            .mappings = mapping,
-            .input_line_count = input_line_count,
+        return ParseResult{
+            .success = .{
+                .mappings = mapping,
+                .input_line_count = input_line_count,
+            },
         };
     }
 
-    pub const ParseError = struct {
-        loc: Logger.Loc = Logger.Loc.Empty,
-        err: anyerror = error.Unexpected,
-        value: i32 = 0,
-        msg: []const u8 = "",
+    pub const ParseResult = union(enum) {
+        fail: struct {
+            loc: Logger.Loc,
+            err: anyerror,
+            value: i32 = 0,
+            msg: []const u8 = "",
 
-        pub fn fail(undefined_ptr: *ParseError, comptime err_tag: anytype, data: ParseError) @Type(.{
-            .ErrorSet = &.{.{ .name = @errorName(err_tag) }},
-        }) {
-            undefined_ptr.* = data;
-            undefined_ptr.err = err_tag;
-            return err_tag;
-        }
-
-        pub fn toData(this: @This(), path: []const u8) Logger.Data {
-            return .{
-                .location = .{
-                    .file = path,
-                    .offset = this.loc.toUsize(),
-                },
-                .text = this.msg,
-            };
-        }
+            pub fn toData(this: @This(), path: []const u8) Logger.Data {
+                return Logger.Data{
+                    .location = Logger.Location{
+                        .file = path,
+                        .offset = this.loc.toUsize(),
+                    },
+                    .text = this.msg,
+                };
+            }
+        },
+        success: ParsedSourceMap,
     };
 
     pub const ParsedSourceMap = struct {
@@ -742,13 +743,11 @@ pub const SourceProviderMap = opaque {
                     break :try_inline;
                 defer found_url.deinit();
 
-                var err_data: Mapping.ParseError = undefined;
                 break :parsed parseUrl(
                     bun.default_allocator,
                     arena.allocator(),
                     found_url.slice(),
                     result,
-                    &err_data,
                 ) catch return null;
             }
 
@@ -771,13 +770,11 @@ pub const SourceProviderMap = opaque {
 
                 load_from_separate_file = true;
 
-                var err_data: Mapping.ParseError = undefined;
                 break :parsed parseJSON(
                     bun.default_allocator,
                     arena.allocator(),
                     data,
                     result,
-                    &err_data,
                 ) catch return null;
             }
 

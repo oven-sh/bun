@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { expect, it } from "bun:test";
 
 it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", async () => {
-  const package_dir = tmpdirSync("bun-test-");
+  const package_dir = tmpdirSync();
 
   await Bun.write(
     path.join(package_dir, "package.json"),

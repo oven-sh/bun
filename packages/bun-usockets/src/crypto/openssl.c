@@ -257,7 +257,8 @@ void us_internal_on_ssl_handshake(
 struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
-  if (s->handshake_state != HANDSHAKE_COMPLETED) {
+  // we avoid calling handshake callback if we received a shutdown
+  if (s->handshake_state != HANDSHAKE_COMPLETED && !s->received_ssl_shutdown) {
     // if we have some pending handshake we cancel it and try to check the
     // latest handshake error this way we will always call on_handshake with the
     // latest error before closing this should always call
@@ -429,7 +430,9 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
       // two phase shutdown is complete here
 
       /* Todo: this should also report some kind of clean shutdown */
-      return us_internal_ssl_socket_close(s, 0, NULL);
+      s->received_ssl_shutdown = 1;
+      us_internal_ssl_socket_close(s, 0, NULL);
+      return NULL;
     } else if (ret < 0) {
 
       int err = SSL_get_error(s->ssl, ret);
@@ -442,7 +445,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
     }
 
     // no further processing of data when in shutdown state
-    return s;
+    return NULL;
   }
   // bug checking: this loop needs a lot of attention and clean-ups and
   // check-ups
@@ -485,11 +488,12 @@ restart:
                 s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
                 read);
             if (!s || us_socket_is_closed(0, &s->s)) {
-              return s;
+              return NULL;
             }
           }
           // terminate connection here
-          return us_internal_ssl_socket_close(s, 0, NULL);
+          us_internal_ssl_socket_close(s, 0, NULL);
+          return NULL;
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
@@ -498,7 +502,8 @@ restart:
         }
 
         // terminate connection here
-        return us_internal_ssl_socket_close(s, 0, NULL);
+        us_internal_ssl_socket_close(s, 0, NULL);
+        return NULL;
       } else {
         // emit the data we have and exit
 
@@ -509,7 +514,8 @@ restart:
 
         // assume we emptied the input buffer fully or error here as well!
         if (loop_ssl_data->ssl_read_input_length) {
-          return us_internal_ssl_socket_close(s, 0, NULL);
+          us_internal_ssl_socket_close(s, 0, NULL);
+          return NULL;
         }
 
         // cannot emit zero length to app
@@ -524,7 +530,7 @@ restart:
             s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
             read);
         if (!s || us_socket_is_closed(0, &s->s)) {
-          return s;
+          return NULL;
         }
 
         break;
@@ -547,7 +553,7 @@ restart:
       s = context->on_data(
           s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || us_socket_is_closed(0, &s->s)) {
-        return s;
+        return NULL;
       }
 
       read = 0;
@@ -557,8 +563,7 @@ restart:
 
   // we received the shutdown after reading so we close
   if (s->received_ssl_shutdown) {
-    us_internal_ssl_socket_close(s, 0, NULL);
-    return NULL;
+    return s;
   }
   // trigger writable if we failed last write with want read
   if (s->ssl_write_wants_read) {
@@ -573,7 +578,7 @@ restart:
         &s->s); // cast here!
     // if we are closed here, then exit
     if (!s || us_socket_is_closed(0, &s->s)) {
-      return s;
+      return NULL;
     }
   }
 
@@ -1693,7 +1698,7 @@ void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s) {
 
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_shut_down(0, &s->s) ||
-         SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN;
+         (s->ssl && (SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN));
 }
 
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {

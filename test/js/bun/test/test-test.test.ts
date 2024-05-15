@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
 import { mkdtemp, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 
@@ -653,4 +653,105 @@ describe("empty", () => {
   } finally {
     await rm(test_dir, { force: true, recursive: true });
   }
+});
+
+test.only("test afterEachFile & beforeEachFile", async () => {
+  const dir = tempDirWithFiles("test-hooks-beforeEachFile", {
+    "package.json": /* json */ `
+{
+  "name": "test-hooks-beforeEachFile",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  }
+}
+`,
+    "1.test.js": /* jsx */ `
+import { test, expect } from "bun:test";
+test("inner test in file #1", () => {
+  console.log("inner test");
+});
+
+`,
+    "2.test.js": /* jsx */ `
+import { test, expect } from "bun:test";
+test("inner test in file #2", () => {
+  console.log("inner test");
+});
+
+`,
+    "3.test.js": /* jsx */ `
+import { test, expect } from "bun:test";
+test("inner test in file #3", () => {
+  console.log("inner test");
+});
+
+`,
+    "4.empty.test.js": /* jsx */ `
+import { test, expect } from "bun:test";
+`,
+    "preload.js": /* js */ `
+import { beforeEachFile, afterEachFile, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
+
+beforeEachFile && beforeEachFile(() => {
+  console.log("beforeEachFile");
+});
+
+afterEachFile && afterEachFile(() => {
+  console.log("afterEachFile");
+});
+
+beforeAll(() => {
+  console.log("beforeAll");
+});
+
+beforeEach(() => {
+  console.log("beforeEach");
+});
+
+afterEach(() => {
+  console.log("afterEach");
+});
+
+afterAll(() => {
+  console.log("afterAll");
+});
+`,
+  });
+
+  const { stdout, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", "--preload=./preload.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+
+  const lines = stdout
+    .toString()
+    .trim()
+    .split("\n")
+    .map(a => a.trim());
+
+  expect(lines).toStrictEqual([
+    "beforeEachFile",
+    "beforeAll",
+    "beforeEach",
+    "inner test",
+    "afterEach",
+    "afterEachFile",
+    "beforeEachFile",
+    "beforeEach",
+    "inner test",
+    "afterEach",
+    "afterEachFile",
+    "beforeEachFile",
+    "beforeEach",
+    "inner test",
+    "afterEach",
+    "afterEachFile",
+    "afterAll",
+  ]);
+
+  expect(exitCode).toBe(0);
 });

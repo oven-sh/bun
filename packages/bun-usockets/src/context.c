@@ -387,7 +387,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     s->long_timeout = 255;
     s->low_prio_state = 0;
     us_internal_socket_context_link_socket(s->context, s);
-    // TODO check this
+    // TODO check this, specifically how it interacts with the SSL code
     memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
 
     /* Connect sockets are semi-sockets just like listen sockets */
@@ -406,6 +406,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
     c->addrinfo_req = addrinfo_req;
     struct us_loop_t *loop = c->context->loop;
+    // this lock/unlock should probably be moved outside the loop in dns_resolver.zig
+    // or we could use a concurrent datastructure for the dns_ready_head
+    // PROBLEM: there could be multiple loops that are waiting for DNS resolution
     pthread_mutex_lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;
     loop->data.dns_ready_head = c;

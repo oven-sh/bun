@@ -1168,7 +1168,7 @@ pub const GlobalData = struct {
     }
 };
 
-pub const InternalDNS = struct {
+const InternalDNS = struct {
     const Request = struct {
         const Key = struct {
             host: [:0]const u8,
@@ -1200,6 +1200,7 @@ pub const InternalDNS = struct {
         result: ?*std.c.addrinfo = null,
         notify: std.ArrayListUnmanaged(*bun.uws.ConnectingSocket) = .{},
         // number of sockets that have a referene to the addrinfo result
+        // while this is non-zero, the result must not be freed
         refcount: usize = 0,
 
         pub fn makeOwned(this: *@This()) void {
@@ -1217,13 +1218,11 @@ pub const InternalDNS = struct {
     };
 
     const GlobalCache = struct {
-        // const Cache = bun.HiveArray(PendingCacheKey, 32);
-        const Cache = std.ArrayListUnmanaged(*Request);
-
         const MAX_ENTRIES = 256;
 
         lock: bun.Lock = bun.Lock.init(),
-        cache: Cache = Cache{},
+        cache: [MAX_ENTRIES]*Request = undefined,
+        len: usize = 0,
 
         const This = @This();
 
@@ -1233,16 +1232,52 @@ pub const InternalDNS = struct {
             none,
         };
 
-        pub fn get(
+        fn get(
             this: *This,
             key: Request.Key,
-        ) CacheResult {
-            for (this.cache.items) |entry| {
+        ) ?*Request {
+            for (this.cache[0..this.len]) |entry| {
                 if (entry.key.hash == key.hash and entry.key.port == key.port) {
-                    return if (entry.result == null) .{ .inflight = entry } else .{ .resolved = entry };
+                    return entry;
                 }
             }
-            return .none;
+            return null;
+        }
+
+        fn isNearlyFull(this: *This) bool {
+            // 80% full (value is kind of arbitrary)
+            return this.len * 5 >= this.cache.len * 4;
+        }
+
+        fn remove(this: *This, entry: *Request) void {
+            // equivalent of swapRemove
+            for (0..this.len) |i| {
+                if (this.cache[i] == entry) {
+                    this.cache[i] = this.cache[this.len - 1];
+                    this.len -= 1;
+                    return;
+                }
+            }
+        }
+
+        fn tryPush(this: *This, entry: *Request) bool {
+            // is the cache full?
+            if (this.len >= this.cache.len) {
+                // check if there is an element to evict
+                for (this.cache[0..this.len]) |*e| {
+                    if (e.*.refcount == 0) {
+                        e.*.deinit();
+                        e.* = entry;
+                        return true;
+                    }
+                }
+                return false;
+            } else {
+                // just append to the end
+                this.cache[this.len] = entry;
+                this.len += 1;
+                return true;
+            }
         }
     };
 
@@ -1275,6 +1310,7 @@ pub const InternalDNS = struct {
 
         req.result = addrinfo orelse @panic("TODO handle this error");
 
+        // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
         global_cache.lock.lock();
         for (req.notify.items) |socket| {
             req.refcount += 1;
@@ -1290,39 +1326,30 @@ pub const InternalDNS = struct {
         const key = Request.Key.init(host, port);
 
         global_cache.lock.lock();
-        switch (global_cache.get(key)) {
-            .inflight => |entry| {
-                // add this socket to the list of sockets to be notified when the request is resolved
-                entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
-                global_cache.lock.unlock();
-                return;
-            },
-            .resolved => |entry| {
+        // is there a cache hit?
+        if (global_cache.get(key)) |entry| {
+            if (entry.result != null) {
                 // result is already available, we can notify the socket immediately
                 entry.refcount += 1;
                 global_cache.lock.unlock();
                 us_internal_dns_callback(socket, entry);
                 return;
-            },
-            .none => {},
+            } else {
+                // add this socket to the list of sockets to be notified when the request is resolved
+                entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+                global_cache.lock.unlock();
+                return;
+            }
         }
+
+        // no cache hit, we have to make a new request
 
         const req = bun.default_allocator.create(Request) catch bun.outOfMemory();
         req.* = .{
             .key = key.toOwned(),
         };
         req.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
-
-        if (global_cache.cache.items.len >= GlobalCache.MAX_ENTRIES) {
-            for (global_cache.cache.items) |*entry| {
-                if (entry.*.refcount == 0) {
-                    entry.*.deinit();
-                    entry.* = req;
-                }
-            }
-        } else {
-            global_cache.cache.append(bun.default_allocator, req) catch bun.outOfMemory();
-        }
+        _ = global_cache.tryPush(req);
         global_cache.lock.unlock();
 
         // schedule the request to be executed on the work pool
@@ -1335,8 +1362,10 @@ pub const InternalDNS = struct {
         defer global_cache.lock.unlock();
 
         req.refcount -= 1;
-        // TODO
-        // if refcount == 0 and cache pressure is high, remove the entry from the cache
+        if (req.refcount == 0 and global_cache.isNearlyFull()) {
+            req.deinit();
+            global_cache.remove(req);
+        }
     }
 
     fn getRequestResult(req: *Request) callconv(.C) *std.c.addrinfo {

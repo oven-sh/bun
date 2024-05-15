@@ -44,7 +44,7 @@ const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented
-var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, *uws.Socket).init(bun.default_allocator);
+var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
 var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 const print_every = 0;
@@ -785,10 +785,10 @@ pub const HTTPThread = struct {
             for (this.queued_shutdowns.items) |http| {
                 if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                     if (http.is_tls) {
-                        const socket = uws.SocketTLS.from(socket_ptr.value);
+                        const socket = uws.SocketTLS.fromAny(socket_ptr.value);
                         socket.shutdown();
                     } else {
-                        const socket = uws.SocketTCP.from(socket_ptr.value);
+                        const socket = uws.SocketTCP.fromAny(socket_ptr.value);
                         socket.shutdown();
                     }
                 }
@@ -965,9 +965,7 @@ pub fn onOpen(
         }
     }
     if (client.signals.aborted != null) {
-        // TODO fix this
-        @panic("NYI");
-        // socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
+        socket_async_http_abort_tracker.put(client.async_http_id, socket.socket) catch unreachable;
     }
     log("Connected {s} \n", .{client.url.href});
 

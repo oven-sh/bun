@@ -49,33 +49,35 @@ pub const InternalLoopData = extern struct {
     }
 };
 
+pub const InternalSocket = union(enum) {
+    done: *Socket,
+    connecting: *ConnectingSocket,
+
+    pub fn get(this: @This()) ?*Socket {
+        return switch (this) {
+            .done => this.done,
+            .connecting => null,
+        };
+    }
+
+    pub fn eq(this: @This(), other: @This()) bool {
+        return switch (this) {
+            .done => switch (other) {
+                .done => this.done == other.done,
+                .connecting => false,
+            },
+            .connecting => switch (other) {
+                .done => false,
+                .connecting => this.connecting == other.connecting,
+            },
+        };
+    }
+};
+
 pub fn NewSocketHandler(comptime is_ssl: bool) type {
     return struct {
         const ssl_int: i32 = @intFromBool(is_ssl);
-        socket: union(enum) {
-            done: *Socket,
-            connecting: *ConnectingSocket,
-
-            pub fn get(this: @This()) ?*Socket {
-                return switch (this) {
-                    .done => this.done,
-                    .connecting => null,
-                };
-            }
-
-            pub fn eq(this: @This(), other: @This()) bool {
-                return switch (this) {
-                    .done => switch (other) {
-                        .done => this.done == other.done,
-                        .connecting => false,
-                    },
-                    .connecting => switch (other) {
-                        .done => false,
-                        .connecting => this.connecting == other.connecting,
-                    },
-                };
-            }
-        },
+        socket: InternalSocket,
         const ThisSocket = @This();
 
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
@@ -834,6 +836,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
         pub fn fromConnecting(connecting: *ConnectingSocket) ThisSocket {
             return ThisSocket{ .socket = .{ .connecting = connecting } };
+        }
+
+        pub fn fromAny(socket: InternalSocket) ThisSocket {
+            return ThisSocket{ .socket = socket };
         }
 
         pub fn adopt(

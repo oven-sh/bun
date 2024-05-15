@@ -1171,14 +1171,17 @@ pub const GlobalData = struct {
 const InternalDNS = struct {
     const Request = struct {
         const Key = struct {
-            host: [:0]const u8,
+            host: ?[:0]const u8,
             port: u16,
             hash: u64,
 
-            pub fn init(name: [:0]const u8, port: u16) @This() {
-                var hasher = std.hash.Wyhash.init(0);
-                hasher.update(name);
-                const hash = hasher.final();
+            pub fn init(name: ?[:0]const u8, port: u16) @This() {
+                const hash = if (name) |n| brk: {
+                    var hasher = std.hash.Wyhash.init(0);
+                    hasher.update(n);
+                    const hash = hasher.final();
+                    break :brk hash;
+                } else 0;
                 return .{
                     .host = name,
                     .port = port,
@@ -1187,12 +1190,16 @@ const InternalDNS = struct {
             }
 
             pub fn toOwned(this: @This()) @This() {
-                const host_copy = bun.default_allocator.dupeZ(u8, this.host) catch bun.outOfMemory();
-                return .{
-                    .host = host_copy,
-                    .port = this.port,
-                    .hash = this.hash,
-                };
+                if (this.host) |host| {
+                    const host_copy = bun.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                    return .{
+                        .host = host_copy,
+                        .port = this.port,
+                        .hash = this.hash,
+                    };
+                } else {
+                    return this;
+                }
             }
         };
 
@@ -1203,17 +1210,14 @@ const InternalDNS = struct {
         // while this is non-zero, the result must not be freed
         refcount: usize = 0,
 
-        pub fn makeOwned(this: *@This()) void {
-            const host_copy = bun.default_allocator.dupeZ(u8, this.host) catch bun.outOfMemory();
-            this.host = host_copy;
-        }
-
         pub fn deinit(this: *@This()) void {
             bun.assert(this.notify.items.len == 0);
             if (this.result) |res| {
                 std.c.freeaddrinfo(res);
             }
-            bun.default_allocator.free(this.key.host);
+            if (this.key.host) |host| {
+                bun.default_allocator.free(host);
+            }
         }
     };
 
@@ -1298,7 +1302,7 @@ const InternalDNS = struct {
 
         var addrinfo: ?*std.c.addrinfo = null;
         const err = std.c.getaddrinfo(
-            req.key.host,
+            if (req.key.host) |host| host.ptr else null,
             if (port.len > 0) portZ.ptr else null,
             null,
             &addrinfo,
@@ -1375,8 +1379,8 @@ const InternalDNS = struct {
     // }
 
     // called from event loop threads or http threads
-    fn getaddrinfo(_host: [*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
-        const host: [:0]const u8 = std.mem.span(_host);
+    fn getaddrinfo(_host: ?[*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
+        const host: ?[:0]const u8 = std.mem.span(_host);
         const key = Request.Key.init(host, port);
 
         global_cache.lock.lock();

@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <stdio.h>
+#include <errno.h>
 
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
@@ -380,14 +380,18 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
+        c->error = result->error;
         c->context->on_connect_error(c, result->error);
         Bun__addrinfo_freeRequest(c->addrinfo_req);
+        us_connecting_socket_close(0, c);
         return;
     }
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, c->options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        c->context->on_connect_error(c, 0);
+        c->error = errno;
+        c->context->on_connect_error(c, errno);
         Bun__addrinfo_freeRequest(c->addrinfo_req);
+        us_connecting_socket_close(0, c);
         return;
     }
 

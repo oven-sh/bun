@@ -10,7 +10,7 @@ it("works", async () => {
   await runBunInstall(bunEnv, package_dir);
 
   const fixture_path = path.join(package_dir, "index.ts");
-  const fixture_data = String.raw`
+  const fixture_data = `
     import { createServer } from "node:http";
     import st from "st";
 
@@ -23,7 +23,6 @@ it("works", async () => {
             resolve(new URL("http://"+hostname+":"+port));
           }
         });
-        setTimeout(() => reject("Timed out"), 1000);
       });
     }
     await using server = createServer(st(process.cwd()));
@@ -45,4 +44,5 @@ it("works", async () => {
   // expect(err).toBeEmpty();
   let out = await new Response(stdout).text();
   expect(out).toEqual(fixture_data + "\n");
+  expect(await exited).toBe(0);
 });

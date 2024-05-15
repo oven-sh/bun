@@ -31,6 +31,7 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", asy
 
   let { stdout, stderr } = Bun.spawn({
     cmd: [bunExe(), "run", fixture_path],
+    cwd: package_dir,
     stdout: "pipe",
     stdin: "ignore",
     stderr: "pipe",

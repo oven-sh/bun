@@ -251,9 +251,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 /* It is perfectly possible to come here with an error */
                 if (error) {
                     /* Emit error, close without emitting on_close */
-                    s->context->on_connect_error(s, 0);
-                    // TODO what do we do with the us_connecting_socket_t that may have a referene to this socket that we're closing?
-                    us_socket_close_connecting(0, s);
+                    s->context->on_connect_error(s->connect_state, 0);
+                    us_connecting_socket_close(0, s->connect_state);
                     s = NULL;
                 } else {
                     /* All sockets poll for readable */
@@ -269,6 +268,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     us_socket_timeout(0, s, 0);
 
                     s->context->on_open(s, 1, 0, 0);
+
+                    // now that the socket is open, we can release the associated us_connecting_socket_t
+                    free(s->connect_state);
+                    s->connect_state = NULL;
                 }
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;

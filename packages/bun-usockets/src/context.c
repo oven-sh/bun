@@ -345,9 +345,14 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
+struct addrinfo_result {
+    struct addrinfo *info;
+    int error;
+};
+
 extern void Bun__addrinfo_get(const char* host, int port, struct us_connecting_socket_t *s);
 extern void Bun__addrinfo_freeRequest(void* addrinfo_req);
-extern struct addrinfo *Bun__addrinfo_getRequestResult(void* addrinfo_req);
+extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
 
 struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
@@ -371,12 +376,17 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
-    struct addrinfo *addrinfo = Bun__addrinfo_getRequestResult(c->addrinfo_req);
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addrinfo, c->options);
+    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
+    if (result->error) {
+        c->context->on_connect_error(c, result->error);
+        Bun__addrinfo_freeRequest(c->addrinfo_req);
+        return;
+    }
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, c->options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        // TODO propagate errno
-        c->context->on_connect_error(NULL, 0);
-        __builtin_trap();
+        c->context->on_connect_error(c, 0);
+        Bun__addrinfo_freeRequest(c->addrinfo_req);
+        return;
     }
 
     Bun__addrinfo_freeRequest(c->addrinfo_req);
@@ -400,6 +410,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     // store the socket so we can close it if we need to
     c->socket = s;
+    s->connect_state = c;
 }
 
 // called asynchronously when DNS resolution completes
@@ -570,7 +581,7 @@ void us_socket_context_on_end(int ssl, struct us_socket_context_t *context, stru
     context->on_end = on_end;
 }
 
-void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code)) {
+void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *s, int code)) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         us_internal_ssl_socket_context_on_connect_error((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t * (*)(struct us_internal_ssl_socket_t *, int)) on_connect_error);

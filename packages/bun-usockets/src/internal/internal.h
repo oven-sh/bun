@@ -126,6 +126,7 @@ struct us_socket_t {
                          = was in low-prio queue in this iteration */
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
+  struct us_connecting_socket_t *connect_state;
 };
 
 struct us_connecting_socket_t {
@@ -225,7 +226,7 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_socket_timeout)(struct us_socket_t *);
   struct us_socket_t *(*on_socket_long_timeout)(struct us_socket_t *);
   struct us_socket_t *(*on_end)(struct us_socket_t *);
-  struct us_socket_t *(*on_connect_error)(struct us_socket_t *, int code);
+  struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
 };
 

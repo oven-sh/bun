@@ -1203,8 +1203,14 @@ const InternalDNS = struct {
             }
         };
 
+        const Result = extern struct {
+            info: ?*std.c.addrinfo,
+            err: c_int,
+        };
+
         key: Key,
-        result: ?*std.c.addrinfo = null,
+        result: ?Result = null,
+
         notify: std.ArrayListUnmanaged(*bun.uws.ConnectingSocket) = .{},
         // number of sockets that have a referene to the addrinfo result
         // while this is non-zero, the result must not be freed
@@ -1213,7 +1219,9 @@ const InternalDNS = struct {
         pub fn deinit(this: *@This()) void {
             bun.assert(this.notify.items.len == 0);
             if (this.result) |res| {
-                std.c.freeaddrinfo(res);
+                if (res.info) |info| {
+                    std.c.freeaddrinfo(info);
+                }
             }
             if (this.key.host) |host| {
                 bun.default_allocator.free(host);
@@ -1308,15 +1316,14 @@ const InternalDNS = struct {
             &addrinfo,
         );
 
-        // assert success
-        // TODO figure out how to return errors later
-        bun.assert(@intFromEnum(err) == 0);
-
         // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
-        req.result = addrinfo orelse @panic("TODO handle this error");
+        req.result = .{
+            .info = addrinfo,
+            .err = @intFromEnum(err),
+        };
         for (req.notify.items) |socket| {
             us_internal_dns_callback(socket, req);
         }
@@ -1433,8 +1440,8 @@ const InternalDNS = struct {
         }
     }
 
-    fn getRequestResult(req: *Request) callconv(.C) *std.c.addrinfo {
-        return req.result.?;
+    fn getRequestResult(req: *Request) callconv(.C) *Request.Result {
+        return &req.result.?;
     }
 };
 

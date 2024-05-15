@@ -111,25 +111,22 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
 
     struct us_socket_t *s = c->socket;
     if (s) {
-        us_socket_close_connecting(ssl, s);
         c->socket = NULL;
+
+        us_internal_socket_context_unlink_socket(s->context, s);
+        us_poll_stop((struct us_poll_t *) s, s->context->loop);
+        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+
+        /* Link this socket to the close-list and let it be deleted after this iteration */
+        s->next = s->context->loop->data.closed_head;
+        s->context->loop->data.closed_head = s;
+
+        /* Any socket with prev = context is marked as closed */
+        s->prev = (struct us_socket_t *) s->context;
     }
 
     us_socket_free_connecting(c);
 } 
-
-void us_socket_close_connecting(int ssl, struct us_socket_t *s) {
-    us_internal_socket_context_unlink_socket(s->context, s);
-    us_poll_stop((struct us_poll_t *) s, s->context->loop);
-    bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
-
-    /* Link this socket to the close-list and let it be deleted after this iteration */
-    s->next = s->context->loop->data.closed_head;
-    s->context->loop->data.closed_head = s;
-
-    /* Any socket with prev = context is marked as closed */
-    s->prev = (struct us_socket_t *) s->context;
-}
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
     if (!us_socket_is_closed(0, s)) {

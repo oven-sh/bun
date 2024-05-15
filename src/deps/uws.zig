@@ -673,10 +673,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
-                pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
+                pub fn on_connect_error(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                    const val = if (comptime ContextType == anyopaque)
+                        us_connecting_socket_ext(comptime ssl_int, socket)
+                    else if (comptime deref_)
+                        SocketHandlerType.fromConnecting(socket).ext(ContextType).*
+                    else
+                        SocketHandlerType.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
-                        getValue(socket),
-                        SocketHandlerType.from(socket),
+                        val,
+                        SocketHandlerType.fromConnecting(socket),
                         code,
                     );
                     return socket;
@@ -790,10 +796,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
-                pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
+                pub fn on_connect_error(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                    const val = if (comptime ContextType == anyopaque)
+                        us_connecting_socket_ext(comptime ssl_int, socket)
+                    else if (comptime deref_)
+                        ThisSocket.fromConnecting(socket).ext(ContextType).*
+                    else
+                        ThisSocket.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
-                        getValue(socket),
-                        ThisSocket.from(socket),
+                        val,
+                        ThisSocket.fromConnecting(socket),
                         code,
                     );
                     return socket;
@@ -948,7 +960,7 @@ pub const SocketContext = opaque {
             fn timeout(socket: *Socket) callconv(.C) ?*Socket {
                 return socket;
             }
-            fn connect_error(socket: *Socket, _: i32) callconv(.C) ?*Socket {
+            fn connect_error(socket: *ConnectingSocket, _: i32) callconv(.C) ?*ConnectingSocket {
                 return socket;
             }
             fn end(socket: *Socket) callconv(.C) ?*Socket {
@@ -1254,7 +1266,7 @@ extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_
 
 extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_long_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*Socket, i32) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*ConnectingSocket, i32) callconv(.C) ?*ConnectingSocket) void;
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
@@ -1263,7 +1275,6 @@ pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, 
 pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) *ConnectingSocket;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
-pub extern fn us_socket_close_connecting(ssl: i32, s: *Socket) void;
 pub extern fn us_connecting_socket_close(ssl: i32, s: *ConnectingSocket) void;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;
 pub extern fn us_socket_context_adopt_socket(ssl: i32, context: ?*SocketContext, s: ?*Socket, ext_size: i32) ?*Socket;

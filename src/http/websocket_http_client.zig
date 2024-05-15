@@ -424,7 +424,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
             log("onOpen", .{});
-            bun.assert(socket.socket.eq(this.tcp.?.socket));
+            this.tcp = socket;
 
             bun.assert(this.input_body_buf.len > 0);
             bun.assert(this.to_send.len == 0);
@@ -644,19 +644,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         // In theory, this could be called immediately
         // In that case, we set `state` to `failed` and return, expecting the parent to call `destroy`.
-        pub fn handleConnectError(this: *HTTPClient, socket: Socket, _: c_int) void {
+        pub fn handleConnectError(this: *HTTPClient, _: Socket, _: c_int) void {
             this.tcp = null;
 
-            _ = socket;
-            @panic("TODO");
+            // the socket is freed by usockets when the connection fails
 
-            // _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), socket.socket);
-            // if (this.state == .reading) {
-            //     this.terminate(ErrorCode.failed_to_connect);
-            //     this.destroy();
-            // } else {
-            //     this.state = .failed;
-            // }
+            if (this.state == .reading) {
+                this.terminate(ErrorCode.failed_to_connect);
+                this.destroy();
+            } else {
+                this.state = .failed;
+            }
         }
 
         pub const Export = shim.exportFunctions(.{

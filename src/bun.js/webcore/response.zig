@@ -732,7 +732,7 @@ pub const Fetch = struct {
         /// stream strong ref if any is available
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
         request_headers: Headers = Headers{ .allocator = undefined },
-        weak_promise: JSC.JSPromise.Weak(FetchTasklet) = .{},
+        promise: JSC.JSPromise.Strong,
         concurrent_task: JSC.ConcurrentTask = .{},
         poll_ref: Async.KeepAlive = .{},
         memory_reporter: *JSC.MemoryReportingAllocator,
@@ -1023,22 +1023,6 @@ pub const Fetch = struct {
             }
         }
 
-        fn cleanPromise(this: *FetchTasklet) void {
-            // this are only stubs for the LazyPromise
-            this.weak_promise.deinit();
-            // this.strong_promise.deinit();
-        }
-        fn getPromiseValue(this: *FetchTasklet) JSC.JSValue {
-
-            // this are only stubs for the LazyPromise
-            const value = this.weak_promise.valueOrEmpty();
-            // if (value.isEmpty()) {
-            //     if (this.strong_promise.get()) |strong_value| {
-            //         return strong_value;
-            //     }
-            // }
-            return value;
-        }
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
@@ -1066,14 +1050,14 @@ pub const Fetch = struct {
                 this.deinit();
                 return;
             }
-            const promise_value = this.getPromiseValue();
+            const promise_value = this.promise.valueOrEmpty();
 
             var poll_ref = this.poll_ref;
             const vm = globalThis.bunVM();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
-                this.cleanPromise();
+                this.promise.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
@@ -1100,7 +1084,7 @@ pub const Fetch = struct {
                     promise.reject(globalThis, result);
 
                     tracker.didDispatch(globalThis);
-                    this.cleanPromise();
+                    this.promise.deinit();
                     this.has_schedule_callback.store(false, .Monotonic);
                     this.mutex.unlock();
                     if (this.is_waiting_abort) {
@@ -1127,7 +1111,7 @@ pub const Fetch = struct {
             defer {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
-                this.cleanPromise();
+                this.promise.deinit();
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
@@ -1179,11 +1163,11 @@ pub const Fetch = struct {
             holder.* = .{
                 .held = JSC.Strong.create(result, globalThis),
                 // we need the promise to be alive until the task is done
-                .promise = JSC.Strong.create(promise_value, globalThis),
+                .promise = this.promise.strong,
                 .globalObject = globalThis,
                 .task = undefined,
             };
-            this.cleanPromise();
+            this.promise.strong = .{};
             holder.task = switch (success) {
                 true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
                 false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
@@ -1524,7 +1508,7 @@ pub const Fetch = struct {
             allocator: std.mem.Allocator,
             globalThis: *JSC.JSGlobalObject,
             fetch_options: FetchOptions,
-            promise: JSValue,
+            promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
             var jsc_vm = globalThis.bunVM();
             var fetch_tasklet = try allocator.create(FetchTasklet);
@@ -1549,8 +1533,7 @@ pub const Fetch = struct {
                 .javascript_vm = jsc_vm,
                 .request_body = fetch_options.body,
                 .global_this = globalThis,
-                // we abort the fetch request if the promise is finalized/free/never waited
-                .weak_promise = JSC.JSPromise.Weak(FetchTasklet).init(globalThis, promise, fetch_tasklet, onPromiseFinalize),
+                .promise = promise,
                 .request_headers = fetch_options.headers,
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,
                 .signal = fetch_options.signal,
@@ -1691,8 +1674,8 @@ pub const Fetch = struct {
         pub fn queue(
             allocator: std.mem.Allocator,
             global: *JSGlobalObject,
-            promise: JSValue,
             fetch_options: FetchOptions,
+            promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
             try http.HTTPThread.init();
             var node = try get(
@@ -2592,13 +2575,15 @@ pub const Fetch = struct {
             }
         }
 
-        const promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
-        promise.ensureStillAlive();
+        // Only create this after we have validated all the input.
+        // or else we will leak it
+        var promise = JSPromise.Strong.init(globalThis);
+
+        const promise_val = promise.value();
 
         _ = FetchTasklet.queue(
             allocator,
             globalThis,
-            promise,
             .{
                 .method = method,
                 .url = url,
@@ -2622,8 +2607,12 @@ pub const Fetch = struct {
                 .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),
                 .unix_socket_path = unix_socket_path,
             },
+            // Pass the Strong value instead of creating a new one, or else we
+            // will leak it
+            // see https://github.com/oven-sh/bun/issues/2985
+            promise,
         ) catch bun.outOfMemory();
-        return promise;
+        return promise_val;
     }
 };
 

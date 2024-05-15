@@ -1212,13 +1212,15 @@ pub const InternalDNS = struct {
             if (this.result) |res| {
                 std.c.freeaddrinfo(res);
             }
-            bun.default_allocator.free(this.host);
+            bun.default_allocator.free(this.key.host);
         }
     };
 
     const GlobalCache = struct {
         // const Cache = bun.HiveArray(PendingCacheKey, 32);
         const Cache = std.ArrayListUnmanaged(*Request);
+
+        const MAX_ENTRIES = 256;
 
         lock: bun.Lock = bun.Lock.init(),
         cache: Cache = Cache{},
@@ -1311,8 +1313,16 @@ pub const InternalDNS = struct {
         };
         req.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
 
-        // TODO prevent cache from growing indefinitely
-        global_cache.cache.append(bun.default_allocator, req) catch bun.outOfMemory();
+        if (global_cache.cache.items.len >= GlobalCache.MAX_ENTRIES) {
+            for (global_cache.cache.items) |*entry| {
+                if (entry.*.refcount == 0) {
+                    entry.*.deinit();
+                    entry.* = req;
+                }
+            }
+        } else {
+            global_cache.cache.append(bun.default_allocator, req) catch bun.outOfMemory();
+        }
         global_cache.lock.unlock();
 
         // schedule the request to be executed on the work pool

@@ -203,6 +203,9 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
         const entry = this.map.getEntry(bun.hash(path)) orelse return;
         const old_value = Value.from(entry.value_ptr.*);
         if (old_value.get(SourceProviderMap)) |prov| {
@@ -213,6 +216,7 @@ pub const SavedSourceMap = struct {
             if (map.source_contents.state == .unloaded and
                 @intFromPtr(map.source_contents.provider()) == @intFromPtr(opaque_source_provider))
             {
+                map.deinit(default_allocator);
                 this.map.removeByPtr(entry.key_ptr);
             } else {
                 // not possible to know for sure this is the same map. also not worth
@@ -234,6 +238,8 @@ pub const SavedSourceMap = struct {
     pub fn deinit(this: *SavedSourceMap) void {
         {
             this.mutex.lock();
+            defer this.mutex.unlock();
+
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
                 var value = Value.from(val.*);
@@ -247,8 +253,6 @@ pub const SavedSourceMap = struct {
                     _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
                 }
             }
-
-            this.mutex.unlock();
         }
 
         this.map.deinit();

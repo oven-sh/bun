@@ -122,7 +122,7 @@ pub fn parseJSON(
     comptime result: ParseUrlResultType,
     err: *Mapping.ParseError,
 ) !result.ParseType() {
-    const json_src = bun.logger.Source.initPathString("", source);
+    const json_src = bun.logger.Source.initPathString("sourcemap.json", source);
     var log = bun.logger.Log.init(arena);
     defer log.deinit();
 
@@ -188,10 +188,6 @@ pub fn parseJSON(
 
     if (result != .sources_only) for (sources_paths.items.slice()) |item| {
         if (item.data != .e_string) {
-            for (source_paths_slice[0..i]) |slice| alloc.free(slice);
-            alloc.free(source_paths_slice);
-            if (result != .mappings_only) alloc.free(source_contents_slice);
-
             return err.fail(error.InvalidSourceMap, .{
                 .msg = "Expected string in sources",
                 .value = 0,
@@ -202,10 +198,6 @@ pub fn parseJSON(
         const utf16_decode = bun.js_lexer.decodeUTF8(item.data.e_string.string(arena) catch bun.outOfMemory(), arena) catch bun.outOfMemory();
         defer arena.free(utf16_decode);
         source_paths_slice[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch {
-            for (source_paths_slice[0..i]) |slice| alloc.free(slice);
-            alloc.free(source_paths_slice);
-            if (result != .mappings_only) alloc.free(source_contents_slice);
-
             return err.fail(error.InvalidSourceMap, .{
                 .msg = "Expected string in sources",
                 .value = 0,
@@ -645,7 +637,7 @@ pub const Mapping = struct {
                 return @ptrFromInt(sc.data);
             }
 
-            pub fn sources(sc: SourceContentPtr) [*]?[]const u8 {
+            fn sources(sc: SourceContentPtr) [*]?[]const u8 {
                 bun.assert(sc.state == .loaded);
                 return @ptrFromInt(sc.data);
             }
@@ -663,7 +655,8 @@ pub const Mapping = struct {
             this.mappings.deinit(allocator);
 
             if (this.external_source_names.len > 0) {
-                for (this.external_source_names) |name| allocator.free(name);
+                for (this.external_source_names) |name|
+                    allocator.free(name);
                 allocator.free(this.external_source_names);
             }
 
@@ -740,7 +733,7 @@ pub const SourceProviderMap = opaque {
             if (load_hint != .is_external_map) try_inline: {
                 const source = ZigSourceProvider__getSourceSlice(provider);
                 defer source.deref();
-                bun.assert(source.tag == .StaticZigString);
+                bun.assert(source.tag == .ZigString);
 
                 const found_url = (if (source.is8Bit())
                     findSourceMappingURL(u8, source.latin1(), arena.allocator())

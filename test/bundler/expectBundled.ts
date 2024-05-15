@@ -1263,13 +1263,15 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
 
-        const { success, stdout, stderr, exitCode } = Bun.spawnSync({
-          cmd: [
-            ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
-            ...(run.bunArgs ?? []),
-            file,
-            ...(run.args ?? []),
-          ] as [string, ...string[]],
+        const args = [
+          ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
+          ...(run.bunArgs ?? []),
+          file,
+          ...(run.args ?? []),
+        ] as [string, ...string[]];
+
+        const { success, stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+          cmd: args,
           env: {
             ...bunEnv,
             FORCE_COLOR: "0",
@@ -1278,6 +1280,10 @@ for (const [key, blob] of build.outputs) {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: run.setCwd ? root : undefined,
         });
+
+        if (signalCode === "SIGTRAP") {
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        }
 
         if (run.error) {
           if (success) {
@@ -1331,14 +1337,14 @@ for (const [key, blob] of build.outputs) {
           }
         } else if (!success) {
           if (run.exitCode) {
-            expect(exitCode).toBe(run.exitCode);
+            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
           } else {
             throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
           }
         }
 
         if (run.validate) {
-          run.validate({ stderr, stdout });
+          run.validate({ stderr: stderr.toUnixString(), stdout: stdout.toUnixString() });
         }
 
         if (run.stdout !== undefined) {

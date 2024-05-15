@@ -321,16 +321,16 @@ it("should hot reload when a file is renamed() into place", async () => {
   }
 });
 
+const comment_spam = ("//" + "A".repeat(2000) + "\n").repeat(1000);
 it("should work with sourcemap generation", async () => {
   writeFileSync(
     hotRunnerRoot,
     `// source content
-//
-//
+${comment_spam}
 throw new Error('0');`,
   );
   await using runner = spawn({
-    cmd: [bunExe(), "--hot", "run", hotRunnerRoot],
+    cmd: [bunExe(), "--smol", "--hot", "run", hotRunnerRoot],
     env: bunEnv,
     cwd,
     stdout: "ignore",
@@ -342,8 +342,7 @@ throw new Error('0');`,
     writeFileSync(
       hotRunnerRoot,
       `// source content
-// etc etc
-// etc etc
+${comment_spam}
 ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     );
   }
@@ -367,13 +366,19 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
 
       expect(line).toContain(`error: ${reloadCounter - 1}`);
       let next = it.shift()!;
-      const col = next.match(/\s*at.*?:4:(\d+)$/)![1];
+      if (!next) throw new Error(line);
+      const match = next.match(/\s*at.*?:1003:(\d+)$/);
+      if (!match) throw new Error("invalid string: " + next);
+      const col = match[1];
       expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
       any = true;
     }
 
     if (any) await onReload();
   }
+  await runner.exited;
+  const rss = runner.resourceUsage().maxRSS;
+  expect(rss).toBeLessThan(100_000_000);
   expect(reloadCounter).toBe(100);
 });
 
@@ -444,3 +449,106 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
   expect(reloadCounter).toBe(100);
   bundler.kill();
 });
+
+const long_comment = "BBBB".repeat(100000);
+
+it("should work with sourcemap loading with large files", async () => {
+  let bundleIn = join(cwd, "bundle_in.ts");
+  rmSync(hotRunnerRoot);
+  writeFileSync(
+    bundleIn,
+    `// ${long_comment}
+//
+console.error("RSS: %s", process.memoryUsage().rss);
+throw new Error('0');`,
+  );
+  await using bundler = spawn({
+    cmd: [
+      //
+      bunExe(),
+      "build",
+      "--watch",
+      bundleIn,
+      "--target=bun",
+      "--sourcemap",
+      "--outfile",
+      hotRunnerRoot,
+    ],
+    env: bunEnv,
+    cwd,
+    stdout: "ignore",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  await using runner = spawn({
+    cmd: [
+      //
+      bunExe(),
+      "--hot",
+      "run",
+      hotRunnerRoot,
+    ],
+    env: bunEnv,
+    cwd,
+    stdout: "inherit",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  let reloadCounter = 0;
+  function onReload() {
+    writeFileSync(
+      bundleIn,
+      `// ${long_comment}
+console.error("RSS: %s", process.memoryUsage().rss);
+//
+${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
+    );
+  }
+  let str = "";
+  let sampleMemory10: number | undefined;
+  let sampleMemory100: number | undefined;
+  outer: for await (const chunk of runner.stderr) {
+    str += new TextDecoder().decode(chunk);
+    var any = false;
+    if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
+
+    let it = str.split("\n");
+    let line;
+    while ((line = it.shift())) {
+      if (!line.includes("error:")) continue;
+      let rssMatch = str.match(/RSS: (\d+(\.\d+)?)\n/);
+      let rss;
+      if (rssMatch) rss = Number(rssMatch[1]);
+      str = "";
+
+      if (reloadCounter == 10) {
+        sampleMemory10 = rss;
+      }
+
+      if (reloadCounter === 100) {
+        sampleMemory100 = rss;
+        runner.kill();
+        break;
+      }
+
+      if (line.includes(`error: ${reloadCounter - 1}`)) {
+        continue outer;
+      }
+      expect(line).toContain(`error: ${reloadCounter}`);
+
+      reloadCounter++;
+      let next = it.shift()!;
+      expect(next).toInclude("bundle_in.ts");
+      const col = next.match(/\s*at.*?:4:(\d+)$/)![1];
+      expect(Number(col)).toBe(1 + "throw ".length + (reloadCounter - 1) * 2);
+      any = true;
+    }
+
+    if (any) await onReload();
+  }
+  expect(reloadCounter).toBe(100);
+  bundler.kill();
+  await runner.exited;
+  // TODO: bun has a memory leak when --hot is used on very large files
+  // console.log({ sampleMemory10, sampleMemory100 });
+}, 20_000);

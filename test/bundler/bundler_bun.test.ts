@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
 import { Database } from "bun:sqlite";
+import { isWindows } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -57,10 +58,10 @@ describe("bundler", () => {
       `,
     },
     run: {
-      exitCode: 1,
-      verify({ stdio }) {
-        expect(stdio).toInclude("\nnote: missing sourcemaps for ");
-        expect(stdio).toInclude("\nnote: consider bundling with '--sourcemap' to get an unminified traces\n");
+      exitCode: isWindows ? 3 : 1,
+      validate({ stderr }) {
+        expect(stderr).toInclude("\nnote: missing sourcemaps for ");
+        expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get an unminified traces\n");
       },
     },
   });
@@ -80,11 +81,10 @@ describe("bundler", () => {
     },
     sourceMap: "inline",
     run: {
-      exitCode: 1,
-      verify({ stdio }) {
+      exitCode: isWindows ? 3 : 1,
+      validate({ stderr }) {
         assert(
-          stdio.startsWith(
-            stdio,
+          stderr.startsWith(
             `1 | // this file has comments and weird whitespace, intentionally
 2 | // to make it obvious if sourcemaps were generated and mapped properly
 3 | if           (true) code();
@@ -95,7 +95,7 @@ describe("bundler", () => {
 error: Hello World`,
           ),
         );
-        expect(stdio).toInclude("/entry.ts:6:19");
+        expect(stderr).toInclude("entry.ts:6:19");
       },
     },
   });

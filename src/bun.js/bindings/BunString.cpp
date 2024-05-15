@@ -1,4 +1,5 @@
 
+#include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -199,13 +200,7 @@ BunString toStringRef(WTF::StringImpl* wtfString)
 BunString toStringView(StringView view) {
     return {
         BunStringTag::ZigString,
-        { .zig = {
-            .ptr = (const LChar*)(view.is8Bit()
-                ? (size_t)view.rawCharacters()
-                : ((size_t)view.rawCharacters() + (static_cast<uint64_t>(1) << 63))
-            ),
-            .len = view.length()
-        } }
+        { .zig = toZigString(view) }
     };
 }
 

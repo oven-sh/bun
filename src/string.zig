@@ -272,9 +272,9 @@ pub const Tag = enum(u8) {
     /// String is backed by a WTF::StringImpl from JavaScriptCore.
     /// Can be in either `latin1` or `utf16le` encodings.
     WTFStringImpl = 1,
-    /// Memory is backed by an allocation in Bun's Zig codebase. When converted to JSValue,
-    /// it has to be cloned into a WTF::String. This string should not be cloned in any
-    /// other circumstance.
+    /// Memory has an unknown owner, likely in Bun's Zig codebase. If `isGloballyAllocated`
+    /// is set, then it is owned by mimalloc. When converted to JSValue it has to be cloned
+    /// into a WTF::String.
     /// Can be in either `utf8` or `utf16le` encodings.
     ZigString = 2,
     /// Static memory that is guarenteed to never be freed. When converted to WTF::String,

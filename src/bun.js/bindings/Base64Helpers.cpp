@@ -34,19 +34,17 @@ ExceptionOr<String> atob(const String& encodedString)
 
     const auto span = encodedString.span8();
     size_t result_length = simdutf::maximal_binary_length_from_base64(reinterpret_cast<const char*>(span.data()), encodedString.length());
-    size_t original_length = result_length;
     LChar* ptr;
     WTF::String outString = WTF::String::createUninitialized(result_length, ptr);
     if (UNLIKELY(outString.isNull())) {
         return WebCore::Exception { OutOfMemoryError };
     }
-    auto result = simdutf::base64_to_binary_safe(reinterpret_cast<const char*>(span.data()), span.size(), reinterpret_cast<char*>(ptr), result_length, simdutf::base64_url);
-    if (result.error) {
+    auto result = simdutf::base64_to_binary(reinterpret_cast<const char*>(span.data()), span.size(), reinterpret_cast<char*>(ptr), simdutf::base64_default);
+    if (result.error != simdutf::error_code::SUCCESS) {
         return WebCore::Exception { InvalidCharacterError };
     }
-    ASSERT(result_length <= original_length);
-    if (original_length != result_length) {
-        return outString.substringSharingImpl(0, result_length);
+    if (result.count != result_length) {
+        return outString.substringSharingImpl(0, result.count);
     }
 
     return outString;

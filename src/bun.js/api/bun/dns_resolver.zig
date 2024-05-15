@@ -1212,9 +1212,10 @@ const InternalDNS = struct {
         result: ?Result = null,
 
         notify: std.ArrayListUnmanaged(*bun.uws.ConnectingSocket) = .{},
-        // number of sockets that have a referene to the addrinfo result
-        // while this is non-zero, the result must not be freed
+        // number of sockets that have a reference to result or are waiting for the result
+        // while this is non-zero, this entry cannot be freed
         refcount: usize = 0,
+        valid: bool = true,
 
         pub fn deinit(this: *@This()) void {
             bun.assert(this.notify.items.len == 0);
@@ -1249,7 +1250,7 @@ const InternalDNS = struct {
             key: Request.Key,
         ) ?*Request {
             for (this.cache[0..this.len]) |entry| {
-                if (entry.key.hash == key.hash and entry.key.port == key.port) {
+                if (entry.key.hash == key.hash and entry.key.port == key.port and entry.valid) {
                     return entry;
                 }
             }
@@ -1297,7 +1298,6 @@ const InternalDNS = struct {
 
     extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, req: *Request) void;
 
-    // executed on work pool threads
     fn workPoolCallback(req: *Request) void {
         std.debug.print("workPoolCallback\n", .{});
         var port_buf: [128]u8 = undefined;
@@ -1385,7 +1385,6 @@ const InternalDNS = struct {
     //     req.notify.clearAndFree(bun.default_allocator);
     // }
 
-    // called from event loop threads or http threads
     fn getaddrinfo(_host: ?[*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
         const host: ?[:0]const u8 = std.mem.span(_host);
         const key = Request.Key.init(host, port);
@@ -1428,13 +1427,14 @@ const InternalDNS = struct {
         bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
     }
 
-    // called from event loop threads
-    fn freeaddrinfo(req: *Request) callconv(.C) void {
+    fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
+        req.valid = err == 0;
+
         req.refcount -= 1;
-        if (req.refcount == 0 and global_cache.isNearlyFull()) {
+        if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
             req.deinit();
             global_cache.remove(req);
         }

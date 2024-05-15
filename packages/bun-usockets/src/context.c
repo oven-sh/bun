@@ -351,7 +351,7 @@ struct addrinfo_result {
 };
 
 extern void Bun__addrinfo_get(const char* host, int port, struct us_connecting_socket_t *s);
-extern void Bun__addrinfo_freeRequest(void* addrinfo_req);
+extern void Bun__addrinfo_freeRequest(void* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
 
 struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
@@ -382,7 +382,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (result->error) {
         c->error = result->error;
         c->context->on_connect_error(c, result->error);
-        Bun__addrinfo_freeRequest(c->addrinfo_req);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
         us_connecting_socket_close(0, c);
         return;
     }
@@ -390,12 +390,12 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         c->error = errno;
         c->context->on_connect_error(c, errno);
-        Bun__addrinfo_freeRequest(c->addrinfo_req);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
         us_connecting_socket_close(0, c);
         return;
     }
 
-    Bun__addrinfo_freeRequest(c->addrinfo_req);
+    Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
 
     struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
     s->context = c->context;

@@ -4,7 +4,7 @@ import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick, isWindows, bunExe, bunEnv } from "harness";
+import { gc, withoutAggressiveGC, isWindows, bunExe, bunEnv, tmpdirSync } from "harness";
 import net from "net";
 
 const tmp_dir = tmpdirSync();

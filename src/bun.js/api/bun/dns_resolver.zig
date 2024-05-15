@@ -1169,58 +1169,184 @@ pub const GlobalData = struct {
 };
 
 pub const InternalDNS = struct {
-    const AddrinfoRequest = struct {
-        host: [:0]const u8,
-        port: u16,
-        socket: *bun.uws.ConnectingSocket,
+    const Request = struct {
+        const NotifyList = std.ArrayListUnmanaged(*bun.uws.ConnectingSocket);
+
+        const Key = struct {
+            host: [:0]const u8,
+            port: u16,
+            hash: u64,
+
+            pub fn init(name: [:0]const u8, port: u16) @This() {
+                var hasher = std.hash.Wyhash.init(0);
+                hasher.update(name);
+                const hash = hasher.final();
+                return .{
+                    .host = name,
+                    .port = port,
+                    .hash = hash,
+                };
+            }
+
+            pub fn toOwned(this: @This()) @This() {
+                const host_copy = bun.default_allocator.dupeZ(u8, this.host) catch bun.outOfMemory();
+                return .{
+                    .host = host_copy,
+                    .port = this.port,
+                    .hash = this.hash,
+                };
+            }
+        };
+
+        key: Key,
+        result: union(enum) {
+            addrinfo: *std.c.addrinfo,
+            notify: NotifyList,
+        } = .{ .notify = NotifyList{} },
+        // number of sockets that have a referene to the addrinfo result
+        refcount: usize = 0,
+
+        pub fn makeOwned(this: *@This()) void {
+            const host_copy = bun.default_allocator.dupeZ(u8, this.host) catch bun.outOfMemory();
+            this.host = host_copy;
+        }
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.result) {
+                .addrinfo => |info| std.c.freeaddrinfo(info),
+                .notify => @panic("attempting to deinit a request that has not been resolved yet"),
+            }
+            bun.default_allocator.free(this.host);
+        }
     };
+
+    const GlobalCache = struct {
+        // const Cache = bun.HiveArray(PendingCacheKey, 32);
+        const Cache = std.ArrayListUnmanaged(*Request);
+
+        lock: bun.Lock = bun.Lock.init(),
+        cache: Cache = Cache{},
+
+        const This = @This();
+
+        const CacheResult = union(enum) {
+            inflight: *Request,
+            resolved: *Request,
+            none,
+        };
+
+        pub fn get(
+            this: *This,
+            key: Request.Key,
+        ) CacheResult {
+            for (this.cache.items) |entry| {
+                if (entry.key.hash == key.hash and entry.key.port == key.port) {
+                    return switch (entry.result) {
+                        .addrinfo => .{ .resolved = entry },
+                        .notify => .{ .inflight = entry },
+                    };
+                }
+            }
+            return .none;
+        }
+    };
+
+    var global_cache = GlobalCache{};
 
     extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, addrinfo: *std.c.addrinfo) void;
 
-    fn workPoolCallback(req: AddrinfoRequest) void {
+    // executed on work pool threads
+    fn workPoolCallback(req: *Request) void {
+        std.debug.print("workPoolCallback\n", .{});
         var port_buf: [128]u8 = undefined;
-        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.port, 10, .lower, .{});
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
         port_buf[port.len] = 0;
         const portZ = port_buf[0..port.len :0];
 
         // var hints = std.mem.zeroes(std.c.addrinfo);
         // hints.socktype = std.c.SOCK.STREAM;
 
-        var addrinfo: ?*std.c.addrinfo = null;
+        var raw_addrinfo: ?*std.c.addrinfo = null;
         const err = std.c.getaddrinfo(
-            req.host,
+            req.key.host,
             if (port.len > 0) portZ.ptr else null,
             null,
-            &addrinfo,
+            &raw_addrinfo,
         );
 
         // assert success
         // TODO figure out how to return errors later
-        bun.assert(@intFromEnum(err) == 0 and addrinfo != null);
+        bun.assert(@intFromEnum(err) == 0);
 
-        us_internal_dns_callback(req.socket, addrinfo.?);
+        const addrinfo = raw_addrinfo orelse @panic("TODO handle this error");
 
-        bun.default_allocator.free(req.host);
-
-        // if (@intFromEnum(err) != 0 or addrinfo == null) {
-        //     this.* = .{ .err = @intFromEnum(err) };
-        //     return;
-        // }
+        global_cache.lock.lock();
+        var notify = req.result.notify;
+        for (notify.items) |socket| {
+            req.refcount += 1;
+            us_internal_dns_callback(socket, addrinfo);
+        }
+        notify.clearAndFree(bun.default_allocator);
+        req.result = .{ .addrinfo = addrinfo };
+        global_cache.lock.unlock();
     }
 
-    export fn Bun__getaddrinfo(host: [*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) void {
-        const req = AddrinfoRequest{
-            .host = bun.default_allocator.dupeZ(u8, std.mem.span(host)) catch bun.outOfMemory(),
-            .port = port,
-            .socket = socket,
+    // called from event loop threads or http threads
+    fn getaddrinfo(_host: [*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
+        const host: [:0]const u8 = std.mem.span(_host);
+        const key = Request.Key.init(host, port);
+
+        global_cache.lock.lock();
+        switch (global_cache.get(key)) {
+            .inflight => |entry| {
+                // add this socket to the list of sockets to be notified when the request is resolved
+                entry.result.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+                global_cache.lock.unlock();
+                return;
+            },
+            .resolved => |entry| {
+                // result is already available, we can notify the socket immediately
+                entry.refcount += 1;
+                global_cache.lock.unlock();
+                us_internal_dns_callback(socket, entry.result.addrinfo);
+                return;
+            },
+            .none => {},
+        }
+
+        var notify = Request.NotifyList{};
+        notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+        const req = bun.default_allocator.create(Request) catch bun.outOfMemory();
+        req.* = .{
+            .key = key.toOwned(),
+            .result = .{ .notify = notify },
         };
-        bun.JSC.WorkPool.go(bun.default_allocator, AddrinfoRequest, req, workPoolCallback) catch bun.outOfMemory();
+
+        // TODO prevent cache from growing indefinitely
+        global_cache.cache.append(bun.default_allocator, req) catch bun.outOfMemory();
+        global_cache.lock.unlock();
+
+        // schedule the request to be executed on the work pool
+        bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
     }
 
-    export fn Bun__freeaddrinfo(addrinfo: *std.c.addrinfo) void {
-        std.c.freeaddrinfo(addrinfo);
+    // called from event loop threads
+    fn freeaddrinfo(addrinfo: *std.c.addrinfo) callconv(.C) void {
+        _ = addrinfo;
+        // 1. get Request from addrinfo (probably have to pass this info along with the addrinfo in us_internal_dns_callback)
+        // 2. decrement refcount
+        // 3. decide if we should free the request (maybe based on cache pressure or something?)
     }
 };
+
+comptime {
+    @export(InternalDNS.getaddrinfo, .{
+        .name = "Bun__getaddrinfo",
+    });
+    @export(InternalDNS.freeaddrinfo, .{
+        .name = "Bun__freeaddrinfo",
+    });
+}
 
 pub const DNSResolver = struct {
     const log = Output.scoped(.DNSResolver, false);
@@ -2592,13 +2718,4 @@ pub const DNSResolver = struct {
             },
         );
     }
-    // pub fn cancel(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    //     const arguments = callframe.arguments(3);
-
-    // }
 };
-
-comptime {
-    _ = &InternalDNS.Bun__getaddrinfo;
-    _ = &InternalDNS.Bun__freeaddrinfo;
-}

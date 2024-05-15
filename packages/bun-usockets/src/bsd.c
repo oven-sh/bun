@@ -980,12 +980,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int
     }
 
     if (bsd_do_connect(addrinfo, &fd) != 0) {
-        us_internal_freeaddrinfo(addrinfo);
         return LIBUS_SOCKET_ERROR;
     }
     
-    
-    us_internal_freeaddrinfo(addrinfo);
     return fd;
 #endif
 }

@@ -377,6 +377,8 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         __builtin_trap();
     }
 
+    Bun__freeaddrinfo(c->addrinfo);
+
     struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
     s->context = c->context;
     s->timeout = 255;
@@ -407,10 +409,6 @@ void us_internal_dns_callback(struct us_connecting_socket_t *c, struct addrinfo 
     loop->data.dns_ready_head = c;
     pthread_mutex_unlock(&loop->data.mutex);
     us_wakeup_loop(loop);
-}
-
-void us_internal_freeaddrinfo(struct addrinfo *addrinfo) {
-    Bun__freeaddrinfo(addrinfo);
 }
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {

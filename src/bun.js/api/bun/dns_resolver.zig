@@ -1313,7 +1313,6 @@ const InternalDNS = struct {
         // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
         global_cache.lock.lock();
         for (req.notify.items) |socket| {
-            req.refcount += 1;
             us_internal_dns_callback(socket, req);
         }
         req.notify.clearAndFree(bun.default_allocator);
@@ -1328,25 +1327,32 @@ const InternalDNS = struct {
         global_cache.lock.lock();
         // is there a cache hit?
         if (global_cache.get(key)) |entry| {
+            // std.debug.print("cache hit for {s}\n", .{host});
             if (entry.result != null) {
+                // std.debug.print("result available\n", .{});
                 // result is already available, we can notify the socket immediately
                 entry.refcount += 1;
                 global_cache.lock.unlock();
                 us_internal_dns_callback(socket, entry);
                 return;
             } else {
+                // std.debug.print("inflight with {d} waiting\n", .{entry.notify.items.len});
                 // add this socket to the list of sockets to be notified when the request is resolved
                 entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+                entry.refcount += 1;
                 global_cache.lock.unlock();
                 return;
             }
         }
+
+        // std.debug.print("cache miss for {s}\n", .{host});
 
         // no cache hit, we have to make a new request
 
         const req = bun.default_allocator.create(Request) catch bun.outOfMemory();
         req.* = .{
             .key = key.toOwned(),
+            .refcount = 1,
         };
         req.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
         _ = global_cache.tryPush(req);

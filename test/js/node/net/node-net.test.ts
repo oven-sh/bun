@@ -1,12 +1,10 @@
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
-import { realpathSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
+const socket_domain = tmpdirSync();
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);

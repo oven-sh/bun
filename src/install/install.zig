@@ -3744,9 +3744,9 @@ pub const PackageManager = struct {
 
         switch (version.tag) {
             .npm, .dist_tag => {
-                const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
                 resolve_from_workspace: {
                     if (version.tag == .npm) {
+                        const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
                         const workspace_version = this.lockfile.workspace_versions.get(name_hash);
                         const buf = this.lockfile.buffers.string_bytes.items;
                         if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
@@ -3771,24 +3771,6 @@ pub const PackageManager = struct {
                                 }
                             }
                         }
-                    } else {
-                        // dist_tag will match any workspace version, even missing ones
-                        if (workspace_path != null) {
-                            const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
-                            const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
-                            const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
-
-                            for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
-                                if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
-                                    // make sure verifyResolutions sees this resolution as a valid package id
-                                    successFn(this, dependency_id, workspace_package_id);
-                                    return .{
-                                        .package = this.lockfile.packages.get(workspace_package_id),
-                                        .is_first_time = false,
-                                    };
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -3798,10 +3780,39 @@ pub const PackageManager = struct {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
                     else => unreachable,
-                } orelse return if (behavior.isPeer()) null else switch (version.tag) {
-                    .npm => error.NoMatchingVersion,
-                    .dist_tag => error.DistTagNotFound,
-                    else => unreachable,
+                } orelse {
+                    resolve_workspace_from_dist_tag: {
+                        // choose a workspace for a dist_tag only if a version was not found
+                        if (version.tag == .dist_tag) {
+                            const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
+                            if (workspace_path != null) {
+                                const root_package = this.lockfile.rootPackage() orelse break :resolve_workspace_from_dist_tag;
+                                const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
+                                const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
+
+                                for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+                                    if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                        // make sure verifyResolutions sees this resolution as a valid package id
+                                        successFn(this, dependency_id, workspace_package_id);
+                                        return .{
+                                            .package = this.lockfile.packages.get(workspace_package_id),
+                                            .is_first_time = false,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (behavior.isPeer()) {
+                        return null;
+                    }
+
+                    return switch (version.tag) {
+                        .npm => error.NoMatchingVersion,
+                        .dist_tag => error.DistTagNotFound,
+                        else => unreachable,
+                    };
                 };
 
                 return try this.getOrPutResolvedPackageWithFindResult(
@@ -11192,18 +11203,19 @@ pub const bun_install_js_bindings = struct {
     const JSGlobalObject = JSC.JSGlobalObject;
 
     pub fn generate(global: *JSGlobalObject) JSValue {
-        const obj = JSValue.createEmptyObject(global, 3);
-        const printLockfileAsJSON = ZigString.static("printLockfileAsJSON");
-        obj.put(global, printLockfileAsJSON, JSC.createCallback(global, printLockfileAsJSON, 1, jsPrintLockfileAsJSON));
+        const obj = JSValue.createEmptyObject(global, 2);
+        const parseLockfile = ZigString.static("parseLockfile");
+        obj.put(global, parseLockfile, JSC.createCallback(global, parseLockfile, 1, jsParseLockfile));
         return obj;
     }
 
-    pub fn jsPrintLockfileAsJSON(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         const allocator = bun.default_allocator;
         var log = logger.Log.init(allocator);
+        defer log.deinit();
 
         const args = callFrame.arguments(1).slice();
-        const cwd = args[0].toSliceOrNull(globalObject) orelse return .undefined;
+        const cwd = args[0].toSliceOrNull(globalObject) orelse return .zero;
         defer cwd.deinit();
 
         const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);
@@ -11215,11 +11227,11 @@ pub const bun_install_js_bindings = struct {
 
         switch (load_result) {
             .err => |err| {
-                globalObject.throw("Failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.value), lockfile_path });
+                globalObject.throw("failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.value), lockfile_path });
                 return .zero;
             },
             .not_found => {
-                globalObject.throw("Lockfile not found: \"{s}\"", .{lockfile_path});
+                globalObject.throw("lockfile not found: \"{s}\"", .{lockfile_path});
                 return .zero;
             },
             .ok => {},
@@ -11239,17 +11251,18 @@ pub const bun_install_js_bindings = struct {
             },
             buffered_writer.writer(),
         ) catch |err| {
-            globalObject.throw("Failed to print lockfile as JSON: {s}", .{@errorName(err)});
+            globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
             return .zero;
         };
 
         buffered_writer.flush() catch |err| {
-            globalObject.throw("Failed to print lockfile as JSON: {s}", .{@errorName(err)});
+            globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
             return .zero;
         };
 
         var str = bun.String.createUTF8(buffer.list.items);
         defer str.deref();
-        return str.toJS(globalObject);
+
+        return str.toJSByParseJSON(globalObject);
     }
 };

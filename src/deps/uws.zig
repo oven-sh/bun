@@ -39,6 +39,9 @@ pub const InternalLoopData = extern struct {
     closed_head: ?*Socket,
     low_prio_head: ?*Socket,
     low_prio_budget: i32,
+    dns_ready_head: *ConnectingSocket,
+    mutex: std.c.pthread_mutex_t,
+
     iteration_nr: c_longlong,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {

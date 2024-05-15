@@ -3,6 +3,7 @@ import { bunEnv, runBunInstall, tmpdirSync } from "harness";
 import * as path from "node:path";
 import { expect, it } from "bun:test";
 
+// prettier-ignore
 it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", async () => {
   const package_dir = tmpdirSync();
 
@@ -41,4 +42,4 @@ it.skipIf(!process.env.TEST_INFO_STRIPE)("should be able to query a charge", asy
   expect(out).toBeEmpty();
   let err = await new Response(stderr).text();
   expect(err).toContain(`error: No such charge: '${charge_id}'\n`);
-});
+}, 20_000);

@@ -102,7 +102,7 @@ const LibInfo = struct {
         ) catch unreachable;
         const promise_value = request.head.promise.value();
 
-        const hints = query.options.toLibC();
+        // const hints = query.options.toLibC();
         const errno = getaddrinfo_async_start_(
             &request.backend.libinfo.machport,
             name_z.ptr,
@@ -1308,16 +1308,71 @@ const InternalDNS = struct {
         // TODO figure out how to return errors later
         bun.assert(@intFromEnum(err) == 0);
 
-        req.result = addrinfo orelse @panic("TODO handle this error");
-
         // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
         global_cache.lock.lock();
+        defer global_cache.lock.unlock();
+
+        req.result = addrinfo orelse @panic("TODO handle this error");
         for (req.notify.items) |socket| {
             us_internal_dns_callback(socket, req);
         }
         req.notify.clearAndFree(bun.default_allocator);
-        global_cache.lock.unlock();
     }
+
+    // pub fn lookupLibinfo() bool {
+    //     const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
+
+    //     var machport: ?*anyopaque = null;
+    //     const errno = getaddrinfo_async_start_(
+    //         &machport,
+    //         name_z.ptr,
+    //         null,
+    //         if (hints != null) &hints.? else null,
+    //         libinfoCallback,
+    //         request,
+    //     );
+
+    //     if (errno != 0) {
+    //         @panic("TODO handle this error");
+    //     }
+
+    //     bun.assert(machport != null);
+
+    //     var poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
+    //     const rc = poll.registerWithFd(
+    //         this.vm.event_loop_handle.?,
+    //         .machport,
+    //         .one_shot,
+    //         bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
+    //     );
+    //     bun.assert(
+    //         rc == .result,
+    //     );
+
+    //     poll.enableKeepingProcessAlive(this.vm.eventLoop());
+
+    //     return promise_value;
+    // }
+
+    // fn libinfoCallback(
+    //     status: i32,
+    //     addr_info: ?*std.c.addrinfo,
+    //     arg: ?*anyopaque,
+    // ) callconv(.C) void {
+    //     const req = bun.cast(*Request, arg);
+    //     if (status != 0) {
+    //         @panic("TODO handle this error");
+    //     }
+
+    //     global_cache.lock.lock();
+    //     defer global_cache.lock.unlock();
+
+    //     req.result = addr_info;
+    //     for (req.notify.items) |socket| {
+    //         us_internal_dns_callback(socket, req);
+    //     }
+    //     req.notify.clearAndFree(bun.default_allocator);
+    // }
 
     // called from event loop threads or http threads
     fn getaddrinfo(_host: [*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {

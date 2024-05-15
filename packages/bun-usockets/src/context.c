@@ -345,8 +345,9 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-extern void Bun__getaddrinfo(const char* host, int port, struct us_connecting_socket_t *s);
-extern void Bun__freeaddrinfo(struct addrinfo* addrinfo);
+extern void Bun__addrinfo_get(const char* host, int port, struct us_connecting_socket_t *s);
+extern void Bun__addrinfo_freeRequest(void* addrinfo_req);
+extern struct addrinfo *Bun__addrinfo_getRequestResult(void* addrinfo_req);
 
 struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
@@ -362,7 +363,7 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
     c->options = options;
     c->ssl = ssl > 0;
 
-    Bun__getaddrinfo(host, port, c);
+    Bun__addrinfo_get(host, port, c);
 
     context->loop->num_polls++;
 
@@ -370,14 +371,15 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(c->addrinfo, c->options);
+    struct addrinfo *addrinfo = Bun__addrinfo_getRequestResult(c->addrinfo_req);
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addrinfo, c->options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         // TODO propagate errno
         c->context->on_connect_error(NULL, 0);
         __builtin_trap();
     }
 
-    Bun__freeaddrinfo(c->addrinfo);
+    Bun__addrinfo_freeRequest(c->addrinfo_req);
 
     struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
     s->context = c->context;
@@ -401,8 +403,8 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 }
 
 // called asynchronously when DNS resolution completes
-void us_internal_dns_callback(struct us_connecting_socket_t *c, struct addrinfo *addrinfo) {
-    c->addrinfo = addrinfo;
+void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    c->addrinfo_req = addrinfo_req;
     struct us_loop_t *loop = c->context->loop;
     pthread_mutex_lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;

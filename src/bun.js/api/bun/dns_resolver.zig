@@ -1170,8 +1170,6 @@ pub const GlobalData = struct {
 
 pub const InternalDNS = struct {
     const Request = struct {
-        const NotifyList = std.ArrayListUnmanaged(*bun.uws.ConnectingSocket);
-
         const Key = struct {
             host: [:0]const u8,
             port: u16,
@@ -1199,10 +1197,8 @@ pub const InternalDNS = struct {
         };
 
         key: Key,
-        result: union(enum) {
-            addrinfo: *std.c.addrinfo,
-            notify: NotifyList,
-        } = .{ .notify = NotifyList{} },
+        result: ?*std.c.addrinfo = null,
+        notify: std.ArrayListUnmanaged(*bun.uws.ConnectingSocket) = .{},
         // number of sockets that have a referene to the addrinfo result
         refcount: usize = 0,
 
@@ -1212,9 +1208,9 @@ pub const InternalDNS = struct {
         }
 
         pub fn deinit(this: *@This()) void {
-            switch (this.result) {
-                .addrinfo => |info| std.c.freeaddrinfo(info),
-                .notify => @panic("attempting to deinit a request that has not been resolved yet"),
+            bun.assert(this.notify.items.len == 0);
+            if (this.result) |res| {
+                std.c.freeaddrinfo(res);
             }
             bun.default_allocator.free(this.host);
         }
@@ -1241,10 +1237,7 @@ pub const InternalDNS = struct {
         ) CacheResult {
             for (this.cache.items) |entry| {
                 if (entry.key.hash == key.hash and entry.key.port == key.port) {
-                    return switch (entry.result) {
-                        .addrinfo => .{ .resolved = entry },
-                        .notify => .{ .inflight = entry },
-                    };
+                    return if (entry.result == null) .{ .inflight = entry } else .{ .resolved = entry };
                 }
             }
             return .none;
@@ -1253,7 +1246,7 @@ pub const InternalDNS = struct {
 
     var global_cache = GlobalCache{};
 
-    extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, addrinfo: *std.c.addrinfo) void;
+    extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, req: *Request) void;
 
     // executed on work pool threads
     fn workPoolCallback(req: *Request) void {
@@ -1266,28 +1259,26 @@ pub const InternalDNS = struct {
         // var hints = std.mem.zeroes(std.c.addrinfo);
         // hints.socktype = std.c.SOCK.STREAM;
 
-        var raw_addrinfo: ?*std.c.addrinfo = null;
+        var addrinfo: ?*std.c.addrinfo = null;
         const err = std.c.getaddrinfo(
             req.key.host,
             if (port.len > 0) portZ.ptr else null,
             null,
-            &raw_addrinfo,
+            &addrinfo,
         );
 
         // assert success
         // TODO figure out how to return errors later
         bun.assert(@intFromEnum(err) == 0);
 
-        const addrinfo = raw_addrinfo orelse @panic("TODO handle this error");
+        req.result = addrinfo orelse @panic("TODO handle this error");
 
         global_cache.lock.lock();
-        var notify = req.result.notify;
-        for (notify.items) |socket| {
+        for (req.notify.items) |socket| {
             req.refcount += 1;
-            us_internal_dns_callback(socket, addrinfo);
+            us_internal_dns_callback(socket, req);
         }
-        notify.clearAndFree(bun.default_allocator);
-        req.result = .{ .addrinfo = addrinfo };
+        req.notify.clearAndFree(bun.default_allocator);
         global_cache.lock.unlock();
     }
 
@@ -1300,7 +1291,7 @@ pub const InternalDNS = struct {
         switch (global_cache.get(key)) {
             .inflight => |entry| {
                 // add this socket to the list of sockets to be notified when the request is resolved
-                entry.result.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+                entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
                 global_cache.lock.unlock();
                 return;
             },
@@ -1308,19 +1299,17 @@ pub const InternalDNS = struct {
                 // result is already available, we can notify the socket immediately
                 entry.refcount += 1;
                 global_cache.lock.unlock();
-                us_internal_dns_callback(socket, entry.result.addrinfo);
+                us_internal_dns_callback(socket, entry);
                 return;
             },
             .none => {},
         }
 
-        var notify = Request.NotifyList{};
-        notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
         const req = bun.default_allocator.create(Request) catch bun.outOfMemory();
         req.* = .{
             .key = key.toOwned(),
-            .result = .{ .notify = notify },
         };
+        req.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
 
         // TODO prevent cache from growing indefinitely
         global_cache.cache.append(bun.default_allocator, req) catch bun.outOfMemory();
@@ -1331,20 +1320,29 @@ pub const InternalDNS = struct {
     }
 
     // called from event loop threads
-    fn freeaddrinfo(addrinfo: *std.c.addrinfo) callconv(.C) void {
-        _ = addrinfo;
-        // 1. get Request from addrinfo (probably have to pass this info along with the addrinfo in us_internal_dns_callback)
-        // 2. decrement refcount
-        // 3. decide if we should free the request (maybe based on cache pressure or something?)
+    fn freeaddrinfo(req: *Request) callconv(.C) void {
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
+
+        req.refcount -= 1;
+        // TODO
+        // if refcount == 0 and cache pressure is high, remove the entry from the cache
+    }
+
+    fn getRequestResult(req: *Request) callconv(.C) *std.c.addrinfo {
+        return req.result.?;
     }
 };
 
 comptime {
     @export(InternalDNS.getaddrinfo, .{
-        .name = "Bun__getaddrinfo",
+        .name = "Bun__addrinfo_get",
     });
     @export(InternalDNS.freeaddrinfo, .{
-        .name = "Bun__freeaddrinfo",
+        .name = "Bun__addrinfo_freeRequest",
+    });
+    @export(InternalDNS.getRequestResult, .{
+        .name = "Bun__addrinfo_getRequestResult",
     });
 }
 

@@ -129,7 +129,7 @@ struct us_socket_t {
 };
 
 struct us_connecting_socket_t {
-    alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo *addrinfo;
+    alignas(LIBUS_EXT_ALIGNMENT) void *addrinfo_req;
     struct us_socket_context_t *context;
     struct us_connecting_socket_t *next;
     struct us_socket_t *socket;

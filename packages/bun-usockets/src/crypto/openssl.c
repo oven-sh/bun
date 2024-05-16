@@ -432,6 +432,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
 
       /* Todo: this should also report some kind of clean shutdown */
       s->received_ssl_shutdown = 1;
+      s->handshake_state = HANDSHAKE_COMPLETED;
       us_internal_ssl_socket_close(s, 0, NULL);
       return NULL;
     } else if (ret < 0) {

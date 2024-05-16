@@ -180,6 +180,11 @@ int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   return length;
 }
 
+static void us_internal_ssl_on_socket_shutdown(struct us_internal_ssl_socket_t *s) {
+  s->received_ssl_shutdown = 1;
+  s->handshake_state = HANDSHAKE_COMPLETED;
+}
+
 struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
                                              int is_client, char *ip,
                                              int ip_length) {
@@ -345,9 +350,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   int result = SSL_do_handshake(s->ssl);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    s->received_ssl_shutdown = 1;
-    s->handshake_state = HANDSHAKE_COMPLETED;
-
+    us_internal_ssl_on_socket_shutdown(s);
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
   }
@@ -400,10 +403,6 @@ ssl_on_end(struct us_internal_ssl_socket_t *s) {
   return us_internal_ssl_socket_close(s, 0, NULL);
 }
 
-static void us_internal_ssl_on_socket_shutdown(struct us_internal_ssl_socket_t *s) {
-  s->received_ssl_shutdown = 1;
-  s->handshake_state = HANDSHAKE_COMPLETED;
-}
 
 // this whole function needs a complete clean-up
 struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,

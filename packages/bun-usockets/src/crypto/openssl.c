@@ -400,6 +400,11 @@ ssl_on_end(struct us_internal_ssl_socket_t *s) {
   return us_internal_ssl_socket_close(s, 0, NULL);
 }
 
+static void us_internal_ssl_on_socket_shutdown(struct us_internal_ssl_socket_t *s) {
+  s->received_ssl_shutdown = 1;
+  s->handshake_state = HANDSHAKE_COMPLETED;
+}
+
 // this whole function needs a complete clean-up
 struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
                                              void *data, int length) {
@@ -431,8 +436,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
       // two phase shutdown is complete here
 
       /* Todo: this should also report some kind of clean shutdown */
-      s->received_ssl_shutdown = 1;
-      s->handshake_state = HANDSHAKE_COMPLETED;
+      us_internal_ssl_on_socket_shutdown(s);
       us_internal_ssl_socket_close(s, 0, NULL);
       return NULL;
     } else if (ret < 0) {
@@ -461,10 +465,8 @@ restart:
                              LIBUS_RECV_BUFFER_LENGTH - read);
     // we need to check if we received a shutdown here
     if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-      s->received_ssl_shutdown = 1;
-      s->handshake_state = HANDSHAKE_COMPLETED;
-      // when reading and getting a shutdown we need to read until SSL buffer is
-      // done first
+      us_internal_ssl_on_socket_shutdown(s);
+      // process the data we might've received before 
     }
 
     if (just_read <= 0) {
@@ -561,11 +563,10 @@ restart:
       goto restart;
     }
   }
-  if (s->received_ssl_shutdown)
-    return s;
 
   // trigger writable if we failed last write with want read
-  if (s->ssl_write_wants_read) {
+  // if ssl is shutdown, ignore this
+  if (s->ssl_write_wants_read && !s->received_ssl_shutdown) {
     s->ssl_write_wants_read = 0;
 
     // make sure to update context before we call (context can change if the

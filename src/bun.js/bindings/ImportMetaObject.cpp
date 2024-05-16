@@ -194,7 +194,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    JSC__JSValue from = 0;
+    JSC__JSValue from = JSC::JSValue::encode(JSC::jsUndefined());
     bool isESM = true;
 
     if (callFrame->argumentCount() > 1) {

@@ -36,12 +36,12 @@ using namespace JSC;
 
 class ScriptOptions {
 public:
-    String filename;
+    String filename = String();
     OrdinalNumber lineOffset;
     OrdinalNumber columnOffset;
-    String cachedData;
-    bool produceCachedData;
-    bool importModuleDynamically;
+    String cachedData = String();
+    bool produceCachedData = false;
+    bool importModuleDynamically = false;
 
     static std::optional<ScriptOptions> fromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue optionsArg, bool& failed)
     {

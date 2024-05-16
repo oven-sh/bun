@@ -193,6 +193,7 @@ Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* glob
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
 {
+    // NOLINTBEGIN
     if (has_loaded_jsc)
         return;
     has_loaded_jsc = true;
@@ -202,6 +203,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     WTF::initializeMainThread();
     JSC::initialize();
     {
+
         JSC::Options::AllowUnfinalizedAccessScope scope;
 
         JSC::Options::useConcurrentJIT() = true;
@@ -240,6 +242,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
         JSC::Options::assertOptionsAreCoherent();
     }
+
+    // NOLINTEND
 }
 
 extern "C" void* Bun__getVM();
@@ -528,10 +532,6 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalO
 static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
-    if (stackTraceLimit == 0) {
-        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-    }
 
     JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
 

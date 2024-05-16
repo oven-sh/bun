@@ -200,17 +200,17 @@ static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
 {
     const uint32_t attributes = static_cast<uint32_t>(attributes_);
     uint32_t result = 0;
-    if (!(attributes & napi_key_configurable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
 
-    if (!(attributes & napi_key_enumerable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_enumerable))) {
         result |= JSC::PropertyAttribute::DontEnum;
     }
 
-    if (!(attributes & napi_key_writable)) {
-        // result |= JSC::PropertyAttribute::ReadOnly;
-    }
+    // if (!(attributes & napi_key_writable)) {
+    //     // result |= JSC::PropertyAttribute::ReadOnly;
+    // }
 
     return result;
 }
@@ -1672,11 +1672,8 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::EncodedJSValue encodedCode = reinterpret_cast<JSC::EncodedJSValue>(code);
-    JSC::JSValue codeValue = JSC::JSValue::decode(encodedCode);
-
-    JSC::EncodedJSValue encodedMessage = reinterpret_cast<JSC::EncodedJSValue>(msg);
-    JSC::JSValue messageValue = JSC::JSValue::decode(encodedMessage);
+    JSC::JSValue codeValue = toJS(code);
+    JSC::JSValue messageValue = toJS(msg);
 
     auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
     if (codeValue) {
@@ -1778,9 +1775,8 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     RETURN_IF_EXCEPTION(scope, {});
     callFrame->setThisValue(subclass);
 
-    size_t count = callFrame->argumentCount();
     MarkedArgumentBufferWithSize<12> args;
-    size_t argc = count + 1;
+    size_t argc = callFrame->argumentCount() + 1;
     args.fill(vm, argc, [&](auto* slot) {
         memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });

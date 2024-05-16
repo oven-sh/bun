@@ -421,7 +421,7 @@ export const readableStreamToBytes = ((stream: ReadableStream<ArrayBufferView | 
             if (done) break;
             sink.write(value);
         }
-        return sink.end() as ArrayBuffer;
+        return sink.end() as Uint8Array;
     })();
 }) satisfies typeof Bun.readableStreamToBytes;
 

@@ -27,7 +27,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.0.21"
+          bun-version: "1.1.8"
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@c7b6cdd3adba8f8b96984640ff172c37c93f73ee
         with:

@@ -20,7 +20,7 @@ extern "C" void Bun__WeakRef__delete(Bun::WeakRef* weakRef)
     delete weakRef;
 }
 
-extern "C" Bun::WeakRef* Bun__WeakRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, void (*finalize_callback)(void*, JSC::JSValue), void* ctx)
+extern "C" Bun::WeakRef* Bun__WeakRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, void (*finalize_callback)(void*), void* ctx)
 {
     return new Bun::WeakRef(globalObject->vm(), JSC::JSValue::decode(encodedValue), finalize_callback, ctx);
 }

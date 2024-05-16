@@ -1477,9 +1477,9 @@ pub const Fetch = struct {
             }
         }
 
-        pub fn onResponseFinalize(this: *FetchTasklet, response_js: JSValue) void {
+        pub fn onResponseFinalize(this: *FetchTasklet) void {
             log("onResponseFinalize", .{});
-            if (response_js.as(Response)) |response| {
+            if (this.native_response) |response| {
                 const body = response.body;
                 // we are streaming or already solved at this point
                 if (body.value != .Locked or this.readable_stream_ref.get() != null) {
@@ -1613,26 +1613,6 @@ pub const Fetch = struct {
                 fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
             }
             return fetch_tasklet;
-        }
-
-        pub fn onPromiseFinalize(this: *FetchTasklet, promise_value: JSValue) void {
-            if (promise_value.isUndefinedOrNull()) {
-                return;
-            }
-
-            if (promise_value.asPromise()) |promise| {
-                if (!promise.isHandled(this.global_this.vm())) {
-                    // if the promise is not handled we should just abort the request
-                    this.signal_store.aborted.store(true, .Monotonic);
-                    this.tracker.didCancel(this.global_this);
-
-                    if (this.http != null) {
-                        http.http_thread.scheduleShutdown(this.http.?);
-                    }
-                }
-                // the problem is that in the case we have a promise that is handled we should have a strong ref of it so we can resolve it later
-                // the plan is stub the then/catch/finalize methods and store the promise in a strong ref
-            }
         }
 
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {

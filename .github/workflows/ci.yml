@@ -14,18 +14,18 @@ on:
       run-id:
         type: string
         description: The workflow ID to download artifacts (skips the build step)
-  pull_request:
-    paths-ignore:
-      - .vscode/**/*
-      - docs/**/*
-      - examples/**/*
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - .vscode/**/*
-      - docs/**/*
-      - examples/**/*
+  # pull_request:
+  #   paths-ignore:
+  #     - .vscode/**/*
+  #     - docs/**/*
+  #     - examples/**/*
+  # push:
+  #   branches:
+  #     - main
+  #   paths-ignore:
+  #     - .vscode/**/*
+  #     - docs/**/*
+  #     - examples/**/*
 
 jobs:
   format:

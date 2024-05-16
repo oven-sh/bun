@@ -2000,7 +2000,7 @@ describe("http/1.1 response body length", () => {
 describe("fetch Response life cycle", () => {
   it("should not keep Response alive if not consumed", async () => {
     const serverProcess = Bun.spawn({
-      cmd: [bunExe(), fetchFixture3],
+      cmd: [bunExe(), "--smol", fetchFixture3],
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",
@@ -2014,7 +2014,7 @@ describe("fetch Response life cycle", () => {
     }
     const serverUrl = await getServerUrl();
     const clientProcess = Bun.spawn({
-      cmd: [bunExe(), fetchFixture4, serverUrl],
+      cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",

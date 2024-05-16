@@ -50,7 +50,7 @@ jobs:
         with:
           issue-number: ${{ steps.env.outputs.pr-number }}
           comment-author: github-actions[bot]
-          body-includes: <!-- generated-comment workflow=${{ github.workflow }}-lint -->
+          body-includes: <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
       - name: Update Comment
         uses: peter-evans/create-or-update-comment@v4
         if: steps.env.outputs.did_fail != '0'
@@ -65,7 +65,7 @@ jobs:
             ${{ steps.env.outputs.text_output }}
             ```
 
-            <!-- generated-comment workflow=${{ github.workflow }}-lint -->
+            <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
           edit-mode: replace
       - name: Update Previous Comment
         uses: peter-evans/create-or-update-comment@v4
@@ -76,5 +76,5 @@ jobs:
           body: |
             @${{ github.actor }}, C++ lint errors fixed! Thank you.
 
-            <!-- generated-comment workflow=${{ github.workflow }}-lint -->
+            <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
           edit-mode: replace

@@ -771,7 +771,7 @@ it("new Response(stream).arrayBuffer() (bytes)", async () => {
     type: "bytes",
   });
   const buffer = await new Response(stream).arrayBuffer();
-  expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
+  expect(new TextDecoder().decode(buffer)).toBe("abdefgh");
 });
 
 it("new Response(stream).arrayBuffer() (default)", async () => {
@@ -788,7 +788,7 @@ it("new Response(stream).arrayBuffer() (default)", async () => {
     cancel() {},
   });
   const buffer = await new Response(stream).arrayBuffer();
-  expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
+  expect(new TextDecoder().decode(buffer)).toBe("abdefgh");
 });
 
 it("new Response(stream).bytes() (bytes)", async () => {

@@ -79,7 +79,7 @@ jobs:
           comment-id: ${{ steps.comment.outputs.comment-id }}
           issue-number: ${{ steps.env.outputs.pr-number }}
           body: |
-            @${{ github.actor }}, you fixed the clang-tidy nits! Thank you.
+            clang-tidy nits are fixed! Thank you.
 
             <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
           edit-mode: replace

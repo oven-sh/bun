@@ -203,7 +203,7 @@ describe("WebSocket", () => {
       websocket: {
         message(ws, message) {
           ws.send(message);
-          setTimeout(() => ws.close(), 100);
+          ws.close();
         }, // a message is received
         open(ws) {
           // a socket is opened

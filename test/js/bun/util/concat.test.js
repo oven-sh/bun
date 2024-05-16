@@ -46,4 +46,10 @@ describe("concat", () => {
     const b = Uint8Array.from([4, 5, 6]);
     expect(concatArrayBuffers([a, b], 4, true)).toEqual(Uint8Array.from([1, 2, 3, 4]));
   });
+
+  it("can be trimmed to a max length (ArrayBuffer)", () => {
+    const a = Uint8Array.from([1, 2, 3]);
+    const b = Uint8Array.from([4, 5, 6]);
+    expect(concatArrayBuffers([a, b], 4)).toEqual(Uint8Array.from([1, 2, 3, 4]).buffer);
+  });
 });

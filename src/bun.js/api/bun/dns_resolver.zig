@@ -1229,7 +1229,7 @@ pub const InternalDNS = struct {
         refcount: usize = 0,
         valid: bool = true,
 
-        libinfo: if (Environment.isMac) MacAsyncDNS else void = .{},
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else void,
 
         pub fn deinit(this: *@This()) void {
             bun.assert(this.notify.items.len == 0);

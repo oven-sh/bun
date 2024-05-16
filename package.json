@@ -18,6 +18,7 @@
     "typescript": "^5.0.2"
   },
   "devDependencies": {
+    "@types/bun": "^1.1.2",
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0"

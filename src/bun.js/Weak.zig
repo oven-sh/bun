@@ -1,10 +1,14 @@
 const bun = @import("root").bun;
 const JSC = bun.JSC;
 
+pub const WeakRefType = enum(u32) {
+    None = 0,
+    FetchResponse = 1,
+};
 const WeakImpl = opaque {
-    pub fn init(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, finalizer: *const fn (*anyopaque) callconv(.C) void, ctx: ?*anyopaque) *WeakImpl {
+    pub fn init(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, refType: WeakRefType, ctx: ?*anyopaque) *WeakImpl {
         JSC.markBinding(@src());
-        return Bun__WeakRef__new(globalThis, value, finalizer, ctx);
+        return Bun__WeakRef__new(globalThis, value, refType, ctx);
     }
 
     pub fn get(this: *WeakImpl) JSC.JSValue {
@@ -25,7 +29,7 @@ const WeakImpl = opaque {
     }
 
     extern fn Bun__WeakRef__delete(this: *WeakImpl) void;
-    extern fn Bun__WeakRef__new(*JSC.JSGlobalObject, JSC.JSValue, finalizer: *const fn (*anyopaque) callconv(.C) void, ctx: ?*anyopaque) *WeakImpl;
+    extern fn Bun__WeakRef__new(*JSC.JSGlobalObject, JSC.JSValue, refType: WeakRefType, ctx: ?*anyopaque) *WeakImpl;
     extern fn Bun__WeakRef__get(this: *WeakImpl) JSC.JSValue;
     extern fn Bun__WeakRef__clear(this: *WeakImpl) void;
 };
@@ -51,16 +55,11 @@ pub fn Weak(comptime T: type) type {
         pub fn create(
             value: JSC.JSValue,
             globalThis: *JSC.JSGlobalObject,
+            refType: WeakRefType,
             ctx: *T,
-            comptime finalizer: *const fn (*T, JSC.JSValue) void,
         ) WeakType {
             if (value != .zero) {
-                const FinalizerHandler = struct {
-                    pub fn destroy(this: *T, js_value: JSC.JSValue) callconv(.C) void {
-                        finalizer(this, js_value);
-                    }
-                };
-                return .{ .ref = WeakImpl.init(globalThis, value, @ptrCast(&FinalizerHandler.destroy), ctx), .globalThis = globalThis };
+                return .{ .ref = WeakImpl.init(globalThis, value, refType, ctx), .globalThis = globalThis };
             }
 
             return .{ .globalThis = globalThis };

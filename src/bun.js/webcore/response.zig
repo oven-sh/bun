@@ -1477,7 +1477,7 @@ pub const Fetch = struct {
             }
         }
 
-        pub fn onResponseFinalize(this: *FetchTasklet) void {
+        export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
             log("onResponseFinalize", .{});
             if (this.native_response) |response| {
                 const body = response.body;
@@ -1494,12 +1494,16 @@ pub const Fetch = struct {
                 }
             }
         }
+        comptime {
+            _ = Bun__FetchResponse_finalize;
+        }
+
         pub fn onResolve(this: *FetchTasklet) JSValue {
             log("onResolve", .{});
             const response = bun.new(Response, this.toResponse());
             const response_js = Response.makeMaybePooled(@as(js.JSContextRef, this.global_this), response);
             response_js.ensureStillAlive();
-            this.response = JSC.Weak(FetchTasklet).create(response_js, this.global_this, this, onResponseFinalize);
+            this.response = JSC.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
             this.native_response = response.ref();
             return response_js;
         }

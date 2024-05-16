@@ -417,6 +417,7 @@ COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 COPY src/runtime ${BUN_DIR}/src/runtime
 COPY src/runtime.js src/runtime.bun.js ${BUN_DIR}/src/
 COPY packages/bun-error ${BUN_DIR}/packages/bun-error
+COPY packages/bun-types ${BUN_DIR}/packages/bun-types
 COPY src/fallback.ts ${BUN_DIR}/src/fallback.ts
 COPY src/api ${BUN_DIR}/src/api
 
@@ -454,7 +455,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   mkdir -p build \
   && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
@@ -520,7 +521,7 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -583,7 +584,7 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \

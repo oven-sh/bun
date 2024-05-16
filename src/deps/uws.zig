@@ -42,11 +42,35 @@ pub const InternalLoopData = extern struct {
     dns_ready_head: *ConnectingSocket,
     closed_connecting_head: *ConnectingSocket,
     mutex: u32, // this is actually a bun.Lock
+    parent_ptr: ?*anyopaque,
+    parent_tag: c_char,
 
     iteration_nr: c_longlong,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
+    }
+
+    pub fn setParentEventLoop(this: *InternalLoopData, parent: bun.JSC.EventLoopHandle) void {
+        switch (parent) {
+            .js => |ptr| {
+                this.parent_tag = 1;
+                this.parent_ptr = ptr;
+            },
+            .mini => |ptr| {
+                this.parent_tag = 2;
+                this.parent_ptr = ptr;
+            },
+        }
+    }
+
+    pub fn getParent(this: *InternalLoopData) bun.JSC.EventLoopHandle {
+        const parent = this.parent_ptr orelse @panic("Parent loop not set - pointer is null");
+        return switch (this.parent_tag) {
+            0 => @panic("Parent loop not set - tag is zero"),
+            1 => .{ .js = bun.cast(*bun.JSC.EventLoop, parent) },
+            2 => .{ .mini = bun.cast(*bun.JSC.MiniEventLoop, parent) },
+        };
     }
 };
 
@@ -1256,14 +1280,6 @@ pub const PosixLoop = extern struct {
 
     pub fn run(this: *PosixLoop) void {
         us_loop_run(this);
-    }
-
-    pub fn getParent(this: *PosixLoop) bun.JSC.EventLoopHandle {
-        const parent = this.internal_loop_data.parent_loop;
-        return if (this.internal_loop_data.parent_kind == 0)
-            .{ .js = bun.cast(*bun.JSC.EventLoop, parent) }
-        else
-            .{ .mini = bun.cast(*bun.JSC.MiniEventLoop, parent) };
     }
 };
 

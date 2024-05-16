@@ -44,6 +44,9 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.dns_ready_head = 0;
     loop->data.mutex = 0;
 
+    loop->data.parent_ptr = 0;
+    loop->data.parent_tag = 0;
+
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 }

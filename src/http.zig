@@ -372,12 +372,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
                 };
-                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+                this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;
 
                 this.sslCtx().setup();
             } else {
                 const opts: uws.us_socket_context_options_t = .{};
-                this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+                this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;
             }
 
             HTTPSocket.configure(
@@ -692,7 +692,7 @@ const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
 pub const HTTPThread = struct {
     var http_thread_loaded: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 
-    loop: *uws.Loop,
+    loop: *JSC.MiniEventLoop,
     http_context: NewHTTPContext(false),
     https_context: NewHTTPContext(true),
 
@@ -742,13 +742,14 @@ pub const HTTPThread = struct {
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
 
-        const loop = bun.uws.Loop.create(struct {
-            pub fn wakeup(_: *uws.Loop) callconv(.C) void {
-                http_thread.drainEvents();
-            }
-            pub fn pre(_: *uws.Loop) callconv(.C) void {}
-            pub fn post(_: *uws.Loop) callconv(.C) void {}
-        });
+        // const loop = bun.uws.Loop.create(struct {
+        //     pub fn wakeup(_: *uws.Loop) callconv(.C) void {
+        //         http_thread.drainEvents();
+        //     }
+        //     pub fn pre(_: *uws.Loop) callconv(.C) void {}
+        //     pub fn post(_: *uws.Loop) callconv(.C) void {}
+        // });
+        const loop = bun.JSC.MiniEventLoop.initGlobal(null);
 
         if (Environment.isWindows) {
             _ = std.os.getenvW(comptime bun.strings.w("SystemRoot")) orelse {
@@ -823,9 +824,9 @@ pub const HTTPThread = struct {
 
     fn processEvents(this: *@This()) noreturn {
         if (comptime Environment.isPosix) {
-            this.loop.num_polls = @max(2, this.loop.num_polls);
+            this.loop.loop.num_polls = @max(2, this.loop.loop.num_polls);
         } else if (comptime Environment.isWindows) {
-            this.loop.inc();
+            this.loop.loop.inc();
         } else {
             @compileError("TODO:");
         }
@@ -838,7 +839,8 @@ pub const HTTPThread = struct {
                 start_time = std.time.nanoTimestamp();
             }
             Output.flush();
-            this.loop.run();
+            this.loop.tickOnce(this);
+            // this.loop.run();
             if (comptime Environment.isDebug) {
                 const end = std.time.nanoTimestamp();
                 threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});
@@ -857,12 +859,12 @@ pub const HTTPThread = struct {
             }) catch bun.outOfMemory();
         }
         if (this.has_awoken.load(.Monotonic))
-            this.loop.wakeup();
+            this.loop.loop.wakeup();
     }
 
     pub fn wakeup(this: *@This()) void {
         if (this.has_awoken.load(.Monotonic))
-            this.loop.wakeup();
+            this.loop.loop.wakeup();
     }
 
     pub fn schedule(this: *@This(), batch: Batch) void {
@@ -878,7 +880,7 @@ pub const HTTPThread = struct {
         }
 
         if (this.has_awoken.load(.Monotonic))
-            this.loop.wakeup();
+            this.loop.loop.wakeup();
     }
 };
 

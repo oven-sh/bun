@@ -39,6 +39,8 @@ struct us_internal_loop_data_t {
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;
     uint32_t mutex;
+    void *parent_ptr;
+    char parent_tag;
     /* We do not care if this flips or not, it doesn't matter */
     long long iteration_nr;
 };

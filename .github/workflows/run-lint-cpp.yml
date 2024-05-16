@@ -46,7 +46,7 @@ jobs:
       - name: Bun install
         run: |
           bun install
-      - name: Format
+      - name: clang-tidy
         id: format
         env:
           CPU_TARGET: native

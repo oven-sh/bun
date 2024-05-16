@@ -37,6 +37,8 @@ namespace WebCore {
 DOMFormData::DOMFormData(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
 {
+    // bad!
+    static void* methodTable = nullptr;
 }
 
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)

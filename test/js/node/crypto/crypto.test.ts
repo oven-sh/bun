@@ -200,7 +200,7 @@ describe("crypto.createSign()/.verifySign()", () => {
 });
 
 it("should send cipher events in the right order", async () => {
-  const package_dir = tmpdirSync("bun-test-node-stream");
+  const package_dir = tmpdirSync();
   const fixture_path = path.join(package_dir, "fixture.js");
 
   await Bun.write(

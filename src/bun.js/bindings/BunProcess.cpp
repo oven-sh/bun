@@ -773,6 +773,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         String signalName = signalNumberToNameMap->get(signalNumber);
         Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
         MarkedArgumentBuffer args;
+        args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
         args.append(jsNumber(signalNumber));
         // TODO(@paperdave): add an ASSERT(isMainThread());
         // This should be true on posix if I understand sigaction right
@@ -1518,7 +1519,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
 #if OS(LINUX)
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
-        header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(reinterpret_cast<const LChar*>(gnu_get_libc_version())), 0));
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(gnu_get_libc_version()), 0));
 #endif
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
@@ -1602,7 +1603,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
             JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
 
-            stack.split('\n', [&](WTF::StringView line) {
+            stack.split('\n', [&](const WTF::StringView& line) {
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 

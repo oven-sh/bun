@@ -890,16 +890,17 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
+        const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
         if (this.hot_reload == .watch) {
             Output.flush();
             bun.reloadProcess(
                 bun.default_allocator,
-                !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"),
+                should_clear_terminal,
                 false,
             );
         }
 
-        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (should_clear_terminal) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -3590,7 +3591,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }

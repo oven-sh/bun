@@ -1,4 +1,4 @@
-name: Comment Lint
+name: C++ Linter comment
 
 permissions:
   actions: read
@@ -7,13 +7,13 @@ permissions:
 on:
   workflow_run:
     workflows:
-      - Lint C++
+      - lint-cpp
     types:
       - completed
 
 jobs:
   comment-lint:
-    if: ${{ github.repository_owner == 'oven-sh' }}
+    if: ${{ github.repository_owner == 'oven-sh' && github.event.workflow_run.conclusion == 'success' }}
     name: Comment
     runs-on: ubuntu-latest
     steps:

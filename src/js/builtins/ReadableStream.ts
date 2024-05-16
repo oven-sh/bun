@@ -131,14 +131,14 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
   if (underlyingSource !== undefined) {
-    return $readableStreamToArrayBufferDirect(stream, underlyingSource);
+    return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
 
   var result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
     // `result` is an InternalPromise, which doesn't have a `.then` method
     // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(Bun.concatArrayBuffers);
+    return result.then(x => Bun.concatArrayBuffers(x));
   }
 
   return Bun.concatArrayBuffers(result);
@@ -146,13 +146,21 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
 
 $linkTimeConstant;
 export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Promise<Uint8Array> | Uint8Array {
-  const result = Bun.readableStreamToArrayBuffer(stream);
+  // this is a direct stream
+  var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
+
+  if (underlyingSource !== undefined) {
+    return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
+  }
+
+  var result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
     // `result` is an InternalPromise, which doesn't have a `.then` method
     // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(x => new Uint8Array(x));
+    return result.then(x => Bun.concatArrayBuffers(x, Infinity, true));
   }
-  return new Uint8Array(result);
+
+  return Bun.concatArrayBuffers(result, Infinity, true);
 }
 
 $linkTimeConstant;

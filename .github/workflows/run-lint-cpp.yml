@@ -1,4 +1,4 @@
-name: Lint C++
+name: lint-cpp
 
 permissions:
   contents: read

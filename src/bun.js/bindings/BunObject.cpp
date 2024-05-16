@@ -22,7 +22,6 @@
 #include "BunObject.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
-#include <cmath>
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
@@ -195,7 +194,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
 
     auto arrayValue = callFrame->uncheckedArgument(0);
 
-    uint32_t maxLength = std::numeric_limits<uint32_t>::max();
+    size_t maxLength = std::numeric_limits<size_t>::max();
     auto arg1 = callFrame->argument(1);
     if (!arg1.isUndefined() && arg1.isNumber()) {
         double number = arg1.toNumber(globalObject);

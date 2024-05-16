@@ -38,7 +38,7 @@ static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const S
     return object;
 }
 
-static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, Identifier name, JSValue value)
+static JSObject* constructInternalProperty(VM& vm, JSGlobalObject* exec, const Identifier& name, JSValue value)
 {
     auto* object = constructEmptyObject(exec);
     object->putDirect(vm, Identifier::fromString(vm, "name"_s), JSC::identifierToJSValue(vm, name));

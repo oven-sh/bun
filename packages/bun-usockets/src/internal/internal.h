@@ -150,7 +150,7 @@ struct us_connecting_socket_t {
     struct us_socket_t *socket;
     int options;
     int socket_ext_size;
-    unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1;
+    unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1;
     unsigned char timeout;
     unsigned char long_timeout;
     int error;

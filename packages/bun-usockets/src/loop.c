@@ -201,7 +201,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 
     for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
         struct us_connecting_socket_t *next = s->next;
-        free(s);
+        us_free(s);
         s = next;
     }
     loop->data.closed_connecting_head = 0;
@@ -219,11 +219,11 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
     us_internal_handle_low_priority_sockets(loop);
-    us_internal_handle_dns_results(loop);
     loop->data.pre_cb(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
+    us_internal_handle_dns_results(loop);
     us_internal_free_closed_sockets(loop);
     loop->data.post_cb(loop);
 }
@@ -275,9 +275,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
 
                     s->context->on_open(s, 1, 0, 0);
 
-                    // now that the socket is open, we can release the associated us_connecting_socket_t
-                    us_connecting_socket_free(s->connect_state);
-                    s->connect_state = NULL;
+                    if (s->connect_state) {
+                        // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
+                        us_connecting_socket_free(s->connect_state);
+                        s->connect_state = NULL;
+                    }
                 }
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;

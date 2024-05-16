@@ -30,7 +30,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <netdb.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>

@@ -1358,6 +1358,8 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
+            // update the internal socket instance to the one that was just connected
+            this.socket = socket;
             JSC.markBinding(@src());
             log("onOpen ssl: {}", .{comptime ssl});
 

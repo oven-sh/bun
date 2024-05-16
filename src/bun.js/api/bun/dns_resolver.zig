@@ -1168,8 +1168,8 @@ pub const GlobalData = struct {
     }
 };
 
-const InternalDNS = struct {
-    const Request = struct {
+pub const InternalDNS = struct {
+    pub const Request = struct {
         const Key = struct {
             host: ?[:0]const u8,
             port: u16,
@@ -1208,6 +1208,18 @@ const InternalDNS = struct {
             err: c_int,
         };
 
+        pub const MacAsyncDNS = struct {
+            file_poll: ?*bun.Async.FilePoll = null,
+            machport: ?*anyopaque = null,
+
+            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            pub fn onMachportChange(this: *Request) void {
+                if (!getaddrinfo_send_reply(this.libinfo.machport.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
+                    libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
+                }
+            }
+        };
+
         key: Key,
         result: ?Result = null,
 
@@ -1216,6 +1228,8 @@ const InternalDNS = struct {
         // while this is non-zero, this entry cannot be freed
         refcount: usize = 0,
         valid: bool = true,
+
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = .{},
 
         pub fn deinit(this: *@This()) void {
             bun.assert(this.notify.items.len == 0);
@@ -1296,33 +1310,28 @@ const InternalDNS = struct {
 
     var global_cache = GlobalCache{};
 
+    // we just hardcode a STREAM socktype
+    const hints: std.c.addrinfo = .{
+        .addr = null,
+        .addrlen = 0,
+        .canonname = null,
+        .family = std.c.AF.UNSPEC,
+        .flags = 0,
+        .next = null,
+        .protocol = 0,
+        .socktype = std.c.SOCK.STREAM,
+    };
+
     extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, req: *Request) void;
 
-    fn workPoolCallback(req: *Request) void {
-        std.debug.print("workPoolCallback\n", .{});
-        var port_buf: [128]u8 = undefined;
-        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
-        port_buf[port.len] = 0;
-        const portZ = port_buf[0..port.len :0];
-
-        // var hints = std.mem.zeroes(std.c.addrinfo);
-        // hints.socktype = std.c.SOCK.STREAM;
-
-        var addrinfo: ?*std.c.addrinfo = null;
-        const err = std.c.getaddrinfo(
-            if (req.key.host) |host| host.ptr else null,
-            if (port.len > 0) portZ.ptr else null,
-            null,
-            &addrinfo,
-        );
-
+    fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
         // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
         global_cache.lock.lock();
         defer global_cache.lock.unlock();
 
         req.result = .{
-            .info = addrinfo,
-            .err = @intFromEnum(err),
+            .info = info,
+            .err = err,
         };
         for (req.notify.items) |socket| {
             us_internal_dns_callback(socket, req);
@@ -1330,60 +1339,72 @@ const InternalDNS = struct {
         req.notify.clearAndFree(bun.default_allocator);
     }
 
-    // pub fn lookupLibinfo() bool {
-    //     const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
+    fn workPoolCallback(req: *Request) void {
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
 
-    //     var machport: ?*anyopaque = null;
-    //     const errno = getaddrinfo_async_start_(
-    //         &machport,
-    //         name_z.ptr,
-    //         null,
-    //         if (hints != null) &hints.? else null,
-    //         libinfoCallback,
-    //         request,
-    //     );
+        var addrinfo: ?*std.c.addrinfo = null;
+        const err = std.c.getaddrinfo(
+            if (req.key.host) |host| host.ptr else null,
+            if (port.len > 0) portZ.ptr else null,
+            &hints,
+            &addrinfo,
+        );
 
-    //     if (errno != 0) {
-    //         @panic("TODO handle this error");
-    //     }
+        afterResult(req, addrinfo, @intFromEnum(err));
+    }
 
-    //     bun.assert(machport != null);
+    pub fn lookupLibinfo(req: *Request, socket: *bun.uws.ConnectingSocket) bool {
+        const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
+        const loop = bun.uws.us_connecting_socket_get_loop(socket).getParent();
 
-    //     var poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
-    //     const rc = poll.registerWithFd(
-    //         this.vm.event_loop_handle.?,
-    //         .machport,
-    //         .one_shot,
-    //         bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
-    //     );
-    //     bun.assert(
-    //         rc == .result,
-    //     );
+        var machport: ?*anyopaque = null;
+        const errno = getaddrinfo_async_start_(
+            &machport,
+            if (req.key.host) |host| host.ptr else null,
+            null,
+            &hints,
+            libinfoCallback,
+            req,
+        );
 
-    //     poll.enableKeepingProcessAlive(this.vm.eventLoop());
+        if (errno != 0) {
+            @panic("TODO handle this error");
+        }
 
-    //     return promise_value;
-    // }
+        bun.assert(machport != null);
 
-    // fn libinfoCallback(
-    //     status: i32,
-    //     addr_info: ?*std.c.addrinfo,
-    //     arg: ?*anyopaque,
-    // ) callconv(.C) void {
-    //     const req = bun.cast(*Request, arg);
-    //     if (status != 0) {
-    //         @panic("TODO handle this error");
-    //     }
+        var poll = bun.Async.FilePoll.init(loop, bun.toFD(std.math.maxInt(i32) - 1), .{}, InternalDNSRequest, req);
+        const rc = poll.registerWithFd(
+            loop.loop(),
+            .machport,
+            .one_shot,
+            bun.toFD(@intFromPtr(machport)),
+        );
+        bun.assert(rc == .result);
 
-    //     global_cache.lock.lock();
-    //     defer global_cache.lock.unlock();
+        req.libinfo = .{
+            .file_poll = poll,
+            .machport = machport,
+        };
 
-    //     req.result = addr_info;
-    //     for (req.notify.items) |socket| {
-    //         us_internal_dns_callback(socket, req);
-    //     }
-    //     req.notify.clearAndFree(bun.default_allocator);
-    // }
+        return true;
+    }
+
+    fn libinfoCallback(
+        status: i32,
+        addr_info: ?*std.c.addrinfo,
+        arg: ?*anyopaque,
+    ) callconv(.C) void {
+        const req = bun.cast(*Request, arg);
+        if (status != 0) {
+            @panic("TODO handle this error");
+        }
+
+        afterResult(req, addr_info, @intCast(status));
+    }
 
     fn getaddrinfo(_host: ?[*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
         const host: ?[:0]const u8 = std.mem.span(_host);
@@ -1423,6 +1444,13 @@ const InternalDNS = struct {
         _ = global_cache.tryPush(req);
         global_cache.lock.unlock();
 
+        // doesn't work yet
+        // if (Environment.isMac) {
+        //     if (lookupLibinfo(req, socket)) {
+        //         return;
+        //     }
+        // }
+
         // schedule the request to be executed on the work pool
         bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
     }
@@ -1444,6 +1472,8 @@ const InternalDNS = struct {
         return &req.result.?;
     }
 };
+
+pub const InternalDNSRequest = InternalDNS.Request;
 
 comptime {
     @export(InternalDNS.getaddrinfo, .{

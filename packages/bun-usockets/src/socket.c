@@ -152,7 +152,11 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         s->prev = (struct us_socket_t *) s->context;
     }
 
-    us_connecting_socket_free(c);
+    // we can only schedule the socket to be freed if there is no pending callback
+    // otherwise, the callback will see that the socket is closed and will free it
+    if (!c->pending_resolve_callback) {
+        us_connecting_socket_free(c);
+    }
 } 
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
@@ -312,6 +316,16 @@ void *us_socket_get_native_handle(int ssl, struct us_socket_t *s) {
     return (void *) (uintptr_t) us_poll_fd((struct us_poll_t *) s);
 }
 
+void *us_connecting_socket_get_native_handle(int ssl, struct us_connecting_socket_t *c) {
+#ifndef LIBUS_NO_SSL
+    // returns the ssl context
+    if (ssl) {
+        return *(void **)(c + 1);
+    }
+#endif
+    return (void *) (uintptr_t) -1;
+}
+
 int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
@@ -455,4 +469,8 @@ void us_socket_unref(struct us_socket_t *s) {
     uv_unref((uv_handle_t*)s->p.uv_p);
 #endif
     // do nothing if not using libuv
+}
+
+struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
+    return c->context->loop;
 }

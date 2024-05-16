@@ -268,9 +268,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub fn getNativeHandle(this: ThisSocket) ?*NativeSocketHandleType(is_ssl) {
-            const socket = this.socket.get() orelse return null;
-            const handle = us_socket_get_native_handle(comptime ssl_int, socket) orelse return null;
-            return @as(*NativeSocketHandleType(is_ssl), @ptrCast(handle));
+            return @ptrCast(switch (this.socket) {
+                .done => |socket| us_socket_get_native_handle(comptime ssl_int, socket),
+                .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
+            } orelse return null);
         }
 
         pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
@@ -1256,6 +1257,14 @@ pub const PosixLoop = extern struct {
     pub fn run(this: *PosixLoop) void {
         us_loop_run(this);
     }
+
+    pub fn getParent(this: *PosixLoop) bun.JSC.EventLoopHandle {
+        const parent = this.internal_loop_data.parent_loop;
+        return if (this.internal_loop_data.parent_kind == 0)
+            .{ .js = bun.cast(*bun.JSC.EventLoop, parent) }
+        else
+            .{ .mini = bun.cast(*bun.JSC.MiniEventLoop, parent) };
+    }
 };
 
 extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
@@ -1436,6 +1445,7 @@ pub const Poll = opaque {
 };
 
 extern fn us_socket_get_native_handle(ssl: i32, s: ?*Socket) ?*anyopaque;
+extern fn us_connecting_socket_get_native_handle(ssl: i32, s: ?*ConnectingSocket) ?*anyopaque;
 
 extern fn us_socket_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
 extern fn us_socket_long_timeout(ssl: i32, s: ?*Socket, seconds: c_uint) void;
@@ -1460,6 +1470,8 @@ extern fn us_connecting_socket_close(ssl: i32, s: ?*ConnectingSocket) void;
 extern fn us_connecting_socket_shutdown_read(ssl: i32, s: ?*ConnectingSocket) void;
 extern fn us_connecting_socket_is_shut_down(ssl: i32, s: ?*ConnectingSocket) i32;
 extern fn us_connecting_socket_get_error(ssl: i32, s: ?*ConnectingSocket) i32;
+
+pub extern fn us_connecting_socket_get_loop(s: *ConnectingSocket) *Loop;
 
 // if a TLS socket calls this, it will start SSL instance and call open event will also do TLS handshake if required
 // will have no effect if the socket is closed or is not TLS

@@ -107,7 +107,7 @@ enum {
 
 struct us_internal_ssl_socket_t {
   struct us_socket_t s;
-  SSL *ssl;
+  SSL *ssl; // this _must_ be the first member after s
 #if ALLOW_SERVER_RENEGOTIATION
   unsigned int client_pending_renegotiations;
   uint64_t last_ssl_renegotiation;

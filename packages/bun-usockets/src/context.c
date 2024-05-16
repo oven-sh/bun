@@ -351,14 +351,14 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
     }
 #endif
 
-    struct us_connecting_socket_t *c = malloc(sizeof(struct us_connecting_socket_t) + socket_ext_size);
-    memset(c, 0, sizeof(struct us_connecting_socket_t));
+    struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
     c->context = context;
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
     c->long_timeout = 255;
+    c->pending_resolve_callback = 1;
 
     Bun__addrinfo_get(host, port, c);
 
@@ -368,6 +368,12 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    c->pending_resolve_callback = 0;
+    // if the socket was closed while we were resolving the address, free it
+    if (c->closed) {
+        us_connecting_socket_free(c);
+        return;
+    }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
         c->error = result->error;

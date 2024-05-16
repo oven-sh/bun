@@ -38,6 +38,7 @@ jobs:
             bun.lockb
             test
             packages/bun-internal-test
+            packages/bun-types
       - name: Setup Environment
         shell: bash
         run: |

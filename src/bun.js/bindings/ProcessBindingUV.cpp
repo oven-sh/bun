@@ -124,7 +124,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     }
     }
 
-    return JSValue::encode(jsString(vm, String("Unknown system error"_s)));
+    return JSValue::encode(jsString(vm, makeString("Unknown system error: "_s, err)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

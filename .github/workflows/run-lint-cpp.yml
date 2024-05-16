@@ -48,6 +48,7 @@ jobs:
         id: format
         env:
           CPU_TARGET: native
+          BUN_SILENT: 1
         run: |
           rm -f did_fail format.log
           echo "${{ inputs.pr-number }}" > pr-number.txt

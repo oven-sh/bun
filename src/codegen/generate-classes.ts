@@ -4,6 +4,10 @@ import type { Field, ClassDefinition } from "./class-definitions";
 import { writeIfNotChanged } from "./helpers";
 import { camelCase, pascalCase } from "change-case";
 
+if (process.env.BUN_SILENT === "1") {
+  console.log = () => {};
+}
+
 const files = process.argv.slice(2);
 const outBase = files.pop();
 

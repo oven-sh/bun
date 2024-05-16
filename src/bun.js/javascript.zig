@@ -215,19 +215,15 @@ pub const SavedSourceMap = struct {
         const old_value = Value.from(entry.value_ptr.*);
         if (old_value.get(SourceProviderMap)) |prov| {
             if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                // there is nothing to unref or deinit
                 this.map.removeByPtr(entry.key_ptr);
             }
         } else if (old_value.get(ParsedSourceMap)) |map| {
-            if (map.source_contents.state == .unloaded and
-                @intFromPtr(map.source_contents.provider()) == @intFromPtr(opaque_source_provider))
-            {
-                map.deinit(default_allocator);
-                this.map.removeByPtr(entry.key_ptr);
-            } else {
-                // not possible to know for sure this is the same map. also not worth
-                // knowing, because what will happen is one of:
-                // - a hot reload happens and replaces this entry.
-                // - the process exits, freeing the memory.
+            if (map.underlying_provider.provider()) |prov| {
+                if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                    map.deinit(default_allocator);
+                    this.map.removeByPtr(entry.key_ptr);
+                }
             }
         }
     }
@@ -286,12 +282,16 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
-    pub fn get(this: *SavedSourceMap, path: string, contents: SourceMap.SourceContentHandling) ?*ParsedSourceMap {
+    pub fn getWithContent(
+        this: *SavedSourceMap,
+        path: string,
+        hint: SourceMap.ParseUrlResultHint,
+    ) SourceMap.ParseUrl {
         const hash = bun.hash(path);
-        const mapping = this.map.getEntry(hash) orelse return null;
+        const mapping = this.map.getEntry(hash) orelse return .{};
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
+                return .{ .map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap) };
             },
             Value.Tag.SavedMappings => {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
@@ -299,35 +299,40 @@ pub const SavedSourceMap = struct {
                 const result = default_allocator.create(ParsedSourceMap) catch unreachable;
                 result.* = saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
-                    return null;
+                    return .{};
                 };
                 mapping.value_ptr.* = Value.init(result).ptr();
-                return result;
+                return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
                 var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
-                if (ptr.toParsedSourceMap(path, contents)) |result| {
-                    mapping.value_ptr.* = Value.init(result).ptr();
-                    return result;
-                } else {
-                    // does not have a valid source map. let's not try again
-                    _ = this.map.remove(hash);
 
-                    // Store path for a user note.
-                    const storage = MissingSourceMapNoteInfo.storage[0..path.len];
-                    @memcpy(storage, path);
-                    MissingSourceMapNoteInfo.path = storage;
+                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                    if (parse.map) |map| {
+                        mapping.value_ptr.* = Value.init(map).ptr();
+                        return parse;
+                    };
 
-                    return null;
-                }
+                // does not have a valid source map. let's not try again
+                _ = this.map.remove(hash);
+
+                // Store path for a user note.
+                const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+                @memcpy(storage, path);
+                MissingSourceMapNoteInfo.path = storage;
+                return .{};
             },
             else => {
                 if (Environment.allow_assert) {
                     @panic("Corrupt pointer tag");
                 }
-                return null;
+                return .{};
             },
         }
+    }
+
+    pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
+        return this.getWithContent(path, .mappings_only).map;
     }
 
     pub fn resolveMapping(
@@ -340,14 +345,19 @@ pub const SavedSourceMap = struct {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        const parsed_mapping = this.get(path, source_handling) orelse
-            return null;
-        const mapping = SourceMap.Mapping.find(parsed_mapping.mappings, line, column) orelse
+        const parse = this.getWithContent(path, switch (source_handling) {
+            .no_source_contents => .mappings_only,
+            .source_contents => .{ .all = .{ .line = line, .column = column } },
+        });
+        const map = parse.map orelse return null;
+        const mapping = parse.mapping orelse
+            SourceMap.Mapping.find(map.mappings, line, column) orelse
             return null;
 
         return .{
             .mapping = mapping,
-            .source_map = parsed_mapping,
+            .source_map = map,
+            .prefetched_source_code = parse.source_contents,
         };
     }
 };
@@ -2928,8 +2938,9 @@ pub const VirtualMachine = struct {
                     },
                     .source_index = 0,
                 },
-                // undefined is fine, because this pointer is never read if `top.remapped == true`
+                // undefined is fine, because these two values are never read if `top.remapped == true`
                 .source_map = undefined,
+                .prefetched_source_code = undefined,
             }
         else
             this.source_mappings.resolveMapping(
@@ -2952,7 +2963,7 @@ pub const VirtualMachine = struct {
             const code = code: {
                 if (!top.remapped and lookup.source_map.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
-                        break :code ZigString.Slice.fromUTF8NeverFree(src);
+                        break :code src;
                     }
                 }
 

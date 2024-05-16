@@ -2026,3 +2026,32 @@ describe("fetch Response life cycle", () => {
       serverProcess.kill();
     }
   });
+  it("should allow to get promise result after response is GC'd", async () => {
+    const server = Bun.serve({
+      async fetch(request: Request) {
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(100);
+              controller.enqueue(new TextEncoder().encode("Hello, World!"));
+              await Bun.sleep(100);
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    async function fetchResponse() {
+      const response = await fetch(`${server.url.origin}/non-empty`);
+      return response.text();
+    }
+    try {
+      const response_promise = fetchResponse();
+      Bun.gc(true);
+      expect(await response_promise).toBe("Hello, World!");
+    } finally {
+      server.stop(true);
+    }
+  });
+});

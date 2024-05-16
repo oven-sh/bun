@@ -28,7 +28,9 @@ on:
 
 env:
   LLVM_VERSION: 16
-  BUN_VERSION: 1.1.2
+  BUN_VERSION: 1.1.8
+  LC_CTYPE: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
 
 jobs:
   build-submodules:

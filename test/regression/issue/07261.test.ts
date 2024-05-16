@@ -1,10 +1,10 @@
-import { bunEnv, bunExe } from "harness";
-import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { it, expect } from "bun:test";
 
 it("imports tsconfig.json with abritary keys", async () => {
-  const testDir = mkdtempSync(join(tmpdir(), "issue7261-"));
+  const testDir = tmpdirSync();
 
   // Clean up from prior runs if necessary
   rmSync(testDir, { recursive: true, force: true });

@@ -288,13 +288,7 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
     if (JSValue targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s))) {
         if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
             auto targetString = targetJSString->value(globalObject);
-            if (targetString == "node"_s) {
-                target = BunPluginTargetNode;
-            } else if (targetString == "bun"_s) {
-                target = BunPluginTargetBun;
-            } else if (targetString == "browser"_s) {
-                target = BunPluginTargetBrowser;
-            } else {
+            if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
                 return JSValue::encode(jsUndefined());
             }

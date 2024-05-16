@@ -1,6 +1,6 @@
 import { hash, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env } from "harness";
+import { bunEnv, bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { mkdir, writeFile, exists } from "fs/promises";
 import { join } from "path";
 import {
@@ -371,7 +371,7 @@ it("should remove all cache", async () => {
 
 import { tmpdir } from "os";
 it("bun pm migrate", async () => {
-  const test_dir = join(tmpdir(), "contoso-test" + Math.random().toString(36).slice(2));
+  const test_dir = tmpdirSync();
 
   cpSync(join(import.meta.dir, "migration/contoso-test"), test_dir, { recursive: true });
 

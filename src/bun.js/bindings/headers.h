@@ -251,7 +251,6 @@ CPP_DECL void JSC__JSPromise__rejectAsHandledException(JSC__JSPromise* arg0, JSC
 CPP_DECL JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, bool arg3);
-CPP_DECL void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2);
 CPP_DECL void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
@@ -268,7 +267,6 @@ CPP_DECL void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandled(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__Exception* arg2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-CPP_DECL void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2);
 CPP_DECL void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSInternalPromise__result(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);

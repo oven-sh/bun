@@ -1,12 +1,7 @@
 import { expect, it } from "bun:test";
 
 function expectInvalidCharacters(val) {
-  try {
-    atob(val);
-    throw new Error("Expected error");
-  } catch (error) {
-    expect(error.message).toBe("The string contains invalid characters.");
-  }
+  expect(() => atob(val)).toThrow("The string contains invalid characters.");
 }
 
 it("atob", () => {

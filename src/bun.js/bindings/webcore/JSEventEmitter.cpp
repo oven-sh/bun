@@ -234,17 +234,21 @@ inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexi
     auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener", "EventEmitter", "addListener"); });
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(eventType), WTFMove(listener), once, prepend); }));
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
+    // see EventEmitterPrototype.addListener in events.ts
+    // first, emit the newListener event
     JSC::Identifier newListenerEventType = JSC::Identifier::fromString(vm, "newListener"_s);
     JSC::MarkedArgumentBuffer args;
     args.append(argument0.value());
     args.append(argument1.value());
 
     JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.emitForBindings(WTFMove(newListenerEventType), WTFMove(args)); }));
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    // then, add the listener
+    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener", "EventEmitter", "addListener"); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(eventType), WTFMove(listener), once, prepend); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());

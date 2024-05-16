@@ -2,7 +2,6 @@ name: Lint
 
 permissions:
   contents: read
-  actions: write
 env:
   LLVM_VERSION: 16
 

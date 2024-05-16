@@ -701,7 +701,9 @@ declare module "bun" {
    * This function is faster because it uses uninitialized memory when copying. Since the entire
    * length of the buffer is known, it is safe to use uninitialized memory.
    */
-  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>): ArrayBuffer;
+  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength?: number): ArrayBuffer;
+  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength: number, asUint8Array: false): ArrayBuffer;
+  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength: number, asUint8Array: true): Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.

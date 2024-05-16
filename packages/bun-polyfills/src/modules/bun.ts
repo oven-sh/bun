@@ -460,16 +460,19 @@ export const readableStreamToJSON = (async <T = unknown>(stream: ReadableStream<
     }
 }) satisfies typeof Bun.readableStreamToJSON;
 
-export const concatArrayBuffers = ((buffers) => {
+export const concatArrayBuffers = ((buffers, maxLength = Infinity, asUint8Array = false) => {
     let size = 0;
     for (const chunk of buffers) size += chunk.byteLength;
+    size = Math.min(size, maxLength);
     const buffer = new ArrayBuffer(size);
     const view = new Uint8Array(buffer);
     let offset = 0;
     for (const chunk of buffers) {
+        if (offset > size) break;
         view.set(new Uint8Array(chunk instanceof ArrayBuffer || chunk instanceof SharedArrayBuffer ? chunk : chunk.buffer), offset);
         offset += chunk.byteLength;
     }
+    if (asUint8Array) return view;
     return buffer;
 }) satisfies typeof Bun.concatArrayBuffers;
 

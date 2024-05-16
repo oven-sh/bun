@@ -87,7 +87,7 @@ describe("WebSocket", () => {
   }, 60_000);
 
   it("should connect many times over https", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -104,23 +104,18 @@ describe("WebSocket", () => {
         open(ws) {},
       },
     });
-    try {
-      for (let i = 0; i < 1000; i++) {
-        const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
-        await new Promise((resolve, reject) => {
-          ws.onopen = resolve;
-          ws.onerror = reject;
-        });
-        var closed = new Promise((resolve, reject) => {
-          ws.onclose = resolve;
-        });
-
-        ws.close();
-        await closed;
-      }
-      Bun.gc(true);
-    } finally {
-      server.stop(true);
+    for (let i = 0; i < 1000; i++) {
+      const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = reject;
+      });
+      var closed = new Promise((resolve, reject) => {
+        ws.onclose = resolve;
+      });
+      ws.send("Hello World!");
+      ws.close();
+      await closed;
     }
   });
 

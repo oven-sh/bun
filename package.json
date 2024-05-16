@@ -1,6 +1,9 @@
 {
   "private": true,
   "name": "bun",
+  "workspaces": [
+    "./packages/bun-types"
+  ],
   "dependencies": {
     "@vscode/debugadapter": "^1.61.0",
     "esbuild": "^0.17.15",
@@ -15,9 +18,13 @@
     "typescript": "^5.0.2"
   },
   "devDependencies": {
+    "@types/bun": "^1.1.2",
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0"
+  },
+  "resolutions": {
+    "bun-types": "workspace:packages/bun-types"
   },
   "scripts": {
     "setup": "./scripts/setup.sh",

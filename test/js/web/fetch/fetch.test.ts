@@ -286,9 +286,8 @@ describe("AbortSignal", () => {
   it("TimeoutError", async () => {
     const signal = AbortSignal.timeout(10);
 
-    let server: Server | null = null;
     try {
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         async fetch() {
           await Bun.sleep(100);
@@ -299,8 +298,6 @@ describe("AbortSignal", () => {
       expect.unreachable();
     } catch (ex: any) {
       expect(ex.name).toBe("TimeoutError");
-    } finally {
-      server?.stop(true);
     }
   });
 
@@ -550,10 +547,9 @@ describe("fetch", () => {
   });
 
   it("should properly redirect to another port #7793", async () => {
-    var server: Server | null = null;
     var socket: net.Server | null = null;
     try {
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         tls: {
           "cert":
@@ -583,7 +579,6 @@ describe("fetch", () => {
 
       expect(await promise).toBe("Hello, world!");
     } finally {
-      server?.stop(true);
       socket?.close();
     }
   });
@@ -632,13 +627,12 @@ describe("fetch", () => {
   });
 
   it("should work with ipv6 localhost", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req) {
         return new Response("Pass!");
       },
     });
-
     let res = await fetch(`http://[::1]:${server.port}`);
     expect(await res.text()).toBe("Pass!");
     res = await fetch(`http://[::]:${server.port}/`);
@@ -647,8 +641,6 @@ describe("fetch", () => {
     expect(await res.text()).toBe("Pass!");
     res = await fetch(`http://[0000:0000:0000:0000:0000:0000:0000:0001]:${server.port}/`);
     expect(await res.text()).toBe("Pass!");
-
-    server.stop();
   });
 });
 
@@ -1558,7 +1550,7 @@ it("should work with http 100 continue on the same buffer", async () => {
 
 describe("should strip headers", () => {
   it("status code 303", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       async fetch(request: Request) {
         if (request.url.endsWith("/redirect")) {
@@ -1589,11 +1581,10 @@ describe("should strip headers", () => {
     expect(headers.get("Content-Language")).toBeNull();
     expect(url).toEndWith("/redirected");
     expect(redirected).toBe(true);
-    server.stop(true);
   });
 
   it("cross-origin status code 302", async () => {
-    const server1 = Bun.serve({
+    await using server1 = Bun.serve({
       port: 0,
       async fetch(request: Request) {
         if (request.url.endsWith("/redirect")) {
@@ -1612,7 +1603,7 @@ describe("should strip headers", () => {
       },
     });
 
-    const server2 = Bun.serve({
+    await using server2 = Bun.serve({
       port: 0,
       async fetch(request: Request, server) {
         if (request.url.endsWith("/redirect")) {
@@ -1641,13 +1632,11 @@ describe("should strip headers", () => {
     expect(headers.get("Authorization")).toBeNull();
     expect(url).toEndWith("/redirected");
     expect(redirected).toBe(true);
-    server1.stop(true);
-    server2.stop(true);
   });
 });
 
 it("same-origin status code 302 should not strip headers", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(request: Request, server) {
       if (request.url.endsWith("/redirect")) {
@@ -1676,25 +1665,9 @@ it("same-origin status code 302 should not strip headers", async () => {
   expect(headers.get("Authorization")).toEqual("yes");
   expect(url).toEndWith("/redirected");
   expect(redirected).toBe(true);
-  server.stop(true);
 });
 
 describe("should handle relative location in the redirect, issue#5635", () => {
-  var server: Server;
-  beforeAll(async () => {
-    server = Bun.serve({
-      port: 0,
-      async fetch(request: Request) {
-        return new Response("Not Found", {
-          status: 404,
-        });
-      },
-    });
-  });
-  afterAll(() => {
-    server.stop(true);
-  });
-
   it.each([
     ["/a/b", "/c", "/c"],
     ["/a/b", "c", "/a/c"],
@@ -1712,6 +1685,14 @@ describe("should handle relative location in the redirect, issue#5635", () => {
     ["/a/b/", "../c/d", "/a/c/d"],
     ["/a/b/", "../../../c", "/c"],
   ])("('%s', '%s')", async (pathname, location, expected) => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
     server.reload({
       async fetch(request: Request) {
         const url = new URL(request.url);
@@ -1741,7 +1722,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
 
 it("should allow very long redirect URLS", async () => {
   const Location = "/" + "B".repeat(7 * 1024);
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(request: Request) {
       gc();
@@ -1765,7 +1746,6 @@ it("should allow very long redirect URLS", async () => {
     expect(url).toBe(`${server.url.origin}${Location}`);
     expect(status).toBe(404);
   }
-  server.stop(true);
 });
 
 it("304 not modified with missing content-length does not cause a request timeout", async () => {

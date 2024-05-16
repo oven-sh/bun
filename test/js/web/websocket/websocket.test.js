@@ -58,7 +58,7 @@ describe("WebSocket", () => {
     Bun.gc(true);
   });
   it("should handle shutdown properly", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -75,19 +75,14 @@ describe("WebSocket", () => {
         open(ws) {},
       },
     });
-    try {
-      for (let i = 0; i < 10_000; i++) {
-        const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
-        await new Promise((resolve, reject) => {
-          ws.onopen = resolve;
-          ws.onerror = reject;
-        });
-        ws.send("message");
-      }
-      Bun.gc(true);
-    } finally {
-      server.stop(true);
-      Bun.gc(true);
+
+    for (let i = 0; i < 10_000; i++) {
+      const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+      await new Promise((resolve, reject) => {
+        ws.onopen = resolve;
+        ws.onerror = reject;
+      });
+      ws.send("message");
     }
   }, 60_000);
 

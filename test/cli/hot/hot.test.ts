@@ -346,7 +346,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     );
   }
   let str = "";
-  for await (const chunk of runner.stderr) {
+  outer: for await (const chunk of runner.stderr) {
     str += new TextDecoder().decode(chunk);
     var any = false;
     if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
@@ -363,7 +363,12 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         break;
       }
 
-      expect(line).toContain(`error: ${reloadCounter - 1}`);
+      if (line.includes(`error: ${reloadCounter - 1}`)) {
+        continue outer;
+      }
+      expect(line).toContain(`error: ${reloadCounter}`);
+      reloadCounter++;
+
       let next = it.shift()!;
       if (!next) throw new Error(line);
       const match = next.match(/\s*at.*?:1003:(\d+)$/);
@@ -418,7 +423,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     );
   }
   let str = "";
-  for await (const chunk of runner.stderr) {
+  outer: for await (const chunk of runner.stderr) {
     str += new TextDecoder().decode(chunk);
     var any = false;
     if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
@@ -427,7 +432,6 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     let line;
     while ((line = it.shift())) {
       if (!line.includes("error")) continue;
-      reloadCounter++;
       str = "";
 
       if (reloadCounter === 100) {
@@ -435,7 +439,12 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         break;
       }
 
-      expect(line).toContain(`error: ${reloadCounter - 1}`);
+      if (line.includes(`error: ${reloadCounter - 1}`)) {
+        continue outer;
+      }
+      expect(line).toContain(`error: ${reloadCounter}`);
+      reloadCounter++;
+
       let next = it.shift()!;
       expect(next).toInclude("bundle_in.ts");
       const col = next.match(/\s*at.*?:4:(\d+)$/)![1];

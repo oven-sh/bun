@@ -7,7 +7,7 @@ permissions:
 on:
   workflow_run:
     workflows:
-      - Lint C++
+      - "Lint C++"
     types:
       - completed
 

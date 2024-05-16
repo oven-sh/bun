@@ -243,7 +243,7 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     if (UNLIKELY(str->length() == 0))
         return JSC::JSValue::encode(JSC::jsNumber(0));
 
-    auto view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->tryGetValue(lexicalGlobalObject);
     size_t written = 0;
 
     switch (encoding) {
@@ -371,7 +371,7 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->tryGetValue(lexicalGlobalObject);
     JSC::EncodedJSValue result;
 
     if (view.is8Bit()) {
@@ -603,7 +603,7 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url: {
         int64_t length = str->length();
-        auto view = str->tryGetValue(lexicalGlobalObject);
+        const auto& view = str->tryGetValue(lexicalGlobalObject);
 
         if (view.is8Bit()) {
             const auto span = view.span8();
@@ -632,7 +632,7 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
     }
 
     case WebCore::BufferEncodingType::utf8: {
-        auto view = str->tryGetValue(lexicalGlobalObject);
+        const auto& view = str->tryGetValue(lexicalGlobalObject);
         if (view.is8Bit()) {
             const auto span = view.span8();
             written = Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));

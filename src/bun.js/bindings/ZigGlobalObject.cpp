@@ -146,7 +146,7 @@
 #include "ZigGeneratedClasses.h"
 #include "ZigSourceProvider.h"
 #include "UtilInspect.h"
-
+#include "Base64Helpers.h"
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
@@ -190,26 +190,10 @@ static bool has_loaded_jsc = false;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-namespace WebCore {
-class Base64Utilities {
-public:
-    static ExceptionOr<String> atob(const String& encodedString)
-    {
-        if (encodedString.isNull())
-            return String();
-
-        auto decodedData = base64DecodeToString(encodedString, Base64DecodeMode::DefaultValidatePaddingAndIgnoreWhitespace);
-        if (!decodedData)
-            return Exception { InvalidCharacterError };
-
-        return decodedData;
-    }
-};
-
-}
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
 {
+    // NOLINTBEGIN
     if (has_loaded_jsc)
         return;
     has_loaded_jsc = true;
@@ -219,6 +203,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     WTF::initializeMainThread();
     JSC::initialize();
     {
+
         JSC::Options::AllowUnfinalizedAccessScope scope;
 
         JSC::Options::useConcurrentJIT() = true;
@@ -257,6 +242,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         }
         JSC::Options::assertOptionsAreCoherent();
     }
+
+    // NOLINTEND
 }
 
 extern "C" void* Bun__getVM();
@@ -545,10 +532,6 @@ static String computeErrorInfoWithoutPrepareStackTrace(JSC::VM& vm, Zig::GlobalO
 static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, unsigned& line, unsigned& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    size_t stackTraceLimit = globalObject->stackTraceLimit().value();
-    if (stackTraceLimit == 0) {
-        stackTraceLimit = DEFAULT_ERROR_STACK_TRACE_LIMIT;
-    }
 
     JSCStackTrace stackTrace = JSCStackTrace::fromExisting(vm, stackFrames);
 
@@ -1523,7 +1506,7 @@ JSC_DEFINE_HOST_FUNCTION(functionATOB,
     WTF::String encodedString = callFrame->uncheckedArgument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
-    auto result = WebCore::Base64Utilities::atob(encodedString);
+    auto result = Bun::Base64::atob(encodedString);
     if (result.hasException()) {
         throwException(globalObject, throwScope, createDOMException(*globalObject, result.releaseException()));
         return JSC::JSValue::encode(JSC::JSValue {});

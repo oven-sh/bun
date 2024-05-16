@@ -26,6 +26,13 @@ pub const SIMDUTFResult = extern struct {
         /// a high surrogate must be followed by a low surrogate and a low surrogate must be preceded by a high surrogate (UTF-16)
         too_large = 5,
         surrogate = 6,
+
+        /// Found a character that cannot be part of a valid base64 string.
+        invalid_base64_character = 7,
+        /// The base64 input terminates with a single character, excluding padding (=).
+        base64_input_remainder = 8,
+        /// The provided buffer is too small.
+        output_buffer_too_small = 9,
         /// Not related to validation/transcoding.
         _,
     };

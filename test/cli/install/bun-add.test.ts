@@ -1,9 +1,8 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, ospath } from "harness";
-import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile, copyFile, appendFile } from "fs/promises";
+import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, tmpdirSync } from "harness";
+import { access, mkdir, readlink, rm, writeFile, copyFile, appendFile } from "fs/promises";
 import { join, relative } from "path";
-import { tmpdir } from "os";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -33,7 +32,7 @@ beforeAll(() => {
 });
 
 beforeEach(async () => {
-  add_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  add_dir = tmpdirSync();
   await dummyBeforeEach();
 });
 afterEach(async () => {
@@ -1763,7 +1762,7 @@ async function installRedirectsToAdd(saveFlagFirst: boolean) {
     " 1 package installed",
   ]);
   expect(await exited).toBe(0);
-  expect(await file(join(package_dir, "package.json")).text()).toInclude("bun-add.test");
+  expect(await file(join(package_dir, "package.json")).text()).toInclude("bun.test.");
 }
 
 it("should add dependency alongside peerDependencies", async () => {

@@ -462,6 +462,8 @@ JSValue fetchCommonJSModule(
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
+    memset(&resValue, 0, sizeof(ErrorableResolvedSource));
+
     ErrorableResolvedSource* res = &resValue;
     WTF::String sourceCodeStringForDeref;
     const auto getSourceCodeStringForDeref = [&]() {

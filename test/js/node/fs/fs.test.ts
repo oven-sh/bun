@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -253,7 +253,7 @@ it("Dirent.name setter", () => {
 });
 
 it("writeFileSync should correctly resolve ../..", () => {
-  const base = join(tmpdir(), `fs-test-${Math.random().toString(36).slice(2)}`);
+  const base = tmpdirSync();
   const path = join(base, "foo", "bar");
   mkdirSync(path, { recursive: true });
   const cwd = process.cwd();
@@ -264,7 +264,7 @@ it("writeFileSync should correctly resolve ../..", () => {
 });
 
 it("writeFileSync in append should not truncate the file", () => {
-  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+  const path = join(tmpdirSync(), "should-not-append.txt");
   var str = "";
   writeFileSync(path, "---BEGIN---");
   str += "---BEGIN---";
@@ -286,7 +286,7 @@ it("await readdir #3931", async () => {
 });
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
-  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+  const path = join(tmpdirSync(), "should-not-append.txt");
 
   for (let options of [{ flag: "w" }, { flag: undefined }, {}, undefined]) {
     writeFileSync(path, "---BEGIN---", options);
@@ -482,9 +482,7 @@ it("readdirSync on import.meta.dir", () => {
 });
 
 it("promises.readdir on a large folder", async () => {
-  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
-  rmSync(huge, { force: true, recursive: true });
-  mkdirSync(huge, { recursive: true });
+  const huge = tmpdirSync();
   for (let i = 0; i < 128; i++) {
     writeFileSync(join(huge, "file-" + i), "");
   }
@@ -819,9 +817,7 @@ it("promises.readFile with buffer as file path", async () => {
 });
 
 it("promises.readdir on a large folder withFileTypes", async () => {
-  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
-  rmSync(huge, { force: true, recursive: true });
-  mkdirSync(huge, { recursive: true });
+  const huge = tmpdirSync();
   let withFileTypes = { withFileTypes: true } as const;
   for (let i = 0; i < 128; i++) {
     writeFileSync(join(huge, "file-" + i), "");
@@ -954,14 +950,12 @@ it("readdirSync on import.meta.dir with trailing slash", () => {
 });
 
 it("readdirSync works on empty directories", () => {
-  const path = `${tmpdir()}/fs-test-empty-dir-${(Math.random() * 100000 + 100).toString(32)}`;
-  mkdirSync(path, { recursive: true });
+  const path = tmpdirSync();
   expect(readdirSync(path).length).toBe(0);
 });
 
 it("readdirSync works on directories with under 32 files", () => {
-  const path = `${tmpdir()}/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(32)}`;
-  mkdirSync(path, { recursive: true });
+  const path = tmpdirSync();
   writeFileSync(`${path}/a`, "a");
   const results = readdirSync(path);
   expect(results.length).toBe(1);
@@ -1263,13 +1257,13 @@ describe("readFile", () => {
 
 describe("writeFileSync", () => {
   it("works", () => {
-    const path = `${tmpdir()}/${Date.now()}.writeFileSync.txt`;
+    const path = `${tmpdirSync()}/writeFileSync.txt`;
     writeFileSync(path, "File written successfully", "utf8");
 
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
   it("write file with mode, issue #3740", () => {
-    const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
+    const path = `${tmpdirSync()}/writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
     expect(stat.mode).toBe(isWindows ? 33206 : 33188);
@@ -1279,7 +1273,7 @@ describe("writeFileSync", () => {
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
       121,
     ]);
-    const path = `${tmpdir()}/${Date.now()}.blob.writeFileSync.txt`;
+    const path = `${tmpdirSync()}/blob.writeFileSync.txt`;
     writeFileSync(path, buffer);
     const out = readFileSync(path);
 
@@ -1292,7 +1286,7 @@ describe("writeFileSync", () => {
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
       121,
     ]);
-    const path = `${tmpdir()}/${Date.now()}.blob2.writeFileSync.txt`;
+    const path = `${tmpdirSync()}/blob2.writeFileSync.txt`;
     writeFileSync(path, buffer);
     const out = readFileSync(path);
 
@@ -1335,7 +1329,7 @@ describe("lstat", () => {
   });
 
   it("symlink metadata is correct", () => {
-    const link = join(tmpdir(), `fs-stream.link${Math.random().toString(32)}.js`);
+    const link = join(tmpdirSync(), `fs-stream.link.js`);
     symlinkSync(join(import.meta.dir, "fs-stream.js"), link);
     const linkStats = lstatSync(link);
     expect(linkStats.isSymbolicLink()).toBe(true);
@@ -1349,7 +1343,7 @@ describe("lstat", () => {
 });
 
 it("symlink", () => {
-  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-symlink.txt");
+  const actual = join(tmpdirSync(), "fs-symlink.txt");
   try {
     unlinkSync(actual);
   } catch (e) {}
@@ -1360,7 +1354,7 @@ it("symlink", () => {
 });
 
 it("readlink", () => {
-  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-readlink.txt");
+  const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
     unlinkSync(actual);
   } catch (e) {}
@@ -1371,7 +1365,7 @@ it("readlink", () => {
 });
 
 it.if(isWindows)("symlink on windows with forward slashes", async () => {
-  const r = join(tmpdir(), Math.random().toString(32));
+  const r = tmpdirSync();
   await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });
   await fs.promises.mkdir(join(r, "files/2024"), { recursive: true });
   await fs.promises.writeFile(join(r, "files/2024/123.txt"), "text");
@@ -1380,7 +1374,7 @@ it.if(isWindows)("symlink on windows with forward slashes", async () => {
 });
 
 it("realpath async", async () => {
-  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
+  const actual = join(tmpdirSync(), "fs-realpath.txt");
   try {
     unlinkSync(actual);
   } catch (e) {}
@@ -1453,7 +1447,7 @@ describe("stat", () => {
 
   it("stat returns ENOENT", () => {
     try {
-      statSync("${tmpdir()}/doesntexist");
+      statSync(`${tmpdir()}/doesntexist`);
       throw "statSync should throw";
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
@@ -2618,6 +2612,21 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  it("works with whole numbers", () => {
+    const atime = Math.floor(Date.now() / 1000);
+    const mtime = Math.floor(Date.now() / 1000);
+
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, atime, mtime);
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime.getTime() / 1000).toEqual(mtime);
+    expect(newStats.atime.getTime() / 1000).toEqual(atime);
   });
 });
 

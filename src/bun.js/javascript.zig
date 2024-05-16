@@ -2849,6 +2849,7 @@ pub const VirtualMachine = struct {
         error_instance: JSValue,
         exception_list: ?*ExceptionList,
         must_reset_parser_arena_later: *bool,
+        source_code_slice: *?ZigString.Slice,
     ) void {
         error_instance.toZigException(this.global, exception);
 
@@ -2972,7 +2973,7 @@ pub const VirtualMachine = struct {
                 must_reset_parser_arena_later.* = true;
                 break :code original_source.source_code.toUTF8(bun.default_allocator);
             };
-            defer code.deinit();
+            source_code_slice.* = code;
 
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
@@ -3046,7 +3047,17 @@ pub const VirtualMachine = struct {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
-        this.remapZigException(exception, error_instance, exception_list, &exception_holder.need_to_clear_parser_arena_on_deinit);
+
+        var source_code_slice: ?ZigString.Slice = null;
+        defer if (source_code_slice) |slice| slice.deinit();
+
+        this.remapZigException(
+            exception,
+            error_instance,
+            exception_list,
+            &exception_holder.need_to_clear_parser_arena_on_deinit,
+            &source_code_slice,
+        );
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;

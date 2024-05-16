@@ -93,7 +93,7 @@ describe("bundler", () => {
 6 |           throw   new
                       ^
 error: Hello World`,
-          ),
+          ) || void console.error(stderr),
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },

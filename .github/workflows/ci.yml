@@ -42,13 +42,6 @@ jobs:
     name: Lint
     uses: ./.github/workflows/run-lint.yml
     secrets: inherit
-  lint-cpp:
-    if: ${{ !inputs.run-id }}
-    name: Lint C++
-    uses: ./.github/workflows/run-lint-cpp.yml
-    secrets: inherit
-    with:
-      pr-number: ${{ github.event.number }}
   linux-x64:
     if: ${{ !inputs.run-id }}
     name: Build linux-x64

@@ -64,6 +64,8 @@ pub const Response = struct {
     init: Init,
     url: bun.String = bun.String.empty,
     redirected: bool = false,
+    /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
+    /// In the server we use a flag response_protected to protect/unprotect the response
     ref_count: u32 = 1,
 
     // We must report a consistent value for this

@@ -115,7 +115,7 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 pub fn build(b: *Build) !void {
     std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
 
-    b.zig_lib_dir = b.zig_lib_dir orelse .{ .path = b.pathFromRoot("src/deps/zig/lib") };
+    b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib")aa;
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -338,7 +338,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         else => "src/io/io_stub.zig",
     };
     obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = .{ .path = io_path },
+        .root_source_file = b.path(io_path),
     });
 
     const zlib_internal_path = switch (os) {
@@ -348,7 +348,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     };
     if (zlib_internal_path) |path| {
         obj.root_module.addAnonymousImport("zlib-internal", .{
-            .root_source_file = .{ .path = path },
+            .root_source_file = b.path(path),
         });
     }
 
@@ -358,19 +358,19 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         else => "src/async/stub_event_loop.zig",
     };
     obj.root_module.addAnonymousImport("async", .{
-        .root_source_file = .{ .path = async_path },
+        .root_source_file = b.path(async_path),
     });
 
     const zig_generated_classes_path = b.pathJoin(&.{ opts.generated_code_dir, "ZigGeneratedClasses.zig" });
     validateGeneratedPath(zig_generated_classes_path);
     obj.root_module.addAnonymousImport("ZigGeneratedClasses", .{
-        .root_source_file = .{ .path = zig_generated_classes_path },
+        .root_source_file = b.path(zig_generated_classes_path),
     });
 
     const resolved_source_tag_path = b.pathJoin(&.{ opts.generated_code_dir, "ResolvedSourceTag.zig" });
     validateGeneratedPath(resolved_source_tag_path);
     obj.root_module.addAnonymousImport("ResolvedSourceTag", .{
-        .root_source_file = .{ .path = resolved_source_tag_path },
+        .root_source_file = b.path(resolved_source_tag_path),
     });
 
     if (os == .windows) {
@@ -398,11 +398,11 @@ const WindowsShim = struct {
             .os_version_min = getOSVersionMin(.windows),
         });
 
-        const path = "src/install/windows-shim/bun_shim_impl.zig";
+        const path = b.path("src/install/windows-shim/bun_shim_impl.zig");
 
         const exe = b.addExecutable(.{
             .name = "bun_shim_impl",
-            .root_source_file = .{ .path = path },
+            .root_source_file = path,
             .target = target,
             .optimize = .ReleaseFast,
             .use_llvm = true,
@@ -418,7 +418,7 @@ const WindowsShim = struct {
 
         const dbg = b.addExecutable(.{
             .name = "bun_shim_debug",
-            .root_source_file = .{ .path = path },
+            .root_source_file = path,
             .target = target,
             .optimize = .Debug,
             .use_llvm = true,

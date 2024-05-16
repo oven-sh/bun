@@ -76,7 +76,7 @@ describe("WebSocket", () => {
       },
     });
     try {
-      for (let i = 0; i < 1000; i++) {
+      for (let i = 0; i < 10_000; i++) {
         const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
         await new Promise((resolve, reject) => {
           ws.onopen = resolve;
@@ -87,8 +87,10 @@ describe("WebSocket", () => {
       Bun.gc(true);
     } finally {
       server.stop(true);
+      Bun.gc(true);
     }
-  });
+  }, 60_000);
+
   it("should connect many times over https", async () => {
     const server = Bun.serve({
       port: 0,

@@ -79,3 +79,6 @@ jobs:
         with:
           name: did_fail.txt
           path: did_fail.txt
+      - name: Fail if formatting failed
+        if: ${{ steps.format.outputs.did_fail == '1' }}
+        run: exit 1

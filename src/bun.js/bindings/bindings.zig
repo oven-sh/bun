@@ -2188,10 +2188,6 @@ pub const JSPromise = extern struct {
         cppFn("setHandled", .{ this, vm });
     }
 
-    pub fn rejectWithCaughtException(this: *JSPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {
-        return cppFn("rejectWithCaughtException", .{ this, globalObject, scope });
-    }
-
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSPromise {
         return cppFn("resolvedPromise", .{ globalThis, value });
     }
@@ -2278,7 +2274,6 @@ pub const JSPromise = extern struct {
         "rejectAsHandled",
         "rejectAsHandledException",
         "rejectOnNextTickWithHandled",
-        "rejectWithCaughtException",
         "rejectedPromise",
         "rejectedPromiseValue",
         "resolve",
@@ -2310,10 +2305,6 @@ pub const JSInternalPromise = extern struct {
     }
     pub fn setHandled(this: *JSInternalPromise, vm: *VM) void {
         cppFn("setHandled", .{ this, vm });
-    }
-
-    pub fn rejectWithCaughtException(this: *JSInternalPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {
-        return cppFn("rejectWithCaughtException", .{ this, globalObject, scope });
     }
 
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSInternalPromise {
@@ -2494,7 +2485,6 @@ pub const JSInternalPromise = extern struct {
     pub const Extern = [_][]const u8{
         "create",
         // "then_",
-        "rejectWithCaughtException",
         "status",
         "result",
         "isHandled",
@@ -2533,12 +2523,6 @@ pub const AnyPromise = union(enum) {
     pub fn setHandled(this: AnyPromise, vm: *VM) void {
         switch (this) {
             inline else => |promise| promise.setHandled(vm),
-        }
-    }
-
-    pub fn rejectWithCaughtException(this: AnyPromise, globalObject: *JSGlobalObject, scope: ThrowScope) void {
-        switch (this) {
-            inline else => |promise| promise.rejectWithCaughtException(globalObject, scope),
         }
     }
 
@@ -5077,12 +5061,6 @@ pub const JSValue = enum(JSValueReprInt) {
         };
     }
 
-    pub fn asObject(this: JSValue) JSObject {
-        return cppFn("asObject", .{
-            this,
-        });
-    }
-
     /// Check if the JSValue is either a signed 32-bit integer or a double and
     /// return the value as a f64
     ///
@@ -5353,7 +5331,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "asCell",
         "asInternalPromise",
         "asNumber",
-        "asObject",
         "asPromise",
         "asString",
         "coerceToDouble",

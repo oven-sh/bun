@@ -23,8 +23,6 @@
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
 #include <cmath>
-#include <cstddef>
-#include <sys/param.h>
 #include "DOMJITIDLConvert.h"
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
@@ -123,7 +121,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
             return JSValue::encode(jsUndefined());
         }
     }
-    byteLength = MIN(byteLength, maxLength);
+    byteLength = std::min(byteLength, maxLength);
 
     if (byteLength == 0) {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
@@ -188,24 +186,31 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Arr
 JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (UNLIKELY(callFrame->argumentCount() < 1)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
         return JSValue::encode(jsUndefined());
     }
 
     auto arrayValue = callFrame->uncheckedArgument(0);
 
-    size_t maxLength = SIZE_MAX;
+    uint32_t maxLength = std::numeric_limits<uint32_t>::max();
     auto arg1 = callFrame->argument(1);
-    if (!arg1.isUndefinedOrNull() && arg1.toNumber(globalObject) != INFINITY) {
-        maxLength = arg1.toInt32(globalObject);
+    if (!arg1.isUndefined() && arg1.isNumber()) {
+        double number = arg1.toNumber(globalObject);
+        if (std::isnan(number) || number < 0) {
+            throwRangeError(globalObject, throwScope, "Maximum length must be >= 0"_s);
+            return {};
+        }
+        if (!std::isinf(number)) {
+            maxLength = arg1.toUInt32(globalObject);
+        }
     }
 
     bool asUint8Array = false;
     auto arg2 = callFrame->argument(2);
-    if (!arg2.isUndefinedOrNull()) {
+    if (!arg2.isUndefined()) {
         asUint8Array = arg2.toBoolean(globalObject);
     }
 

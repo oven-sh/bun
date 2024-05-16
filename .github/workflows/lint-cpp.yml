@@ -18,13 +18,6 @@ on:
       - .vscode/**/*
       - docs/**/*
       - examples/**/*
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - .vscode/**/*
-      - docs/**/*
-      - examples/**/*
 
 jobs:
   lint-cpp:

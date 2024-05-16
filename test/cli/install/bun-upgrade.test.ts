@@ -1,8 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, readFile } from "fs/promises";
-import { tmpdir } from "os";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 import { copyFileSync } from "js/node/fs/export-star-from";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
@@ -12,9 +10,7 @@ let run_dir: string;
 let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
 
 beforeEach(async () => {
-  run_dir = await realpath(
-    await mkdtemp(join(tmpdir(), "bun-upgrade.test." + Math.trunc(Math.random() * 9999999).toString(32))),
-  );
+  run_dir = tmpdirSync();
   copyFileSync(bunExe(), join(run_dir, exe_name));
 });
 

@@ -530,6 +530,10 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     if (UNLIKELY(!object || !env)) {
         return napi_invalid_arg;
     }
@@ -554,6 +558,10 @@ extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, doubl
 {
     NAPI_PREMABLE
 
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     if (UNLIKELY(!env)) {
         return napi_invalid_arg;
     }
@@ -568,9 +576,7 @@ extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, doubl
         return napi_date_expected;
     }
 
-    if (result) {
-        *result = date->internalNumber();
-    }
+    *result = date->internalNumber();
 
     return napi_ok;
 }
@@ -579,6 +585,10 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     napi_value key, napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
@@ -614,8 +624,12 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
 
     auto keyProp = toJS(key);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = toNapi(target->deleteProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject))));
+    auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    if (LIKELY(result)) {
+        *result = toNapi(deleteResult);
+    }
 
     scope.clearException();
     return napi_ok;
@@ -624,6 +638,10 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     napi_value key, bool* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
@@ -723,6 +741,10 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
 {
     NAPI_PREMABLE
 
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
@@ -745,6 +767,10 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
 
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
@@ -1027,6 +1053,10 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
 {
     NAPI_PREMABLE
 
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     auto name = WTF::String();
@@ -1038,9 +1068,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     auto method = reinterpret_cast<Zig::FFIFunction>(cb);
     auto* function = NAPIFunction::create(vm, globalObject, length, name, method, data);
 
-    if (result != nullptr) {
-        *result = toNapi(JSC::JSValue(function));
-    }
+    *result = toNapi(JSC::JSValue(function));
 
     return napi_ok;
 }
@@ -1133,6 +1161,12 @@ extern "C" napi_status
 napi_define_properties(napi_env env, napi_value object, size_t property_count,
     const napi_property_descriptor* properties)
 {
+    NAPI_PREMABLE
+
+    if (UNLIKELY(property_count > 0 && !properties)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
@@ -1183,6 +1217,11 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     napi_ref* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     JSC::JSValue val = toJS(value);
 
     if (!val || !val.isObject()) {
@@ -1252,7 +1291,9 @@ extern "C" napi_status napi_reference_unref(napi_env env, napi_ref ref,
     NAPI_PREMABLE
     NapiRef* napiRef = toJS(ref);
     napiRef->unref();
-    *result = napiRef->refCount;
+    if (LIKELY(result)) {
+        *result = napiRef->refCount;
+    }
     return napi_ok;
 }
 
@@ -1263,6 +1304,9 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     napi_value* result)
 {
     NAPI_PREMABLE
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
     NapiRef* napiRef = toJS(ref);
     *result = toNapi(napiRef->value());
 
@@ -1281,7 +1325,9 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     NAPI_PREMABLE
     NapiRef* napiRef = toJS(ref);
     napiRef->ref();
-    *result = napiRef->refCount;
+    if (LIKELY(result)) {
+        *result = napiRef->refCount;
+    }
     return napi_ok;
 }
 
@@ -1305,6 +1351,10 @@ extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     bool* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
 
     JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(toJS(arraybuffer));
     if (UNLIKELY(!jsArrayBuffer)) {
@@ -1345,6 +1395,11 @@ extern "C" napi_status napi_adjust_external_memory(napi_env env,
     int64_t* adjusted_value)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!adjusted_value)) {
+        return napi_invalid_arg;
+    }
+
     if (change_in_bytes > 0) {
         toJS(env)->vm().heap.deprecatedReportExtraMemory(change_in_bytes);
     }
@@ -1355,6 +1410,11 @@ extern "C" napi_status napi_adjust_external_memory(napi_env env,
 extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     auto globalObject = toJS(env);
     *result = globalObject->vm().exceptionForInspection() != nullptr;
     return napi_ok;
@@ -1363,6 +1423,11 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     auto globalObject = toJS(env);
     *result = toNapi(JSC::JSValue(globalObject->vm().lastException()));
     globalObject->vm().clearLastException();
@@ -1500,6 +1565,11 @@ extern "C" napi_status napi_create_error(napi_env env, napi_value code,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
@@ -1581,6 +1651,10 @@ extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
 {
     NAPI_PREMABLE
 
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     *result = reinterpret_cast<napi_value>(globalObject->globalThis());
     return napi_ok;
@@ -1591,6 +1665,11 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
 
     JSC::JSValue codeValue = toJS(code);
@@ -1634,6 +1713,11 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1645,9 +1729,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     }
     auto dataView = JSC::DataView::create(arraybufferValue->impl(), byte_offset, length);
 
-    if (result != nullptr) {
-        *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
-    }
+    *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
 
     return napi_ok;
 }
@@ -1763,6 +1845,12 @@ extern "C" napi_status napi_get_all_property_names(
     napi_key_filter key_filter, napi_key_conversion key_conversion,
     napi_value* result)
 {
+    NAPI_PREMABLE;
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     DontEnumPropertiesMode jsc_key_mode = key_mode == napi_key_include_prototypes ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude;
     PropertyNameMode jsc_property_mode = PropertyNameMode::StringsAndSymbols;
     if (key_filter == napi_key_skip_symbols) {
@@ -1791,6 +1879,11 @@ extern "C" napi_status
 napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     auto globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     auto lastException = vm.lastException();
@@ -1826,6 +1919,10 @@ extern "C" napi_status napi_define_class(napi_env env,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
 
     if (utf8name == nullptr) {
         return napi_invalid_arg;
@@ -1880,6 +1977,11 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
 
@@ -2070,6 +2172,10 @@ extern "C" napi_status napi_get_element(napi_env env, napi_value objectValue,
 {
     NAPI_PREMABLE
 
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
     JSValue jsValue = toJS(objectValue);
     if (UNLIKELY(!env || !jsValue || !jsValue.isObject())) {
         return napi_invalid_arg;
@@ -2081,9 +2187,7 @@ extern "C" napi_status napi_get_element(napi_env env, napi_value objectValue,
     JSValue element = object->getIndex(toJS(env), index);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
-    if (result) {
-        *result = toNapi(element);
-    }
+    *result = toNapi(element);
 
     return napi_ok;
 }
@@ -2101,7 +2205,9 @@ extern "C" napi_status napi_delete_element(napi_env env, napi_value objectValue,
     JSObject* object = jsValue.getObject();
 
     auto scope = DECLARE_THROW_SCOPE(object->vm());
-    *result = JSObject::deletePropertyByIndex(object, toJS(env), index);
+    if (LIKELY(result)) {
+        *result = JSObject::deletePropertyByIndex(object, toJS(env), index);
+    }
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     return napi_ok;
@@ -2374,6 +2480,10 @@ extern "C" napi_status napi_create_bigint_words(napi_env env,
     napi_value* result)
 {
     NAPI_PREMABLE
+
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();

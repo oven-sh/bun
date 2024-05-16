@@ -240,6 +240,28 @@ pub const Loader = struct {
         return true;
     }
 
+    pub fn getAs(this: *const Loader, comptime T: type, key: string) ?T {
+        const value = this.get(key) orelse return null;
+        switch (comptime T) {
+            bool => {
+                if (strings.eqlComptime(value, "")) return false;
+                if (strings.eqlComptime(value, "0")) return false;
+                if (strings.eqlComptime(value, "NO")) return false;
+                if (strings.eqlComptime(value, "OFF")) return false;
+                if (strings.eqlComptime(value, "false")) return false;
+
+                return true;
+            },
+            else => @compileError("Implement getAs for this type"),
+        }
+    }
+
+    pub var has_no_clear_screen_cli_flag: ?bool = null;
+    /// Returns whether the `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` env var is set to something truthy
+    pub fn hasSetNoClearTerminalOnReload(this: *const Loader, default_value: bool) bool {
+        return (has_no_clear_screen_cli_flag orelse this.getAs(bool, "BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD")) orelse default_value;
+    }
+
     pub fn get(this: *const Loader, key: string) ?string {
         var _key = key;
         if (_key.len > 0 and _key[0] == '$') {

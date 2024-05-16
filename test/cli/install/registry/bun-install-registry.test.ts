@@ -8,18 +8,20 @@ import {
   toHaveBins,
   writeShebangScript,
   tmpdirSync,
+  toMatchNodeModulesAt,
 } from "harness";
 import { join, sep } from "path";
-import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
-import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
   toHaveBins,
+  toMatchNodeModulesAt,
 });
 
 var verdaccioServer: ChildProcess;
@@ -49,7 +51,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  packageDir = tmpdirSync("bun-install-registry-" + testCounter++ + "-");
+  packageDir = tmpdirSync();
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -888,6 +890,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
   expect(await exited).toBe(0);
 
+  let lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+
   // delete node_modules
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -927,6 +932,9 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
   ]);
   expect(await exited).toBe(0);
+
+  lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
 
   for (var i = 0; i < 100; i++) {
     // Situation:

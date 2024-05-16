@@ -141,3 +141,4 @@ x64
 yarn.lock
 zig-cache
 zig-out
+test/node.js/upstream

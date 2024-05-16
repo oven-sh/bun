@@ -55,6 +55,8 @@ ENV CXX=clang++-${LLVM_VERSION}
 ENV CC=clang-${LLVM_VERSION}
 ENV AR=/usr/bin/llvm-ar-${LLVM_VERSION}
 ENV LD=lld-${LLVM_VERSION}
+ENV LC_CTYPE=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
 ENV SCCACHE_REGION=${SCCACHE_REGION}
@@ -454,7 +456,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   mkdir -p build \
   && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
@@ -520,7 +522,7 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -583,7 +585,7 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \

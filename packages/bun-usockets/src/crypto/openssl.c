@@ -346,6 +346,8 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     s->received_ssl_shutdown = 1;
+    s->handshake_state = HANDSHAKE_COMPLETED;
+
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
   }
@@ -459,6 +461,7 @@ restart:
     // we need to check if we received a shutdown here
     if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
       s->received_ssl_shutdown = 1;
+      s->handshake_state = HANDSHAKE_COMPLETED;
       // when reading and getting a shutdown we need to read until SSL buffer is
       // done first
     }

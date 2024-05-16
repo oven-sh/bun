@@ -1,5 +1,5 @@
 {
-  "name": "websocket-server",
+  "name": "bench-websocket-server",
   "module": "index.ts",
   "type": "module",
   "dependencies": {

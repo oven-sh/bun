@@ -1,5 +1,5 @@
 {
-  "name": "bundle",
+  "name": "bench-bundle",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {

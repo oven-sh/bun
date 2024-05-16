@@ -1,5 +1,5 @@
 {
-  "name": "bench",
+  "name": "bench-modules",
   "scripts": {
     "deps": "exit 0",
     "build": "exit 0",

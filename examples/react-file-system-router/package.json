@@ -1,5 +1,5 @@
 {
-  "name": "react-routes",
+  "name": "examples-react-routes",
   "module": "index.tsx",
   "type": "module",
   "devDependencies": {

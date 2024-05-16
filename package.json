@@ -37,5 +37,20 @@
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",
     "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun"
+  },
+  "workspaces": {
+    "packages": [
+      "./bench",
+      "./bench/*",
+      "./examples/*",
+      "./misctools",
+      "./packages/*",
+      "./src/*",
+      "./test",
+      "./test/*"
+    ],
+    "nohoist": [
+      "./packages/bun-types"
+    ]
   }
 }

@@ -3826,7 +3826,7 @@ pub const Blob = struct {
         return toArrayBufferViewWithBytes(this, global, buf, lifetime, .Uint8Array);
     }
 
-    pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.Type) JSValue {
+    pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
                 if (comptime Environment.isLinux) {
@@ -3860,7 +3860,7 @@ pub const Blob = struct {
                         }
                     }
                 }
-                return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
+                return JSC.ArrayBuffer.create2(global, buf, TypedArrayView);
             },
             .share => {
                 this.store.?.ref();
@@ -3900,7 +3900,7 @@ pub const Blob = struct {
         return toArrayBufferView(this, global, lifetime, .Uint8Array);
     }
 
-    pub fn toArrayBufferView(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.Type) JSValue {
+    pub fn toArrayBufferView(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         const WithBytesFn = comptime if (TypedArrayView == .Uint8Array)
             toUint8ArrayWithBytes
         else
@@ -3911,7 +3911,7 @@ pub const Blob = struct {
 
         const view_ = this.sharedView();
         if (view_.len == 0)
-            return JSC.ArrayBuffer.create(global, "", TypedArrayView);
+            return JSC.ArrayBuffer.create2(global, "", TypedArrayView);
 
         return WithBytesFn(this, global, @constCast(view_), lifetime);
     }
@@ -4331,7 +4331,7 @@ pub const AnyBlob = union(enum) {
         return this.toArrayBufferView(global, lifetime, .Uint8Array);
     }
 
-    pub fn toArrayBufferView(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime, comptime TypedArrayView: JSC.JSValue.Type) JSValue {
+    pub fn toArrayBufferView(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (this.*) {
             .Blob => return this.Blob.toArrayBufferView(global, lifetime, TypedArrayView),
             // .InlineBlob => {
@@ -4349,7 +4349,7 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.create(global, "", TypedArrayView);
+                    return JSC.ArrayBuffer.create2(global, "", TypedArrayView);
                 }
 
                 const bytes = this.InternalBlob.toOwnedSlice();
@@ -4374,7 +4374,7 @@ pub const AnyBlob = union(enum) {
                     return value.toJS(global, null);
                 }
 
-                return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);
+                return JSC.ArrayBuffer.create2(global, out_bytes.slice(), TypedArrayView);
             },
         }
     }

@@ -112,7 +112,6 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
-
   return $readableStreamIntoArray(stream);
 }
 
@@ -123,7 +122,6 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   if (underlyingSource !== undefined) {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
-
   return $readableStreamIntoText(stream);
 }
 
@@ -144,6 +142,17 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   }
 
   return Bun.concatArrayBuffers(result);
+}
+
+$linkTimeConstant;
+export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Promise<Uint8Array> | Uint8Array {
+  const result = Bun.readableStreamToArrayBuffer(stream);
+  if ($isPromise(result)) {
+    // `result` is an InternalPromise, which doesn't have a `.then` method
+    // but `.then` isn't user-overridable, so we can use it safely.
+    return result.then(x => new Uint8Array(x));
+  }
+  return new Uint8Array(result);
 }
 
 $linkTimeConstant;

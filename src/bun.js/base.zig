@@ -394,6 +394,13 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
+    pub fn create2(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSValue.JSType) JSValue {
+        return switch (kind) {
+            inline .Uint8Array, .ArrayBuffer => create(globalThis, bytes, @field(BinaryType, @tagName(kind))),
+            else => @compileError(@tagName(kind)),
+        };
+    }
+
     pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType) JSValue {
         JSC.markBinding(@src());
 

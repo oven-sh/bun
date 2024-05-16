@@ -247,6 +247,17 @@ for (const { body, fn } of bodyTypes) {
           expect(await fn(string).arrayBuffer()).toStrictEqual(buffer.buffer);
         });
       });
+      describe("bytes()", () => {
+        test("undefined", async () => {
+          expect(await fn().bytes()).toStrictEqual(new Uint8Array(0));
+        });
+        test("null", async () => {
+          expect(await fn(null).bytes()).toStrictEqual(new Uint8Array(0));
+        });
+        test(`"${string}"`, async () => {
+          expect(await fn(string).bytes()).toStrictEqual(new Uint8Array(buffer));
+        });
+      });
       describe("text()", () => {
         test("undefined", async () => {
           expect(await fn().text()).toBe("");

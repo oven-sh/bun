@@ -561,6 +561,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
+    readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToBlob                           JSBuiltin                                                           Builtin|Function 1
     readableStreamToFormData                       JSBuiltin                                                           Builtin|Function 1
     readableStreamToJSON                           JSBuiltin                                                           Builtin|Function 1
@@ -630,6 +631,7 @@ public:
 
 #define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
 #define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
+#define bunObjectReadableStreamToBytesCodeGenerator WebCore::readableStreamReadableStreamToBytesCodeGenerator
 #define bunObjectReadableStreamToBlobCodeGenerator WebCore::readableStreamReadableStreamToBlobCodeGenerator
 #define bunObjectReadableStreamToFormDataCodeGenerator WebCore::readableStreamReadableStreamToFormDataCodeGenerator
 #define bunObjectReadableStreamToJSONCodeGenerator WebCore::readableStreamReadableStreamToJSONCodeGenerator
@@ -639,6 +641,7 @@ public:
 
 #undef bunObjectReadableStreamToArrayCodeGenerator
 #undef bunObjectReadableStreamToArrayBufferCodeGenerator
+#undef bunObjectReadableStreamToBytesCodeGenerator
 #undef bunObjectReadableStreamToBlobCodeGenerator
 #undef bunObjectReadableStreamToFormDataCodeGenerator
 #undef bunObjectReadableStreamToJSONCodeGenerator

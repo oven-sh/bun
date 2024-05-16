@@ -1547,8 +1547,12 @@ extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalOb
     }));
 
     if (type == JSC::Uint8ArrayType) {
-        return JSValue::encode(JSC::JSUint8Array::create(globalObject->vm(), globalObject->m_typedArrayUint8.get(globalObject), WTFMove(buffer)));
-    } else if (type == JSC::ArrayBufferType) {
+        auto uint8array = JSC::JSUint8Array::create(globalObject, globalObject->m_typedArrayUint8.get(globalObject), WTFMove(buffer), 0, byteLength);
+        return JSValue::encode(uint8array);
+    }
+
+    if (type == JSC::ArrayBufferType) {
+
         Structure* structure = globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default);
 
         if (UNLIKELY(!structure)) {
@@ -2059,6 +2063,46 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::Global
     return ZigGlobalObject__readableStreamToArrayBufferBody(reinterpret_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
 }
 
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* function = globalObject->m_readableStreamToBytes.get();
+    if (!function) {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBytesCodeGenerator(vm)), globalObject);
+        globalObject->m_readableStreamToBytes.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+
+    JSC::JSObject* object = result.getObject();
+
+    if (UNLIKELY(!result || result.isUndefinedOrNull()))
+        return JSValue::encode(result);
+
+    if (UNLIKELY(!object)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected object"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
+    if (UNLIKELY(!promise)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected promise"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(promise));
+}
+
 extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
@@ -2156,6 +2200,21 @@ JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSGlobalObject * 
 
     auto readableStreamValue = callFrame->uncheckedArgument(0);
     return ZigGlobalObject__readableStreamToArrayBufferBody(reinterpret_cast<Zig::GlobalObject*>(globalObject), JSValue::encode(readableStreamValue));
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToBytes);
+JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToBytes, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+
+    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto readableStreamValue = callFrame->uncheckedArgument(0);
+    return ZigGlobalObject__readableStreamToBytes(reinterpret_cast<Zig::GlobalObject*>(globalObject), JSValue::encode(readableStreamValue));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotask, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -3352,6 +3411,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_assignToStream);
     visitor.append(thisObject->m_readableStreamToArrayBuffer);
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
+    visitor.append(thisObject->m_readableStreamToBytes);
     visitor.append(thisObject->m_readableStreamToBlob);
     visitor.append(thisObject->m_readableStreamToJSON);
     visitor.append(thisObject->m_readableStreamToText);

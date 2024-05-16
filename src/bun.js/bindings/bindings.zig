@@ -3084,7 +3084,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
-    extern fn ZigGlobalObject__readableStreamToUint8Array(*JSGlobalObject, JSValue) JSValue;
+    extern fn ZigGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
@@ -3095,9 +3095,9 @@ pub const JSGlobalObject = extern struct {
         return ZigGlobalObject__readableStreamToArrayBuffer(this, value);
     }
 
-    pub fn readableStreamToUint8Array(this: *JSGlobalObject, value: JSValue) JSValue {
+    pub fn readableStreamToBytes(this: *JSGlobalObject, value: JSValue) JSValue {
         if (comptime is_bindgen) unreachable;
-        return ZigGlobalObject__readableStreamToUint8Array(this, value);
+        return ZigGlobalObject__readableStreamToBytes(this, value);
     }
 
     pub fn readableStreamToText(this: *JSGlobalObject, value: JSValue) JSValue {

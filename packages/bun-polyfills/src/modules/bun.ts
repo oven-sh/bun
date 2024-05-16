@@ -410,6 +410,13 @@ export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferV
         return sink.end() as ArrayBuffer;
     })();
 }) satisfies typeof Bun.readableStreamToArrayBuffer;
+
+export const readableStreamToBytes = ((stream: ReadableStream<ArrayBufferView | ArrayBufferLike>): Uint8Array | Promise<Uint8Array> => {
+    return (async () => {
+        return new Uint8Array(await readableStreamToArrayBuffer(stream))
+    })();
+}) satisfies typeof Bun.readableStreamToBytes;
+
 export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBuffer>) => {
     let result = '';
     const reader = stream.pipeThrough(new TextDecoderStream()).getReader(); ReadableStreamDefaultReader

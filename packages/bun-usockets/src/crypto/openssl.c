@@ -1695,7 +1695,7 @@ void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s) {
 
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_shut_down(0, &s->s) ||
-         (s->ssl && (SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN));
+         (SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN);
 }
 
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {

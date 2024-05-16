@@ -3860,7 +3860,7 @@ pub const Blob = struct {
                         }
                     }
                 }
-                return JSC.ArrayBuffer.create2(global, buf, TypedArrayView);
+                return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
                 this.store.?.ref();
@@ -3911,7 +3911,7 @@ pub const Blob = struct {
 
         const view_ = this.sharedView();
         if (view_.len == 0)
-            return JSC.ArrayBuffer.create2(global, "", TypedArrayView);
+            return JSC.ArrayBuffer.create(global, "", TypedArrayView);
 
         return WithBytesFn(this, global, @constCast(view_), lifetime);
     }
@@ -4349,7 +4349,7 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.create2(global, "", TypedArrayView);
+                    return JSC.ArrayBuffer.create(global, "", TypedArrayView);
                 }
 
                 const bytes = this.InternalBlob.toOwnedSlice();
@@ -4374,7 +4374,7 @@ pub const AnyBlob = union(enum) {
                     return value.toJS(global, null);
                 }
 
-                return JSC.ArrayBuffer.create2(global, out_bytes.slice(), TypedArrayView);
+                return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);
             },
         }
     }

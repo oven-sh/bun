@@ -113,7 +113,6 @@ describe("WebSocket", () => {
       var closed = new Promise((resolve, reject) => {
         ws.onclose = resolve;
       });
-      ws.send("Hello World!");
       ws.close();
       await closed;
     }

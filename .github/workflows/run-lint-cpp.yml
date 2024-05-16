@@ -52,7 +52,7 @@ jobs:
           rm -f did_fail format.log
           echo "${{ inputs.pr-number }}" > pr-number.txt
           echo "pr_number=$(cat pr-number.txt)" >> $GITHUB_OUTPUT
-          bun run build:tidy &> >(tee -p format.log) && echo 0 > did_succeed.txt
+          bun run --silent build:tidy &> >(tee -p format.log) && echo 0 > did_succeed.txt
           # Upload format.log as github artifact for the workflow
           if [ -f did_succeed.txt ]; then
             echo "0" > did_fail.txt

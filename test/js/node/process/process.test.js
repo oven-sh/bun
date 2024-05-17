@@ -105,6 +105,10 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+it.skipIf(process.platform === "win32")("ICU version does not regress", () => {
+  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(72);
+});
+
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 

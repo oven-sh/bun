@@ -2213,6 +2213,11 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
+
     if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -2262,6 +2267,11 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSLockHolder lock(vm);
+
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
 
     if (!object)
         return JSC::JSValue::encode(JSC::JSValue());

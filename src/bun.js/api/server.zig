@@ -4064,10 +4064,9 @@ pub const ServerWebSocket = struct {
 
     fn binaryToJS(this: *const ServerWebSocket, globalThis: *JSC.JSGlobalObject, data: []const u8) JSC.JSValue {
         return switch (this.flags.binary_type) {
-            .Buffer => JSC.ArrayBuffer.create(
+            .Buffer => JSC.ArrayBuffer.createBuffer(
                 globalThis,
                 data,
-                .Buffer,
             ),
             .Uint8Array => JSC.ArrayBuffer.create(
                 globalThis,

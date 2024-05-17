@@ -469,7 +469,7 @@ describe("errors", () => {
     Three Act Tragedy
     Death in the Clouds`;
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         server.stop();

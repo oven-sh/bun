@@ -43,7 +43,7 @@
 //   pathname: string,
 //   callback: (evtSource: EventSource, done: (err?: unknown) => void) => void,
 // ) {
-//   const server = Bun.serve({
+//   using server = Bun.serve({
 //     port: 0,
 //     fetch(req) {
 //       if (new URL(req.url).pathname === "/stream") {
@@ -70,7 +70,6 @@
 //     });
 //   } catch (err) {
 //     evtSource?.close();
-//     server.stop(true);
 //     done(err);
 //   }
 // }

@@ -750,6 +750,29 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
       });
 
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} bytes${withGC ? " (with gc) " : ""}`, async () => {
+        if (withGC) gc();
+
+        var response = blobbyConstructor(JSON.stringify(jsonObject));
+        if (withGC) gc();
+
+        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+        if (withGC) gc();
+
+        const compare = await response.bytes();
+        if (withGC) gc();
+
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
+
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
+        if (withGC) gc();
+      });
+
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${
         withGC ? " (with gc) " : ""
       }`, async () => {
@@ -762,6 +785,31 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
         if (withGC) gc();
 
         const compare = new Uint8Array(await response.arrayBuffer());
+        if (withGC) gc();
+
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
+
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
+        if (withGC) gc();
+      });
+
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> bytes${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
+
+        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+        if (withGC) gc();
+
+        const compare = await response.bytes();
         if (withGC) gc();
 
         withoutAggressiveGC(() => {
@@ -828,7 +876,7 @@ describe("Bun.file", () => {
     expect(size).toBe(Infinity);
   });
 
-  const method = ["arrayBuffer", "text", "json"] as const;
+  const method = ["arrayBuffer", "text", "json", "bytes"] as const;
   function forEachMethod(fn: (m: (typeof method)[number]) => any, skip?: AnyFunction) {
     for (const m of method) {
       (skip ? it.skip : it)(m, fn(m));

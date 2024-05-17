@@ -77,6 +77,7 @@ pub const Request = struct {
     pub usingnamespace JSC.Codegen.JSRequest;
 
     pub const getText = RequestMixin.getText;
+    pub const getBytes = RequestMixin.getBytes;
     pub const getBody = RequestMixin.getBody;
     pub const getBodyUsed = RequestMixin.getBodyUsed;
     pub const getJSON = RequestMixin.getJSON;

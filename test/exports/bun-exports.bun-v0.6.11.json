@@ -7645,6 +7645,7 @@
           "plugin": "function",
           "readableStreamToArray": "function",
           "readableStreamToArrayBuffer": "function",
+          "readableStreamToBytes": "function",
           "readableStreamToBlob": "function",
           "readableStreamToJSON": "function",
           "readableStreamToText": "function",

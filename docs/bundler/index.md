@@ -1096,6 +1096,7 @@ const build = await Bun.build({
 
 for (const output of build.outputs) {
   await output.arrayBuffer(); // => ArrayBuffer
+  await output.bytes(); // => Uint8Array
   await output.text(); // string
 }
 ```

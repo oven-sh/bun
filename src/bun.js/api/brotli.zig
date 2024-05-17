@@ -92,7 +92,7 @@ pub const BrotliEncoder = struct {
         defer this.output_lock.unlock();
 
         defer this.output.clearRetainingCapacity();
-        return JSC.ArrayBuffer.create(this.globalThis, this.output.items, .Buffer);
+        return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
     }
 
     pub fn runFromJSThread(this: *BrotliEncoder) void {
@@ -383,7 +383,7 @@ pub const BrotliDecoder = struct {
         defer this.output_lock.unlock();
 
         defer this.output.clearRetainingCapacity();
-        return JSC.ArrayBuffer.create(this.globalThis, this.output.items, .Buffer);
+        return JSC.ArrayBuffer.createBuffer(this.globalThis, this.output.items);
     }
 
     pub fn runFromJSThread(this: *BrotliDecoder) void {

@@ -2418,7 +2418,7 @@ pub const Crypto = struct {
                 return output_buf.value;
             } else {
                 // Clone to GC-managed memory
-                return JSC.ArrayBuffer.create(globalThis, output_digest_slice[0..len], .Buffer);
+                return JSC.ArrayBuffer.createBuffer(globalThis, output_digest_slice[0..len]);
             }
         }
 
@@ -2590,7 +2590,7 @@ pub const Crypto = struct {
                 return output_buf.value;
             } else {
                 // Clone to GC-managed memory
-                return JSC.ArrayBuffer.create(globalThis, result, .Buffer);
+                return JSC.ArrayBuffer.createBuffer(globalThis, result);
             }
         }
 
@@ -2695,7 +2695,7 @@ pub const Crypto = struct {
                 var out: [Algorithm.digest_length]u8 = undefined;
                 h.final(&out);
                 // Clone to GC-managed memory
-                return JSC.ArrayBuffer.create(globalThis, &out, .Buffer);
+                return JSC.ArrayBuffer.createBuffer(globalThis, &out);
             }
         }
 

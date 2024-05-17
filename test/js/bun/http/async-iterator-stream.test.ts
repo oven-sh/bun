@@ -204,7 +204,7 @@ describe("Streaming body via", () => {
           ["Response", () => new Response(bodyInit)],
           ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
         ]) {
-          for (let method of ["arrayBuffer", "text"]) {
+          for (let method of ["arrayBuffer", "bytes", "text"]) {
             test(`${label}(${method})`, async () => {
               const result = await constructFn()[method]();
               expect(Buffer.from(result)).toEqual(Buffer.from(expected));

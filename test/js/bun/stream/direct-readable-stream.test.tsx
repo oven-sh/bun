@@ -1,6 +1,7 @@
 import {
   concatArrayBuffers,
   readableStreamToArray,
+  readableStreamToBytes,
   readableStreamToArrayBuffer,
   readableStreamToBlob,
   readableStreamToText,
@@ -184,6 +185,15 @@ describe("ReactDOM", () => {
           gc();
           const arrayBuffer = await readableStreamToArrayBuffer(stream);
           const text = new TextDecoder().decode(arrayBuffer);
+          gc();
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
+          gc();
+        });
+        it("readableStreamToBytes(stream)", async () => {
+          const stream = await renderToReadableStream(reactElement);
+          gc();
+          const uint8 = await readableStreamToBytes(stream);
+          const text = new TextDecoder().decode(uint8);
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();

@@ -1145,8 +1145,9 @@ fn NewSocket(comptime ssl: bool) type {
         finalizing: bool = false,
         is_active: bool = false,
         owned_protos: bool = true,
+        authorized: bool = false,
         // future flags
-        _reserved: u4 = 0,
+        _reserved: u3 = 0,
     };
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -1157,7 +1158,6 @@ fn NewSocket(comptime ssl: bool) type {
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
-        authorized: bool = false,
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
@@ -1495,7 +1495,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const authorized = if (success == 1) true else false;
 
-            this.authorized = authorized;
+            this.flags.authorized = authorized;
 
             const handlers = this.handlers;
             var callback = handlers.onHandshake;
@@ -1667,7 +1667,7 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
             log("getAuthorized()", .{});
-            return JSValue.jsBoolean(this.authorized);
+            return JSValue.jsBoolean(this.flags.authorized);
         }
         pub fn timeout(
             this: *This,

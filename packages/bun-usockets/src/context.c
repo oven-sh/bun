@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
@@ -264,8 +264,61 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };    
 }
 
+static struct us_socket_t * us_socket_context_on_open_dummy(struct us_socket_t *s, int is_client, char *ip, int ip_length) {
+    return s;
+}
+
+static struct us_socket_t *us_socket_context_on_close_dummy(struct us_socket_t *s, int code, void *reason) {
+    return s;
+}
+
+static struct us_socket_t *us_socket_context_on_data_dummy(struct us_socket_t *s, char *data, int length){
+    return NULL; // null ends data loop
+}
+
+static struct us_socket_t *us_socket_context_on_writable_dummy(struct us_socket_t *s) {
+    return s;
+}
+
+static struct us_socket_t *us_socket_context_on_timeout_dummy(struct us_socket_t *s) {
+    return s;
+}
+
+static struct us_socket_t *us_socket_context_on_connect_error_dummy(struct us_socket_t *s, int code) {
+    return s;
+}
+
+static struct us_socket_t *us_socket_context_on_end_dummy(struct us_socket_t *s) {
+    return s;
+}
+
+static void us_socket_context_on_handshake_dummy(struct us_socket_t *s, int success, struct us_bun_verify_error_t verify_error, void* custom_data) {
+    return;
+}
+static struct us_socket_t *us_socket_context_on_long_timeout_dummy(struct us_socket_t *s) {
+    return s;
+}
+
+void us_socket_context_clean_callbacks(int ssl, struct us_socket_context_t *context) {
+    us_socket_context_on_open(ssl, context, us_socket_context_on_open_dummy);
+    us_socket_context_on_close(ssl, context, us_socket_context_on_close_dummy);
+    us_socket_context_on_data(ssl, context, us_socket_context_on_data_dummy);
+    us_socket_context_on_writable(ssl, context, us_socket_context_on_writable_dummy);
+    us_socket_context_on_timeout(ssl, context, us_socket_context_on_timeout_dummy);
+    us_socket_context_on_connect_error(ssl, context, us_socket_context_on_connect_error_dummy);
+    us_socket_context_on_end(ssl, context, us_socket_context_on_end_dummy);
+    us_socket_context_on_handshake(ssl, context, us_socket_context_on_handshake_dummy, NULL);
+    us_socket_context_on_long_timeout(ssl, context, us_socket_context_on_long_timeout_dummy);
+}
 
 void us_socket_context_free(int ssl, struct us_socket_context_t *context) {
+    /* We clean callbacks so we avoid UAF when closing/deiniting */
+    us_socket_context_clean_callbacks(ssl, context);
+    /* We are deiniting so we garantee that we are closed */
+    us_socket_context_close(ssl, context);
+    // TODO: if we are listening and we have some sockets in accept loop, we cannot deinit because we will have UAF
+    // we need to wait for all sockets to be closed before closing the context
+ 
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         /* This function will call us again with SSL=false */

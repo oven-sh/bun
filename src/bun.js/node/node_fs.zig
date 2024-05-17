@@ -661,7 +661,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             const dir = fd.asDir();
-            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
+            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8, src);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -5036,6 +5036,7 @@ pub const NodeFS = struct {
     fn readdirWithEntries(
         args: Arguments.Readdir,
         fd: bun.FileDescriptor,
+        basename: [:0]const u8,
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
@@ -5044,6 +5045,7 @@ pub const NodeFS = struct {
         var iterator = DirIterator.iterate(
             dir,
             comptime if (is_u16) .u16 else .u8,
+            basename,
         );
         var entry = iterator.next();
 
@@ -5078,6 +5080,7 @@ pub const NodeFS = struct {
                     Dirent => {
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
+                            .path = bun.String.createUTF8(basename),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5161,7 +5164,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.asDir(), .u8);
+        var iterator = DirIterator.iterate(fd.asDir(), .u8, basename);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -5217,6 +5220,7 @@ pub const NodeFS = struct {
                 Dirent => {
                     entries.append(.{
                         .name = bun.String.createUTF8(name_to_copy),
+                        .path = bun.String.createUTF8(basename),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5304,7 +5308,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            var iterator = DirIterator.iterate(fd.asDir(), .u8);
+            var iterator = DirIterator.iterate(fd.asDir(), .u8, basename);
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -5346,6 +5350,7 @@ pub const NodeFS = struct {
                     Dirent => {
                         entries.append(.{
                             .name = bun.String.createUTF8(name_to_copy),
+                            .path = bun.String.createUTF8(root_basename),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5429,7 +5434,7 @@ pub const NodeFS = struct {
         defer _ = Syscall.close(fd);
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-        return switch (readdirWithEntries(args, fd, ExpectedType, &entries)) {
+        return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
             .err => |err| return .{
                 .err = err,
             },
@@ -6385,7 +6390,7 @@ pub const NodeFS = struct {
 
         var iterator = iterator: {
             const dir = fd.asDir();
-            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
+            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8, src);
         };
         var entry = iterator.next();
         while (switch (entry) {

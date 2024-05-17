@@ -21,12 +21,25 @@ const Maybe = JSC.Maybe;
 const File = std.fs.File;
 
 pub const IteratorResult = struct {
+    path: PathString,
     name: PathString,
     kind: Entry.Kind,
 };
 const Result = Maybe(?IteratorResult);
 
 const IteratorResultW = struct {
+    // fake PathString to have less `if (Environment.isWindows) ...`
+    path: struct {
+        data: [:0]const u16,
+
+        pub fn slice(this: @This()) []const u16 {
+            return this.data;
+        }
+
+        pub fn sliceAssumeZ(this: @This()) [:0]const u16 {
+            return this.data;
+        }
+    },
     // fake PathString to have less `if (Environment.isWindows) ...`
     name: struct {
         data: [:0]const u16,
@@ -56,6 +69,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             buf: [8192]u8, // TODO align(@alignOf(os.system.dirent)),
             index: usize,
             end_index: usize,
+            basename: bun.String,
 
             const Self = @This();
 
@@ -118,13 +132,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     return .{
                         .result = IteratorResult{
                             .name = PathString.init(name),
+                            .path = PathString.init(self.basename.byteSlice()),
                             .kind = entry_kind,
                         },
                     };
                 }
             }
         },
-
         .linux => struct {
             dir: Dir,
             // The if guard is solely there to prevent compile errors from missing `linux.dirent64`
@@ -132,6 +146,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             buf: [8192]u8 align(if (builtin.os.tag != .linux) 1 else @alignOf(linux.dirent64)),
             index: usize,
             end_index: usize,
+            basename: bun.String,
 
             const Self = @This();
             const linux = os.linux;
@@ -200,6 +215,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             end_index: usize,
             first: bool,
             name_data: if (use_windows_ospath) [257]u16 else [513]u8,
+            basename: bun.String,
 
             const Self = @This();
 
@@ -339,6 +355,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             cookie: u64,
             index: usize,
             end_index: usize,
+            basename: bun.String,
 
             const Self = @This();
 
@@ -424,7 +441,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
 
         pub const Error = IteratorError;
 
-        pub fn init(dir: Dir) Self {
+        pub fn init(dir: Dir, basename: bun.String) Self {
             return Self{
                 .iter = switch (builtin.os.tag) {
                     .macos,
@@ -440,12 +457,14 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,
+                        .basename = basename,
                     },
                     .linux, .haiku => IteratorType{
                         .dir = dir,
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,
+                        .basename = basename,
                     },
                     .windows => IteratorType{
                         .dir = dir,
@@ -454,6 +473,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .first = true,
                         .buf = undefined,
                         .name_data = undefined,
+                        .basename = basename,
                     },
                     .wasi => IteratorType{
                         .dir = dir,
@@ -461,6 +481,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,
+                        .basename = basename,
                     },
                     else => @compileError("unimplemented"),
                 },
@@ -472,6 +493,6 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
 pub const WrappedIterator = NewWrappedIterator(.u8);
 pub const WrappedIteratorW = NewWrappedIterator(.u16);
 
-pub fn iterate(self: Dir, comptime path_type: PathType) NewWrappedIterator(path_type) {
-    return NewWrappedIterator(path_type).init(self);
+pub fn iterate(self: Dir, comptime path_type: PathType, basename: bun.string) NewWrappedIterator(path_type) {
+    return NewWrappedIterator(path_type).init(self, bun.String.createUTF8(basename));
 }

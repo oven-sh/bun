@@ -164,8 +164,9 @@ pub const SyscallAccessor = struct {
             return self.value.next();
         }
 
+        // TODO: base basename
         pub inline fn iterate(dir: Handle) DirIter {
-            return .{ .value = DirIterator.WrappedIterator.init(dir.value.asDir()) };
+            return .{ .value = DirIterator.WrappedIterator.init(dir.value.asDir(), bun.String.empty) };
         }
     };
 

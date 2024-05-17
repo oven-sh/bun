@@ -3048,8 +3048,9 @@ pub const trait = @import("./trait.zig");
 
 pub const brotli = @import("./brotli.zig");
 
+// TODO: pass basename
 pub fn iterateDir(dir: std.fs.Dir) DirIterator.Iterator {
-    return DirIterator.iterate(dir, .u8).iter;
+    return DirIterator.iterate(dir, .u8, "").iter;
 }
 
 fn ReinterpretSliceType(comptime T: type, comptime slice: type) type {

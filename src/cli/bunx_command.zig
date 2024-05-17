@@ -114,7 +114,7 @@ pub const BunxCommand = struct {
                     const bin_dir = try bun.sys.openatA(dir_fd, dir_name, std.os.O.RDONLY | std.os.O.DIRECTORY, 0).unwrap();
                     defer _ = bun.sys.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir.cast() };
-                    var iterator = bun.DirIterator.iterate(dir, .u8);
+                    var iterator = bun.DirIterator.iterate(dir, .u8, dir_name);
                     var entry = iterator.next();
                     while (true) : (entry = iterator.next()) {
                         const current = switch (entry) {

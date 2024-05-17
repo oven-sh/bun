@@ -98,7 +98,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                         {
                             errdefer new_dir.close();
                             try self.stack.append(StackItem{
-                                .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
+                                .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8, base.name.slice()),
                                 .dirname_len = self.name_buffer.items.len,
                             });
                             top = &self.stack.items[self.stack.items.len - 1];
@@ -168,8 +168,9 @@ pub fn walk(
         skip_dirnames_[i] = bun.hashWithSeed(seed, std.mem.sliceAsBytes(name));
     }
 
+    // TODO: pass basename
     try stack.append(Walker.StackItem{
-        .iter = DirIterator.iterate(self, if (Environment.isWindows) .u16 else .u8),
+        .iter = DirIterator.iterate(self, if (Environment.isWindows) .u16 else .u8, ""),
         .dirname_len = 0,
     });
 

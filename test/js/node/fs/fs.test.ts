@@ -481,6 +481,16 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("Dirent has the expected fields", () => {
+  const dir = tmpdirSync();
+  writeFileSync(join(dir, "file.txt"), "");
+  const dirs = readdirSync(dir, { withFileTypes: true });
+  expect(dirs.length).toBe(1);
+  expect(dirs[0].name).toBe("file.txt");
+  expect(dirs[0].path).toBe(dir);
+  expect(dirs[0].parentPath).toBe(dir);
+});
+
 it("promises.readdir on a large folder", async () => {
   const huge = tmpdirSync();
   for (let i = 0; i < 128; i++) {

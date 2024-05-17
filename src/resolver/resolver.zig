@@ -2576,6 +2576,14 @@ pub const Resolver = struct {
 
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
+            if ((input_path.len == 2 and input_path[1] == ':') or
+                (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
+            {
+                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                win32_normalized_dir_info_cache_buf[2] = '\\';
+                input_path.len = 3;
+            }
         }
 
         assert(std.fs.path.isAbsolute(input_path));

@@ -1563,8 +1563,7 @@ pub const PathName = struct {
             path = path[2..];
         }
 
-        var _i = bun.path.lastIndexOfSep(path);
-        while (_i) |i| {
+        while (bun.path.lastIndexOfSep(path)) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len > i + 1) {
                 base = path[i + 1 ..];
@@ -1575,8 +1574,6 @@ pub const PathName = struct {
 
             // Ignore trailing slashes
             path = path[0..i];
-
-            _i = bun.path.lastIndexOfSep(path);
         }
 
         // Strip off the extension

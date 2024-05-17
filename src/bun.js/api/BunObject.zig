@@ -1355,6 +1355,8 @@ pub const Crypto = struct {
             @"sha3-256",
             @"sha3-384",
             @"sha3-512",
+            shake128,
+            shake256,
 
             pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
                 var all = std.EnumArray(Algorithm, ZigString).initUndefined();
@@ -1396,6 +1398,8 @@ pub const Crypto = struct {
                 .{ "sha3-256", .@"sha3-256" },
                 .{ "sha3-384", .@"sha3-384" },
                 .{ "sha3-512", .@"sha3-512" },
+                .{ "shake128", .shake128 },
+                .{ "shake256", .shake256 },
                 // .{ "md5-sha1", .@"MD5-SHA1" },
                 // .{ "dsa-sha", .@"DSA-SHA" },
                 // .{ "dsa-sha1", .@"DSA-SHA1" },
@@ -2636,6 +2640,8 @@ pub const Crypto = struct {
             .{ "sha3-256", std.crypto.hash.sha3.Sha3_256 },
             .{ "sha3-384", std.crypto.hash.sha3.Sha3_384 },
             .{ "sha3-512", std.crypto.hash.sha3.Sha3_512 },
+            .{ "shake128", std.crypto.hash.sha3.Shake128 },
+            .{ "shake256", std.crypto.hash.sha3.Shake256 },
         };
 
         pub fn hashByName(

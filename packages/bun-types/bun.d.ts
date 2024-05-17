@@ -3117,7 +3117,9 @@ declare module "bun" {
     | "sha3-224"
     | "sha3-256"
     | "sha3-384"
-    | "sha3-512";
+    | "sha3-512"
+    | "shake128"
+    | "shake256";
 
   /**
    * Hardware-accelerated cryptographic hash functions

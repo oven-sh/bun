@@ -362,7 +362,11 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 
     Bun__addrinfo_get(host, port, c);
 
+#ifdef _WIN32
+    context->loop->uv_loop->active_handles++;
+#else
     context->loop->num_polls++;
+#endif
 
     return c;
 }
@@ -406,7 +410,11 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 
+#ifdef _WIN32
+    s->context->loop->uv_loop->active_handles--;
+#else
     s->context->loop->num_polls--;
+#endif
 
     /* Link it into context so that timeout fires properly */
 

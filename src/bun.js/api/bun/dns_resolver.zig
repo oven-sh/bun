@@ -1229,7 +1229,7 @@ pub const InternalDNS = struct {
         refcount: usize = 0,
         valid: bool = true,
 
-        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else void,
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else {},
 
         pub fn deinit(this: *@This()) void {
             bun.assert(this.notify.items.len == 0);
@@ -1345,15 +1345,37 @@ pub const InternalDNS = struct {
         port_buf[port.len] = 0;
         const portZ = port_buf[0..port.len :0];
 
-        var addrinfo: ?*std.c.addrinfo = null;
-        const err = std.c.getaddrinfo(
-            if (req.key.host) |host| host.ptr else null,
-            if (port.len > 0) portZ.ptr else null,
-            &hints,
-            &addrinfo,
-        );
+        if (Environment.isWindows) {
+            const wsa = std.os.windows.ws2_32;
+            const wsa_hints = wsa.addrinfo{
+                .flags = 0,
+                .family = wsa.AF.UNSPEC,
+                .socktype = wsa.SOCK.STREAM,
+                .protocol = 0,
+                .addrlen = 0,
+                .canonname = null,
+                .addr = null,
+                .next = null,
+            };
 
-        afterResult(req, addrinfo, @intFromEnum(err));
+            var addrinfo: ?*wsa.addrinfo = null;
+            const err = wsa.getaddrinfo(
+                if (req.key.host) |host| host.ptr else null,
+                if (port.len > 0) portZ.ptr else null,
+                &wsa_hints,
+                &addrinfo,
+            );
+            afterResult(req, @ptrCast(addrinfo), err);
+        } else {
+            var addrinfo: ?*std.c.addrinfo = null;
+            const err = std.c.getaddrinfo(
+                if (req.key.host) |host| host.ptr else null,
+                if (port.len > 0) portZ.ptr else null,
+                &hints,
+                &addrinfo,
+            );
+            afterResult(req, addrinfo, @intFromEnum(err));
+        }
     }
 
     pub fn lookupLibinfo(req: *Request, socket: *bun.uws.ConnectingSocket) bool {

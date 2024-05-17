@@ -63,15 +63,15 @@ describe("CryptoHasher", () => {
     it(`CryptoHasher.hash ${algorithm}`, () => {
       expect(CryptoHasher.hash(algorithm, "hello world").toString("hex")).toEqual(expected[algorithm]);
     });
-  }
 
-  it("CryptoHasher sha256 multi-part", () => {
-    var hasher = new CryptoHasher("sha256");
-    hasher.update("hello ");
-    hasher.update("world");
-    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
-    expect(hasher.algorithm).toBe("sha256");
-  });
+    it(`new CryptoHasher ${algorithm} multi-part`, () => {
+      var hasher = new CryptoHasher(algorithm);
+      hasher.update("hello ");
+      hasher.update("world");
+      expect(hasher.digest("hex")).toBe(expected[algorithm]);
+      expect(hasher.algorithm).toBe(algorithm);
+    });
+  }
 
   it("CryptoHasher resets when digest is called", () => {
     var hasher = new CryptoHasher("sha256");

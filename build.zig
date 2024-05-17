@@ -115,7 +115,7 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 pub fn build(b: *Build) !void {
     std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
 
-    b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib")aa;
+    b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -364,13 +364,13 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     const zig_generated_classes_path = b.pathJoin(&.{ opts.generated_code_dir, "ZigGeneratedClasses.zig" });
     validateGeneratedPath(zig_generated_classes_path);
     obj.root_module.addAnonymousImport("ZigGeneratedClasses", .{
-        .root_source_file = b.path(zig_generated_classes_path),
+        .root_source_file = .{ .cwd_relative = zig_generated_classes_path },
     });
 
     const resolved_source_tag_path = b.pathJoin(&.{ opts.generated_code_dir, "ResolvedSourceTag.zig" });
     validateGeneratedPath(resolved_source_tag_path);
     obj.root_module.addAnonymousImport("ResolvedSourceTag", .{
-        .root_source_file = b.path(resolved_source_tag_path),
+        .root_source_file = .{ .cwd_relative = resolved_source_tag_path },
     });
 
     if (os == .windows) {

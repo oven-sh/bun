@@ -2452,7 +2452,7 @@ declare module "bun" {
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
     unix?: never;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
@@ -2462,7 +2462,7 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface ErrorLike extends Error {
     code?: string;
@@ -2492,6 +2492,19 @@ declare module "bun" {
      * @default false
      */
     lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     */
+    requestCert?: boolean;
 
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -2531,11 +2544,11 @@ declare module "bun" {
   }
 
   interface TLSServeOptions extends ServeOptions, TLSOptions {
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface SocketAddress {
@@ -2564,7 +2577,7 @@ declare module "bun" {
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
    */
-  interface Server {
+  interface Server extends Disposable {
     /**
      * Stop listening to prevent new connections from being accepted.
      *

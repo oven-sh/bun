@@ -661,7 +661,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             const dir = fd.asDir();
-            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8, src);
+            var iterator = DirIterator.iterateOSPath(dir, if (Environment.isWindows) .u16 else .u8, src);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -6403,7 +6403,7 @@ pub const NodeFS = struct {
 
         var iterator = iterator: {
             const dir = fd.asDir();
-            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8, src);
+            break :iterator DirIterator.iterateOSPath(dir, if (Environment.isWindows) .u16 else .u8, src);
         };
         var entry = iterator.next();
         while (switch (entry) {

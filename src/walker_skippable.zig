@@ -98,7 +98,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                         {
                             errdefer new_dir.close();
                             try self.stack.append(StackItem{
-                                .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8, base.name.slice()),
+                                .iter = DirIterator.iterateOSPath(new_dir, if (Environment.isWindows) .u16 else .u8, base.name.slice()),
                                 .dirname_len = self.name_buffer.items.len,
                             });
                             top = &self.stack.items[self.stack.items.len - 1];

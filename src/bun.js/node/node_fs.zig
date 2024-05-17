@@ -5042,6 +5042,10 @@ pub const NodeFS = struct {
     ) Maybe(void) {
         const dir = fd.asDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
+
+        const dirent_path = bun.String.createUTF8(basename);
+        defer dirent_path.deref();
+
         var iterator = DirIterator.iterate(
             dir,
             comptime if (is_u16) .u16 else .u8,
@@ -5078,9 +5082,10 @@ pub const NodeFS = struct {
                 const utf8_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
+                        dirent_path.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
-                            .path = bun.String.createUTF8(basename),
+                            .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5122,6 +5127,8 @@ pub const NodeFS = struct {
         comptime is_root: bool,
     ) Maybe(void) {
         const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const dirent_path = bun.String.createUTF8(basename);
+        defer dirent_path.deref();
 
         const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
@@ -5218,9 +5225,10 @@ pub const NodeFS = struct {
 
             switch (comptime ExpectedType) {
                 Dirent => {
+                    dirent_path.ref();
                     entries.append(.{
                         .name = bun.String.createUTF8(name_to_copy),
-                        .path = bun.String.createUTF8(basename),
+                        .path = dirent_path,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5308,6 +5316,8 @@ pub const NodeFS = struct {
                 }
             }
 
+            const dirent_path = bun.String.createUTF8(basename);
+            defer dirent_path.deref();
             var iterator = DirIterator.iterate(fd.asDir(), .u8, basename);
             var entry = iterator.next();
 
@@ -5348,9 +5358,10 @@ pub const NodeFS = struct {
 
                 switch (comptime ExpectedType) {
                     Dirent => {
+                        dirent_path.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(name_to_copy),
-                            .path = bun.String.createUTF8(root_basename),
+                            .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

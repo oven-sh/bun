@@ -1826,6 +1826,7 @@ pub const Dirent = struct {
 
     pub fn finalize(this: *Dirent) callconv(.C) void {
         this.name.deref();
+        this.path.deref();
         bun.destroy(this);
     }
 };

@@ -13,12 +13,8 @@ test("coverage crash", () => {
     env: {
       ...bunEnv,
     },
+    stdio: ["inherit", "inherit", "inherit"],
   });
-  try {
-    expect(result.exitCode).toBe(0);
-    expect(result.signalCode).toBeUndefined();
-  } catch (e) {
-    console.log("Err: ", result.stderr.toString("utf8"));
-    throw e;
-  }
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
 });

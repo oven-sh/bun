@@ -21,7 +21,6 @@ const prettyFmt = Output.prettyFmt;
 /// bitsets are simple and bitsets are relatively fast to construct and query
 ///
 pub const CodeCoverageReport = struct {
-    
     source_url: bun.JSC.ZigString.Slice,
     executable_lines: Bitset,
     lines_which_have_executed: Bitset,

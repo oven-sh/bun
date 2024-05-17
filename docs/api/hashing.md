@@ -127,6 +127,8 @@ Bun.hash.murmur64v2("data", 1234);
 - `"sha3-256"`
 - `"sha3-384"`
 - `"sha3-512"`
+- `"shake128"`
+- `"shake256"`
 
 ```ts
 const hasher = new Bun.CryptoHasher("sha256");

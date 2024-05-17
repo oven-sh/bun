@@ -1111,7 +1111,7 @@ it("formats error responses correctly", async () => {
 });
 
 it("request body and signal life cycle", async () => {
-  renderToReadableStream = (await import("react-dom/server")).renderToReadableStream;
+  renderToReadableStream = (await import("react-dom/server.browser")).renderToReadableStream;
   app_jsx = (await import("./app")).default;
   {
     const headers = {
@@ -1127,20 +1127,17 @@ it("request body and signal life cycle", async () => {
       },
     });
 
-    try {
-      const requests = [];
-      for (let j = 0; j < 10; j++) {
-        for (let i = 0; i < 250; i++) {
-          requests.push(fetch(server.url.origin));
-        }
-
-        await Promise.all(requests);
-        requests.length = 0;
-        Bun.gc(true);
+    const requests = [];
+    for (let j = 0; j < 10; j++) {
+      for (let i = 0; i < 250; i++) {
+        requests.push(fetch(server.url.origin));
       }
-    } catch (e) {
-      console.error(e);
+
+      await Promise.all(requests);
+      requests.length = 0;
+      Bun.gc(true);
     }
+
     await Bun.sleep(10);
     expect(true).toBe(true);
   }
@@ -1197,7 +1194,6 @@ it("does propagate type for Blob", async () => {
 it("unix socket connection in Bun.serve", async () => {
   const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
   using server = Bun.serve({
-    port: 0,
     unix,
 
     async fetch(req) {

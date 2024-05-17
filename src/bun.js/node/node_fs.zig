@@ -5101,8 +5101,10 @@ pub const NodeFS = struct {
                 const utf16_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
+                        dirent_path.ref();
                         entries.append(.{
                             .name = bun.String.createUTF16(utf16_name),
+                            .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

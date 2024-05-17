@@ -260,7 +260,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 /* It is perfectly possible to come here with an error */
                 if (error) {
                     /* Emit error, close without emitting on_close */
-                    s->context->on_connect_error(s->connect_state, 0);
+                    s->context->on_connect_error(s->connect_state, error);
                     us_connecting_socket_close(0, s->connect_state);
                     s = NULL;
                 } else {
@@ -432,7 +432,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             /* Such as epollerr epollhup */
             if (error && s) {
                 /* Todo: decide what code we give here */
-                s = us_socket_close(0, s, 0, NULL);
+                s = us_socket_close(0, s, error, NULL);
                 return;
             }
             break;

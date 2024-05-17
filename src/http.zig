@@ -742,13 +742,6 @@ pub const HTTPThread = struct {
         default_arena = Arena.init() catch unreachable;
         default_allocator = default_arena.allocator();
 
-        // const loop = bun.uws.Loop.create(struct {
-        //     pub fn wakeup(_: *uws.Loop) callconv(.C) void {
-        //         http_thread.drainEvents();
-        //     }
-        //     pub fn pre(_: *uws.Loop) callconv(.C) void {}
-        //     pub fn post(_: *uws.Loop) callconv(.C) void {}
-        // });
         const loop = bun.JSC.MiniEventLoop.initGlobal(null);
 
         if (Environment.isWindows) {

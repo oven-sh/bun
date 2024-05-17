@@ -361,7 +361,10 @@ describe("ServerWebSocket", () => {
     }
   });
   describe("publish()", () => {
-    for (const [group, messages] of [["strings", strings] /*, ["buffers", buffers]*/] as const) {
+    for (const [group, messages] of [
+      ["strings", strings],
+      ["buffers", buffers],
+    ] as const) {
       describe(group, () => {
         for (const { label, message, bytes } of messages) {
           const topic = label + topicI++;

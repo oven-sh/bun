@@ -70,6 +70,7 @@ pub const InternalLoopData = extern struct {
             0 => @panic("Parent loop not set - tag is zero"),
             1 => .{ .js = bun.cast(*bun.JSC.EventLoop, parent) },
             2 => .{ .mini = bun.cast(*bun.JSC.MiniEventLoop, parent) },
+            else => @panic("Parent loop data corrupted - tag is invalid"),
         };
     }
 };

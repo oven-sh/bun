@@ -1358,32 +1358,34 @@ pub const InternalDNS = struct {
 
     pub fn lookupLibinfo(req: *Request, socket: *bun.uws.ConnectingSocket) bool {
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
-        const loop = bun.uws.us_connecting_socket_get_loop(socket).getParent();
+        const loop = bun.uws.us_connecting_socket_get_loop(socket).internal_loop_data.getParent();
+
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
 
         var machport: ?*anyopaque = null;
         const errno = getaddrinfo_async_start_(
             &machport,
             if (req.key.host) |host| host.ptr else null,
-            null,
+            if (port.len > 0) portZ.ptr else null,
             &hints,
             libinfoCallback,
             req,
         );
 
-        if (errno != 0) {
-            @panic("TODO handle this error");
+        if (errno != 0 or machport == null) {
+            return false;
         }
 
-        bun.assert(machport != null);
+        var poll = bun.Async.FilePoll.init(loop, bun.toFD(@intFromPtr(machport)), .{}, InternalDNSRequest, req);
+        const rc = poll.register(loop.loop(), .machport, true);
 
-        var poll = bun.Async.FilePoll.init(loop, bun.toFD(std.math.maxInt(i32) - 1), .{}, InternalDNSRequest, req);
-        const rc = poll.registerWithFd(
-            loop.loop(),
-            .machport,
-            .one_shot,
-            bun.toFD(@intFromPtr(machport)),
-        );
-        bun.assert(rc == .result);
+        if (rc == .err) {
+            poll.deinit();
+            return false;
+        }
 
         req.libinfo = .{
             .file_poll = poll,
@@ -1445,11 +1447,13 @@ pub const InternalDNS = struct {
         global_cache.lock.unlock();
 
         // doesn't work yet
-        // if (Environment.isMac) {
-        //     if (lookupLibinfo(req, socket)) {
-        //         return;
-        //     }
-        // }
+        if (comptime Environment.isMac) {
+            if (!bun.getRuntimeFeatureFlag("BUN_NO_LIBINFO")) {
+                const res = lookupLibinfo(req, socket);
+                if (res) return;
+                // if we were not able to use libinfo, we fall back to the work pool
+            }
+        }
 
         // schedule the request to be executed on the work pool
         bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();

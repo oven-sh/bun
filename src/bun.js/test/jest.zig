@@ -108,28 +108,39 @@ pub const TestRunner = struct {
                 const elapsed = now.since(pending_test.started_at);
 
                 if (elapsed >= (@as(u64, this.last_test_timeout_timer_duration) * std.time.ns_per_ms)) {
+                    debug("timeout {}ms \\>= {}ms", .{ elapsed / std.time.ns_per_ms, this.last_test_timeout_timer_duration });
                     pending_test.timeout();
                 }
             }
         }
     }
+    pub fn onTestTimeoutNoop(_: *bun.uws.Timer) callconv(.C) void {
+        // Used for disarming the timer; This function intentionally does nothing
+    }
 
-    pub fn setTimeout(
+    pub fn armTimeout(
         this: *TestRunner,
         milliseconds: u32,
         test_id: TestRunner.Test.ID,
     ) void {
         this.active_test_for_timeout = test_id;
+        this.last_test_timeout_timer_duration = milliseconds;
 
         if (milliseconds > 0) {
             if (this.test_timeout_timer == null) {
                 this.test_timeout_timer = bun.uws.Timer.createFallthrough(bun.uws.Loop.get(), this);
             }
 
-            if (this.last_test_timeout_timer_duration != milliseconds) {
-                this.last_test_timeout_timer_duration = milliseconds;
-                this.test_timeout_timer.?.set(this, onTestTimeout, @as(i32, @intCast(milliseconds)), @as(i32, @intCast(milliseconds)));
-            }
+            // re-arm timer to increase accuracy, as timing could be off due to hooks
+            debug("arm timeout {}ms", .{milliseconds});
+            this.test_timeout_timer.?.set(this, onTestTimeout, @as(i32, @intCast(milliseconds)), @intCast(milliseconds));
+        }
+    }
+
+    pub fn disarmTimeout(this: *TestRunner) void {
+        if (this.test_timeout_timer != null) {
+            debug("disarm timeout", .{});
+            this.test_timeout_timer.?.set(this, onTestTimeoutNoop, 0, 0);
         }
     }
 
@@ -675,7 +686,7 @@ pub const TestScope = struct {
             task.started_at = timer.started;
         }
 
-        Jest.runner.?.setTimeout(
+        Jest.runner.?.armTimeout(
             this.timeout_millis,
             task.test_id,
         );
@@ -1421,6 +1432,7 @@ pub const TestRunnerTask = struct {
             return;
 
         this.reported = true;
+        Jest.runner.?.disarmTimeout();
 
         const test_id = this.test_id;
         const test_ = this.describe.tests.items[test_id];

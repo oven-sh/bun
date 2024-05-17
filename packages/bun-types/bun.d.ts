@@ -4274,6 +4274,15 @@ declare module "bun" {
       ): void;
 
       /**
+       * The serialization format to use for IPC messages. Defaults to `"advanced"`.
+       *
+       * To communicate with Node.js processes, use `"json"`.
+       *
+       * When `ipc` is not specified, this is ignored.
+       */
+      serialization?: "json" | "advanced";
+
+      /**
        * If true, the subprocess will have a hidden window.
        */
       windowsHide?: boolean;

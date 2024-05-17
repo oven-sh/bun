@@ -50,6 +50,10 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
       return this.#output!.arrayBuffer();
     }
 
+    bytes() {
+      return this.#output!.bytes();
+    }
+
     blob() {
       return this.#output!.blob();
     }
@@ -75,6 +79,10 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
 
     arrayBuffer() {
       return this.stdout.buffer;
+    }
+
+    bytes() {
+      return new Uint8Array(this.arrayBuffer());
     }
 
     blob() {
@@ -217,6 +225,10 @@ export function createBunShellTemplateFunction(ShellInterpreter) {
     async arrayBuffer() {
       const { stdout } = (await this.#quiet()) as ShellOutput;
       return stdout.buffer;
+    }
+
+    async bytes() {
+      return this.arrayBuffer().then(x => new Uint8Array(x));
     }
 
     async blob() {

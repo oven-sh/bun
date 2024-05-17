@@ -1333,14 +1333,21 @@ pub const FileSystem = struct {
             const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
-                defer file.close();
-                const metadata = try file.metadata();
-                cache.kind = switch (metadata.kind()) {
-                    .directory => .dir,
-                    .sym_link => .file,
-                    else => .file,
-                };
+                const stat = try bun.sys.lstat(absolute_path_c).unwrap();
+                var mode: u31 = @truncate(stat.mode);
+                if (bun.S.ISLNK(mode)) {
+                    var buf: bun.PathBuffer = undefined;
+                    const read = try bun.sys.readlink(absolute_path_c, &buf).unwrap();
+                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, read));
+                    mode = @truncate((try bun.sys.stat(read).unwrap()).mode);
+                }
+
+                if (bun.S.ISDIR(mode)) {
+                    cache.kind = .dir;
+                } else {
+                    cache.kind = .file;
+                }
+
                 return cache;
             }
 

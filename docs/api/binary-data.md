@@ -886,15 +886,25 @@ new Response(stream).arrayBuffer();
 Bun.readableStreamToArrayBuffer(stream);
 ```
 
+#### To `Uint8Array`
+
+```ts
+// with Response
+new Response(stream).bytes();
+
+// with Bun function
+Bun.readableStreamToBytes(stream);
+```
+
 #### To `TypedArray`
 
 ```ts
 // with Response
 const buf = await new Response(stream).arrayBuffer();
-new Uint8Array(buf);
+new Int8Array(buf);
 
 // with Bun function
-new Uint8Array(Bun.readableStreamToArrayBuffer(stream));
+new Int8Array(Bun.readableStreamToArrayBuffer(stream));
 ```
 
 #### To `DataView`

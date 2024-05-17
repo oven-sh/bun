@@ -2905,6 +2905,17 @@ pub const Blob = struct {
         return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
     }
 
+    pub fn getBytes(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const store = this.store;
+        if (store) |st| st.ref();
+        defer if (store) |st| st.deref();
+        return promisified(this.toUint8Array(globalThis, .clone), globalThis);
+    }
+
     pub fn getFormData(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -3808,6 +3819,14 @@ pub const Blob = struct {
     }
 
     pub fn toArrayBufferWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
+        return toArrayBufferViewWithBytes(this, global, buf, lifetime, .ArrayBuffer);
+    }
+
+    pub fn toUint8ArrayWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
+        return toArrayBufferViewWithBytes(this, global, buf, lifetime, .Uint8Array);
+    }
+
+    pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
                 if (comptime Environment.isLinux) {
@@ -3829,6 +3848,7 @@ pub const Blob = struct {
                                         byteOffset,
                                         byteLength,
                                         allocated_slice.len,
+                                        TypedArrayView,
                                     );
                                     bloblog("toArrayBuffer COW clone({d}, {d}) = {d}", .{ byteOffset, byteLength, @intFromBool(result != .zero) });
 
@@ -3840,11 +3860,11 @@ pub const Blob = struct {
                         }
                     }
                 }
-                return JSC.ArrayBuffer.create(global, buf, .ArrayBuffer);
+                return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
                 this.store.?.ref();
-                return JSC.ArrayBuffer.fromBytes(buf, .ArrayBuffer).toJSWithContext(
+                return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
                     global,
                     this.store.?,
                     JSC.BlobArrayBuffer_deallocator,
@@ -3854,7 +3874,7 @@ pub const Blob = struct {
             .transfer => {
                 const store = this.store.?;
                 this.transfer();
-                return JSC.ArrayBuffer.fromBytes(buf, .ArrayBuffer).toJSWithContext(
+                return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
                     global,
                     store,
                     JSC.BlobArrayBuffer_deallocator,
@@ -3862,7 +3882,7 @@ pub const Blob = struct {
                 );
             },
             .temporary => {
-                return JSC.ArrayBuffer.fromBytes(buf, .ArrayBuffer).toJS(
+                return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(
                     global,
                     null,
                 );
@@ -3872,15 +3892,28 @@ pub const Blob = struct {
 
     pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         bloblog("toArrayBuffer", .{});
+        return toArrayBufferView(this, global, lifetime, .ArrayBuffer);
+    }
+
+    pub fn toUint8Array(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        bloblog("toUin8Array", .{});
+        return toArrayBufferView(this, global, lifetime, .Uint8Array);
+    }
+
+    pub fn toArrayBufferView(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
+        const WithBytesFn = comptime if (TypedArrayView == .Uint8Array)
+            toUint8ArrayWithBytes
+        else
+            toArrayBufferWithBytes;
         if (this.needsToReadFile()) {
-            return this.doReadFile(toArrayBufferWithBytes, global);
+            return this.doReadFile(WithBytesFn, global);
         }
 
         const view_ = this.sharedView();
         if (view_.len == 0)
-            return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
+            return JSC.ArrayBuffer.create(global, "", TypedArrayView);
 
-        return toArrayBufferWithBytes(this, global, @constCast(view_), lifetime);
+        return WithBytesFn(this, global, @constCast(view_), lifetime);
     }
 
     pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
@@ -4291,8 +4324,16 @@ pub const AnyBlob = union(enum) {
     }
 
     pub fn toArrayBuffer(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
+        return this.toArrayBufferView(global, lifetime, .ArrayBuffer);
+    }
+
+    pub fn toUint8Array(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
+        return this.toArrayBufferView(global, lifetime, .Uint8Array);
+    }
+
+    pub fn toArrayBufferView(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (this.*) {
-            .Blob => return this.Blob.toArrayBuffer(global, lifetime),
+            .Blob => return this.Blob.toArrayBufferView(global, lifetime, TypedArrayView),
             // .InlineBlob => {
             //     if (this.InlineBlob.len == 0) {
             //         return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
@@ -4308,14 +4349,14 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
+                    return JSC.ArrayBuffer.create(global, "", TypedArrayView);
                 }
 
                 const bytes = this.InternalBlob.toOwnedSlice();
                 this.* = .{ .Blob = .{} };
                 const value = JSC.ArrayBuffer.fromBytes(
                     bytes,
-                    .ArrayBuffer,
+                    TypedArrayView,
                 );
                 return value.toJS(global, null);
             },
@@ -4328,12 +4369,12 @@ pub const AnyBlob = union(enum) {
                 if (out_bytes.isAllocated()) {
                     const value = JSC.ArrayBuffer.fromBytes(
                         @constCast(out_bytes.slice()),
-                        .ArrayBuffer,
+                        TypedArrayView,
                     );
                     return value.toJS(global, null);
                 }
 
-                return JSC.ArrayBuffer.create(global, out_bytes.slice(), .ArrayBuffer);
+                return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);
             },
         }
     }

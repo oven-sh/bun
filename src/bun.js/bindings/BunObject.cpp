@@ -50,7 +50,7 @@ static JSValue constructEnvObject(VM& vm, JSObject* object)
     return jsCast<Zig::GlobalObject*>(object->globalObject())->processEnvObject();
 }
 
-static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
+static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)
 {
     auto& vm = lexicalGlobalObject->vm();
 
@@ -120,6 +120,7 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
             return JSValue::encode(jsUndefined());
         }
     }
+    byteLength = std::min(byteLength, maxLength);
 
     if (byteLength == 0) {
         RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
@@ -173,22 +174,46 @@ static inline JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalO
         }
     }
 
+    if (asUint8Array) {
+        auto uint8array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), WTFMove(buffer), 0, byteLength);
+        return JSValue::encode(uint8array);
+    }
+
     RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), WTFMove(buffer))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (UNLIKELY(callFrame->argumentCount() < 1)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
         return JSValue::encode(jsUndefined());
     }
 
     auto arrayValue = callFrame->uncheckedArgument(0);
 
-    return flattenArrayOfBuffersIntoArrayBuffer(globalObject, arrayValue);
+    size_t maxLength = std::numeric_limits<size_t>::max();
+    auto arg1 = callFrame->argument(1);
+    if (!arg1.isUndefined() && arg1.isNumber()) {
+        double number = arg1.toNumber(globalObject);
+        if (std::isnan(number) || number < 0) {
+            throwRangeError(globalObject, throwScope, "Maximum length must be >= 0"_s);
+            return {};
+        }
+        if (!std::isinf(number)) {
+            maxLength = arg1.toUInt32(globalObject);
+        }
+    }
+
+    bool asUint8Array = false;
+    auto arg2 = callFrame->argument(2);
+    if (!arg2.isUndefined()) {
+        asUint8Array = arg2.toBoolean(globalObject);
+    }
+
+    return flattenArrayOfBuffersIntoArrayBufferOrUint8Array(globalObject, arrayValue, maxLength, asUint8Array);
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
@@ -525,7 +550,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
-    concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 1
+    concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
@@ -561,6 +586,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     readableStreamToArray                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToArrayBuffer                    JSBuiltin                                                           Builtin|Function 1
+    readableStreamToBytes                          JSBuiltin                                                           Builtin|Function 1
     readableStreamToBlob                           JSBuiltin                                                           Builtin|Function 1
     readableStreamToFormData                       JSBuiltin                                                           Builtin|Function 1
     readableStreamToJSON                           JSBuiltin                                                           Builtin|Function 1
@@ -630,6 +656,7 @@ public:
 
 #define bunObjectReadableStreamToArrayCodeGenerator WebCore::readableStreamReadableStreamToArrayCodeGenerator
 #define bunObjectReadableStreamToArrayBufferCodeGenerator WebCore::readableStreamReadableStreamToArrayBufferCodeGenerator
+#define bunObjectReadableStreamToBytesCodeGenerator WebCore::readableStreamReadableStreamToBytesCodeGenerator
 #define bunObjectReadableStreamToBlobCodeGenerator WebCore::readableStreamReadableStreamToBlobCodeGenerator
 #define bunObjectReadableStreamToFormDataCodeGenerator WebCore::readableStreamReadableStreamToFormDataCodeGenerator
 #define bunObjectReadableStreamToJSONCodeGenerator WebCore::readableStreamReadableStreamToJSONCodeGenerator
@@ -639,6 +666,7 @@ public:
 
 #undef bunObjectReadableStreamToArrayCodeGenerator
 #undef bunObjectReadableStreamToArrayBufferCodeGenerator
+#undef bunObjectReadableStreamToBytesCodeGenerator
 #undef bunObjectReadableStreamToBlobCodeGenerator
 #undef bunObjectReadableStreamToFormDataCodeGenerator
 #undef bunObjectReadableStreamToJSONCodeGenerator

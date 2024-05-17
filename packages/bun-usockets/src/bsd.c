@@ -935,6 +935,36 @@ static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)
 
 #ifdef _WIN32
 
+static int convert_null_addr(struct addrinfo *addrinfo, struct addrinfo* result, struct sockaddr_storage *inaddr) {
+    // 1. check that all addrinfo results are 0.0.0.0 or ::
+    if (addrinfo->ai_family == AF_INET) {
+        struct sockaddr_in *addr = (struct sockaddr_in *) addrinfo->ai_addr;
+        if (addr->sin_addr.s_addr == htonl(INADDR_ANY)) {
+            memcpy(inaddr, addr, sizeof(struct sockaddr_in));
+            ((struct sockaddr_in *) inaddr)->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+            memcpy(result, addrinfo, sizeof(struct addrinfo));
+            result->ai_addr = (struct sockaddr *) inaddr;
+            result->ai_next = NULL;
+
+            return 1;
+        }
+    } else if (addrinfo->ai_family == AF_INET6) {
+        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) addrinfo->ai_addr;
+        if (memcmp(&addr->sin6_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
+            memcpy(inaddr, addr, sizeof(struct sockaddr_in6));
+            memcpy(&((struct sockaddr_in6 *) inaddr)->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr));
+
+            memcpy(result, addrinfo, sizeof(struct addrinfo));
+            result->ai_addr = (struct sockaddr *) inaddr;
+            result->ai_next = NULL;
+
+            return 1;
+        }
+    }
+    return 0;
+} 
+
 static int is_loopback(struct addrinfo *addrinfo) {
     if (addrinfo->ai_family == AF_INET) {
         struct sockaddr_in *addr = (struct sockaddr_in *) addrinfo->ai_addr;
@@ -955,6 +985,16 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int
     }
 
 #ifdef _WIN32
+
+    // On windows we can't connect to the null address directly. 
+    // To match POSIX behavior, we need to connect to localhost instead.
+    struct addrinfo alt_result;
+    struct sockaddr_storage storage;
+
+    if (convert_null_addr(addrinfo, &alt_result, &storage)) {
+        addrinfo = &alt_result;
+    }
+
     // This sets the socket to fail quickly if no connection can be established to localhost,
     // instead of waiting for the default 2 seconds. This is necessary because we always try to connect
     // using IPv6 first, but it's possible that whatever we want to connect to is only listening on IPv4.

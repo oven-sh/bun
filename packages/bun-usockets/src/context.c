@@ -372,6 +372,13 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 }
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    // make sure to decrement the active_handles counter, no matter what
+#ifdef _WIN32
+    c->context->loop->uv_loop->active_handles--;
+#else
+    c->context->loop->num_polls--;
+#endif
+
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
@@ -402,6 +409,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     s->timeout = c->timeout;
     s->long_timeout = c->long_timeout;
     s->low_prio_state = 0;
+    /* Link it into context so that timeout fires properly */
     us_internal_socket_context_link_socket(s->context, s);
     // TODO check this, specifically how it interacts with the SSL code
     memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
@@ -409,14 +417,6 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     /* Connect sockets are semi-sockets just like listen sockets */
     us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
-
-#ifdef _WIN32
-    s->context->loop->uv_loop->active_handles--;
-#else
-    s->context->loop->num_polls--;
-#endif
-
-    /* Link it into context so that timeout fires properly */
 
     // store the socket so we can close it if we need to
     c->socket = s;
@@ -461,6 +461,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->timeout = 255;
     connect_socket->long_timeout = 255;
     connect_socket->low_prio_state = 0;
+    connect_socket->connect_state = NULL;
     us_internal_socket_context_link_socket(context, connect_socket);
 
     return connect_socket;

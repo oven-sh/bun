@@ -1330,19 +1330,31 @@ pub const FileSystem = struct {
             outpath[entry_path.len + 1] = 0;
             outpath[entry_path.len] = 0;
 
-            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
+            var absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                const stat = try bun.sys.lstat(absolute_path_c).unwrap();
-                var mode: u31 = @truncate(stat.mode);
-                if (bun.S.ISLNK(mode)) {
-                    var buf: bun.PathBuffer = undefined;
-                    const read = try bun.sys.readlink(absolute_path_c, &buf).unwrap();
-                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, read));
-                    mode = @truncate((try bun.sys.stat(read).unwrap()).mode);
+                var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
+                var depth: usize = 0;
+                var buf2: bun.PathBuffer = undefined;
+                var buf1: bun.PathBuffer = undefined;
+                var current_buf: *bun.PathBuffer = &buf1;
+                var other_buf: *bun.PathBuffer = &buf2;
+                while (file.isReparsePoint()) : (depth += 1) {
+                    const read = try bun.sys.readlink(absolute_path_c, &current_buf).unwrap();
+                    std.mem.swap(&current_buf, &other_buf);
+                    file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
+                    absolute_path_c = read;
+
+                    if (depth > 20) {
+                        return error.TooManySymlinks;
+                    }
                 }
 
-                if (bun.S.ISDIR(mode)) {
+                if (depth > 0) {
+                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
+                }
+
+                if (file.isDirectory()) {
                     cache.kind = .dir;
                 } else {
                     cache.kind = .file;

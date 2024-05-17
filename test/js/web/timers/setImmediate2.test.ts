@@ -4,10 +4,10 @@ test("setImmediate doesn't block the event loop", async () => {
   const incomingTimestamps = [];
   var hasResponded = false;
   var expectedTime = "";
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(req) {
-      await new Promise(resolve => setTimeout(resolve, 50).unref());
+      await new Promise(resolve => setTimeout(resolve, 1500).unref());
       function queuey() {
         incomingTimestamps.push(Date.now());
         if (!hasResponded) setImmediate(queuey);
@@ -20,5 +20,4 @@ test("setImmediate doesn't block the event loop", async () => {
   const resp = await fetch(`http://${server.hostname}:${server.port}/`);
   expect(await resp.text()).toBe(expectedTime);
   hasResponded = true;
-  server.stop(true);
 });

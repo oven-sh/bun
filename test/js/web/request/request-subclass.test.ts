@@ -28,7 +28,7 @@ test("fetch() calls request.method & request.url getters on subclass", async () 
     }
   }
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     fetch(req) {
       return new Response(req.method, { headers: req.headers });
     },
@@ -41,7 +41,6 @@ test("fetch() calls request.method & request.url getters on subclass", async () 
   const response = await fetch(request);
   expect(await response.text()).toBe("POST");
   expect(response.headers.get("X-My-Header")).toBe("123");
-  server.stop(true);
 });
 
 test("fetch() with subclass containing invalid HTTP headers throws without crashing", async () => {

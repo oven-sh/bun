@@ -1423,10 +1423,6 @@ pub const InternalDNS = struct {
         arg: ?*anyopaque,
     ) callconv(.C) void {
         const req = bun.cast(*Request, arg);
-        if (status != 0) {
-            @panic("TODO handle this error");
-        }
-
         afterResult(req, addr_info, @intCast(status));
     }
 

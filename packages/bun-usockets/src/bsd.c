@@ -61,9 +61,10 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
                 errno = EAFNOSUPPORT;
                 return -1;
             }
+            int err = WSAGetLastError();
             if (ret < 0) {
-                if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                if (err == WSAEINTR) continue;
+                if (err == WSAEWOULDBLOCK) return i;
                 return ret;
             }
             break;
@@ -111,7 +112,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     while (1) {
         ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
         if (ret < 0) {
-            if (errno == EINTR) continue;
+            if (WSAGetLastError() == WSAEINTR) continue;
             return ret;
         }
         recvbuf->recvlen = ret;
@@ -843,7 +844,13 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
     int res = connect(fd, &addr, sizeof(addr));
     // EAFNOSUPPORT is harmless in this case - we just want to disconnect
-    if (res == 0 || errno == EAFNOSUPPORT) {
+    if (res == 0 || 
+#ifdef _WIN32
+    WSAGetLastError() == WSAEAFNOSUPPORT
+#else
+    errno == EAFNOSUPPORT
+#endif
+    ) {
         return 0;
     } else {
         return -1;
@@ -883,6 +890,15 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
 static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
 {
+#ifdef _WIN32
+    do {
+        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
+            return 0;
+        }
+    } while (WSAGetLastError() == WSAEINTR);
+
+    return LIBUS_SOCKET_ERROR;
+#else
      do {
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || errno == EINPROGRESS) {
             return 0;
@@ -890,6 +906,7 @@ static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
     } while (errno == EINTR);
 
     return LIBUS_SOCKET_ERROR;
+#endif
 }
 
 static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)

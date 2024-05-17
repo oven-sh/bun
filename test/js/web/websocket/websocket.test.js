@@ -13,7 +13,7 @@ const COMMON_CERT = {
 };
 describe("WebSocket", () => {
   it("should connect", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -39,7 +39,6 @@ describe("WebSocket", () => {
     });
     ws.close();
     await closed;
-    server.stop(true);
     Bun.gc(true);
   });
 
@@ -59,7 +58,7 @@ describe("WebSocket", () => {
   });
 
   it("should connect many times over https", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -76,7 +75,7 @@ describe("WebSocket", () => {
         open(ws) {},
       },
     });
-    try {
+    {
       for (let i = 0; i < 1000; i++) {
         const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
         await new Promise((resolve, reject) => {
@@ -91,13 +90,11 @@ describe("WebSocket", () => {
         await closed;
       }
       Bun.gc(true);
-    } finally {
-      server.stop(true);
     }
   });
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -119,7 +116,7 @@ describe("WebSocket", () => {
       },
     });
 
-    try {
+    {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
@@ -153,13 +150,11 @@ describe("WebSocket", () => {
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
       }
-    } finally {
-      server.stop(true);
     }
   });
 
   it("rejectUnauthorized should NOT reject self-sign certs when false", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -181,7 +176,7 @@ describe("WebSocket", () => {
       },
     });
 
-    try {
+    {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
@@ -206,8 +201,6 @@ describe("WebSocket", () => {
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
         expect(result.code).toBe(1000);
       }
-    } finally {
-      server.stop(true);
     }
   });
 
@@ -218,7 +211,7 @@ describe("WebSocket", () => {
       passphrase: "123123123",
     };
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: UNTRUSTED_CERT,
       fetch(req, server) {
@@ -240,7 +233,7 @@ describe("WebSocket", () => {
       },
     });
 
-    try {
+    {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
@@ -264,8 +257,6 @@ describe("WebSocket", () => {
         expect(result.code).toBe(1015);
         expect(result.reason).toBe("TLS handshake failed");
       }
-    } finally {
-      server.stop(true);
     }
   });
 
@@ -501,7 +492,7 @@ it("should report failing websocket connection in onerror and onclose for connec
 describe("websocket in subprocess", () => {
   it("should exit", async () => {
     let messageReceived = false;
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -531,7 +522,6 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
-    server.stop(true);
   });
 
   it("should exit after killed", async () => {
@@ -565,7 +555,7 @@ describe("websocket in subprocess", () => {
   it("should exit after timeout", async () => {
     let messageReceived = false;
     let start = 0;
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -597,7 +587,6 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
-    server.stop(true);
   });
 
   it("should exit after server stop and 0 messages", async () => {

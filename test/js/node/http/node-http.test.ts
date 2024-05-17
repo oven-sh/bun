@@ -1835,7 +1835,7 @@ it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
   const payload = Buffer.from("X".repeat(16 * 1024));
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(req) {
       let running = true;
@@ -1848,8 +1848,7 @@ it("destroy should end download", async () => {
       });
     },
   });
-
-  try {
+  {
     let chunks = 0;
 
     const { promise, resolve } = Promise.withResolvers();
@@ -1866,8 +1865,6 @@ it("destroy should end download", async () => {
     req.destroy();
     await Bun.sleep(200);
     expect(chunks).toBeLessThanOrEqual(3);
-  } finally {
-    server.stop(true);
   }
 });
 

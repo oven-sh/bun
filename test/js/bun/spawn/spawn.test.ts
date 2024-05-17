@@ -702,8 +702,8 @@ describe("should not hang", () => {
 });
 
 it("#3480", async () => {
-  try {
-    var server = Bun.serve({
+  {
+    using server = Bun.serve({
       port: 0,
       fetch: (req, res) => {
         Bun.spawnSync(["node", "-e", "console.log('1')"], {});
@@ -714,8 +714,6 @@ it("#3480", async () => {
     const response = await fetch("http://" + server.hostname + ":" + server.port);
     expect(await response.text()).toBe("Hello world!");
     expect(response.ok);
-  } finally {
-    server!.stop(true);
   }
 });
 

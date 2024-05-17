@@ -106,7 +106,7 @@ describe("bundler", () => {
         );
 
         const port = 0;
-        const server = Bun.serve({
+        using server = Bun.serve({
           port,
           async fetch(req) {
             return new Response(await renderToReadableStream(<App />), headers);
@@ -115,7 +115,6 @@ describe("bundler", () => {
         const res = await fetch(server.url);
         if (res.status !== 200) throw "status error";
         console.log(await res.text());
-        server.stop(true);
       `,
     },
     run: {

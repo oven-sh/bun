@@ -39,9 +39,8 @@ describe("HTMLRewriter", () => {
   it("HTMLRewriter: async replacement using fetch + Bun.serve", async () => {
     await gcTick();
     let content;
-    let server;
-    try {
-      server = Bun.serve({
+    {
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           return new HTMLRewriter()
@@ -59,8 +58,6 @@ describe("HTMLRewriter", () => {
       const url = `http://localhost:${server.port}`;
       expect(await fetch(url).then(res => res.text())).toBe(`<div>${content}</div>`);
       await gcTick();
-    } finally {
-      server.stop();
     }
   });
 

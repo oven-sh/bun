@@ -558,7 +558,7 @@ describe("Client Basics", () => {
   });
   it("should fail to connect over HTTP/1.1", async () => {
     const tls = TLS_CERT;
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       tls: {
@@ -575,8 +575,6 @@ describe("Client Basics", () => {
       expect("unreachable").toBe(true);
     } catch (err) {
       expect(err.code).toBe("ERR_HTTP2_ERROR");
-    } finally {
-      server.stop();
     }
   });
   it("works with Duplex", async () => {

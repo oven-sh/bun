@@ -1,6 +1,7 @@
 import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
 import { join } from "path";
 import { AddressInfo } from "ws";
+import { it, expect } from "bun:test";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -42,7 +43,7 @@ const COMMON_CERT = {
 };
 
 it("Bun.serve() should work with tls and Bun.file()", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch() {
       return new Response(Bun.file(join(import.meta.dir, "fixtures/index.html")));
@@ -54,11 +55,10 @@ it("Bun.serve() should work with tls and Bun.file()", async () => {
   });
   const res = await fetch(`https://${server.hostname}:${server.port}/`, { tls: { rejectUnauthorized: false } });
   expect(await res.text()).toBe("<h1>HELLO</h1>");
-  server.stop();
 });
 
 it("should have peer certificate when using self asign certificate", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     tls: {
       cert: COMMON_CERT.cert,
       key: COMMON_CERT.key,
@@ -121,7 +121,6 @@ it("should have peer certificate when using self asign certificate", async () =>
     expect(cert.serialNumber).toBe("A2DD4153F2F748E3");
     expect(cert.raw).toBeInstanceOf(Buffer);
   } finally {
-    server.stop();
     socket.end();
   }
 });

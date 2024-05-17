@@ -6,7 +6,7 @@ describe("fetch doesn't leak", () => {
   test("fixture #1", async () => {
     const body = new Blob(["some body in here!".repeat(100)]);
     var count = 0;
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       fetch(req) {
@@ -27,7 +27,6 @@ describe("fetch doesn't leak", () => {
     });
 
     const exitCode = await proc.exited;
-    server.stop(true);
     expect(exitCode).toBe(0);
     expect(count).toBe(200);
   });
@@ -60,7 +59,7 @@ describe("fetch doesn't leak", () => {
       serveOptions.tls = COMMON_CERT;
     }
 
-    const server = Bun.serve(serveOptions);
+    using server = Bun.serve(serveOptions);
 
     const env = {
       ...bunEnv,
@@ -84,7 +83,6 @@ describe("fetch doesn't leak", () => {
     });
 
     const exitCode = await proc.exited;
-    server.stop(true);
     expect(exitCode).toBe(0);
   }
 

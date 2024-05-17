@@ -1,5 +1,3 @@
-import assert from "assert";
-import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -28,7 +26,7 @@ describe("bundler", () => {
         );
 
         const port = 42001;
-        const server = Bun.serve({
+        using server = Bun.serve({
           port,
           async fetch(req) {
             return new Response(await renderToReadableStream(<App />), headers);
@@ -37,7 +35,6 @@ describe("bundler", () => {
         const res = await fetch("http://localhost:" + port);
         if (res.status !== 200) throw "status error";
         console.log(await res.text());
-        server.stop();
       `,
     },
     run: {

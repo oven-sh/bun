@@ -1668,6 +1668,21 @@ it("same-origin status code 302 should not strip headers", async () => {
 });
 
 describe("should handle relative location in the redirect, issue#5635", () => {
+  let server: Server;
+  beforeAll(async () => {
+    server = Bun.serve({
+      port: 0,
+      async fetch(request: Request) {
+        return new Response("Not Found", {
+          status: 404,
+        });
+      },
+    });
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+
   it.each([
     ["/a/b", "/c", "/c"],
     ["/a/b", "c", "/a/c"],
@@ -1685,14 +1700,6 @@ describe("should handle relative location in the redirect, issue#5635", () => {
     ["/a/b/", "../c/d", "/a/c/d"],
     ["/a/b/", "../../../c", "/c"],
   ])("('%s', '%s')", async (pathname, location, expected) => {
-    using server = Bun.serve({
-      port: 0,
-      async fetch(request: Request) {
-        return new Response("Not Found", {
-          status: 404,
-        });
-      },
-    });
     server.reload({
       async fetch(request: Request) {
         const url = new URL(request.url);

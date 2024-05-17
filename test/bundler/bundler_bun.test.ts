@@ -58,7 +58,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      exitCode: isWindows ? 3 : 1,
+      exitCode: 1,
       validate({ stderr }) {
         expect(stderr).toInclude("\nnote: missing sourcemaps for ");
         expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get an unminified traces\n");
@@ -81,7 +81,7 @@ describe("bundler", () => {
     },
     sourceMap: "inline",
     run: {
-      exitCode: isWindows ? 3 : 1,
+      exitCode: 1,
       validate({ stderr }) {
         assert(
           stderr.startsWith(

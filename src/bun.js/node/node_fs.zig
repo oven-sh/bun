@@ -5043,8 +5043,7 @@ pub const NodeFS = struct {
         const dir = fd.asDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
 
-        const dirent_path = bun.String.createUTF8(basename);
-        defer dirent_path.deref();
+        var dirent_path: ?bun.String = null;
 
         var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
@@ -5074,14 +5073,19 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
+            if (ExpectedType == Dirent) {
+                if (dirent_path == null) {
+                    dirent_path = bun.String.createUTF8(basename);
+                }
+            }
             if (comptime !is_u16) {
                 const utf8_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
-                        dirent_path.ref();
+                        dirent_path.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
-                            .path = dirent_path,
+                            .path = dirent_path.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5097,10 +5101,10 @@ pub const NodeFS = struct {
                 const utf16_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
-                        dirent_path.ref();
+                        dirent_path.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF16(utf16_name),
-                            .path = dirent_path,
+                            .path = dirent_path.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5110,6 +5114,9 @@ pub const NodeFS = struct {
                     else => @compileError("unreachable"),
                 }
             }
+        }
+        if (dirent_path) |*p| {
+            p.deref();
         }
 
         return Maybe(void).success;

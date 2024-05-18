@@ -565,15 +565,7 @@ it("should handle workspaces", async () => {
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
-  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ @org/nominally-scoped@workspace:packages/nominally-scoped`,
-    `+ Asterisk@workspace:packages/asterisk`,
-    `+ AsteriskTheSecond@workspace:packages/second-asterisk`,
-    "+ Bar@workspace:bar",
-    "",
-    "4 packages installed",
-  ]);
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -607,15 +599,7 @@ it("should handle workspaces", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ @org/nominally-scoped@workspace:packages/nominally-scoped`,
-    `+ Asterisk@workspace:packages/asterisk`,
-    `+ AsteriskTheSecond@workspace:packages/second-asterisk`,
-    "+ Bar@workspace:bar",
-    "",
-    "4 packages installed",
-  ]);
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -737,12 +721,7 @@ it("should handle workspaces with packages array", async () => {
 
   const out = await new Response(stdout).text();
 
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -792,13 +771,7 @@ it("should handle inter-dependency between workspaces", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    `+ Baz@workspace:packages/baz`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "Baz"]);
@@ -849,13 +822,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    `+ Baz@workspace:packages/baz`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "Baz"]);
@@ -906,13 +873,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    `+ Baz@workspace:packages/baz`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar", "Baz"]);
@@ -962,12 +923,7 @@ it("should ignore peerDependencies within workspaces", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ Baz@workspace:packages/baz`,
-    "",
-    "1 package installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["Baz"]);
@@ -1077,7 +1033,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
     join(package_dir, "bar", "preinstall.js"),
     'await require("fs/promises").writeFile("bar.txt", "bar!");',
   );
-  const { stdout, stderr, exited } = spawn({
+  const { stdout, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: "pipe",
@@ -1085,14 +1041,8 @@ it("should handle life-cycle scripts within workspaces", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1153,7 +1103,6 @@ it("should handle life-cycle scripts during re-installation", async () => {
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ Bar@workspace:bar",
     "+ qux@0.0.2",
     "",
     "2 packages installed",
@@ -1185,7 +1134,6 @@ it("should handle life-cycle scripts during re-installation", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ Bar@workspace:bar",
     "+ qux@0.0.2",
     "",
     "2 packages installed",
@@ -1217,7 +1165,6 @@ it("should handle life-cycle scripts during re-installation", async () => {
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ Bar@workspace:bar",
     "+ qux@0.0.2",
     "",
     "2 packages installed",
@@ -1273,12 +1220,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
-  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1321,12 +1263,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1356,12 +1293,7 @@ it("should use updated life-cycle scripts in root during re-installation", async
   expect(err3).not.toContain("Saved lockfile");
 
   const out3 = await new Response(stdout3).text();
-  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1414,12 +1346,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
-  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited1).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1465,12 +1392,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1502,12 +1424,7 @@ it("should use updated life-cycle scripts in dependency during re-installation",
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
   const out3 = await new Response(stdout3).text();
-  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ Bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited3).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
@@ -1547,12 +1464,7 @@ it("should ignore workspaces within workspaces", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@workspace:bar",
-    "",
-    "1 package installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
@@ -1840,13 +1752,7 @@ it("should handle matching workspaces from dependencies", async () => {
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ pkg1@workspace:packages/pkg1`,
-    `+ pkg2@workspace:packages/pkg2`,
-    "",
-    "3 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
   expect(await exited).toBe(0);
   await access(join(package_dir, "bun.lockb"));
 });
@@ -2740,7 +2646,6 @@ it("should handle aliased & direct dependency references", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ bar@workspace:bar",
     "+ baz@0.0.3",
     "",
     "2 packages installed",
@@ -2820,7 +2725,6 @@ it("should not hoist if name collides with alias", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ moo@workspace:moo",
     "+ bar@0.0.3",
     "",
     "3 packages installed",
@@ -2898,7 +2802,6 @@ it("should get npm alias with matching version", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ moo@workspace:moo",
     "+ boba@0.0.5",
     "",
     "2 packages installed",
@@ -4146,13 +4049,7 @@ it("should consider peerDependencies during hoisting", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@workspace:bar",
-    "+ moo@workspace:moo",
-    "",
-    "4 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/baz-0.0.5.tgz`]);
   expect(requested).toBe(3);
@@ -4244,13 +4141,7 @@ it("should install peerDependencies when needed", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@workspace:bar",
-    "+ moo@workspace:moo",
-    "",
-    "4 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/baz-0.0.5.tgz`]);
   expect(requested).toBe(3);
@@ -6747,17 +6638,7 @@ it("should handle installing workspaces with more complicated globs", async () =
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/)
       .sort(),
-  ).toEqual(
-    [
-      "",
-      `+ backend@workspace:packages/backend`,
-      `+ components@workspace:packages/frontend/components`,
-      `+ frontend@workspace:packages/frontend`,
-      `+ types@workspace:packages/types`,
-      "",
-      "4 packages installed",
-    ].sort(),
-  );
+  ).toEqual(["", "4 packages installed"].sort());
 });
 
 it("should handle installing workspaces with multiple glob patterns", async () => {
@@ -6821,17 +6702,7 @@ it("should handle installing workspaces with multiple glob patterns", async () =
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/)
       .sort(),
-  ).toEqual(
-    [
-      "",
-      "+ clientlib@workspace:client/clientlib",
-      "+ db@workspace:backend/db",
-      "+ server@workspace:backend/server",
-      "+ types@workspace:types/types",
-      "",
-      "4 packages installed",
-    ].sort(),
-  );
+  ).toEqual(["", "4 packages installed"].sort());
 });
 
 it.todo("should handle installing workspaces with absolute glob patterns", async () => {
@@ -6891,17 +6762,7 @@ it.todo("should handle installing workspaces with absolute glob patterns", async
       .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
       .split(/\r?\n/)
       .sort(),
-  ).toEqual(
-    [
-      "",
-      `+ backend@workspace:packages/backend`,
-      `+ components@workspace:packages/frontend/components`,
-      `+ frontend@workspace:packages/frontend`,
-      `+ types@workspace:packages/types`,
-      "",
-      "4 packages installed",
-    ].sort(),
-  );
+  ).toEqual(["", "4 packages installed"].sort());
 });
 
 it("should handle installing packages inside workspaces with difference versions", async () => {
@@ -7227,16 +7088,7 @@ it("should handle installing packages inside workspaces with difference versions
     const err5 = await new Response(stderr5).text();
     expect(err5).toContain("Saved lockfile");
     const out5 = await new Response(stdout5).text();
-    expect(out5.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      `+ package1@workspace:packages/package1`,
-      `+ package2@workspace:packages/package2`,
-      `+ package3@workspace:packages/package3`,
-      `+ package4@workspace:packages/package4`,
-      `+ package5@workspace:packages/package5`,
-      "",
-      "6 packages installed",
-    ]);
+    expect(out5.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "6 packages installed"]);
     expect(await exited5).toBe(0);
 
     const {
@@ -7482,13 +7334,7 @@ it("should override child npm dependency by matching workspace", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@workspace:bar",
-    "+ baz@workspace:baz",
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -7538,13 +7384,7 @@ it("should not override child npm dependency by workspace with mismatched versio
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@workspace:bar",
-    "+ baz@workspace:baz",
-    "",
-    "3 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
@@ -7600,13 +7440,7 @@ it("should override @scoped child npm dependency by matching workspace", async (
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ @moo/bar@workspace:packages/moo-bar`,
-    `+ @moo/baz@workspace:packages/moo-baz`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -7661,13 +7495,7 @@ it("should override aliased child npm dependency by matching workspace", async (
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ @moo/bar@workspace:packages/bar`,
-    `+ baz@workspace:packages/baz`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -7724,13 +7552,7 @@ it("should handle `workspace:` with semver range", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@workspace:bar",
-    "+ baz@workspace:baz",
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -7779,13 +7601,7 @@ it("should handle `workspace:` with alias & @scope", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ @moo/bar@workspace:packages/bar`,
-    `+ @moz/baz@workspace:packages/baz`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
@@ -7854,7 +7670,6 @@ it("should handle `workspace:*` on both root & child", async () => {
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    `+ baz@workspace:packages/baz`,
     `+ bar@workspace:packages/bar`,
     "",
     "2 packages installed",
@@ -7890,7 +7705,6 @@ it("should handle `workspace:*` on both root & child", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    `+ baz@workspace:packages/baz`,
     `+ bar@workspace:packages/bar`,
     "",
     "2 packages installed",

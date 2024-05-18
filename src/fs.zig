@@ -1324,7 +1324,7 @@ pub const FileSystem = struct {
 
             const dir = _dir;
             var combo = [2]string{ dir, base };
-            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var outpath: bun.PathBuffer = undefined;
             const entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
             outpath[entry_path.len + 1] = 0;
@@ -1336,12 +1336,11 @@ pub const FileSystem = struct {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
                 var buf2: bun.PathBuffer = undefined;
-                var buf1: bun.PathBuffer = undefined;
-                var current_buf: *bun.PathBuffer = &buf1;
-                var other_buf: *bun.PathBuffer = &buf2;
+                var current_buf: *bun.PathBuffer = &buf2;
+                var other_buf: *bun.PathBuffer = &outpath;
                 while (file.isReparsePoint()) : (depth += 1) {
-                    const read = try bun.sys.readlink(absolute_path_c, &current_buf).unwrap();
-                    std.mem.swap(&current_buf, &other_buf);
+                    const read = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
+                    std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
                     file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
                     absolute_path_c = read;
 

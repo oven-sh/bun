@@ -977,7 +977,7 @@ const PatchLinesParser = struct {
 
         return .{
             .line_nr = @max(1, std.fmt.parseInt(u32, line_nr, 10) catch return ParseErr.bad_header_line),
-            .line_count = @max(1, std.fmt.parseInt(u32, line_nr_count, 10) catch return ParseErr.bad_header_line),
+            .line_count = std.fmt.parseInt(u32, line_nr_count, 10) catch return ParseErr.bad_header_line,
             .rest = text,
         };
     }

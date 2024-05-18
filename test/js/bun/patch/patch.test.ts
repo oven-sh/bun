@@ -66,7 +66,34 @@ describe("parse", () => {
   });
 
   test(`can handle files with CRLF line breaks`, () => {
-    expect(parse(crlfLineBreaks)).toEqual("");
+    console.log(parse(crlfLineBreaks));
+    expect(JSON.parse(parse(crlfLineBreaks))).toEqual({
+      "parts": {
+        "items": [
+          {
+            "file_creation": {
+              "path": "banana.ts",
+              "mode": "non_executable",
+              "hunk": {
+                "header": { "original": { "start": 1, "len": 0 }, "patched": { "start": 1, "len": 1 } },
+                "parts": {
+                  "items": [
+                    {
+                      "type": "insertion",
+                      "lines": { "items": ["this is a new file\r"], "capacity": 8 },
+                      "no_newline_at_end_of_file": false,
+                    },
+                  ],
+                  "capacity": 8,
+                },
+              },
+              "hash": "3e1267f",
+            },
+          },
+        ],
+        "capacity": 8,
+      },
+    });
   });
 });
 

@@ -2101,7 +2101,7 @@ pub const WindowsFileAttributes = enum(windows.DWORD) {
     _,
 
     pub fn isFile(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_NORMAL == 0;
+        return @intFromEnum(this) & FILE_ATTRIBUTE_NORMAL != 0;
     }
 
     pub fn isArchive(this: WindowsFileAttributes) bool {

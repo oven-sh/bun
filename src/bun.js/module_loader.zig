@@ -2412,6 +2412,7 @@ pub const ModuleLoader = struct {
                 .@"node:constants" => return jsSyntheticModule(.@"node:constants", specifier),
                 .@"bun:jsc" => return jsSyntheticModule(.@"bun:jsc", specifier),
                 .@"bun:test" => return jsSyntheticModule(.@"bun:test", specifier),
+                .@"bun:patch" => return jsSyntheticModule(.@"bun:patch", specifier),
 
                 .@"bun:internal-for-testing" => {
                     if (!Environment.isDebug) {
@@ -2624,6 +2625,7 @@ pub const HardcodedModule = enum {
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sqlite",
     @"bun:internal-for-testing",
+    @"bun:patch",
     @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
@@ -2699,6 +2701,7 @@ pub const HardcodedModule = enum {
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
+            .{ "bun:patch", HardcodedModule.@"bun:patch" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -2913,6 +2916,7 @@ pub const HardcodedModule = enum {
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
+            .{ "bun:patch", .{ .path = "bun:patch" } },
             .{ "ffi", .{ .path = "bun:ffi" } },
 
             // Thirdparty packages we override

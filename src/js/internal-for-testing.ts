@@ -17,6 +17,10 @@ export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
+export const patchInternals = {
+  parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
+};
+
 export const shellInternals = {
   lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
   parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),

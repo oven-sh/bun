@@ -3301,10 +3301,30 @@ pub const Expr = struct {
         return expr.data.e_string.string(allocator) catch null;
     }
 
+    pub inline fn isString(expr: *const Expr) bool {
+        return switch (expr.data) {
+            .e_string, .e_utf8_string => true,
+            else => false,
+        };
+    }
+
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         switch (expr.data) {
             .e_string => |str| return str.string(allocator) catch null,
             .e_utf8_string => |str| return str.data,
+            else => return null,
+        }
+    }
+
+    pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) ?u64 {
+        switch (expr.data) {
+            .e_string => |str| {
+                if (str.isUTF8()) return hash_fn(str.data);
+                const utf8_str = str.string(allocator) catch return null;
+                defer allocator.free(utf8_str);
+                return hash_fn(utf8_str);
+            },
+            .e_utf8_string => |str| return hash_fn(str.data),
             else => return null,
         }
     }

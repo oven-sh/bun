@@ -89,6 +89,7 @@ const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const TrustedDependenciesSet = std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, void, ArrayIdentityContext, false);
+pub const PatchedDependenciesMap = std.ArrayHashMapUnmanaged(PackageNameHash, []const u8, ArrayIdentityContext.U64, false);
 pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
@@ -130,6 +131,10 @@ workspace_versions: VersionHashMap = .{},
 /// Optional because `trustedDependencies` in package.json might be an
 /// empty list or it might not exist
 trusted_dependencies: ?TrustedDependenciesSet = null,
+/// TODO: should this b here?
+/// im putting this here because Lockfile.parseWithJSON() is the codepath that parses package.json, but we don't actually save this field in
+/// the serialized lockfile
+patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
@@ -239,6 +244,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     this.workspace_paths = .{};
     this.workspace_versions = .{};
     this.overrides = .{};
+    this.patched_dependencies = .{};
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -4577,6 +4583,21 @@ pub const Package = extern struct {
                         }
                     },
                     else => {},
+                }
+            }
+
+            if (json.asProperty("patched_dependencies")) |patched_deps| {
+                const obj = patched_deps.expr.data.e_object;
+                lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
+                for (obj.properties.slice()) |prop| {
+                    const key = prop.key.?;
+                    const value = prop.value.?;
+                    if (key.isString() and value.isString()) {
+                        var sfb = std.heap.stackFallback(128, allocator);
+                        const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                        const valuestr = value.asString(allocator).?;
+                        lockfile.patched_dependencies.put(allocator, keyhash, valuestr) catch unreachable;
+                    }
                 }
             }
 

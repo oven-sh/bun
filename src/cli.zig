@@ -100,6 +100,7 @@ pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -478,6 +479,11 @@ pub const Arguments = struct {
             ctx.test_options.run_todo = args.flag("--todo");
             ctx.test_options.only = args.flag("--only");
         }
+
+        // if (cmd == .PatchCommand) {
+        //     ctx.patch_options.edit_dir = args.option("--edit-dir") orelse "";
+        //     ctx.patch_options.ignore_existing = args.flag("--ignore-existing");
+        // }
 
         ctx.args.absolute_working_dir = cwd;
         ctx.positionals = args.positionals();
@@ -2024,6 +2030,7 @@ pub const Command = struct {
         ReplCommand,
         ReservedCommand,
         ExecCommand,
+        // PatchCommand,
 
         /// Used by crash reports.
         ///
@@ -2053,6 +2060,8 @@ pub const Command = struct {
                 .ReplCommand => 'G',
                 .ReservedCommand => 'w',
                 .ExecCommand => 'e',
+                // TODO: @dave should we make this function return [2]u8 instead of u8, running out of letters in alphabet
+                // .PatchCommand => 'x',
             };
         }
 
@@ -2063,6 +2072,7 @@ pub const Command = struct {
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
+                // .PatchCommand => Arguments.patch_params,
                 else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
         }
@@ -2270,6 +2280,19 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
+                // Command.Tag.PatchCommand => {
+                //     Output.pretty(
+                //         \\<b>Usage: bun patch <r><cyan>\<script\><r>
+                //         \\
+                //         \\Prepare a package for patching.
+                //         \\
+                //         \\<b>Options:<r>
+                //         \\  <cyan>--edit-dir<r>               <d>The package that needs to be modified will be extracted to this directory.<r>
+                //         \\  <cyan>--ignore-existing<r>        <d>Ignore existing patch files when patching.<r>
+                //         \\
+                //     , .{});
+                //     Output.flush();
+                // },
                 else => {
                     HelpCommand.printWithReason(.explicit);
                 },
@@ -2285,7 +2308,16 @@ pub const Command = struct {
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand,
+                .LinkCommand,
+                .UnlinkCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                // .PatchCommand,
+                => true,
                 else => false,
             };
         }

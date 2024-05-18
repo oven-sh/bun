@@ -47,6 +47,8 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 
+pub const patch = @import("./patch.zig");
+
 pub const glob = @import("./glob.zig");
 
 pub const shell = struct {

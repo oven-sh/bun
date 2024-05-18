@@ -75,6 +75,7 @@ pub const Tag = enum(u8) {
     copy_file_range,
     copyfile,
     fchmod,
+    fchmodat,
     fchown,
     fcntl,
     fdatasync,
@@ -356,6 +357,13 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     }
 
     return Maybe(void).errnoSys(C.fchmod(fd.cast(), mode), .fchmod) orelse
+        Maybe(void).success;
+}
+
+pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("Use fchmod instead");
+
+    return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
         Maybe(void).success;
 }
 

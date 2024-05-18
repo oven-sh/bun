@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const JSC = bun.JSC;
 const Allocator = std.mem.Allocator;
 const List = std.ArrayListUnmanaged;
 
@@ -12,34 +13,94 @@ pub const PatchFilePart = union(enum) {
     file_creation: *FileCreation,
     file_rename: *FileRename,
     file_mode_change: *FileModeChange,
+
+    pub fn deinit(this: *PatchFilePart, allocator: Allocator) void {
+        switch (this.*) {
+            .file_patch => this.file_patch.deinit(allocator),
+            .file_deletion => this.file_deletion.deinit(allocator),
+            .file_creation => this.file_creation.deinit(allocator),
+            .file_rename => this.file_rename.deinit(allocator),
+            .file_mode_change => this.file_mode_change.deinit(allocator),
+        }
+    }
 };
 
 pub const PatchFile = struct {
     parts: List(PatchFilePart) = .{},
 
-    // TODO: should we compute the hash of the original file and check it against the one in the patch file?
-    pub fn apply(this: *const PatchFile, patch_dir: []const u8) !void {
-        try std.os.chdir(patch_dir);
+    pub fn deinit(this: *PatchFile, allocator: Allocator) void {
+        for (this.parts.items) |*part| part.deinit(allocator);
+        this.parts.deinit(allocator);
+    }
 
-        var file_contents_buf = std.ArrayListUnmanaged(u8){};
-        defer file_contents_buf.deinit(bun.default_allocator);
+    pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?JSC.SystemError {
+        const ScratchBuffer = struct {
+            buf: std.ArrayList(u8),
+
+            fn deinit(scratch: *@This()) void {
+                scratch.buf.deinit();
+            }
+
+            fn clear(scratch: *@This()) void {
+                scratch.buf.clearRetainingCapacity();
+            }
+
+            fn dupeZ(scratch: *@This(), path: []const u8) [:0]const u8 {
+                const start = scratch.buf.items.len;
+                scratch.buf.appendSlice(path) catch unreachable;
+                scratch.buf.append(0) catch unreachable;
+                return scratch.buf.items[start .. start + path.len :0];
+            }
+        };
+        var sfb = std.heap.stackFallback(1024, allocator);
+        var scratch_buf = ScratchBuffer{ .buf = std.ArrayList(u8).init(sfb.get()) };
+        defer scratch_buf.deinit();
 
         for (this.parts.items) |*part| {
+            defer scratch_buf.clear();
             switch (part.*) {
                 .file_deletion => {
-                    try std.os.unlink(part.file_deletion.path);
+                    const pathz = scratch_buf.dupeZ(part.file_deletion.path);
+
+                    if (bun.sys.unlinkat(patch_dir, pathz).asErr()) |e| {
+                        return e.withPath(pathz).toSystemError();
+                    }
                 },
                 .file_rename => {
-                    try std.os.rename(part.file_rename.from_path, part.file_rename.to_path);
+                    const from_path = scratch_buf.dupeZ(part.file_rename.from_path);
+                    const to_path = scratch_buf.dupeZ(part.file_rename.to_path);
+
+                    if (bun.sys.renameat(patch_dir, from_path, patch_dir, to_path).asErr()) |e| {
+                        return e.toSystemError();
+                    }
                 },
                 .file_creation => {
-                    defer file_contents_buf.clearRetainingCapacity();
-                    // TODO: create directories if it doesn't exist
-                    try std.os.mkdir(std.fs.path.dirname(part.file_creation.path) orelse @panic("OOPS"), 0o777);
+                    const filepath = bun.PathString.init(scratch_buf.dupeZ(part.file_creation.path));
+                    const filedir = bun.path.dirname(filepath.slice(), .auto);
+                    const mode = part.file_creation.mode;
+
+                    var nodefs = bun.JSC.Node.NodeFS{};
+                    if (nodefs.mkdirRecursive(.{
+                        .path = .{ .string = bun.PathString.init(filedir) },
+                        .recursive = true,
+                        .mode = @intFromEnum(mode),
+                    }, .sync).asErr()) |e| return e.toSystemError();
+
+                    const newfile_fd = switch (bun.sys.openat(
+                        patch_dir,
+                        filepath.sliceAssumeZ(),
+                        std.os.O.CREAT | std.os.O.RDWR,
+                        mode.toBunMode(),
+                    )) {
+                        .result => |fd| fd,
+                        .err => |e| return e.withPath(filepath.slice()).toSystemError(),
+                    };
+                    defer _ = bun.sys.close(newfile_fd);
+
                     const hunk = part.file_creation.hunk orelse {
-                        try std.fs.cwd().writeFile(part.file_creation.path, "");
                         continue;
                     };
+
                     const file_contents = brk: {
                         const count = count: {
                             var total: usize = 0;
@@ -48,8 +109,8 @@ pub const PatchFile = struct {
                             }
                             break :count total;
                         };
-                        try file_contents_buf.ensureTotalCapacity(bun.default_allocator, count);
-                        var contents = file_contents_buf.items[0..count];
+                        scratch_buf.buf.ensureTotalCapacity(count) catch unreachable;
+                        var contents = scratch_buf.buf.items[0..count];
                         var i: usize = 0;
                         for (hunk.parts.items[0].lines.items) |line| {
                             @memcpy(contents[i .. i + line.len], line);
@@ -57,14 +118,30 @@ pub const PatchFile = struct {
                         }
                         break :brk contents;
                     };
-                    try std.fs.cwd().writeFile(part.file_creation.path, file_contents);
+
+                    var written: usize = 0;
+                    while (written < file_contents.len) {
+                        switch (bun.sys.write(newfile_fd, file_contents)) {
+                            .result => |bytes| written += bytes,
+                            .err => |e| return e.withPath(filepath.slice()).toSystemError(),
+                        }
+                    }
                 },
                 .file_patch => {
-                    try applyPatch(part.file_patch);
+                    // TODO: should we compute the hash of the original file and check it against the on in the patch?
+                    applyPatch(part.file_patch) catch bun.outOfMemory();
                 },
-                .file_mode_change => {},
+                .file_mode_change => {
+                    const newmode = part.file_mode_change.new_mode;
+                    const filepath = scratch_buf.dupeZ(part.file_mode_change.path);
+                    if (bun.sys.fchmodat(patch_dir, filepath, newmode.toBunMode(), 0).asErr()) |e| {
+                        return e.toSystemError();
+                    }
+                },
             }
         }
+
+        return null;
     }
 
     /// Invariants:
@@ -395,6 +472,10 @@ pub const FileMode = enum(u32) {
     non_executable = 0o644,
     executable = 0o755,
 
+    pub fn toBunMode(this: FileMode) bun.Mode {
+        return @intFromEnum(this);
+    }
+
     pub fn fromU32(mode: u32) ?FileMode {
         switch (mode) {
             0o644 => return .non_executable,
@@ -407,12 +488,18 @@ pub const FileMode = enum(u32) {
 pub const FileRename = struct {
     from_path: []const u8,
     to_path: []const u8,
+
+    /// Does not allocate
+    pub fn deinit(_: *FileRename, _: Allocator) void {}
 };
 
 pub const FileModeChange = struct {
     path: []const u8,
     old_mode: FileMode,
     new_mode: FileMode,
+
+    /// Does not allocate
+    pub fn deinit(_: *FileModeChange, _: Allocator) void {}
 };
 
 pub const FilePatch = struct {
@@ -420,6 +507,12 @@ pub const FilePatch = struct {
     hunks: List(Hunk),
     before_hash: ?[]const u8,
     after_hash: ?[]const u8,
+
+    pub fn deinit(this: *FilePatch, allocator: Allocator) void {
+        for (this.hunks.items) |*hunk| hunk.deinit(allocator);
+        this.hunks.deinit(allocator);
+        bun.destroy(this);
+    }
 };
 
 pub const FileDeletion = struct {
@@ -427,6 +520,11 @@ pub const FileDeletion = struct {
     mode: FileMode,
     hunk: ?*Hunk,
     hash: ?[]const u8,
+
+    pub fn deinit(this: *FileDeletion, allocator: Allocator) void {
+        if (this.hunk) |hunk| hunk.deinit(allocator);
+        bun.destroy(this);
+    }
 };
 
 pub const FileCreation = struct {
@@ -434,6 +532,11 @@ pub const FileCreation = struct {
     mode: FileMode,
     hunk: ?*Hunk,
     hash: ?[]const u8,
+
+    pub fn deinit(this: *FileCreation, allocator: Allocator) void {
+        if (this.hunk) |hunk| hunk.deinit(allocator);
+        bun.destroy(this);
+    }
 };
 
 pub const PatchFilePartKind = enum {
@@ -782,7 +885,7 @@ const PatchLinesParser = struct {
                                 };
                             }
 
-                            this.current_hunk_mutation_part.?.lines.append(bun.default_allocator, line[1..]) catch unreachable;
+                            this.current_hunk_mutation_part.?.lines.append(bun.default_allocator, line[@min(1, line.len)..]) catch unreachable;
                         },
                     }
                 },
@@ -993,5 +1096,83 @@ const PatchLinesParser = struct {
         const a_path = rest[a_path_start_index..a_path_end_index];
         const b_path = std.mem.trimRight(u8, rest[b_path_start_index..], " \n\r\t");
         return .{ a_path, b_path };
+    }
+};
+
+pub const TestingAPIs = struct {
+    /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+
+        const patchfile_src_js = arguments.nextEat() orelse {
+            globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
+            return .undefined;
+        };
+        const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
+        const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
+
+        var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
+            globalThis.throwError(e, "failed to parse patch file");
+            return .undefined;
+        };
+        defer patchfile.deinit(bun.default_allocator);
+
+        const str = std.json.stringifyAlloc(bun.default_allocator, patchfile, .{}) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        const outstr = bun.String.fromUTF8(str);
+        return outstr.toJS(globalThis);
+    }
+};
+
+pub const JS = struct {
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+
+        const patchfile_js = arguments.nextEat() orelse {
+            globalThis.throw("apply: expected at least 1 argument, got 0", .{});
+            return .undefined;
+        };
+
+        var close_fd: bool = false;
+        const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
+            close_fd = true;
+            var bunstr = dir_js.toBunString(globalThis);
+            defer bunstr.deref();
+            const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
+            defer bun.default_allocator.free(path);
+
+            break :brk switch (bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                .err => |e| {
+                    globalThis.throwValue(e.withPath(path).toJSC(globalThis));
+                    return .undefined;
+                },
+                .result => |fd| fd,
+            };
+        } else bun.FileDescriptor.cwd();
+        defer if (close_fd) {
+            _ = bun.sys.close(dir_fd);
+        };
+
+        const patchfile_bunstr = patchfile_js.toBunString(globalThis);
+        defer patchfile_bunstr.deref();
+        const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
+        defer patchfile_src.deinit();
+
+        var patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
+            globalThis.throwError(e, "failed to parse patchfile");
+            return .undefined;
+        };
+        defer patch_file.deinit(bun.default_allocator);
+
+        if (patch_file.apply(bun.default_allocator, dir_fd)) |err| {
+            globalThis.throwValue(err.toErrorInstance(globalThis));
+            return .undefined;
+        }
+
+        return .true;
     }
 };

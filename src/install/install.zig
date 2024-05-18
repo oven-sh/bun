@@ -522,6 +522,7 @@ pub const Features = struct {
     peer_dependencies: bool = true,
     trusted_dependencies: bool = false,
     workspaces: bool = false,
+    patched_dependencies: bool = false,
 
     check_for_duplicate_dependencies: bool = false,
 
@@ -541,6 +542,7 @@ pub const Features = struct {
         .is_main = true,
         .optional_dependencies = true,
         .trusted_dependencies = true,
+        .patched_dependencies = true,
         .workspaces = true,
     };
 
@@ -873,8 +875,20 @@ pub const PackageInstall = struct {
 
     package_name: string,
     package_version: string,
+    patch: Patch = .{},
     file_count: u32 = 0,
     node_modules: *const PackageManager.NodeModulesFolder,
+
+    const Patch = struct {
+        root_project_dir: ?[]const u8 = null,
+        patch_path: string = undefined,
+
+        pub const NULL = Patch{};
+
+        pub fn isNull(this: Patch) bool {
+            return this.root_project_dir == null;
+        }
+    };
 
     const debug = Output.scoped(.install, true);
 
@@ -1140,6 +1154,7 @@ pub const PackageInstall = struct {
         copying_files,
         linking,
         linking_dependency,
+        patching,
 
         pub fn name(this: Step) []const u8 {
             return switch (this) {
@@ -1148,6 +1163,7 @@ pub const PackageInstall = struct {
                 .opening_dest_dir => "opening node_modules/package dir",
                 .linking => "linking bins",
                 .linking_dependency => "linking dependency/workspace to node_modules",
+                .patching => "patching dependency",
             };
         }
     };
@@ -2193,7 +2209,94 @@ pub const PackageInstall = struct {
         // we'll catch it the next error
         if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
 
-        var supported_method_to_use = this.getInstallMethod();
+        // Package has a .patch file that must be applied
+        // We can't use hardlinks or symlinks because they will modify the source
+        // So we:
+        // 1. clone the original package source to a temp directory
+        // 2. apply patch to the temp directory
+        // 3. rename() the temp directory to the original destination directory
+        // Are steps 2-3 strictly necessary? Probably not, but they have the added benefit
+        // of being atomic and thus resilient to unexpected crashes etc.
+        if (!this.patch.isNull()) {
+            const dir = this.patch.root_project_dir.?;
+            const patchfile_path = this.patch.patch_path;
+
+            // parse the patch file
+            const absolute_patchfile_path = bun.path.join(&[_][]const u8{
+                dir,
+                patchfile_path,
+            }, .auto);
+            // TODO: can the patch file be anything other than utf-8?
+            const patchfile_txt = std.fs.cwd().readFileAlloc(
+                this.allocator,
+                absolute_patchfile_path,
+                1024 * 1024 * 1024 * 4,
+            ) catch |e| return .{
+                .fail = .{ .err = e, .step = .patching },
+            };
+            defer this.allocator.free(patchfile_txt);
+            var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
+                return .{ .fail = .{ .err = e, .step = .patching } };
+            };
+            defer patchfile.deinit(bun.default_allocator);
+
+            // create temp dir
+            var tmpname_buf: [1024]u8 = undefined;
+            const tempdir_name = bun.span(
+                bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |e| return .{
+                    .fail = .{ .err = e, .step = .patching },
+                },
+            );
+            var tmpdir = std.fs.cwd().makeOpenPath(tempdir_name, .{}) catch |e| return .{
+                .fail = .{ .err = e, .step = .patching },
+            };
+            defer tmpdir.close();
+
+            // install original package to tempdir
+            const result = this.installImpl(skip_delete, tmpdir, .copyfile);
+            if (result.isFail()) return result;
+
+            // apply patch
+            if (patchfile.apply(this.allocator, bun.toFD(tmpdir.fd))) |e| {
+                defer e.deref();
+                return .{
+                    .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
+                };
+            }
+
+            // rename to original destination dir
+            const path_in_tmpdir = std.fs.path.joinZ(this.allocator, &[_][]const u8{
+                tempdir_name,
+                this.destination_dir_subpath,
+            }) catch |e| return .{ .fail = .{ .err = e, .step = .patching } };
+            defer this.allocator.free(path_in_tmpdir);
+            if (bun.sys.renameat2(
+                bun.toFD(std.fs.cwd()),
+                path_in_tmpdir,
+                bun.toFD(destination_dir.fd),
+                this.cache_dir_subpath,
+                .{},
+            ).asErr()) |e| {
+                return .{
+                    .fail = .{
+                        .err = bun.errnoToZigErr(e.getErrno()),
+                        .step = .patching,
+                    },
+                };
+            }
+
+            return Result.success();
+        }
+
+        return this.installImpl(skip_delete, destination_dir, this.getInstallMethod());
+    }
+
+    fn installImpl(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir, method_: Method) Result {
+        // If this fails, we don't care.
+        // we'll catch it the next error
+        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
+
+        var supported_method_to_use = method_;
 
         switch (supported_method_to_use) {
             .clonefile => {
@@ -6974,6 +7077,7 @@ pub const PackageManager = struct {
         remove,
         link,
         unlink,
+        // patch,
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -7423,6 +7527,38 @@ pub const PackageManager = struct {
         file.close();
     }
 
+    // pub inline fn patch(ctx: Command.Context) !void {
+    //     var manager = init(ctx, subcommand) catch |err| brk: {
+    //         if (err == error.MissingPackageJSON) {
+    //             switch (op) {
+    //                 .update => {
+    //                     Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
+    //                     Global.crash();
+    //                 },
+    //                 .remove => {
+    //                     Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
+    //                     Global.crash();
+    //                 },
+    //                 .patch => {
+    //                     Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
+    //                     Global.crash();
+    //                 },
+    //                 else => {
+    //                     try attemptToCreatePackageJSON();
+    //                     break :brk try PackageManager.init(ctx, subcommand);
+    //                 },
+    //             }
+    //         }
+
+    //         return err;
+    //     };
+
+    //     if (manager.options.shouldPrintCommandName()) {
+    //         Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+    //         Output.flush();
+    //     }
+    // }
+
     pub inline fn update(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .update, .update);
     }
@@ -7821,6 +7957,11 @@ pub const PackageManager = struct {
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 
+    const patch_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--edit-dir <dir>                    The package that needs to be modified will be extracted to this directory") catch unreachable,
+        clap.parseParam("--ignore-existing                     Ignore existing patch files when patching") catch unreachable,
+    };
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",
@@ -7860,6 +8001,13 @@ pub const PackageManager = struct {
         exact: bool = false,
 
         concurrent_scripts: ?usize = null,
+
+        patch: PatchOpts = .{},
+
+        const PatchOpts = struct {
+            edit_dir: ?[]const u8 = null,
+            ignore_existing: bool = false,
+        };
 
         const Omit = struct {
             dev: bool = false,
@@ -8034,6 +8182,7 @@ pub const PackageManager = struct {
                 .remove => remove_params,
                 .link => link_params,
                 .unlink => unlink_params,
+                // .patch => patch_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -8072,11 +8221,19 @@ pub const PackageManager = struct {
 
             // link and unlink default to not saving, all others default to
             // saving.
+            // TODO: I think `bun patch` command goes here
             if (comptime subcommand == .link or subcommand == .unlink) {
                 cli.no_save = !args.flag("--save");
             } else {
                 cli.no_save = args.flag("--no-save");
             }
+
+            // if (comptime subcommand == .patch) {
+            //     cli.patch = .{
+            //         .edit_dir = args.option("--edit-dir"),
+            //         .ignore_existing = args.flag("--ignore-existing"),
+            //     };
+            // }
 
             if (args.option("--config")) |opt| {
                 cli.config = opt;
@@ -8313,6 +8470,10 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
                         Global.crash();
                     },
+                    // .patch => {
+                    //     Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
+                    //     Global.crash();
+                    // },
                     else => {
                         try attemptToCreatePackageJSON();
                         break :brk try PackageManager.init(ctx, subcommand);
@@ -9200,6 +9361,14 @@ pub const PackageManager = struct {
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
                 .package_name = name,
+                .patch = brk: {
+                    const name_hash = this.lockfile.packages.items(.name_hash)[package_id];
+                    const patch_path = this.lockfile.patched_dependencies.get(name_hash) orelse break :brk PackageInstall.Patch.NULL;
+                    break :brk .{
+                        .patch_path = patch_path,
+                        .root_project_dir = FileSystem.instance.top_level_dir,
+                    };
+                },
                 .package_version = resolution_label,
                 .node_modules = &this.node_modules,
                 // .install_order = this.tree_iterator.order,

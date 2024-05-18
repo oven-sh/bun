@@ -18,6 +18,7 @@
 #ifndef LOOP_DATA_H
 #define LOOP_DATA_H
 
+#include <stdint.h>
 
 // IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
 struct us_internal_loop_data_t {

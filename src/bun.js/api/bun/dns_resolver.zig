@@ -1439,10 +1439,10 @@ pub const InternalDNS = struct {
 
     pub fn createDNSCacheStatsObject(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, 7);
-        object.put(globalObject, JSC.ZigString.static("hits_completed"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("hits_inflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cache_hits_completed"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cache_hits_inflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .Monotonic)));
         object.put(globalObject, JSC.ZigString.static("size"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("misses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cache_misses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .Monotonic)));
         object.put(globalObject, JSC.ZigString.static("errors"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .Monotonic)));
         object.put(globalObject, JSC.ZigString.static("getaddrinfo"), JSC.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .Monotonic)));
         return object;
@@ -1482,7 +1482,6 @@ pub const InternalDNS = struct {
         }
 
         // no cache hit, we have to make a new request
-
         const req = bun.default_allocator.create(Request) catch bun.outOfMemory();
         req.* = .{
             .key = key.toOwned(),

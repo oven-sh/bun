@@ -7020,7 +7020,7 @@ pub const Interpreter = struct {
             pub fn start(this: *Cd) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 if (args.len > 1) {
-                    this.writeStderrNonBlocking("too many arguments", .{});
+                    this.writeStderrNonBlocking("too many arguments\n", .{});
                     // yield execution
                     return Maybe(void).success;
                 }
@@ -7060,7 +7060,7 @@ pub const Interpreter = struct {
                 switch (errno) {
                     @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
                         if (!this.bltn.stderr.needsIO()) {
-                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
                             this.bltn.done(1);
@@ -7068,12 +7068,12 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
 
-                        this.writeStderrNonBlocking("not a directory: {s}", .{new_cwd_});
+                        this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
                         return Maybe(void).success;
                     },
                     @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
                         if (!this.bltn.stderr.needsIO()) {
-                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
                             this.bltn.done(1);
@@ -7081,7 +7081,7 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
 
-                        this.writeStderrNonBlocking("not a directory: {s}", .{new_cwd_});
+                        this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
                         return Maybe(void).success;
                     },
                     else => return Maybe(void).success,
@@ -7100,7 +7100,7 @@ pub const Interpreter = struct {
                 }
 
                 this.state = .done;
-                this.bltn.done(0);
+                this.bltn.done(1);
             }
 
             pub fn deinit(this: *Cd) void {
@@ -10538,17 +10538,16 @@ pub const Interpreter = struct {
 
                 pub fn isDir(_: *ShellCpTask, path: [:0]const u8) Maybe(bool) {
                     if (bun.Environment.isWindows) {
-                        var wpath: bun.OSPathBuffer = undefined;
-                        const attributes = windows.GetFileAttributesW(bun.strings.toWPath(wpath[0..], path[0..path.len]));
-                        if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+                        const attributes = bun.sys.getFileAttributes(path[0..path.len]) orelse {
                             const err: Syscall.Error = .{
                                 .errno = @intFromEnum(bun.C.SystemErrno.ENOENT),
                                 .syscall = .copyfile,
                                 .path = path,
                             };
                             return .{ .err = err };
-                        }
-                        return .{ .result = (attributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0 };
+                        };
+
+                        return .{ .result = attributes.isDirectory() };
                     }
                     const stat = switch (Syscall.lstat(path)) {
                         .result => |x| x,

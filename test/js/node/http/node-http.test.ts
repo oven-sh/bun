@@ -886,6 +886,13 @@ describe("node:http", () => {
       expect(Agent instanceof Function).toBe(true);
     });
 
+    it("can be constructed with new", () => {
+      expect(new Agent().protocol).toBe("http:");
+    });
+    it("can be constructed with apply", () => {
+      expect(Agent.apply({}).protocol).toBe("http:");
+    });
+
     it("should have a default maxSockets of Infinity", () => {
       expect(dummyAgent.maxSockets).toBe(Infinity);
     });

@@ -139,11 +139,17 @@ pub const PatchFile = struct {
                         continue;
                     };
 
+                    const last_line = hunk.parts.items[0].lines.items.len -| 1;
+
+                    const no_newline_at_end_of_file = hunk.parts.items[0].no_newline_at_end_of_file;
+
                     const count = count: {
                         var total: usize = 0;
-                        for (hunk.parts.items[0].lines.items) |line| {
+                        for (hunk.parts.items[0].lines.items, 0..) |line, i| {
                             total += line.len;
+                            total += @intFromBool(i < last_line);
                         }
+                        total += @intFromBool(!no_newline_at_end_of_file);
                         break :count total;
                     };
 
@@ -153,9 +159,13 @@ pub const PatchFile = struct {
                     const file_contents = brk: {
                         var contents = file_alloc.alloc(u8, count) catch bun.outOfMemory();
                         var i: usize = 0;
-                        for (hunk.parts.items[0].lines.items) |line| {
+                        for (hunk.parts.items[0].lines.items, 0..) |line, idx| {
                             @memcpy(contents[i .. i + line.len], line);
                             i += line.len;
+                            if (idx < last_line or !no_newline_at_end_of_file) {
+                                contents[i] = '\n';
+                                i += 1;
+                            }
                         }
                         break :brk contents;
                     };

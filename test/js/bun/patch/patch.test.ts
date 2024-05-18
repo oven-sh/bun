@@ -23,6 +23,7 @@ const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<
           USERPROFILE: "",
         },
       )
+      .quiet()
       .cwd(cwd)
       // For some reason git diff returns exit code 1 when it is not an error
       // So we must check that there is no stderr output instead of the exit code
@@ -37,8 +38,8 @@ const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<
     .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
     .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
     .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
-    .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "")
-    .replace(/\n\\ No newline at end of file\n$/, "\n");
+    .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
+  // .replace(/\n\\ No newline at end of file\n$/, "\n");
 };
 
 describe("apply", () => {
@@ -70,6 +71,23 @@ describe("apply", () => {
       const files = {
         "a": {},
         "b/newfile.txt": "hey im new here!",
+      };
+      const tempdir = tempDirWithFiles("patch-test", files);
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "newfile.txt")}`.cwd(tempdir).text()).toBe(files["b/newfile.txt"]);
+    });
+
+    test("multi-line", async () => {
+      const files = {
+        "a": {},
+        "b/newfile.txt": "hey im new here!\nhello",
       };
       const tempdir = tempDirWithFiles("patch-test", files);
 
@@ -165,16 +183,9 @@ describe("apply", () => {
 
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
-      await $`echo ${patchfile} > my.patch`;
-
       await apply(patchfile, afolder);
 
-      expect(
-        await $`cat ${join(afolder, "hi.txt")}`
-          .cwd(tempdir)
-          .text()
-          .then((s: string) => s.trimEnd()),
-      ).toBe(files["b/hi.txt"]);
+      expect(await $`cat ${join(afolder, "hi.txt")}`.cwd(tempdir).text()).toBe(files["b/hi.txt"]);
       const stat = await fs.stat(join(afolder, "hi.txt"));
       expect((stat.mode & parseInt("777", 8)).toString(8)).toBe("755");
     });

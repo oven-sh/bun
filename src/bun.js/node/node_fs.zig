@@ -5176,6 +5176,7 @@ pub const NodeFS = struct {
 
         var iterator = DirIterator.iterate(fd.asDir(), .u8);
         var entry = iterator.next();
+        var dirent_path_prev: ?bun.String = null;
 
         while (switch (entry) {
             .err => |err| {
@@ -5228,9 +5229,15 @@ pub const NodeFS = struct {
 
             switch (comptime ExpectedType) {
                 Dirent => {
+                    const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
+                    if (dirent_path_prev != null and bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                        dirent_path_prev.?.ref();
+                    } else {
+                        dirent_path_prev = bun.String.createUTF8(path_u8);
+                    }
                     entries.append(.{
                         .name = bun.String.createUTF8(utf8_name),
-                        .path = bun.String.createUTF8(bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto)),
+                        .path = dirent_path_prev.?,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5320,6 +5327,7 @@ pub const NodeFS = struct {
 
             var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
+            var dirent_path_prev: ?bun.String = null;
 
             while (switch (entry) {
                 .err => |err| {
@@ -5358,9 +5366,15 @@ pub const NodeFS = struct {
 
                 switch (comptime ExpectedType) {
                     Dirent => {
+                        const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
+                        if (dirent_path_prev != null and bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                            dirent_path_prev.?.ref();
+                        } else {
+                            dirent_path_prev = bun.String.createUTF8(path_u8);
+                        }
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
-                            .path = bun.String.createUTF8(bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto)),
+                            .path = dirent_path_prev.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

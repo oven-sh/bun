@@ -128,8 +128,6 @@ void us_internal_socket_context_unlink_socket(
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 
-void us_internal_freeaddrinfo(struct addrinfo *addrinfo);
-
 /* Sockets are polls */
 struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p; // 4 bytes

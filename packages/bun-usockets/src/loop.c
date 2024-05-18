@@ -172,17 +172,17 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     }
 }
 
-void us_internal_handle_dns_results(struct us_loop_t *loop) {
-    Bun__lock(&loop->data.mutex);
-    struct us_connecting_socket_t *s = loop->data.dns_ready_head;
-    loop->data.dns_ready_head = NULL;
-    Bun__unlock(&loop->data.mutex);
-
+static void drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
     while (s) {
         struct us_connecting_socket_t *next = s->next;
         us_internal_socket_after_resolve(s);
         s = next;
     }
+}
+
+void us_internal_handle_dns_results(struct us_loop_t *loop) {
+    struct us_connecting_socket_t *s = __atomic_exchange_n(&loop->data.dns_ready_head, NULL, __ATOMIC_ACQ_REL);
+    drain_pending_dns_resolve(loop, s);
 }
 
 /* Note: Properly takes the linked list and timeout sweep into account */

@@ -1277,11 +1277,13 @@ pub const InternalDNS = struct {
         }
 
         fn remove(this: *This, entry: *Request) void {
+            const len = this.len;
             // equivalent of swapRemove
-            for (0..this.len) |i| {
+            for (0..len) |i| {
                 if (this.cache[i] == entry) {
-                    this.cache[i] = this.cache[this.len - 1];
+                    this.cache[i] = this.cache[len - 1];
                     this.len -= 1;
+                    dns_cache_size = len - 1;
                     return;
                 }
             }
@@ -1426,26 +1428,48 @@ pub const InternalDNS = struct {
         afterResult(req, addr_info, @intCast(status));
     }
 
+    var dns_cache_hits_completed: usize = 0;
+    var dns_cache_hits_inflight: usize = 0;
+    var dns_cache_size: usize = 0;
+    var dns_cache_misses: usize = 0;
+    var dns_cache_errors: usize = 0;
+    var getaddrinfo_calls: usize = 0;
+
+    pub fn createDNSCacheStatsObject(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObject(globalObject, 7);
+        object.put(globalObject, JSC.ZigString.static("hits_completed"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("hits_inflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("size"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("misses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("errors"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("getaddrinfo"), JSC.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .Monotonic)));
+        return object;
+    }
+
+    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.JSFunction.create(globalObject, "createDNSCacheStatsObject", createDNSCacheStatsObject, 0, .{});
+    }
+
     fn getaddrinfo(_host: ?[*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
         const host: ?[:0]const u8 = std.mem.span(_host);
         const key = Request.Key.init(host, port);
 
         global_cache.lock.lock();
+        getaddrinfo_calls += 1;
         // is there a cache hit?
         if (global_cache.get(key)) |entry| {
-            // std.debug.print("cache hit for {s}\n", .{host});
             if (entry.result != null) {
-                // std.debug.print("result available\n", .{});
                 // result is already available, we can notify the socket immediately
                 entry.refcount += 1;
+                dns_cache_hits_completed += 1;
                 global_cache.lock.unlock();
                 us_internal_dns_callback(socket, entry);
                 return;
             } else {
-                // std.debug.print("inflight with {d} waiting\n", .{entry.notify.items.len});
                 // add this socket to the list of sockets to be notified when the request is resolved
                 entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
                 entry.refcount += 1;
+                dns_cache_hits_inflight += 1;
                 global_cache.lock.unlock();
                 return;
             }
@@ -1462,6 +1486,8 @@ pub const InternalDNS = struct {
         };
         req.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
         _ = global_cache.tryPush(req);
+        dns_cache_misses += 1;
+        dns_cache_size = global_cache.len;
         global_cache.lock.unlock();
 
         // doesn't work yet
@@ -1482,6 +1508,7 @@ pub const InternalDNS = struct {
         defer global_cache.lock.unlock();
 
         req.valid = err == 0;
+        dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
         req.refcount -= 1;
         if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
@@ -2880,3 +2907,5 @@ pub const DNSResolver = struct {
         );
     }
 };
+
+pub const getDNSCacheStats = InternalDNS.getDNSCacheStats;

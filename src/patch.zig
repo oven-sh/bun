@@ -56,6 +56,22 @@ pub const PatchFile = struct {
     }
 
     pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?JSC.SystemError {
+        const State = struct {
+            pathbuf: bun.PathBuffer = undefined,
+            patch_dir_abs_path: ?[:0]const u8 = null,
+
+            fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) JSC.Maybe([:0]const u8) {
+                if (state.patch_dir_abs_path) |p| return .{ .result = p };
+                return switch (bun.sys.getFdPath(fd, &state.pathbuf)) {
+                    .result => |p| {
+                        state.patch_dir_abs_path = state.pathbuf[0..p.len :0];
+                        return .{ .result = state.patch_dir_abs_path.? };
+                    },
+                    .err => |e| return .{ .err = e.withFd(fd) },
+                };
+            }
+        };
+        var state: State = .{};
         var sfb = std.heap.stackFallback(1024, allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
 
@@ -73,6 +89,23 @@ pub const PatchFile = struct {
                     const from_path = arena.allocator().dupeZ(u8, part.file_rename.from_path) catch bun.outOfMemory();
                     const to_path = arena.allocator().dupeZ(u8, part.file_rename.to_path) catch bun.outOfMemory();
 
+                    if (std.fs.path.dirname(to_path)) |todir| {
+                        const abs_patch_dir = switch (state.patchDirAbsPath(patch_dir)) {
+                            .result => |p| p,
+                            .err => |e| return e.toSystemError(),
+                        };
+                        const path_to_make = bun.path.joinZ(&[_][]const u8{
+                            abs_patch_dir,
+                            todir,
+                        }, .auto);
+                        var nodefs = bun.JSC.Node.NodeFS{};
+                        if (nodefs.mkdirRecursive(.{
+                            .path = .{ .string = bun.PathString.init(path_to_make) },
+                            .recursive = true,
+                            .mode = 0o755,
+                        }, .sync).asErr()) |e| return e.toSystemError();
+                    }
+
                     if (bun.sys.renameat(patch_dir, from_path, patch_dir, to_path).asErr()) |e| {
                         return e.toSystemError();
                     }
@@ -83,11 +116,13 @@ pub const PatchFile = struct {
                     const mode = part.file_creation.mode;
 
                     var nodefs = bun.JSC.Node.NodeFS{};
-                    if (nodefs.mkdirRecursive(.{
-                        .path = .{ .string = bun.PathString.init(filedir) },
-                        .recursive = true,
-                        .mode = @intFromEnum(mode),
-                    }, .sync).asErr()) |e| return e.toSystemError();
+                    if (filedir.len > 0) {
+                        if (nodefs.mkdirRecursive(.{
+                            .path = .{ .string = bun.PathString.init(filedir) },
+                            .recursive = true,
+                            .mode = @intFromEnum(mode),
+                        }, .sync).asErr()) |e| return e.toSystemError();
+                    }
 
                     const newfile_fd = switch (bun.sys.openat(
                         patch_dir,
@@ -251,7 +286,7 @@ pub const PatchFile = struct {
                         // TODO: check if the lines match in the original file?
                         lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}) catch bun.outOfMemory();
                         if (part.no_newline_at_end_of_file) {
-                            lines.append(bun.default_allocator, "\n") catch bun.outOfMemory();
+                            lines.append(bun.default_allocator, "") catch bun.outOfMemory();
                         }
                         // line_cursor -= part.lines.items.len;
                     },
@@ -259,7 +294,7 @@ pub const PatchFile = struct {
             }
         }
 
-        const file_fd = switch (bun.sys.openat(patch_dir, file_path, std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC, 0)) {
+        const file_fd = switch (bun.sys.openat(patch_dir, file_path, std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC, stat.mode)) {
             .err => |e| return .{ .err = e.withPath(file_path) },
             .result => |fd| fd,
         };
@@ -1147,7 +1182,10 @@ pub const TestingAPIs = struct {
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
-            globalThis.throwError(e, "failed to parse patch file");
+            if (e == error.hunk_header_integrity_check_failed) {
+                globalThis.throwError(e, "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)");
+            } else globalThis.throwError(e, "failed to parse patch file");
+
             return .undefined;
         };
         defer patchfile.deinit(bun.default_allocator);

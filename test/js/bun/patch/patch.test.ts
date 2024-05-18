@@ -4,6 +4,7 @@ import { patchInternals } from "bun:internal-for-testing";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import { apply } from "bun:patch";
+import fs from "fs/promises";
 const { parse } = patchInternals;
 
 const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
@@ -61,6 +62,121 @@ describe("apply", () => {
       expect(
         await $`if ls -d ${join(afolder, "byebye.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
       ).toBe("okay!\n");
+    });
+  });
+
+  describe("creation", () => {
+    test("simple", async () => {
+      const files = {
+        "a": {},
+        "b/newfile.txt": "hey im new here!",
+      };
+      const tempdir = tempDirWithFiles("patch-test", files);
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "newfile.txt")}`.cwd(tempdir).text()).toBe(files["b/newfile.txt"]);
+    });
+  });
+
+  describe("rename", () => {
+    test("files", async () => {
+      const files = {
+        "a/hey.txt": "hello!",
+        "b/heynow.txt": "hello!",
+      };
+      const tempdir = tempDirWithFiles("patch-test", files);
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "heynow.txt")}`.cwd(tempdir).text()).toBe(files["b/heynow.txt"]);
+      expect(
+        await $`if ls -d ${join(afolder, "hey.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
+      ).toBe("okay!\n");
+    });
+
+    test("folders", async () => {
+      const files = {
+        "a/foo/hey.txt": "hello!",
+        "a/foo/hi.txt": "hello!",
+        "a/foo/lmao.txt": "lmao!",
+        "b/foo": {},
+        "b/bar/hey.txt": "hello!",
+        "b/bar/hi.txt": "hello!",
+        "b/bar/lmao.txt": "lmao!",
+      };
+      const tempdir = tempDirWithFiles("patch-test", files);
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      // Should we remove the folder if it's empty? Technically running `git apply` does this
+      // But git does not track empty directories so it's not really a problem
+      // expect(
+      //   await $`if ls -d ${join(afolder, "foo")}; then echo should not exist!; else echo okay!; fi;`
+      //     .cwd(tempdir)
+      //     .text(),
+      // ).toBe("okay!\n");
+
+      expect(await $`cat ${join(afolder, "bar", "hey.txt")}`.cwd(tempdir).text()).toBe(files["b/bar/hey.txt"]);
+      expect(await $`cat ${join(afolder, "bar", "hi.txt")}`.cwd(tempdir).text()).toBe(files["b/bar/hi.txt"]);
+      expect(await $`cat ${join(afolder, "bar", "lmao.txt")}`.cwd(tempdir).text()).toBe(files["b/bar/lmao.txt"]);
+      expect(
+        await $`ls ${join(afolder, "bar")}`
+          .cwd(tempdir)
+          .text()
+          .then((out: string) =>
+            out
+              .split("\n")
+              .filter(x => x !== "")
+              .sort(),
+          ),
+      ).toEqual(["hey.txt", "hi.txt", "lmao.txt"].sort());
+    });
+  });
+
+  describe("mode change", () => {
+    test("simple", async () => {
+      const files = {
+        "a/hi.txt": "hello!",
+        "b/hi.txt": "hi!",
+      };
+
+      const tempdir = tempDirWithFiles("patch-test", files);
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      await fs.chmod(join(bfolder, "hi.txt"), 0o755);
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await $`echo ${patchfile} > my.patch`;
+
+      await apply(patchfile, afolder);
+
+      expect(
+        await $`cat ${join(afolder, "hi.txt")}`
+          .cwd(tempdir)
+          .text()
+          .then((s: string) => s.trimEnd()),
+      ).toBe(files["b/hi.txt"]);
+      const stat = await fs.stat(join(afolder, "hi.txt"));
+      expect((stat.mode & parseInt("777", 8)).toString(8)).toBe("755");
     });
   });
 
@@ -262,6 +378,10 @@ describe("apply", () => {
 
       expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
     });
+  });
+
+  describe("No newline at end of file", () => {
+    // TODO: simple, multiline, multiple hunks
   });
 });
 

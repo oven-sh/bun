@@ -8687,14 +8687,19 @@ pub const PackageManager = struct {
                 }
             }
 
+            const source = logger.Source.initPathString("package.json", new_package_json_source);
+
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
-            current_package_json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, manager.original_package_json_path, true);
+            var new_package_json = json_parser.ParsePackageJSONUTF8(&source, manager.log, manager.allocator) catch |err| {
+                Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
 
             try PackageJSONEditor.edit(
                 manager.allocator,
                 updates,
-                &current_package_json.root,
+                &new_package_json,
                 dependency_list,
                 .{
                     .exact_versions = manager.options.enable.exact_versions,
@@ -8702,7 +8707,7 @@ pub const PackageManager = struct {
                 },
             );
             var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
-            try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
+            try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =
                 preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
@@ -8710,8 +8715,8 @@ pub const PackageManager = struct {
             written = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer_two),
                 &package_json_writer_two,
-                current_package_json.root,
-                &current_package_json.source,
+                new_package_json,
+                &source,
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 Global.crash();

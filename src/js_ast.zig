@@ -855,7 +855,7 @@ pub const G = struct {
         pub fn deepClone(this: *const Property, allocator: std.mem.Allocator) !Property {
             var class_static_block: ?*ClassStaticBlock = null;
             if (this.class_static_block != null) {
-                class_static_block = try bun.create(allocator, ClassStaticBlock, .{
+                class_static_block = bun.create(allocator, ClassStaticBlock, .{
                     .loc = this.class_static_block.?.loc,
                     .stmts = try this.class_static_block.?.stmts.clone(allocator),
                 });
@@ -5157,7 +5157,7 @@ pub const Expr = struct {
             return switch (this) {
                 .e_array => |el| {
                     const items = try el.items.deepClone(allocator);
-                    const item = try bun.create(allocator, E.Array, .{
+                    const item = bun.create(allocator, E.Array, .{
                         .items = items,
                         .comma_after_spread = el.comma_after_spread,
                         .was_originally_macro = el.was_originally_macro,
@@ -5168,14 +5168,14 @@ pub const Expr = struct {
                     return .{ .e_array = item };
                 },
                 .e_unary => |el| {
-                    const item = try bun.create(allocator, E.Unary, .{
+                    const item = bun.create(allocator, E.Unary, .{
                         .op = el.op,
                         .value = try el.value.deepClone(allocator),
                     });
                     return .{ .e_unary = item };
                 },
                 .e_binary => |el| {
-                    const item = try bun.create(allocator, E.Binary, .{
+                    const item = bun.create(allocator, E.Binary, .{
                         .op = el.op,
                         .left = try el.left.deepClone(allocator),
                         .right = try el.right.deepClone(allocator),
@@ -5188,7 +5188,7 @@ pub const Expr = struct {
                         properties[i] = try prop.deepClone(allocator);
                     }
 
-                    const item = try bun.create(allocator, E.Class, .{
+                    const item = bun.create(allocator, E.Class, .{
                         .class_keyword = el.class_keyword,
                         .ts_decorators = try el.ts_decorators.deepClone(allocator),
                         .class_name = el.class_name,
@@ -5201,7 +5201,7 @@ pub const Expr = struct {
                     return .{ .e_class = item };
                 },
                 .e_new => |el| {
-                    const item = try bun.create(allocator, E.New, .{
+                    const item = bun.create(allocator, E.New, .{
                         .target = try el.target.deepClone(allocator),
                         .args = try el.args.deepClone(allocator),
                         .can_be_unwrapped_if_unused = el.can_be_unwrapped_if_unused,
@@ -5211,13 +5211,13 @@ pub const Expr = struct {
                     return .{ .e_new = item };
                 },
                 .e_function => |el| {
-                    const item = try bun.create(allocator, E.Function, .{
+                    const item = bun.create(allocator, E.Function, .{
                         .func = try el.func.deepClone(allocator),
                     });
                     return .{ .e_function = item };
                 },
                 .e_call => |el| {
-                    const item = try bun.create(allocator, E.Call, .{
+                    const item = bun.create(allocator, E.Call, .{
                         .target = try el.target.deepClone(allocator),
                         .args = try el.args.deepClone(allocator),
                         .optional_chain = el.optional_chain,
@@ -5229,7 +5229,7 @@ pub const Expr = struct {
                     return .{ .e_call = item };
                 },
                 .e_dot => |el| {
-                    const item = try bun.create(allocator, E.Dot, .{
+                    const item = bun.create(allocator, E.Dot, .{
                         .target = try el.target.deepClone(allocator),
                         .name = el.name,
                         .name_loc = el.name_loc,
@@ -5240,7 +5240,7 @@ pub const Expr = struct {
                     return .{ .e_dot = item };
                 },
                 .e_index => |el| {
-                    const item = try bun.create(allocator, E.Index, .{
+                    const item = bun.create(allocator, E.Index, .{
                         .target = try el.target.deepClone(allocator),
                         .index = try el.index.deepClone(allocator),
                         .optional_chain = el.optional_chain,
@@ -5252,7 +5252,7 @@ pub const Expr = struct {
                     for (0..args.len) |i| {
                         args[i] = try el.args[i].deepClone(allocator);
                     }
-                    const item = try bun.create(allocator, E.Arrow, .{
+                    const item = bun.create(allocator, E.Arrow, .{
                         .args = args,
                         .body = el.body,
                         .is_async = el.is_async,
@@ -5263,7 +5263,7 @@ pub const Expr = struct {
                     return .{ .e_arrow = item };
                 },
                 .e_jsx_element => |el| {
-                    const item = try bun.create(allocator, E.JSXElement, .{
+                    const item = bun.create(allocator, E.JSXElement, .{
                         .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
                         .properties = try el.properties.deepClone(allocator),
                         .children = try el.children.deepClone(allocator),
@@ -5274,7 +5274,7 @@ pub const Expr = struct {
                     return .{ .e_jsx_element = item };
                 },
                 .e_object => |el| {
-                    const item = try bun.create(allocator, E.Object, .{
+                    const item = bun.create(allocator, E.Object, .{
                         .properties = try el.properties.deepClone(allocator),
                         .comma_after_spread = el.comma_after_spread,
                         .is_single_line = el.is_single_line,
@@ -5285,13 +5285,13 @@ pub const Expr = struct {
                     return .{ .e_object = item };
                 },
                 .e_spread => |el| {
-                    const item = try bun.create(allocator, E.Spread, .{
+                    const item = bun.create(allocator, E.Spread, .{
                         .value = try el.value.deepClone(allocator),
                     });
                     return .{ .e_spread = item };
                 },
                 .e_template_part => |el| {
-                    const item = try bun.create(allocator, E.TemplatePart, .{
+                    const item = bun.create(allocator, E.TemplatePart, .{
                         .value = try el.value.deepClone(allocator),
                         .tail_loc = el.tail_loc,
                         .tail = el.tail,
@@ -5299,7 +5299,7 @@ pub const Expr = struct {
                     return .{ .e_template_part = item };
                 },
                 .e_template => |el| {
-                    const item = try bun.create(allocator, E.Template, .{
+                    const item = bun.create(allocator, E.Template, .{
                         .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
                         .parts = el.parts,
                         .head = el.head,
@@ -5307,27 +5307,27 @@ pub const Expr = struct {
                     return .{ .e_template = item };
                 },
                 .e_reg_exp => |el| {
-                    const item = try bun.create(allocator, E.RegExp, .{
+                    const item = bun.create(allocator, E.RegExp, .{
                         .value = el.value,
                         .flags_offset = el.flags_offset,
                     });
                     return .{ .e_reg_exp = item };
                 },
                 .e_await => |el| {
-                    const item = try bun.create(allocator, E.Await, .{
+                    const item = bun.create(allocator, E.Await, .{
                         .value = try el.value.deepClone(allocator),
                     });
                     return .{ .e_await = item };
                 },
                 .e_yield => |el| {
-                    const item = try bun.create(allocator, E.Yield, .{
+                    const item = bun.create(allocator, E.Yield, .{
                         .value = if (el.value) |value| try value.deepClone(allocator) else null,
                         .is_star = el.is_star,
                     });
                     return .{ .e_yield = item };
                 },
                 .e_if => |el| {
-                    const item = try bun.create(allocator, E.If, .{
+                    const item = bun.create(allocator, E.If, .{
                         .test_ = try el.test_.deepClone(allocator),
                         .yes = try el.yes.deepClone(allocator),
                         .no = try el.no.deepClone(allocator),
@@ -5335,7 +5335,7 @@ pub const Expr = struct {
                     return .{ .e_if = item };
                 },
                 .e_import => |el| {
-                    const item = try bun.create(allocator, E.Import, .{
+                    const item = bun.create(allocator, E.Import, .{
                         .expr = try el.expr.deepClone(allocator),
                         .import_record_index = el.import_record_index,
                         .type_attribute = el.type_attribute,
@@ -5344,13 +5344,13 @@ pub const Expr = struct {
                     return .{ .e_import = item };
                 },
                 .e_big_int => |el| {
-                    const item = try bun.create(allocator, E.BigInt, .{
+                    const item = bun.create(allocator, E.BigInt, .{
                         .value = el.value,
                     });
                     return .{ .e_big_int = item };
                 },
                 .e_string => |el| {
-                    const item = try bun.create(allocator, E.String, .{
+                    const item = bun.create(allocator, E.String, .{
                         .data = el.data,
                         .prefer_template = el.prefer_template,
                         .next = el.next,

@@ -1207,6 +1207,7 @@ pub const Printer = struct {
             installed: *const Bitset,
             comptime print_section_header: enum(u1) { print_section_header, dont_print_section_header },
             printed_new_install: *bool,
+            id_map: ?[]DependencyID,
         ) !void {
             const lockfile = this.lockfile;
             const packages_slice = lockfile.packages.slice();
@@ -1219,7 +1220,7 @@ pub const Printer = struct {
 
             var printed_section_header = false;
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
-                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, null)) {
+                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
                     .@"return" => return,
                     .yes => {},
                     .no => continue,
@@ -1385,6 +1386,7 @@ pub const Printer = struct {
                         installed,
                         .dont_print_section_header,
                         &had_printed_new_install,
+                        null,
                     );
 
                     for (workspaces_to_print.items) |workspace_dep_id| {
@@ -1397,6 +1399,7 @@ pub const Printer = struct {
                             installed,
                             .print_section_header,
                             &had_printed_new_install,
+                            null,
                         );
                     }
                 } else {
@@ -1421,6 +1424,7 @@ pub const Printer = struct {
                         installed,
                         .dont_print_section_header,
                         &had_printed_new_install,
+                        id_map,
                     );
                 }
             } else {
@@ -1458,6 +1462,7 @@ pub const Printer = struct {
 
             if (bun.Environment.allow_assert) had_printed_new_install = false;
 
+            var printed_installed_update_request = false;
             for (id_map) |dependency_id| {
                 if (dependency_id == invalid_package_id) continue;
                 if (bun.Environment.allow_assert) had_printed_new_install = true;
@@ -1470,6 +1475,8 @@ pub const Printer = struct {
 
                 switch (bin.tag) {
                     .none, .dir => {
+                        printed_installed_update_request = true;
+
                         const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
 
                         try writer.print(
@@ -1481,6 +1488,8 @@ pub const Printer = struct {
                         );
                     },
                     .map, .file, .named_file => {
+                        printed_installed_update_request = true;
+
                         var iterator = Bin.NamesIterator{
                             .bin = bin,
                             .package_name = name,
@@ -1510,10 +1519,7 @@ pub const Printer = struct {
                 }
             }
 
-            // updates.len > 0 is a simpler check than to keep track of a boolean
-            // this assert ensures it is accurate.
-
-            if (this.updates.len > 0) {
+            if (printed_installed_update_request) {
                 try writer.writeAll("\n");
             }
         }
@@ -3928,8 +3934,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            // .behavior = if (in_workspace or found_workspace or dependency_version.tag == .workspace) group.behavior.setWorkspace(true) else group.behavior,
-            .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+            .behavior = if (in_workspace or found_workspace or dependency_version.tag == .workspace) group.behavior.setWorkspace(true) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,

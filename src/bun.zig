@@ -2789,7 +2789,7 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
-pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) !*T {
+pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;

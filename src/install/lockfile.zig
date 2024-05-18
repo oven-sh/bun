@@ -1262,7 +1262,6 @@ pub const Printer = struct {
             const package_id = resolutions[dep_id];
 
             if (dependency.behavior.isPeer()) return .no;
-            if (package_id >= this.lockfile.packages.len or !installed.isSet(package_id)) return .no;
 
             if (id_map) |map| {
                 for (this.updates, map) |update, *update_dependency_id| {
@@ -1276,6 +1275,8 @@ pub const Printer = struct {
                     }
                 }
             }
+
+            if (package_id >= this.lockfile.packages.len or !installed.isSet(package_id)) return .no;
 
             return .yes;
         }

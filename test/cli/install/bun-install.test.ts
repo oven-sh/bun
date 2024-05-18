@@ -4988,7 +4988,7 @@ cache = false
     "",
     "+ html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
     "",
-    " 12 packages installed",
+    "12 packages installed",
   ]);
   expect(await exited3).toBe(0);
   expect(urls.sort()).toBeEmpty();

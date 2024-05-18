@@ -1509,7 +1509,7 @@ pub const Printer = struct {
 
                         while (iterator.next() catch null) |bin_name| {
                             try writer.print(
-                                comptime Output.prettyFmt("<r>  <d>- <r><b>{s}<r>\n", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors),
                                 .{
                                     bin_name,
                                 },

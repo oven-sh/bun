@@ -911,8 +911,10 @@ static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
 
 static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)
 {
+    int lastErr = 0;
     while (rp != NULL) {
-        if (bsd_do_connect_raw(rp, *fd) == 0) {
+        lastErr = bsd_do_connect_raw(rp, *fd);
+        if (lastErr == 0) {
             return 0;
         }
 
@@ -920,6 +922,9 @@ static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)
         bsd_close_socket(*fd);
 
         if (rp == NULL) {
+            if (lastErr != 0) {
+                errno = lastErr;
+            }
             return LIBUS_SOCKET_ERROR;
         }
 
@@ -928,6 +933,10 @@ static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)
             return LIBUS_SOCKET_ERROR;
         }
         *fd = resultFd;
+    }
+
+    if (lastErr != 0) {
+        errno = lastErr;
     }
 
     return LIBUS_SOCKET_ERROR;

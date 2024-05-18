@@ -4115,7 +4115,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             },
           });
         });
-        test.only("already installed", async () => {
+        test("already installed", async () => {
           await writeFile(
             join(packageDir, "package.json"),
             JSON.stringify({

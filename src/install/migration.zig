@@ -177,6 +177,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
                 &workspaces,
                 allocator,
+                &Install.PackageManager.instance.workspace_package_json_cache,
                 log,
                 json_array,
                 &json_src,

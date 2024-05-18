@@ -562,10 +562,8 @@ it("should handle workspaces", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -606,10 +604,8 @@ it("should handle workspaces", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -667,10 +663,8 @@ it("should handle `workspace:` specifier", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -697,10 +691,8 @@ it("should handle `workspace:` specifier", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1156,10 +1148,8 @@ it("should handle life-cycle scripts during re-installation", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1189,11 +1179,9 @@ it("should handle life-cycle scripts during re-installation", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1223,11 +1211,9 @@ it("should handle life-cycle scripts during re-installation", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
-  expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1283,11 +1269,9 @@ it("should use updated life-cycle scripts in root during re-installation", async
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1333,11 +1317,9 @@ it("should use updated life-cycle scripts in root during re-installation", async
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1369,12 +1351,10 @@ it("should use updated life-cycle scripts in root during re-installation", async
     stderr: "pipe",
     env,
   });
-  expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
 
-  expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1430,11 +1410,9 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1483,11 +1461,9 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1522,11 +1498,9 @@ it("should use updated life-cycle scripts in dependency during re-installation",
     stderr: "pipe",
     env,
   });
-  expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("error:");
   expect(err3).not.toContain("Saved lockfile");
-  expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1799,7 +1773,6 @@ it("should handle ^0.0.2 in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -1865,7 +1838,6 @@ it("should handle matching workspaces from dependencies", async () => {
   });
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -1899,7 +1871,6 @@ it("should edit package json correctly with git dependencies", async () => {
   var err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1920,7 +1891,6 @@ it("should edit package json correctly with git dependencies", async () => {
   err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1941,7 +1911,6 @@ it("should edit package json correctly with git dependencies", async () => {
   err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1962,7 +1931,6 @@ it("should edit package json correctly with git dependencies", async () => {
   err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await exited).toBe(0);
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
@@ -1998,7 +1966,6 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2042,7 +2009,6 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2086,7 +2052,6 @@ it("should choose the right version with prereleases", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2130,7 +2095,6 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2174,7 +2138,6 @@ it("should handle ^0.0.2_pre3 in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2218,7 +2181,6 @@ it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2262,7 +2224,6 @@ it("should handle caret range in dependencies when the registry has prereleased 
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2671,10 +2632,8 @@ it("should not reinstall aliased dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -2711,10 +2670,8 @@ it("should not reinstall aliased dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -3162,10 +3119,8 @@ it("should handle aliased dependency with existing lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -3224,10 +3179,8 @@ it("should handle aliased dependency with existing lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -4035,10 +3988,8 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -4093,10 +4044,8 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -4904,10 +4853,8 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -4962,10 +4909,8 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -5037,10 +4982,8 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
   expect(err3).not.toContain("Saved lockfile");
-  expect(stdout3).toBeDefined();
   const out3 = await new Response(stdout3).text();
   expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -5485,10 +5428,8 @@ it("should handle tarball URL with existing lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -5547,10 +5488,8 @@ it("should handle tarball URL with existing lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -5630,10 +5569,8 @@ it("should handle tarball path with existing lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -5691,10 +5628,8 @@ it("should handle tarball path with existing lockfile", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -6189,11 +6124,9 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -6332,11 +6265,9 @@ cache = false
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
   expect(err2).not.toContain("error:");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["", "[] done", ""]);
   expect(await exited2).toBe(0);
@@ -6442,10 +6373,8 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -6473,10 +6402,8 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -6654,10 +6581,8 @@ it("should handle installing packages from inside a workspace with `*`", async (
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -6685,10 +6610,8 @@ it("should handle installing packages from inside a workspace with `*`", async (
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2).toContain("installed bar");
   expect(await exited2).toBe(0);
@@ -6737,10 +6660,8 @@ it("should handle installing packages from inside a workspace without prefix", a
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -6765,10 +6686,8 @@ it("should handle installing packages from inside a workspace without prefix", a
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2).toContain("installed bar");
   expect(await exited2).toBe(0);
@@ -7122,7 +7041,6 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr1).toBeDefined();
     const err1 = await new Response(stderr1).text();
     expect(err1).toContain("Saved lockfile");
     const out1 = await new Response(stdout1).text();
@@ -7154,11 +7072,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr1_2).toBeDefined();
-    expect(stderr1_2).toBeDefined();
     const err1_2 = await new Response(stderr1_2).text();
     expect(err1_2).toContain("Saved lockfile");
-    expect(stdout1_2).toBeDefined();
     const out1_2 = await new Response(stdout1_2).text();
     expect(out1_2).toContain("installed bar");
     expect(await exited1_2).toBe(0);
@@ -7180,10 +7095,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr2).toBeDefined();
     const err2 = await new Response(stderr2).text();
     expect(err2).toContain("Saved lockfile");
-    expect(stdout2).toBeDefined();
     const out2 = await new Response(stdout2).text();
     expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
@@ -7210,11 +7123,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr2_2).toBeDefined();
-    expect(stderr2_2).toBeDefined();
     const err2_2 = await new Response(stderr2_2).text();
     expect(err2_2).toContain("Saved lockfile");
-    expect(stdout2_2).toBeDefined();
     const out2_2 = await new Response(stdout2_2).text();
     expect(out2_2).toContain("installed bar");
     expect(await exited2_2).toBe(0);
@@ -7235,10 +7145,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr2).toBeDefined();
     const err3 = await new Response(stderr3).text();
     expect(err3).toContain("Saved lockfile");
-    expect(stdout3).toBeDefined();
     const out3 = await new Response(stdout3).text();
     expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
@@ -7265,11 +7173,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr3_2).toBeDefined();
-    expect(stderr3_2).toBeDefined();
     const err3_2 = await new Response(stderr3_2).text();
     expect(err3_2).toContain("Saved lockfile");
-    expect(stdout3_2).toBeDefined();
     const out3_2 = await new Response(stdout3_2).text();
     expect(out3_2).toContain("installed bar");
     expect(await exited3_2).toBe(0);
@@ -7290,10 +7195,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr4).toBeDefined();
     const err4 = await new Response(stderr4).text();
     expect(err4).toContain("Saved lockfile");
-    expect(stdout4).toBeDefined();
     const out4 = await new Response(stdout4).text();
     expect(out4.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
@@ -7320,11 +7223,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr4_2).toBeDefined();
-    expect(stderr4_2).toBeDefined();
     const err4_2 = await new Response(stderr4_2).text();
     expect(err4_2).toContain("Saved lockfile");
-    expect(stdout4_2).toBeDefined();
     const out4_2 = await new Response(stdout4_2).text();
     expect(out4_2).toContain("installed bar");
     expect(await exited4_2).toBe(0);
@@ -7346,10 +7246,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr5).toBeDefined();
     const err5 = await new Response(stderr5).text();
     expect(err5).toContain("Saved lockfile");
-    expect(stdout5).toBeDefined();
     const out5 = await new Response(stdout5).text();
     expect(out5.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
@@ -7376,11 +7274,8 @@ it("should handle installing packages inside workspaces with difference versions
       stderr: "pipe",
       env,
     });
-    expect(stderr5_2).toBeDefined();
-    expect(stderr5_2).toBeDefined();
     const err5_2 = await new Response(stderr5_2).text();
     expect(err5_2).toContain("Saved lockfile");
-    expect(stdout5_2).toBeDefined();
     const out5_2 = await new Response(stdout5_2).text();
     expect(out5_2).toContain("installed bar");
     expect(await exited5_2).toBe(0);
@@ -7976,11 +7871,9 @@ it("should handle `workspace:*` on both root & child", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -8014,11 +7907,9 @@ it("should handle `workspace:*` on both root & child", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).not.toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
@@ -8115,154 +8006,154 @@ it("should install correct version of peer dependency from root package", async 
   await access(join(package_dir, "bun.lockb"));
 });
 
-// describe("Registry URLs", () => {
-//   // Some of the non failing URLs are invalid, but bun's URL parser ignores
-//   // the validation error and returns a valid serialized URL anyway.
-//   const registryURLs: [url: string, fails: boolean | -1][] = [
-//     ["asdfghjklqwertyuiop", true],
-//     ["                ", true],
-//     ["::::::::::::::::", true],
-//     ["https://ex ample.org/", true],
-//     ["example", true],
-//     ["https://example.com:demo", true],
-//     ["http://[www.example.com]/", true],
-//     ["c:a", true],
-//     ["https://registry.npmjs.org/", false],
-//     ["http://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
-//     ["http://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
-//     // ["", true],
-//     ["https:example.org", false],
-//     ["https://////example.com///", false],
-//     ["https://example.com/https:example.org", false],
-//     ["https://example.com/[]?[]#[]", false],
-//     ["http://example/%?%#%", false],
-//     ["c:", true],
-//     ["c:/", -1],
-//     ["http://點看", false], // gets converted to punycode
-//     ["http://xn--c1yn36f/", false],
-//   ];
+describe("Registry URLs", () => {
+  // Some of the non failing URLs are invalid, but bun's URL parser ignores
+  // the validation error and returns a valid serialized URL anyway.
+  const registryURLs: [url: string, fails: boolean | -1][] = [
+    ["asdfghjklqwertyuiop", true],
+    ["                ", true],
+    ["::::::::::::::::", true],
+    ["https://ex ample.org/", true],
+    ["example", true],
+    ["https://example.com:demo", true],
+    ["http://[www.example.com]/", true],
+    ["c:a", true],
+    ["https://registry.npmjs.org/", false],
+    ["http://artifactory.xxx.yyy/artifactory/api/npm/my-npm/", false], // https://github.com/oven-sh/bun/issues/3899
+    ["http://artifactory.xxx.yyy/artifactory/api/npm/my-npm", false], // https://github.com/oven-sh/bun/issues/5368
+    // ["", true],
+    ["https:example.org", false],
+    ["https://////example.com///", false],
+    ["https://example.com/https:example.org", false],
+    ["https://example.com/[]?[]#[]", false],
+    ["http://example/%?%#%", false],
+    ["c:", true],
+    ["c:/", -1],
+    ["http://點看", false], // gets converted to punycode
+    ["http://xn--c1yn36f/", false],
+  ];
 
-//   for (const entry of registryURLs) {
-//     const regURL = entry[0];
-//     const fails = entry[1];
+  for (const entry of registryURLs) {
+    const regURL = entry[0];
+    const fails = entry[1];
 
-//     it(
-//       `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
-//       async () => {
-//         await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    it(
+      `should ${fails ? "fail" : "handle"} joining registry and package URLs (${regURL})`,
+      async () => {
+        await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-//         await writeFile(
-//           join(package_dir, "package.json"),
-//           JSON.stringify({
-//             name: "foo",
-//             version: "0.0.1",
-//             dependencies: {
-//               notapackage: "0.0.2",
-//             },
-//           }),
-//         );
+        await writeFile(
+          join(package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              notapackage: "0.0.2",
+            },
+          }),
+        );
 
-//         const { stdout, stderr, exited } = spawn({
-//           cmd: [bunExe(), "install"],
-//           cwd: package_dir,
-//           stdout: "pipe",
-//           stdin: "pipe",
-//           stderr: "pipe",
-//           env,
-//         });
-//         expect(await new Response(stdout).text()).toBeEmpty();
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        expect(await new Response(stdout).text()).toBeEmpty();
 
-//         const err = await new Response(stderr).text();
+        const err = await new Response(stderr).text();
 
-//         if (fails === -1) {
-//           expect(err).toContain(`Registry URL must be http:// or https://`);
-//           expect(err).toContain("error: InvalidURL");
-//         } else if (fails) {
-//           expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-//           expect(err).toContain("error: InvalidURL");
-//         } else {
-//           expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
-//         }
-//         // fails either way, since notapackage is, well, not a real package.
-//         expect(await exited).not.toBe(0);
-//       },
-//       Infinity,
-//     );
-//   }
+        if (fails === -1) {
+          expect(err).toContain(`Registry URL must be http:// or https://`);
+          expect(err).toContain("error: InvalidURL");
+        } else if (fails) {
+          expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+          expect(err).toContain("error: InvalidURL");
+        } else {
+          expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
+        }
+        // fails either way, since notapackage is, well, not a real package.
+        expect(await exited).not.toBe(0);
+      },
+      Infinity,
+    );
+  }
 
-//   it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
-//     const regURL = "asdfghjklqwertyuiop";
+  it("shouldn't fail joining invalid registry and package URLs for optional dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
 
-//     await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-//     await writeFile(
-//       join(package_dir, "package.json"),
-//       JSON.stringify({
-//         name: "foo",
-//         version: "0.0.1",
-//         optionalDependencies: {
-//           notapackage: "0.0.2",
-//         },
-//       }),
-//     );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
 
-//     const { stdout, stderr, exited } = spawn({
-//       cmd: [bunExe(), "install"],
-//       cwd: package_dir,
-//       stdout: "pipe",
-//       stdin: "pipe",
-//       stderr: "pipe",
-//       env,
-//     });
-//     expect(await new Response(stdout).text()).not.toBeEmpty();
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stdout).text()).not.toBeEmpty();
 
-//     const err = await new Response(stderr).text();
+    const err = await new Response(stderr).text();
 
-//     expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-//     expect(err).toContain("warn: InvalidURL");
+    expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+    expect(err).toContain("warn: InvalidURL");
 
-//     expect(await exited).toBe(0);
-//   });
+    expect(await exited).toBe(0);
+  });
 
-//   // TODO: This test should fail if the param `warn_on_error` is true in
-//   // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
-//   // code never gets run for peer dependencies unless you do some package
-//   // manifest magic. I doubt it'd ever fail, but having a dedicated
-//   // test would be nice.
-//   test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
-//     const regURL = "asdfghjklqwertyuiop";
+  // TODO: This test should fail if the param `warn_on_error` is true in
+  // `(install.zig).NetworkTask.forManifest()`. Unfortunately, that
+  // code never gets run for peer dependencies unless you do some package
+  // manifest magic. I doubt it'd ever fail, but having a dedicated
+  // test would be nice.
+  test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
+    const regURL = "asdfghjklqwertyuiop";
 
-//     await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
+    await writeFile(join(package_dir, "bunfig.toml"), `[install]\ncache = false\nregistry = "${regURL}"`);
 
-//     await writeFile(
-//       join(package_dir, "package.json"),
-//       JSON.stringify({
-//         name: "foo",
-//         version: "0.0.1",
-//         peerDependencies: {
-//           notapackage: "0.0.2",
-//         },
-//       }),
-//     );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        peerDependencies: {
+          notapackage: "0.0.2",
+        },
+      }),
+    );
 
-//     const { stdout, stderr, exited } = spawn({
-//       cmd: [bunExe(), "install"],
-//       cwd: package_dir,
-//       stdout: "pipe",
-//       stdin: "pipe",
-//       stderr: "pipe",
-//       env,
-//     });
-//     expect(await new Response(stdout).text()).not.toBeEmpty();
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stdout).text()).not.toBeEmpty();
 
-//     const err = await new Response(stderr).text();
+    const err = await new Response(stderr).text();
 
-//     expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-//     expect(err).toContain("warn: InvalidURL");
+    expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+    expect(err).toContain("warn: InvalidURL");
 
-//     expect(await exited).toBe(0);
-//   });
-// });
+    expect(await exited).toBe(0);
+  });
+});
 
 it("should handle @scoped name that contains tilde, issue#7045", async () => {
   await writeFile(

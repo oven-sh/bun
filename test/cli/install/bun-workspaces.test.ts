@@ -83,8 +83,8 @@ test("dependency on workspace without version in package.json", async () => {
     expect(lockfile).toMatchSnapshot(`version: ${version}`);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + bar@workspace:packages/bar",
-      " + lodash@workspace:packages/mono",
+      "+ bar@workspace:packages/bar",
+      "+ lodash@workspace:packages/mono",
       "",
       " 2 packages installed",
     ]);
@@ -112,8 +112,8 @@ test("dependency on workspace without version in package.json", async () => {
     expect(lockfile).toMatchSnapshot(`version: ${version}`);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + bar@workspace:packages/bar",
-      " + lodash@workspace:packages/mono",
+      "+ bar@workspace:packages/bar",
+      "+ lodash@workspace:packages/mono",
       "",
       " 3 packages installed",
     ]);
@@ -159,9 +159,9 @@ test("dependency on same name as workspace and dist-tag", async () => {
   expect(lockfile).toMatchNodeModulesAt(packageDir);
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + bar@workspace:packages/bar",
-    " + lodash@workspace:packages/mono",
+    "+ bar@workspace:packages/bar",
+    "+ lodash@workspace:packages/mono",
     "",
-    " 3 packages installed",
+    "3 packages installed",
   ]);
 });

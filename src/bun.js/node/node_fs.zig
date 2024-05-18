@@ -5126,9 +5126,6 @@ pub const NodeFS = struct {
     ) Maybe(void) {
         const root_basename = async_task.root_path.slice();
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-        const dirent_path = bun.String.createUTF8(basename);
-        defer dirent_path.deref();
-
         const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
@@ -5224,10 +5221,9 @@ pub const NodeFS = struct {
 
             switch (comptime ExpectedType) {
                 Dirent => {
-                    dirent_path.ref();
                     entries.append(.{
-                        .name = bun.String.createUTF8(name_to_copy),
-                        .path = dirent_path,
+                        .name = bun.String.createUTF8(utf8_name),
+                        .path = bun.String.createUTF8(std.fs.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto)).?),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5315,8 +5311,6 @@ pub const NodeFS = struct {
                 }
             }
 
-            const dirent_path = bun.String.createUTF8(basename);
-            defer dirent_path.deref();
             var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
 
@@ -5357,10 +5351,9 @@ pub const NodeFS = struct {
 
                 switch (comptime ExpectedType) {
                     Dirent => {
-                        dirent_path.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF8(name_to_copy),
-                            .path = dirent_path,
+                            .name = bun.String.createUTF8(utf8_name),
+                            .path = bun.String.createUTF8(std.fs.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto)).?),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

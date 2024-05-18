@@ -578,7 +578,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #include <sys/stat.h>
 #include <stddef.h>
 
-static int bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
     memset(server_address, 0, sizeof(struct sockaddr_un));
     server_address->sun_family = AF_UNIX;
 
@@ -897,7 +897,7 @@ static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
         }
     } while (WSAGetLastError() == WSAEINTR);
 
-    return LIBUS_SOCKET_ERROR;
+    return WSAGetLastError();
 #else
      do {
         if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || errno == EINPROGRESS) {
@@ -905,7 +905,7 @@ static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
         }
     } while (errno == EINTR);
 
-    return LIBUS_SOCKET_ERROR;
+    return errno;
 #endif
 }
 

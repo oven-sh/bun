@@ -22,7 +22,7 @@ export function createTestBuilder(path: string) {
 
     expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
     expected_stderr: string | ((stderr: string, tempdir: string) => void) | { contains: string } = "";
-    expected_exit_code: number = 0;
+    expected_exit_code: number | ((code: number) => void) = 0;
     expected_error: ShellError | string | boolean | undefined = undefined;
     file_equals: { [filename: string]: string | (() => string | Promise<string>) } = {};
     _doesNotExist: string[] = [];
@@ -175,7 +175,7 @@ export function createTestBuilder(path: string) {
       return this;
     }
 
-    exitCode(expected: number): this {
+    exitCode(expected: number | ((code: number) => void)): this {
       this.expected_exit_code = expected;
       return this;
     }
@@ -232,7 +232,9 @@ export function createTestBuilder(path: string) {
           expect(stderr.toString()).toContain(this.expected_stderr.contains);
         }
       }
-      if (this.expected_exit_code !== undefined) expect(exitCode).toEqual(this.expected_exit_code);
+      if (typeof this.expected_exit_code === "number") {
+        expect(exitCode).toEqual(this.expected_exit_code);
+      } else if (typeof this.expected_exit_code === "function") this.expected_exit_code(exitCode);
 
       for (const [filename, expected_raw] of Object.entries(this.file_equals)) {
         const expected = typeof expected_raw === "string" ? expected_raw : await expected_raw();

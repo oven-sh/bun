@@ -2214,7 +2214,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
     if (comptime Environment.isWindows) {
         const attributes = getFileAttributes(path) orelse return false;
 
-        if (file_only and !attributes.isNormal()) {
+        if (file_only and attributes.isDirectory()) {
             return false;
         }
 

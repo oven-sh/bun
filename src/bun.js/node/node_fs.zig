@@ -5124,6 +5124,7 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
         comptime is_root: bool,
     ) Maybe(void) {
+        const root_basename = async_task.root_path.slice();
         const flags = os.O.DIRECTORY | os.O.RDONLY;
         const dirent_path = bun.String.createUTF8(basename);
         defer dirent_path.deref();
@@ -5147,7 +5148,7 @@ pub const NodeFS = struct {
                         else => {},
                     }
 
-                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    const path_parts = [_]string{ root_basename, basename };
                     return .{
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
@@ -5175,7 +5176,7 @@ pub const NodeFS = struct {
         while (switch (entry) {
             .err => |err| {
                 if (comptime !is_root) {
-                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    const path_parts = [_]string{ root_basename, basename };
                     return .{
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };

@@ -661,7 +661,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             const dir = fd.asDir();
-            var iterator = DirIterator.iterateOSPath(dir, if (Environment.isWindows) .u16 else .u8, src);
+            var iterator = DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
             var entry = iterator.next();
             while (switch (entry) {
                 .err => |err| {
@@ -5046,11 +5046,7 @@ pub const NodeFS = struct {
         const dirent_path = bun.String.createUTF8(basename);
         defer dirent_path.deref();
 
-        var iterator = DirIterator.iterate(
-            dir,
-            comptime if (is_u16) .u16 else .u8,
-            basename,
-        );
+        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -5173,7 +5169,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var iterator = DirIterator.iterate(fd.asDir(), .u8, basename);
+        var iterator = DirIterator.iterate(fd.asDir(), .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -5320,7 +5316,7 @@ pub const NodeFS = struct {
 
             const dirent_path = bun.String.createUTF8(basename);
             defer dirent_path.deref();
-            var iterator = DirIterator.iterate(fd.asDir(), .u8, basename);
+            var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
 
             while (switch (entry) {
@@ -6403,7 +6399,7 @@ pub const NodeFS = struct {
 
         var iterator = iterator: {
             const dir = fd.asDir();
-            break :iterator DirIterator.iterateOSPath(dir, if (Environment.isWindows) .u16 else .u8, src);
+            break :iterator DirIterator.iterate(dir, if (Environment.isWindows) .u16 else .u8);
         };
         var entry = iterator.next();
         while (switch (entry) {

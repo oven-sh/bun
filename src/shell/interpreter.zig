@@ -7476,7 +7476,7 @@ pub const Interpreter = struct {
                             std.fmt.format(writer, "{s}:\n", .{this.path}) catch bun.outOfMemory();
                         }
 
-                        var iterator = DirIterator.iterate(fd.asDir(), .u8, this.path);
+                        var iterator = DirIterator.iterate(fd.asDir(), .u8);
                         var entry = iterator.next();
 
                         while (switch (entry) {
@@ -9361,7 +9361,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     }
 
-                    var iterator = DirIterator.iterate(fd.asDir(), .u8, path);
+                    var iterator = DirIterator.iterate(fd.asDir(), .u8);
                     var entry = iterator.next();
 
                     var remove_child_vtable = RemoveFileVTable{

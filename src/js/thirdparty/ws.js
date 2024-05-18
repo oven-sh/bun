@@ -26,6 +26,18 @@ function emitWarning(type, message) {
   console.warn("[bun] Warning:", message);
 }
 
+// TODO: add private method on WebSocket to avoid these allocations
+function normalizeData(data, opts) {
+  const isBinary = opts?.binary;
+  if (isBinary === true && typeof data === "string") {
+    data = Buffer.from(data);
+  } else if (isBinary === false && $isTypedArrayView(data)) {
+    data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
+  }
+
+  return data;
+}
+
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
  */
@@ -129,7 +141,7 @@ class BunWebSocket extends EventEmitter {
 
   send(data, opts, cb) {
     try {
-      this.#ws.send(data, opts?.compress);
+      this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {
       typeof cb === "function" && cb(error);
       return;
@@ -710,7 +722,9 @@ class BunWebSocketMocked extends EventEmitter {
   send(data, opts, cb) {
     if (this.#state === 1) {
       const compress = opts?.compress;
+      data = normalizeData(data, opts);
       const written = this.#ws.send(data, compress);
+
       if (written == -1) {
         // backpressure
         this.#enquedMessages.push([data, compress, cb]);

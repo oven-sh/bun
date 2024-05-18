@@ -12,10 +12,12 @@ const ws = new WebSocket(url, {
 });
 
 ws.on("open", () => {
-  console.log("Connected", ws.url); // read by test script
-  console.error("Connected", ws.url);
+  if (process.send) {
+    process.send("connected");
+  }
+  console.log(`[${process.versions.bun ? "bun" : "node"}]`, "Connected", ws.url); // read by test script
+  console.error(`[${process.versions.bun ? "bun" : "node"}]`, "Connected", ws.url);
 });
-
 const logMessages = process.env.LOG_MESSAGES === "1";
 ws.on("message", (data, isBinary) => {
   if (logMessages) {
@@ -23,9 +25,10 @@ ws.on("message", (data, isBinary) => {
       console.error("Received binary message:", data);
     } else {
       console.error("Received text message:", data);
+      data = data.toString();
     }
   }
-  ws.send(data, { binary: isBinary });
+  ws.send(data, { binary: !!isBinary });
 
   if (data === "ping") {
     console.error("Sending ping");

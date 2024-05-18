@@ -4033,6 +4033,19 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
     return to_read * 2;
 }
 
+/// Leave a single leading char
+/// ```zig
+/// trimSubsequentLeadingChars("foo\n\n\n\n", '\n') -> "foo\n"
+/// ```
+pub fn trimSubsequentLeadingChars(slice: []const u8, char: u8) []const u8 {
+    var end = slice.len - 1;
+    var endend = slice.len;
+    while (end > 0 and slice[end] == char) : (end -= 1) {
+        endend = end + 1;
+    }
+    return slice[0..endend];
+}
+
 pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     if (indexOfNotChar(slice, char)) |i| {
         return slice[i..];

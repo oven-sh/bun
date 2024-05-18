@@ -4,7 +4,7 @@ import { bunExe, bunEnv } from "harness";
 
 describe("Streaming body via", () => {
   test("async generator function", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -25,7 +25,6 @@ describe("Streaming body via", () => {
 
     expect(Buffer.concat(chunks).toString()).toBe("Hello, world!!");
     expect(chunks).toHaveLength(2);
-    server.stop(true);
   });
 
   test("async generator function throws an error but continues to send the headers", async () => {
@@ -58,7 +57,7 @@ describe("Streaming body via", () => {
 
   test("async generator aborted doesn't crash", async () => {
     var aborter = new AbortController();
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -81,13 +80,11 @@ describe("Streaming body via", () => {
     } catch (e) {
       expect(e).toBeInstanceOf(DOMException);
       expect(e.name).toBe("AbortError");
-    } finally {
-      server.stop(true);
     }
   });
 
   test("[Symbol.asyncIterator]", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -114,11 +111,10 @@ describe("Streaming body via", () => {
 
     expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n!");
     expect(chunks).toHaveLength(2);
-    server.stop(true);
   });
 
   test("[Symbol.asyncIterator] with a custom iterator", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -151,7 +147,6 @@ describe("Streaming body via", () => {
     expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
     // TODO:
     // expect(chunks).toHaveLength(2);
-    server.stop(true);
   });
 
   test("yield", async () => {
@@ -209,7 +204,7 @@ describe("Streaming body via", () => {
           ["Response", () => new Response(bodyInit)],
           ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
         ]) {
-          for (let method of ["arrayBuffer", "text"]) {
+          for (let method of ["arrayBuffer", "bytes", "text"]) {
             test(`${label}(${method})`, async () => {
               const result = await constructFn()[method]();
               expect(Buffer.from(result)).toEqual(Buffer.from(expected));

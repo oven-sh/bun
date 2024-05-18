@@ -1609,7 +1609,7 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
     WebCore::propagateException(*arg0, throwScope,
         headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
-    pairs.releaseBuffer();
+
     JSValue value = WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
@@ -1844,7 +1844,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
+    case WebCore::JSDOMWrapperType: {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -2213,6 +2213,11 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
+
     if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -2262,6 +2267,11 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSLockHolder lock(vm);
+
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
 
     if (!object)
         return JSC::JSValue::encode(JSC::JSValue());
@@ -2951,13 +2961,6 @@ JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
-void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
-    bJSC__ThrowScope arg2)
-{
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
-
-    arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
-}
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
@@ -3113,14 +3116,6 @@ JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObj
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
-void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0,
-    JSC__JSGlobalObject* arg1,
-    bJSC__ThrowScope arg2)
-{
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
-
-    arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
-}
 void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
@@ -3203,12 +3198,7 @@ double JSC__JSValue__asNumber(JSC__JSValue JSValue0)
     auto value = JSC::JSValue::decode(JSValue0);
     return value.asNumber();
 };
-bJSC__JSObject JSC__JSValue__asObject(JSC__JSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    auto obj = JSC::asObject(value);
-    return cast<bJSC__JSObject>(&obj);
-};
+
 JSC__JSString* JSC__JSValue__asString(JSC__JSValue JSValue0)
 {
     auto value = JSC::JSValue::decode(JSValue0);
@@ -4963,10 +4953,7 @@ restart:
             scope.clearException();
         }
 
-        fast = false;
-
         if (anyHits) {
-
             if (prototypeCount++ < 5) {
                 if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
                     if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(proto)->target() != globalObject))) {

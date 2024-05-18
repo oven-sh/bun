@@ -1219,17 +1219,17 @@ fi
   "private": true,
   "name": "bun",
   "dependencies": {
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
+    "@vscode/debugadapter": "1.61.0",
+    "esbuild": "0.17.15",
+    "eslint": "8.20.0",
+    "eslint-config-prettier": "8.5.0",
+    "mitata": "0.1.3",
     "peechy": "0.4.34",
-    "prettier": "^3.2.5",
+    "prettier": "3.2.5",
     "react": "next",
     "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
+    "source-map-js": "1.0.2",
+    "typescript": "5.0.2"
   },
   "devDependencies": {
   },
@@ -2040,7 +2040,7 @@ describe("subshell", () => {
     "module": "index.ts",
     "type": "module",
     "dependencies": {
-      "sharp": "^0.33.3"
+      "sharp": "0.33.3"
     }
   }`;
 

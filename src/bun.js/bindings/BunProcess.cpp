@@ -1603,7 +1603,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
             JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
 
-            stack.split('\n', [&](WTF::StringView line) {
+            stack.split('\n', [&](const WTF::StringView& line) {
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 
@@ -2610,12 +2610,12 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
 
-    if (!value.isInt32()) {
+    if (!value.isInt32AsAnyInt()) {
         throwRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
         return false;
     }
 
-    int port = value.asInt32();
+    int port = value.toInt32(globalObject);
 
     if (port != 0) {
         if (port < 1024 || port > 65535) {

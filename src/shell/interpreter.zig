@@ -10538,17 +10538,16 @@ pub const Interpreter = struct {
 
                 pub fn isDir(_: *ShellCpTask, path: [:0]const u8) Maybe(bool) {
                     if (bun.Environment.isWindows) {
-                        var wpath: bun.OSPathBuffer = undefined;
-                        const attributes = windows.GetFileAttributesW(bun.strings.toWPath(wpath[0..], path[0..path.len]));
-                        if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+                        const attributes = bun.sys.getFileAttributes(path[0..path.len]) orelse {
                             const err: Syscall.Error = .{
                                 .errno = @intFromEnum(bun.C.SystemErrno.ENOENT),
                                 .syscall = .copyfile,
                                 .path = path,
                             };
                             return .{ .err = err };
-                        }
-                        return .{ .result = (attributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0 };
+                        };
+
+                        return .{ .result = attributes.isDirectory() };
                     }
                     const stat = switch (Syscall.lstat(path)) {
                         .result => |x| x,

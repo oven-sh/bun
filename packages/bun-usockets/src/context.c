@@ -331,7 +331,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     us_poll_start(p, context->loop, LIBUS_SOCKET_READABLE);
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
-
+    ls->s.connect_state = NULL;
     ls->s.context = context;
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;

@@ -304,6 +304,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         struct us_socket_t *s = (struct us_socket_t *) accepted_p;
 
                         s->context = listen_socket->s.context;
+                        s->connect_state = NULL;
                         s->timeout = 255;
                         s->long_timeout = 255;
                         s->low_prio_state = 0;

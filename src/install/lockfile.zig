@@ -1065,8 +1065,8 @@ pub const Printer = struct {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
 
-        var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf1: bun.PathBuffer = undefined;
+        var lockfile_path_buf2: bun.PathBuffer = undefined;
 
         var lockfile_path: stringZ = "";
 
@@ -3446,7 +3446,7 @@ pub const Package = extern struct {
                         if (switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
-                                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var local_buf: bun.PathBuffer = undefined;
                                 const package_json_path = Path.joinZBuf(
                                     &local_buf,
                                     &[_]string{ path, "package.json" },

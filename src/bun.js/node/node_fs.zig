@@ -812,7 +812,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
                 this.destroy();
             }
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
         }
     };
@@ -859,7 +859,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         return task.promise.value();
     }
 
-    pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8, comptime is_root: bool) void {
+    pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *bun.PathBuffer, comptime is_root: bool) void {
         switch (this.args.tag()) {
             inline else => |tag| {
                 const ResultType = comptime switch (tag) {
@@ -916,7 +916,7 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
         var this: *AsyncReaddirRecursiveTask = @fieldParentPtr(AsyncReaddirRecursiveTask, "task", task);
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
     }
 
@@ -4057,7 +4057,7 @@ pub const NodeFS = struct {
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
-    sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    sync_error_buf: bun.PathBuffer = undefined,
     vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
@@ -4220,8 +4220,8 @@ pub const NodeFS = struct {
 
         // TODO: do we need to fchown?
         if (comptime Environment.isMac) {
-            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
 
             const src = args.src.sliceZ(&src_buf);
             const dest = args.dest.sliceZ(&dest_buf);
@@ -4295,8 +4295,8 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isLinux) {
-            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
             const src = args.src.sliceZ(&src_buf);
             const dest = args.dest.sliceZ(&dest_buf);
 
@@ -4577,7 +4577,7 @@ pub const NodeFS = struct {
     }
 
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime _: Flavor) Maybe(Return.Link) {
-        var new_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var new_path_buf: bun.PathBuffer = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
         const to = args.new_path.sliceZ(&new_path_buf);
 
@@ -4637,13 +4637,13 @@ pub const NodeFS = struct {
             args.path.osPath(&buf)
         else brk: {
             // TODO(@paperdave): clean this up a lot.
-            var joined_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var joined_buf: bun.PathBuffer = undefined;
             if (std.fs.path.isAbsolute(args.path.slice())) {
                 const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
                     return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, utf8);
             } else {
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 const cwd = std.os.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
             }
@@ -5110,7 +5110,7 @@ pub const NodeFS = struct {
     }
 
     pub fn readdirWithEntriesRecursiveAsync(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         args: Arguments.Readdir,
         async_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
@@ -5234,7 +5234,7 @@ pub const NodeFS = struct {
     }
 
     fn readdirWithEntriesRecursiveSync(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         args: Arguments.Readdir,
         root_basename: [:0]const u8,
         comptime ExpectedType: type,
@@ -5364,7 +5364,7 @@ pub const NodeFS = struct {
     }
 
     fn _readdir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         args: Arguments.Readdir,
         comptime ExpectedType: type,
         comptime recursive: bool,
@@ -5380,7 +5380,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(buf);
 
         if (comptime recursive and flavor == .sync) {
-            var buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf_to_pass: bun.PathBuffer = undefined;
 
             var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
             return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
@@ -5645,7 +5645,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
+    pub fn writeFileWithPathBuffer(pathbuf: *bun.PathBuffer, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         const fd = switch (args.file) {
             .path => brk: {
                 const path = args.file.path.sliceZWithForceCopy(pathbuf, true);
@@ -5753,7 +5753,7 @@ pub const NodeFS = struct {
     }
 
     pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime _: Flavor) Maybe(Return.Readlink) {
-        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: bun.PathBuffer = undefined;
         const inbuf = &this.sync_error_buf;
 
         const path = args.path.sliceZ(inbuf);
@@ -5821,7 +5821,7 @@ pub const NodeFS = struct {
             };
         }
 
-        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: bun.PathBuffer = undefined;
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) bun.assert(FileSystem.instance_loaded);
 
@@ -5881,7 +5881,7 @@ pub const NodeFS = struct {
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
         _ = flavor;
         const from_buf = &this.sync_error_buf;
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
 
         const from = args.old_path.sliceZ(from_buf);
         const to = args.new_path.sliceZ(&to_buf);
@@ -6056,7 +6056,7 @@ pub const NodeFS = struct {
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
 
         if (Environment.isWindows) {
             const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);

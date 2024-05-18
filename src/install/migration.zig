@@ -40,7 +40,7 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
     const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(bun_lockfile_path, '/') orelse 0];
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var buf: bun.PathBuffer = undefined;
     @memcpy(buf[0..dirname.len], dirname);
 
     npm: {

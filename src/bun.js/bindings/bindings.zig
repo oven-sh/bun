@@ -820,7 +820,7 @@ pub const ZigString = extern struct {
         };
     }
 
-    pub fn sliceZBuf(this: ZigString, buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
+    pub fn sliceZBuf(this: ZigString, buf: *bun.PathBuffer) ![:0]const u8 {
         return try std.fmt.bufPrintZ(buf, "{}", .{this});
     }
 

@@ -1178,7 +1178,7 @@ pub const PackageInstall = struct {
                 walker: *Walker,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var stackpath: bun.PathBuffer = undefined;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
@@ -2055,7 +2055,7 @@ pub const PackageInstall = struct {
         var dest_buf: bun.PathBuffer = undefined;
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
         const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
             .fail = .{
                 .err = err,
@@ -2538,7 +2538,7 @@ pub const PackageManager = struct {
         this.env.loadCCachePath(this_bundler.fs);
 
         {
-            var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var node_path: bun.PathBuffer = undefined;
             if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
             } else brk: {
@@ -2767,7 +2767,7 @@ pub const PackageManager = struct {
             var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
             this.global_dir = global_dir;
             this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             const _path = try bun.getFdPath(this.global_link_dir.?.fd, &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
             break :brk this.global_link_dir.?;
@@ -2910,7 +2910,7 @@ pub const PackageManager = struct {
         }
     }
 
-    var cached_package_folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
     pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
         return this.cache_directory_ orelse brk: {
@@ -2977,7 +2977,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var tmpbuf: bun.PathBuffer = undefined;
         const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
@@ -3032,7 +3032,7 @@ pub const PackageManager = struct {
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();
             if (elapsed > std.time.ns_per_ms * 100) {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf: bun.PathBuffer = undefined;
                 const cache_dir_path = bun.getFdPath(cache_directory.fd, &path_buf) catch "it";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
@@ -3048,7 +3048,7 @@ pub const PackageManager = struct {
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
-        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: bun.PathBuffer = undefined;
         const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
 
         // used later for adding to path for scripts
@@ -3314,11 +3314,11 @@ pub const PackageManager = struct {
 
     pub fn pathForCachedNPMPath(
         this: *PackageManager,
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         package_name: []const u8,
         npm: Semver.Version,
     ) ![]u8 {
-        var package_name_version_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var package_name_version_buf: bun.PathBuffer = undefined;
 
         const subpath = std.fmt.bufPrintZ(
             &package_name_version_buf,
@@ -3343,7 +3343,7 @@ pub const PackageManager = struct {
         this: *PackageManager,
         package_id: PackageID,
         resolution: Resolution,
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
     ) ![]u8 {
         // const folder_name = this.cachedNPMPackageFolderName(name, version);
         switch (resolution.tag) {
@@ -3420,7 +3420,7 @@ pub const PackageManager = struct {
         );
         for (installed_versions.items) |installed_version| {
             if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 const npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                     Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
                     return null;
@@ -5951,7 +5951,7 @@ pub const PackageManager = struct {
             }
 
             if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 var parts = [_]string{ "install", "global" };
                 const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{});
@@ -5959,14 +5959,14 @@ pub const PackageManager = struct {
 
             if (!Environment.isWindows) {
                 if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var parts = [_]string{ ".bun", "install", "global" };
                     const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                     return try std.fs.cwd().makeOpenPath(path, .{});
                 }
             } else {
                 if (bun.getenvZ("USERPROFILE")) |home_dir| {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var parts = [_]string{ ".bun", "install", "global" };
                     const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                     return try std.fs.cwd().makeOpenPath(path, .{});
@@ -5990,7 +5990,7 @@ pub const PackageManager = struct {
             }
 
             if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 var parts = [_]string{
                     "bin",
                 };
@@ -5999,7 +5999,7 @@ pub const PackageManager = struct {
             }
 
             if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 var parts = [_]string{
                     ".bun",
                     "bin",
@@ -7379,7 +7379,7 @@ pub const PackageManager = struct {
         ) -| std.time.s_per_day;
 
         if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             var parts = [_]string{
                 "./bun.lockb",
             };
@@ -8109,8 +8109,8 @@ pub const PackageManager = struct {
             // }
 
             if (args.option("--cwd")) |cwd_| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
+                var buf2: bun.PathBuffer = undefined;
                 var final_path: [:0]u8 = undefined;
                 if (cwd_.len > 0 and cwd_[0] == '.') {
                     const cwd = try bun.getcwd(&buf);
@@ -8622,7 +8622,7 @@ pub const PackageManager = struct {
 
                 var cwd = std.fs.cwd();
                 // This is not exactly correct
-                var node_modules_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var node_modules_buf: bun.PathBuffer = undefined;
                 bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
                 const offset_buf = node_modules_buf["node_modules/".len..];
                 const name_hashes = manager.lockfile.packages.items(.name_hash);
@@ -8770,8 +8770,8 @@ pub const PackageManager = struct {
         resolutions: []Resolution,
         node: *Progress.Node,
         global_bin_dir: std.fs.Dir,
-        destination_dir_subpath_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
-        folder_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+        destination_dir_subpath_buf: bun.PathBuffer = undefined,
+        folder_path_buf: bun.PathBuffer = undefined,
         successfully_installed: Bitset,
         tree_iterator: *Lockfile.Tree.Iterator,
         command_ctx: Command.Context,
@@ -10307,7 +10307,7 @@ pub const PackageManager = struct {
 
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
-        var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var out_buffer: bun.PathBuffer = undefined;
         const result = try bun.getFdPath(manager.options.global_bin_dir.fd, &out_buffer);
         out_buffer[result.len] = 0;
         const result_: [:0]u8 = out_buffer[0..result.len :0];

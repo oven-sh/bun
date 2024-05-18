@@ -1693,7 +1693,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
 
     var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
 
@@ -1723,7 +1723,7 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {

@@ -130,7 +130,7 @@ fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *bun.PathBuffer, path: []con
 /// It is similar to Get-Command in powershell.
 pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u16 {
     if (bin.len == 0) return null;
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
 
     const check_windows_extensions = !endsWithExtension(bin);
 

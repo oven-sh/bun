@@ -530,7 +530,7 @@ pub fn which(
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
@@ -1247,7 +1247,7 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (arguments.len < 1) {
         return bun.String.empty.toJS(globalObject);
     }
-    var public_path_temp_str: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var public_path_temp_str: bun.PathBuffer = undefined;
 
     const to = arguments[0].toSlice(globalObject, bun.default_allocator);
     defer to.deinit();
@@ -3272,7 +3272,7 @@ pub fn mmapFile(
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer args.deinit();
 
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var buf: bun.PathBuffer = undefined;
     const path = brk: {
         if (args.nextEat()) |path| {
             if (path.isString()) {

@@ -55,9 +55,10 @@ describe("apply", () => {
 
     const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
+    console.log("A FOLDER", afolder);
     await apply(patchfile, afolder);
 
-    expect(await $`cat ${join(afolder, "hello.txt")}`.text()).toBe(bfile);
+    expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
   });
 });
 

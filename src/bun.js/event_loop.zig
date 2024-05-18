@@ -928,6 +928,10 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(AsyncPatchApplyTask))) => {
+                    var shell_ls_task: *AsyncPatchApplyTask = task.get(AsyncPatchApplyTask).?;
+                    shell_ls_task.runFromJS();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
                     var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
                     shell_ls_task.runFromMainThread();

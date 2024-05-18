@@ -187,7 +187,7 @@ pub const PatchFile = struct {
         // to use the arena
         const use_arena: bool = stat.size <= PAGE_SIZE;
         const file_alloc = if (use_arena) arena.allocator() else bun.default_allocator;
-        const filebuf = std.fs.cwd().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch |e| return .{ .err = bun.sys.Error.fromZigErr(e, .read).withPath(file_path) };
+        const filebuf = patch_dir.asDir().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch |e| return .{ .err = bun.sys.Error.fromZigErr(e, .read).withPath(file_path) };
         defer file_alloc.free(filebuf);
 
         var file_line_count: usize = 0;
@@ -1167,14 +1167,14 @@ pub const TestingAPIs = struct {
 
 pub const JS = struct {
     const ApplyArgs = struct {
-        patchfile_txt: []const u8,
+        patchfile_txt: JSC.ZigString.Slice,
         patchfile: PatchFile,
         dirfd: bun.FileDescriptor,
 
-        pub fn deinit(this: ApplyArgs) void {
-            bun.default_allocator.free(this.patchfile_txt);
+        pub fn deinit(this: *ApplyArgs) void {
+            this.patchfile_txt.deinit();
             this.patchfile.deinit(bun.default_allocator);
-            if (bun.FileDescriptor.cwd().int() != this.dirfd) {
+            if (bun.FileDescriptor.cwd().int() != this.dirfd.int()) {
                 _ = bun.sys.close(this.dirfd);
             }
         }
@@ -1210,11 +1210,11 @@ pub const JS = struct {
 
             if (this.err) |err| {
                 const errJs = err.toErrorInstance(this.globalThis);
-                promise.reject(this.global, errJs);
+                promise.reject(this.globalThis, errJs);
                 return;
             }
 
-            promise.resolve(this.global, .true);
+            promise.resolve(this.globalThis, .true);
         }
 
         fn deinit(this: *PatchApplyTask) void {
@@ -1264,7 +1264,7 @@ pub const JS = struct {
             .result = ApplyArgs{
                 .dirfd = dir_fd,
                 .patchfile = patch_file,
-                .patchfile_txt = patchfile_src.slice(),
+                .patchfile_txt = patchfile_src,
             },
         };
     }
@@ -1280,7 +1280,7 @@ pub const JS = struct {
             return .undefined;
         };
         task.schedule();
-        return .true;
+        return task.promise.value();
     }
 
     pub fn applySync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

@@ -497,7 +497,17 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         us_internal_socket_context_unlink_socket(s->context, s);
     }
 
-    struct us_socket_t *new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
+
+    struct us_connecting_socket_t *c = s->connect_state;
+
+    struct us_socket_t *new_s = s;
+    if (ext_size != -1) {
+        new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
+        if (c) {
+            c->socket = new_s;
+            c->context = context;
+        }
+    }
     new_s->timeout = 255;
     new_s->long_timeout = 255;
 

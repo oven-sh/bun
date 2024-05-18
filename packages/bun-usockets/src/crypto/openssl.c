@@ -1748,10 +1748,13 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     struct us_internal_ssl_socket_context_t *context,
     struct us_internal_ssl_socket_t *s, int ext_size) {
   // todo: this is completely untested
+  int new_ext_size = ext_size;
+  if (ext_size != -1) {
+    new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
+  }
   return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
       0, &context->sc, &s->s,
-      sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          ext_size);
+      new_ext_size);
 }
 
 struct us_internal_ssl_socket_t *

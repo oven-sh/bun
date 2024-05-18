@@ -949,20 +949,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return ThisSocket{ .socket = socket };
         }
 
-        pub fn adopt(
-            socket: *Socket,
-            socket_ctx: *SocketContext,
-            comptime Context: type,
-            comptime socket_field_name: []const u8,
-            ctx: Context,
-        ) ?*Context {
-            var adopted = ThisSocket.from(us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(Context)) orelse return null);
-            var holder = adopted.ext(Context);
-            holder.* = ctx;
-            @field(holder, socket_field_name) = adopted;
-            return holder;
-        }
-
         pub fn adoptPtr(
             socket: *Socket,
             socket_ctx: *SocketContext,
@@ -970,7 +956,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             comptime socket_field_name: []const u8,
             ctx: *Context,
         ) bool {
-            var adopted = ThisSocket.from(us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(*Context)) orelse return false);
+            // ext_size of -1 means we want to keep the current ext size
+            // in particular, we don't want to allocate a new socket
+            const new_socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, -1) orelse return false;
+            bun.assert(new_socket == socket);
+            var adopted = ThisSocket.from(new_socket);
             const holder = adopted.ext(*anyopaque);
             holder.* = ctx;
             @field(ctx, socket_field_name) = adopted;

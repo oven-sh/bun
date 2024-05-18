@@ -5230,7 +5230,7 @@ pub const NodeFS = struct {
                 Dirent => {
                     entries.append(.{
                         .name = bun.String.createUTF8(utf8_name),
-                        .path = bun.String.createUTF8(std.fs.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto)).?),
+                        .path = bun.String.createUTF8(bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto)),
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5360,7 +5360,7 @@ pub const NodeFS = struct {
                     Dirent => {
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
-                            .path = bun.String.createUTF8(std.fs.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto)).?),
+                            .path = bun.String.createUTF8(bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto)),
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },

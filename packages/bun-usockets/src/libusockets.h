@@ -76,6 +76,7 @@ enum {
 
 /* Library types publicly available */
 struct us_socket_t;
+struct us_connecting_socket_t;
 struct us_timer_t;
 struct us_socket_context_t;
 struct us_loop_t;
@@ -179,7 +180,7 @@ struct us_socket_events_t {
     struct us_socket_t *(*on_timeout)(struct us_socket_t *);
     struct us_socket_t *(*on_long_timeout)(struct us_socket_t *);
     struct us_socket_t *(*on_end)(struct us_socket_t *);
-    struct us_socket_t *(*on_connect_error)(struct us_socket_t *, int code);
+    struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
     void (*on_handshake)(struct us_socket_t*, int success, struct us_bun_verify_error_t verify_error, void* custom_data);
 };
 
@@ -243,7 +244,7 @@ void us_socket_context_on_long_timeout(int ssl, struct us_socket_context_t *cont
     struct us_socket_t *(*on_timeout)(struct us_socket_t *s));
 /* This one is only used for when a connecting socket fails in a late stage. */
 void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context,
-    struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code));
+    struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *s, int code));
 
 void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
 
@@ -267,8 +268,8 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
 
 /* Land in on_open or on_connection_error or return null or return socket */
-struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
-    const char *host, int port, const char *source_host, int options, int socket_ext_size);
+struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
+    const char *host, int port, int options, int socket_ext_size);
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context,
     const char *server_path, size_t pathlen, int options, int socket_ext_size);
@@ -277,10 +278,12 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */
 int us_socket_is_established(int ssl, struct us_socket_t *s);
 
+void us_connecting_socket_free(struct us_connecting_socket_t *c);
+
 /* Cancel a connecting socket. Can be used together with us_socket_timeout to limit connection times.
  * Entirely destroys the socket - this function works like us_socket_close but does not trigger on_close event since
  * you never got the on_open event first. */
-struct us_socket_t *us_socket_close_connecting(int ssl, struct us_socket_t *s);
+void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c);
 
 /* Returns the loop for this socket context. */
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context);
@@ -370,6 +373,7 @@ void us_socket_long_timeout(int ssl, struct us_socket_t *s, unsigned int minutes
 
 /* Return the user data extension of this socket */
 void *us_socket_ext(int ssl, struct us_socket_t *s);
+void *us_connecting_socket_ext(int ssl, struct us_connecting_socket_t *c);
 
 /* Return the socket context of this socket */
 struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s);

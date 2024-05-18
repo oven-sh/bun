@@ -2044,9 +2044,9 @@ pub const Subprocess = struct {
         var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
         if (Environment.isPosix and !is_sync) {
             if (maybe_ipc_mode != null) {
-                posix_ipc_info = .{
+                posix_ipc_info = IPC.Socket.from(
                     // we initialize ext later in the function
-                    .socket = uws.us_socket_from_fd(
+                    uws.us_socket_from_fd(
                         jsc_vm.rareData().spawnIPCContext(jsc_vm),
                         @sizeOf(*Subprocess),
                         spawned.extra_pipes.items[0].cast(),
@@ -2056,7 +2056,7 @@ pub const Subprocess = struct {
                         globalThis.throw("failed to create socket pair", .{});
                         return .zero;
                     },
-                };
+                );
             }
         }
 
@@ -2117,8 +2117,7 @@ pub const Subprocess = struct {
 
         if (subprocess.ipc_data) |*ipc_data| {
             if (Environment.isPosix) {
-                const ptr = posix_ipc_info.ext(*Subprocess);
-                ptr.?.* = subprocess;
+                posix_ipc_info.ext(*Subprocess).* = subprocess;
             } else {
                 if (ipc_data.configureServer(
                     Subprocess,

@@ -55,3 +55,12 @@ export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",
   "createNativeFrameForTesting",
 );
+
+export const dnsCacheStats = $zig("dns_resolver.zig", "getDNSCacheStats") as () => {
+  hits_completed: number;
+  hits_inflight: number;
+  size: number;
+  misses: number;
+  errors: number;
+  getaddrinfo: number;
+};

@@ -1598,6 +1598,7 @@ pub const EventLoop = struct {
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
         }
+        bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -1772,6 +1773,7 @@ pub const MiniEventLoop = struct {
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
+        global.loop.internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(global));
         global.env = env orelse bun.DotEnv.instance orelse env_loader: {
             const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
             map.* = bun.DotEnv.Map.init(bun.default_allocator);

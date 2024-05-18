@@ -163,6 +163,7 @@ pub const FilePoll = struct {
     const FileSink = JSC.WebCore.FileSink.Poll;
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
+    const Request = JSC.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
     pub const Owner = bun.TaggedPointerUnion(.{
@@ -186,6 +187,7 @@ pub const FilePoll = struct {
 
         DNSResolver,
         GetAddrInfoRequest,
+        Request,
         // LifecycleScriptSubprocessOutputReader,
         Process,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
@@ -409,6 +411,16 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
+            },
+
+            @field(Owner.Tag, "Request") => {
+                if (comptime !Environment.isMac) {
+                    unreachable;
+                }
+
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) InternalDNSRequest", .{poll.fd});
+                const loader: *Request = ptr.as(Request);
+                Request.MacAsyncDNS.onMachportChange(loader);
             },
 
             else => {

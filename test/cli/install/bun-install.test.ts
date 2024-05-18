@@ -2822,7 +2822,6 @@ it("should not hoist if name collides with alias", async () => {
     "",
     "+ moo@workspace:moo",
     "+ bar@0.0.3",
-    "+ bar@0.0.2",
     "",
     "3 packages installed",
   ]);
@@ -4051,7 +4050,7 @@ cache = false
     "",
     "+ html-minifier@github:kangax/html-minifier#4beb325",
     "",
-    " 12 packages installed",
+    "12 packages installed",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -4916,7 +4915,7 @@ cache = false
     "",
     "+ html-minifier@git+https://git@github.com/kangax/html-minifier#4beb325eb01154a40c0cbebff2e5737bbd7071ab",
     "",
-    " 12 packages installed",
+    "12 packages installed",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
@@ -5815,7 +5814,7 @@ it("should install dependencies in root package of workspace", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ moo@workspace:moo",
+    "+ bar@0.0.2",
     "",
     "2 packages installed",
   ]);
@@ -5866,7 +5865,7 @@ it("should install dependencies in root package of workspace (*)", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ moo@workspace:moo",
+    "+ bar@0.0.2",
     "",
     "2 packages installed",
   ]);
@@ -6587,7 +6586,6 @@ it("should handle installing packages from inside a workspace with `*`", async (
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     `+ swag@workspace:packages/swag`,
-    `+ yolo@workspace:packages/yolo`,
     "",
     "2 packages installed",
   ]);
@@ -6665,7 +6663,6 @@ it("should handle installing packages from inside a workspace without prefix", a
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    `+ p1@workspace:packages/p1`,
     `+ p2@workspace:packages/p2`,
     "",
     "2 packages installed",

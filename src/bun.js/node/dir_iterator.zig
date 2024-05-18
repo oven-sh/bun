@@ -302,6 +302,8 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         const islink = attrs & w.FILE_ATTRIBUTE_REPARSE_POINT != 0;
                         // on windows symlinks can be directories, too. We prioritize the
                         // "sym_link" kind over the "directory" kind
+                        // this will coerce into either .file or .directory later
+                        // once the symlink is read
                         if (islink) break :blk Entry.Kind.sym_link;
                         if (isdir) break :blk Entry.Kind.directory;
                         break :blk Entry.Kind.file;

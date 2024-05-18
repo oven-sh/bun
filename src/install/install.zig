@@ -7028,7 +7028,7 @@ pub const PackageManager = struct {
 
                 while (true) {
                     const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
-                    var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                    var buf2: bun.PathBuffer = undefined;
                     @memcpy(buf2[0..this_cwd_without_trailing_slash.len], this_cwd_without_trailing_slash);
                     buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
                     buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
@@ -7088,7 +7088,7 @@ pub const PackageManager = struct {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
-                        var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                        var buf2: bun.PathBuffer = undefined;
                         @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
                         buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
                         buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;

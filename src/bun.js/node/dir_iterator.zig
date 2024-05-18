@@ -176,7 +176,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     return .{
                         .result = IteratorResult{
                             .name = PathString.init(name),
-                            .path = PathString.init(self.basename.byteSlice()),
                             .kind = entry_kind,
                         },
                     };
@@ -316,7 +315,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         return .{
                             .result = IteratorResultW{
                                 .kind = kind,
-                                .path = self.basename,
                                 .name = .{ .data = name_utf16le },
                             },
                         };
@@ -328,7 +326,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     return .{
                         .result = IteratorResult{
                             .name = PathString.init(name_utf8),
-                            .path = PathString.init(self.basename.byteSlice()),
                             .kind = kind,
                         },
                     };

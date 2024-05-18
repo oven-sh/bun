@@ -771,10 +771,10 @@ const PatchLinesParser = struct {
         const end = brk: {
             var iter = std.mem.splitBackwardsScalar(u8, file_, '\n');
             var prev: usize = file_.len;
-            while (iter.next()) |last_line| {
+            if (iter.next()) |last_line| {
                 if (last_line.len == 0) {
                     prev = iter.index.?;
-                } else break;
+                }
             }
             break :brk prev;
         };

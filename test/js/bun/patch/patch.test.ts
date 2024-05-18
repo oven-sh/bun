@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, it } from "bun:test";
 import { patchInternals } from "bun:internal-for-testing";
 const { parse } = patchInternals;
 
@@ -66,7 +66,6 @@ describe("parse", () => {
   });
 
   test(`can handle files with CRLF line breaks`, () => {
-    console.log(parse(crlfLineBreaks));
     expect(JSON.parse(parse(crlfLineBreaks))).toEqual({
       "parts": {
         "items": [
@@ -95,11 +94,214 @@ describe("parse", () => {
       },
     });
   });
+
+  test("works", () => {
+    expect(JSON.parse(parse(modeChangeAndModifyAndRename))).toEqual({
+      "parts": {
+        "items": [
+          { "file_rename": { "from_path": "numbers.txt", "to_path": "banana.txt" } },
+          { "file_mode_change": { "path": "banana.txt", "old_mode": "non_executable", "new_mode": "executable" } },
+          {
+            "file_patch": {
+              "path": "banana.txt",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 1, "len": 4 }, "patched": { "start": 1, "len": 4 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "deletion",
+                          "lines": { "items": ["one"], "capacity": 8 },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": { "items": ["ne"], "capacity": 8 },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "context",
+                          "lines": { "items": ["", "two", ""], "capacity": 8 },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                      "capacity": 8,
+                    },
+                  },
+                ],
+                "capacity": 8,
+              },
+              "before_hash": "fbf1785",
+              "after_hash": "92d2c5f",
+            },
+          },
+        ],
+        "capacity": 8,
+      },
+    });
+  });
+
+  test("parses old-style patches", () => {
+    expect(JSON.parse(parse(oldStylePatch))).toEqual({
+      "parts": {
+        "items": [
+          {
+            "file_patch": {
+              "path": "node_modules/graphql/utilities/assertValidName.js",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 41, "len": 10 }, "patched": { "start": 41, "len": 11 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "context",
+                          "lines": {
+                            "items": [
+                              " */",
+                              "function isValidNameError(name, node) {",
+                              "  !(typeof name === 'string') ? (0, _invariant2.default)(0, 'Expected string') : void 0;",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "deletion",
+                          "lines": {
+                            "items": [
+                              "  if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
+                              "    return new _GraphQLError.GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
+                              "  }",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": {
+                            "items": [
+                              "  // if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
+                              "  //   return new _GraphQLError.GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
+                              "  // }",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "context",
+                          "lines": {
+                            "items": [
+                              "  if (!NAME_RX.test(name)) {",
+                              "    return new _GraphQLError.GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"' + name + '\" does not.', node);",
+                              "  }",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": { "items": [""], "capacity": 8 },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "context",
+                          "lines": { "items": ["}"], "capacity": 8 },
+                          "no_newline_at_end_of_file": true,
+                        },
+                      ],
+                      "capacity": 8,
+                    },
+                  },
+                ],
+                "capacity": 8,
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+          {
+            "file_patch": {
+              "path": "node_modules/graphql/utilities/assertValidName.mjs",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 29, "len": 9 }, "patched": { "start": 29, "len": 9 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "context",
+                          "lines": {
+                            "items": [
+                              " */",
+                              "export function isValidNameError(name, node) {",
+                              "  !(typeof name === 'string') ? invariant(0, 'Expected string') : void 0;",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "deletion",
+                          "lines": {
+                            "items": [
+                              "  if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
+                              "    return new GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
+                              "  }",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": {
+                            "items": [
+                              "  // if (name.length > 1 && name[0] === '_' && name[1] === '_') {",
+                              "  //   return new GraphQLError('Name \"' + name + '\" must not begin with \"__\", which is reserved by ' + 'GraphQL introspection.', node);",
+                              "  // }",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "context",
+                          "lines": {
+                            "items": [
+                              "  if (!NAME_RX.test(name)) {",
+                              "    return new GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but \"' + name + '\" does not.', node);",
+                              "  }",
+                            ],
+                            "capacity": 8,
+                          },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                      "capacity": 8,
+                    },
+                  },
+                ],
+                "capacity": 8,
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+        ],
+        "capacity": 8,
+      },
+    });
+  });
 });
 
 const patch = `diff --git a/banana.ts b/banana.ts\nindex 2de83dd..842652c 100644\n--- a/banana.ts\n+++ b/banana.ts\n@@ -1,5 +1,5 @@\n this\n is\n \n-a\n+\n file\n`;
 
-const invalidHeaders1 = `diff --git a/banana.ts b/banana.ts
+const invalidHeaders1 = /* diff */ `diff --git a/banana.ts b/banana.ts
 index 2de83dd..842652c 100644
 --- a/banana.ts
 +++ b/banana.ts
@@ -112,7 +314,7 @@ index 2de83dd..842652c 100644
  file
 `;
 
-const invalidHeaders2 = `diff --git a/banana.ts b/banana.ts
+const invalidHeaders2 = /* diff */ `diff --git a/banana.ts b/banana.ts
 index 2de83dd..842652c 100644
 --- a/banana.ts
 +++ b/banana.ts
@@ -125,7 +327,7 @@ index 2de83dd..842652c 100644
  file
 `;
 
-const invalidHeaders3 = `diff --git a/banana.ts b/banana.ts
+const invalidHeaders3 = /* diff */ `diff --git a/banana.ts b/banana.ts
 index 2de83dd..842652c 100644
 --- a/banana.ts
 +++ b/banana.ts
@@ -137,7 +339,7 @@ index 2de83dd..842652c 100644
 +
  file
 `;
-const invalidHeaders4 = `diff --git a/banana.ts b/banana.ts
+const invalidHeaders4 = /* diff */ `diff --git a/banana.ts b/banana.ts
 index 2de83dd..842652c 100644
 --- a/banana.ts
 +++ b/banana.ts
@@ -150,7 +352,7 @@ index 2de83dd..842652c 100644
  file
 `;
 
-const invalidHeaders5 = `diff --git a/banana.ts b/banana.ts
+const invalidHeaders5 = /* diff */ `diff --git a/banana.ts b/banana.ts
 index 2de83dd..842652c 100644
 --- a/banana.ts
 +++ b/banana.ts
@@ -163,7 +365,7 @@ index 2de83dd..842652c 100644
  file
 `;
 
-const accidentalBlankLine = `diff --git a/banana.ts b/banana.ts
+const accidentalBlankLine = /* diff */ `diff --git a/banana.ts b/banana.ts
 index 2de83dd..842652c 100644
 --- a/banana.ts
 +++ b/banana.ts
@@ -176,7 +378,7 @@ index 2de83dd..842652c 100644
  file
 `;
 
-const crlfLineBreaks = `diff --git a/banana.ts b/banana.ts
+const crlfLineBreaks = /* diff */ `diff --git a/banana.ts b/banana.ts
 new file mode 100644
 index 0000000..3e1267f
 --- /dev/null
@@ -184,3 +386,56 @@ index 0000000..3e1267f
 @@ -0,0 +1 @@
 +this is a new file
 `.replace(/\n/g, "\r\n");
+
+const modeChangeAndModifyAndRename = /* diff */ `diff --git a/numbers.txt b/banana.txt
+old mode 100644
+new mode 100755
+similarity index 96%
+rename from numbers.txt
+rename to banana.txt
+index fbf1785..92d2c5f
+--- a/numbers.txt
++++ b/banana.txt
+@@ -1,4 +1,4 @@
+-one
++ne
+
+ two
+
+`;
+
+const oldStylePatch = /* diff */ `patch-package
+--- a/node_modules/graphql/utilities/assertValidName.js
++++ b/node_modules/graphql/utilities/assertValidName.js
+@@ -41,10 +41,11 @@ function assertValidName(name) {
+  */
+ function isValidNameError(name, node) {
+   !(typeof name === 'string') ? (0, _invariant2.default)(0, 'Expected string') : void 0;
+-  if (name.length > 1 && name[0] === '_' && name[1] === '_') {
+-    return new _GraphQLError.GraphQLError('Name "' + name + '" must not begin with "__", which is reserved by ' + 'GraphQL introspection.', node);
+-  }
++  // if (name.length > 1 && name[0] === '_' && name[1] === '_') {
++  //   return new _GraphQLError.GraphQLError('Name "' + name + '" must not begin with "__", which is reserved by ' + 'GraphQL introspection.', node);
++  // }
+   if (!NAME_RX.test(name)) {
+     return new _GraphQLError.GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but "' + name + '" does not.', node);
+   }
++
+ }
+\\ No newline at end of file
+--- a/node_modules/graphql/utilities/assertValidName.mjs
++++ b/node_modules/graphql/utilities/assertValidName.mjs
+@@ -29,9 +29,9 @@ export function assertValidName(name) {
+  */
+ export function isValidNameError(name, node) {
+   !(typeof name === 'string') ? invariant(0, 'Expected string') : void 0;
+-  if (name.length > 1 && name[0] === '_' && name[1] === '_') {
+-    return new GraphQLError('Name "' + name + '" must not begin with "__", which is reserved by ' + 'GraphQL introspection.', node);
+-  }
++  // if (name.length > 1 && name[0] === '_' && name[1] === '_') {
++  //   return new GraphQLError('Name "' + name + '" must not begin with "__", which is reserved by ' + 'GraphQL introspection.', node);
++  // }
+   if (!NAME_RX.test(name)) {
+     return new GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but "' + name + '" does not.', node);
+   }
+`;

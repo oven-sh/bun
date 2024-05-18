@@ -8,6 +8,7 @@ import fs, {
   existsSync,
   mkdirSync,
   openSync,
+  readdir,
   readdirSync,
   readFile,
   readFileSync,
@@ -2215,7 +2216,7 @@ describe("fs/promises", () => {
     const [bun, subprocess] = await Promise.all([
       (async function () {
         console.time("readdir(path, {recursive: true})");
-        const files = await promises.readdir(full, { recursive: true });
+        const files = readdirSync(full, { recursive: true });
         files.sort();
         console.timeEnd("readdir(path, {recursive: true})");
         return files;
@@ -3059,3 +3060,25 @@ it("promises.fdatasync with a bad fd should include that in the error thrown", a
   }
   expect.unreachable();
 });
+
+it("readdirSync should not crash on symlink loops", () => {
+  // prettier-ignore
+  expect(readdirSync(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true }).length).toBe(symlink_fixture_depth());
+});
+
+it("readdir should not crash on symlink loops", async () => {
+  // prettier-ignore
+  expect((await promisify(readdir)(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(symlink_fixture_depth());
+});
+
+it("promises.readdir should not crash on symlink loops", async () => {
+  // prettier-ignore
+  expect((await _promises.readdir(join(import.meta.dirname, "./fixtures/readdir-loop"), { recursive: true })).length).toBe(symlink_fixture_depth());
+});
+
+function symlink_fixture_depth() {
+  if (process.platform === "darwin") return 166;
+  if (process.platform === "linux") return 206;
+  if (process.platform === "win32") return 6;
+  throw new Error(`test unimplemented for '${process.platform}'`);
+}

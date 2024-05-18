@@ -7044,10 +7044,6 @@ it("should handle installing packages inside workspaces with difference versions
     expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       `+ package1@workspace:packages/package1`,
-      `+ package2@workspace:packages/package2`,
-      `+ package3@workspace:packages/package3`,
-      `+ package4@workspace:packages/package4`,
-      `+ package5@workspace:packages/package5`,
       "",
       "5 packages installed",
     ]);
@@ -7098,13 +7094,8 @@ it("should handle installing packages inside workspaces with difference versions
     expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       `+ package1@workspace:packages/package1`,
-      `+ package2@workspace:packages/package2`,
-      `+ package3@workspace:packages/package3`,
-      `+ package4@workspace:packages/package4`,
-      `+ package5@workspace:packages/package5`,
-      "+ bar@0.0.2",
       "",
-      " 6 packages installed",
+      "6 packages installed",
     ]);
     expect(await exited2).toBe(0);
 
@@ -7148,13 +7139,8 @@ it("should handle installing packages inside workspaces with difference versions
     expect(out3.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       `+ package1@workspace:packages/package1`,
-      `+ package2@workspace:packages/package2`,
-      `+ package3@workspace:packages/package3`,
-      `+ package4@workspace:packages/package4`,
-      `+ package5@workspace:packages/package5`,
-      "+ bar@0.0.2",
       "",
-      " 6 packages installed",
+      "6 packages installed",
     ]);
     expect(await exited3).toBe(0);
 
@@ -7198,13 +7184,8 @@ it("should handle installing packages inside workspaces with difference versions
     expect(out4.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       `+ package1@workspace:packages/package1`,
-      `+ package2@workspace:packages/package2`,
-      `+ package3@workspace:packages/package3`,
-      `+ package4@workspace:packages/package4`,
-      `+ package5@workspace:packages/package5`,
-      "+ bar@0.0.2",
       "",
-      " 6 packages installed",
+      "6 packages installed",
     ]);
     expect(await exited4).toBe(0);
 
@@ -7253,9 +7234,8 @@ it("should handle installing packages inside workspaces with difference versions
       `+ package3@workspace:packages/package3`,
       `+ package4@workspace:packages/package4`,
       `+ package5@workspace:packages/package5`,
-      "+ bar@0.0.2",
       "",
-      " 6 packages installed",
+      "6 packages installed",
     ]);
     expect(await exited5).toBe(0);
 

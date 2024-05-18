@@ -86,7 +86,7 @@ test("dependency on workspace without version in package.json", async () => {
       "+ bar@workspace:packages/bar",
       "+ lodash@workspace:packages/mono",
       "",
-      " 2 packages installed",
+      "2 packages installed",
     ]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -115,7 +115,7 @@ test("dependency on workspace without version in package.json", async () => {
       "+ bar@workspace:packages/bar",
       "+ lodash@workspace:packages/mono",
       "",
-      " 3 packages installed",
+      "3 packages installed",
     ]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });

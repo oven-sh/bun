@@ -5967,7 +5967,7 @@ describe("yarn tests", () => {
       "+ y@workspace:packages/y",
       "+ z@workspace:packages/z",
       "",
-      " 7 packages installed",
+      "7 packages installed",
     ]);
     expect(await exited).toBe(0);
   });
@@ -6008,7 +6008,7 @@ describe("yarn tests", () => {
       "+ dragon-test-7-c@3.0.0",
       "+ dragon-test-7-d@1.0.0",
       "",
-      " 7 packages installed",
+      "7 packages installed",
     ]);
     expect(await exited).toBe(0);
 

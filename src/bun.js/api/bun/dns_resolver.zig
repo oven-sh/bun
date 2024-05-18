@@ -1325,6 +1325,7 @@ pub const InternalDNS = struct {
     };
 
     extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, req: *Request) void;
+    extern fn us_internal_dns_callback_threadsafe(socket: *bun.uws.ConnectingSocket, req: *Request) void;
 
     fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
         // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
@@ -1336,7 +1337,7 @@ pub const InternalDNS = struct {
             .err = err,
         };
         for (req.notify.items) |socket| {
-            us_internal_dns_callback(socket, req);
+            us_internal_dns_callback_threadsafe(socket, req);
         }
         req.notify.clearAndFree(bun.default_allocator);
     }

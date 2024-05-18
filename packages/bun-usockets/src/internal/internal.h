@@ -127,6 +127,7 @@ void us_internal_socket_context_unlink_socket(
     struct us_socket_context_t *context, struct us_socket_t *s);
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
+int us_internal_handle_dns_results(struct us_loop_t *loop);
 
 /* Sockets are polls */
 struct us_socket_t {

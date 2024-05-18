@@ -172,7 +172,27 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     }
 }
 
-static void drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
+// Called when DNS resolution completes
+// Does not wake up the loop.
+void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    struct us_loop_t *loop = c->context->loop;
+    Bun__lock(&loop->data.mutex);
+    c->addrinfo_req = addrinfo_req;
+    c->next = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = c;
+    Bun__unlock(&loop->data.mutex);
+}
+
+// Called when DNS resolution completes
+// Wakes up the loop.
+// Can be caleld from any thread.
+void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    struct us_loop_t *loop = c->context->loop;
+    us_internal_dns_callback(c, addrinfo_req);
+    us_wakeup_loop(loop);
+}
+
+void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
     while (s) {
         struct us_connecting_socket_t *next = s->next;
         us_internal_socket_after_resolve(s);
@@ -180,9 +200,10 @@ static void drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecti
     }
 }
 
-void us_internal_handle_dns_results(struct us_loop_t *loop) {
+int us_internal_handle_dns_results(struct us_loop_t *loop) {
     struct us_connecting_socket_t *s = __atomic_exchange_n(&loop->data.dns_ready_head, NULL, __ATOMIC_ACQ_REL);
-    drain_pending_dns_resolve(loop, s);
+    us_internal_drain_pending_dns_resolve(loop, s);
+    return s != NULL;
 }
 
 /* Note: Properly takes the linked list and timeout sweep into account */
@@ -221,6 +242,7 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
 /* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
+    us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
 }

@@ -423,20 +423,6 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     s->connect_state = c;
 }
 
-// called asynchronously when DNS resolution completes
-void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
-    c->addrinfo_req = addrinfo_req;
-    struct us_loop_t *loop = c->context->loop;
-    // this lock/unlock should probably be moved outside the loop in dns_resolver.zig
-    // or we could use a concurrent datastructure for the dns_ready_head
-    // PROBLEM: there could be multiple loops that are waiting for DNS resolution
-    Bun__lock(&loop->data.mutex);
-    c->next = loop->data.dns_ready_head;
-    loop->data.dns_ready_head = c;
-    Bun__unlock(&loop->data.mutex);
-    us_wakeup_loop(loop);
-}
-
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {

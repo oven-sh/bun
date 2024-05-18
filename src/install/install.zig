@@ -3935,11 +3935,17 @@ pub const PackageManager = struct {
                 var buf2: bun.PathBuffer = undefined;
                 const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
                     break :blk Path.joinAbsStringBuf(
-                        strings.withoutSuffixComptime(this.original_package_json_path, "package.json"),
+                        FileSystem.instance.top_level_dir,
                         &buf2,
-                        &[_]string{folder_path},
+                        &.{folder_path},
                         .auto,
                     );
+                    // break :blk Path.joinAbsStringBuf(
+                    //     strings.withoutSuffixComptime(this.original_package_json_path, "package.json"),
+                    //     &buf2,
+                    //     &[_]string{folder_path},
+                    //     .auto,
+                    // );
                 };
                 const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
 
@@ -5471,7 +5477,7 @@ pub const PackageManager = struct {
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
-                        Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
+                        Output.prettyError("\n<d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
 
@@ -5611,7 +5617,7 @@ pub const PackageManager = struct {
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
-                        Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
+                        Output.prettyError("<d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
 
@@ -7430,10 +7436,9 @@ pub const PackageManager = struct {
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         const top_level_dir_no_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
-        var original_package_json_path = allocator.alloc(u8, top_level_dir_no_trailing_slash.len + "/package.json".len + 1) catch bun.outOfMemory();
+        var original_package_json_path = allocator.allocSentinel(u8, top_level_dir_no_trailing_slash.len + "/package.json".len, 0) catch bun.outOfMemory();
         @memcpy(original_package_json_path[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
         @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
-        original_package_json_path[top_level_dir_no_trailing_slash.len + "/package.json".len] = 0;
 
         manager.* = PackageManager{
             .options = .{
@@ -10804,7 +10809,7 @@ pub const PackageManager = struct {
             if (comptime log_level.showProgress()) {
                 manager.startProgressBar();
             } else if (comptime log_level != .silent) {
-                Output.prettyErrorln(" Resolving dependencies", .{});
+                Output.prettyErrorln("Resolving dependencies", .{});
                 Output.flush();
             }
 
@@ -10884,7 +10889,7 @@ pub const PackageManager = struct {
             if (comptime log_level.showProgress()) {
                 manager.endProgressBar();
             } else if (comptime log_level != .silent) {
-                Output.prettyErrorln(" Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
+                Output.prettyErrorln("Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
                 Output.flush();
             }
         }

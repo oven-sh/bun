@@ -1169,6 +1169,7 @@ pub const GlobalData = struct {
 };
 
 pub const InternalDNS = struct {
+    const log = Output.scoped(.dns, true);
     pub const Request = struct {
         const Key = struct {
             host: ?[:0]const u8,
@@ -1458,25 +1459,27 @@ pub const InternalDNS = struct {
         global_cache.lock.lock();
         getaddrinfo_calls += 1;
         // is there a cache hit?
-        if (global_cache.get(key)) |entry| {
-            if (entry.result != null) {
-                // result is already available, we can notify the socket immediately
-                entry.refcount += 1;
-                dns_cache_hits_completed += 1;
-                global_cache.lock.unlock();
-                us_internal_dns_callback(socket, entry);
-                return;
-            } else {
-                // add this socket to the list of sockets to be notified when the request is resolved
-                entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
-                entry.refcount += 1;
-                dns_cache_hits_inflight += 1;
-                global_cache.lock.unlock();
-                return;
+        if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE")) {
+            if (global_cache.get(key)) |entry| {
+                if (entry.result != null) {
+                    log("getaddrinfo({s}:{d}) = cache hit", .{ host orelse "", port });
+                    // result is already available, we can notify the socket immediately
+                    entry.refcount += 1;
+                    dns_cache_hits_completed += 1;
+                    global_cache.lock.unlock();
+                    us_internal_dns_callback(socket, entry);
+                    return;
+                } else {
+                    log("getaddrinfo({s}:{d}) = cache hit (inflight)", .{ host orelse "", port });
+                    // add this socket to the list of sockets to be notified when the request is resolved
+                    entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+                    entry.refcount += 1;
+                    dns_cache_hits_inflight += 1;
+                    global_cache.lock.unlock();
+                    return;
+                }
             }
         }
-
-        // std.debug.print("cache miss for {s}\n", .{host});
 
         // no cache hit, we have to make a new request
 
@@ -1493,13 +1496,15 @@ pub const InternalDNS = struct {
 
         // doesn't work yet
         if (comptime Environment.isMac) {
-            if (!bun.getRuntimeFeatureFlag("BUN_NO_LIBINFO")) {
+            if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO")) {
                 const res = lookupLibinfo(req, socket);
+                log("getaddrinfo({s}:{d}) = cache miss (libinfo)", .{ host orelse "", port });
                 if (res) return;
                 // if we were not able to use libinfo, we fall back to the work pool
             }
         }
 
+        log("getaddrinfo({s}:{d}) = cache miss (libc)", .{ host orelse "", port });
         // schedule the request to be executed on the work pool
         bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
     }
@@ -1513,8 +1518,9 @@ pub const InternalDNS = struct {
 
         req.refcount -= 1;
         if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
-            req.deinit();
+            log("cache --", .{});
             global_cache.remove(req);
+            req.deinit();
         }
     }
 

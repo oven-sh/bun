@@ -41,24 +41,227 @@ const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<
 };
 
 describe("apply", () => {
-  test("simple insertion", async () => {
-    const afile = `hello!\n`;
-    const bfile = `hello!\nwassup?\n`;
+  describe("deletion", () => {
+    test("simple", async () => {
+      const files = {
+        "a/hey.txt": "hello!",
+        "a/byebye.txt": "goodbye :(",
+        "b/hey.txt": "hello!",
+      };
+      const tempdir = tempDirWithFiles("patch-test", files);
 
-    const tempdir = tempDirWithFiles("patch-test", {
-      "a/hello.txt": afile,
-      "b/hello.txt": bfile,
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hey.txt")}`.cwd(tempdir).text()).toBe(files["b/hey.txt"]);
+      expect(
+        await $`if ls -d ${join(afolder, "byebye.txt")}; then echo oops; else echo okay!; fi;`.cwd(tempdir).text(),
+      ).toBe("okay!\n");
+    });
+  });
+
+  describe("patch", () => {
+    test("simple insertion", async () => {
+      const afile = `hello!\n`;
+      const bfile = `hello!\nwassup?\n`;
+
+      const tempdir = tempDirWithFiles("patch-test", {
+        "a/hello.txt": afile,
+        "b/hello.txt": bfile,
+      });
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
     });
 
-    const afolder = join(tempdir, "a");
-    const bfolder = join(tempdir, "b");
+    test("simple deletion", async () => {
+      const afile = `hello!\nwassup?\n`;
+      const bfile = `hello!\n`;
 
-    const patchfile = await makeDiff(afolder, bfolder, tempdir);
+      const tempdir = tempDirWithFiles("patch-test", {
+        "a/hello.txt": afile,
+        "b/hello.txt": bfile,
+      });
 
-    console.log("A FOLDER", afolder);
-    await apply(patchfile, afolder);
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
 
-    expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
+
+    test("multi insertion", async () => {
+      const afile = `hello!\n`;
+      const bfile = `lol\nhello!\nwassup?\n`;
+
+      const tempdir = tempDirWithFiles("patch-test", {
+        "a/hello.txt": afile,
+        "b/hello.txt": bfile,
+      });
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
+
+    test("multi deletion", async () => {
+      const afile = `hello!\nwassup?\nlmao\n`;
+      const bfile = `wassup?\n`;
+
+      const tempdir = tempDirWithFiles("patch-test", {
+        "a/hello.txt": afile,
+        "b/hello.txt": bfile,
+      });
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
+
+    test("multi-hunk insertion", async () => {
+      const afile = `0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20`;
+      const bfile = `0
+0.5 hi
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+19.5 lol hi
+20`;
+
+      const tempdir = tempDirWithFiles("patch-test", {
+        "a/hello.txt": afile,
+        "b/hello.txt": bfile,
+      });
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
+
+    test("multi-hunk deletion", async () => {
+      const bfile = `0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20`;
+      const afile = `0
+0.5 hi
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+19.5 lol hi
+20`;
+
+      const tempdir = tempDirWithFiles("patch-test", {
+        "a/hello.txt": afile,
+        "b/hello.txt": bfile,
+      });
+
+      const afolder = join(tempdir, "a");
+      const bfolder = join(tempdir, "b");
+
+      const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
   });
 });
 

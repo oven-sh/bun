@@ -192,10 +192,9 @@ pub const PatchFile = struct {
 
         var file_line_count: usize = 0;
         const lines_count = brk: {
-            var count: usize = 1;
-            for (filebuf) |c| if (c == '\n') {
-                count += 1;
-            };
+            var count: usize = 0;
+            var iter = std.mem.splitScalar(u8, filebuf, '\n');
+            while (iter.next()) |_| : (count += 1) {}
             file_line_count = count;
 
             // Adjust to account for the changes
@@ -226,12 +225,9 @@ pub const PatchFile = struct {
             var iter = std.mem.splitScalar(u8, filebuf, '\n');
             var i: usize = 0;
             while (iter.next()) |line| : (i += 1) {
-                if (i >= lines_count) {
-                    // TODO: return error
-                    @panic("line count mismatch");
-                }
                 lines.append(bun.default_allocator, line) catch bun.outOfMemory();
             }
+            bun.debugAssert(i == file_line_count);
         }
 
         for (patch.hunks.items) |*hunk| {

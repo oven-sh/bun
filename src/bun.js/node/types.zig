@@ -1824,9 +1824,13 @@ pub const Dirent = struct {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 
-    pub fn finalize(this: *Dirent) callconv(.C) void {
+    pub fn deref(this: *const Dirent) void {
         this.name.deref();
         this.path.deref();
+    }
+
+    pub fn finalize(this: *Dirent) callconv(.C) void {
+        this.deref();
         bun.destroy(this);
     }
 };

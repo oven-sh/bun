@@ -6,6 +6,9 @@ const List = std.ArrayListUnmanaged;
 
 const WHITESPACE: []const u8 = " \t\n\r";
 
+// TODO: calculate this for different systems
+const PAGE_SIZE = 16384;
+
 /// All strings point to the original patch file text
 pub const PatchFilePart = union(enum) {
     file_patch: *FilePatch,
@@ -28,54 +31,54 @@ pub const PatchFilePart = union(enum) {
 pub const PatchFile = struct {
     parts: List(PatchFilePart) = .{},
 
+    const ScratchBuffer = struct {
+        buf: std.ArrayList(u8),
+
+        fn deinit(scratch: *@This()) void {
+            scratch.buf.deinit();
+        }
+
+        fn clear(scratch: *@This()) void {
+            scratch.buf.clearRetainingCapacity();
+        }
+
+        fn dupeZ(scratch: *@This(), path: []const u8) [:0]const u8 {
+            const start = scratch.buf.items.len;
+            scratch.buf.appendSlice(path) catch unreachable;
+            scratch.buf.append(0) catch unreachable;
+            return scratch.buf.items[start .. start + path.len :0];
+        }
+    };
+
     pub fn deinit(this: *PatchFile, allocator: Allocator) void {
         for (this.parts.items) |*part| part.deinit(allocator);
         this.parts.deinit(allocator);
     }
 
     pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?JSC.SystemError {
-        const ScratchBuffer = struct {
-            buf: std.ArrayList(u8),
-
-            fn deinit(scratch: *@This()) void {
-                scratch.buf.deinit();
-            }
-
-            fn clear(scratch: *@This()) void {
-                scratch.buf.clearRetainingCapacity();
-            }
-
-            fn dupeZ(scratch: *@This(), path: []const u8) [:0]const u8 {
-                const start = scratch.buf.items.len;
-                scratch.buf.appendSlice(path) catch unreachable;
-                scratch.buf.append(0) catch unreachable;
-                return scratch.buf.items[start .. start + path.len :0];
-            }
-        };
         var sfb = std.heap.stackFallback(1024, allocator);
-        var scratch_buf = ScratchBuffer{ .buf = std.ArrayList(u8).init(sfb.get()) };
-        defer scratch_buf.deinit();
+        var arena = bun.ArenaAllocator.init(sfb.get());
 
         for (this.parts.items) |*part| {
-            defer scratch_buf.clear();
+            defer _ = arena.reset(.retain_capacity);
             switch (part.*) {
                 .file_deletion => {
-                    const pathz = scratch_buf.dupeZ(part.file_deletion.path);
+                    const pathz = arena.allocator().dupeZ(u8, part.file_deletion.path) catch bun.outOfMemory();
 
                     if (bun.sys.unlinkat(patch_dir, pathz).asErr()) |e| {
                         return e.withPath(pathz).toSystemError();
                     }
                 },
                 .file_rename => {
-                    const from_path = scratch_buf.dupeZ(part.file_rename.from_path);
-                    const to_path = scratch_buf.dupeZ(part.file_rename.to_path);
+                    const from_path = arena.allocator().dupeZ(u8, part.file_rename.from_path) catch bun.outOfMemory();
+                    const to_path = arena.allocator().dupeZ(u8, part.file_rename.to_path) catch bun.outOfMemory();
 
                     if (bun.sys.renameat(patch_dir, from_path, patch_dir, to_path).asErr()) |e| {
                         return e.toSystemError();
                     }
                 },
                 .file_creation => {
-                    const filepath = bun.PathString.init(scratch_buf.dupeZ(part.file_creation.path));
+                    const filepath = bun.PathString.init(arena.allocator().dupeZ(u8, part.file_creation.path) catch bun.outOfMemory());
                     const filedir = bun.path.dirname(filepath.slice(), .auto);
                     const mode = part.file_creation.mode;
 
@@ -89,7 +92,7 @@ pub const PatchFile = struct {
                     const newfile_fd = switch (bun.sys.openat(
                         patch_dir,
                         filepath.sliceAssumeZ(),
-                        std.os.O.CREAT | std.os.O.RDWR,
+                        std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
                         mode.toBunMode(),
                     )) {
                         .result => |fd| fd,
@@ -101,16 +104,19 @@ pub const PatchFile = struct {
                         continue;
                     };
 
+                    const count = count: {
+                        var total: usize = 0;
+                        for (hunk.parts.items[0].lines.items) |line| {
+                            total += line.len;
+                        }
+                        break :count total;
+                    };
+
+                    const file_alloc = if (count <= PAGE_SIZE) arena.allocator() else bun.default_allocator;
+
+                    // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
                     const file_contents = brk: {
-                        const count = count: {
-                            var total: usize = 0;
-                            for (hunk.parts.items[0].lines.items) |line| {
-                                total += line.len;
-                            }
-                            break :count total;
-                        };
-                        scratch_buf.buf.ensureTotalCapacity(count) catch unreachable;
-                        var contents = scratch_buf.buf.items[0..count];
+                        var contents = file_alloc.alloc(u8, count) catch bun.outOfMemory();
                         var i: usize = 0;
                         for (hunk.parts.items[0].lines.items) |line| {
                             @memcpy(contents[i .. i + line.len], line);
@@ -118,10 +124,11 @@ pub const PatchFile = struct {
                         }
                         break :brk contents;
                     };
+                    defer file_alloc.free(file_contents);
 
                     var written: usize = 0;
                     while (written < file_contents.len) {
-                        switch (bun.sys.write(newfile_fd, file_contents)) {
+                        switch (bun.sys.write(newfile_fd, file_contents[written..])) {
                             .result => |bytes| written += bytes,
                             .err => |e| return e.withPath(filepath.slice()).toSystemError(),
                         }
@@ -129,11 +136,13 @@ pub const PatchFile = struct {
                 },
                 .file_patch => {
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    applyPatch(part.file_patch) catch bun.outOfMemory();
+                    if (applyPatch(part.file_patch, &arena, patch_dir).asErr()) |e| {
+                        return e.toSystemError();
+                    }
                 },
                 .file_mode_change => {
                     const newmode = part.file_mode_change.new_mode;
-                    const filepath = scratch_buf.dupeZ(part.file_mode_change.path);
+                    const filepath = arena.allocator().dupeZ(u8, part.file_mode_change.path) catch bun.outOfMemory();
                     if (bun.sys.fchmodat(patch_dir, filepath, newmode.toBunMode(), 0).asErr()) |e| {
                         return e.toSystemError();
                     }
@@ -154,21 +163,33 @@ pub const PatchFile = struct {
     /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
     fn applyPatch(
         patch: *const FilePatch,
-    ) !void {
-        // TODO: calculate this for different targets
-        const PAGE_SIZE = 16384;
-        _ = PAGE_SIZE; // autofix
+        arena: *bun.ArenaAllocator,
+        patch_dir: bun.FileDescriptor,
+    ) JSC.Maybe(void) {
+        const file_path: [:0]const u8 = arena.allocator().dupeZ(u8, patch.path) catch bun.outOfMemory();
 
-        const file_path: []const u8 = patch.path;
+        // Need to get the mode of the original file
+        // And also get the size to read file into memory
+        const stat = switch (bun.sys.fstatat(patch_dir, file_path)) {
+            .err => |e| return .{ .err = e.withPath(file_path) },
+            .result => |stat| stat,
+        };
 
-        const stat = try std.os.fstatat(std.fs.cwd().fd, file_path, 0);
         // if (stat.size <= PAGE_SIZE) {
         //     // try applyPatchSmall(patch);
         //     @panic("wait");
         // }
 
-        const filebuf = try std.fs.cwd().readFileAlloc(bun.default_allocator, file_path, 1024 * 1024 * 1024 * 4);
-        defer bun.default_allocator.free(filebuf);
+        // Purposefully use `bun.default_allocator` here because if the file size is big like
+        // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
+        //
+        // But if the file size is small, like less than a single page, it's probably ok
+        // to use the arena
+        const use_arena: bool = stat.size <= PAGE_SIZE;
+        const file_alloc = if (use_arena) arena.allocator() else bun.default_allocator;
+        const filebuf = std.fs.cwd().readFileAlloc(file_alloc, file_path, 1024 * 1024 * 1024 * 4) catch |e| return .{ .err = bun.sys.Error.fromZigErr(e, .read).withPath(file_path) };
+        defer file_alloc.free(filebuf);
+
         var file_line_count: usize = 0;
         const lines_count = brk: {
             var count: usize = 1;
@@ -198,7 +219,8 @@ pub const PatchFile = struct {
             break :brk count;
         };
 
-        var lines = try std.ArrayListUnmanaged([]const u8).initCapacity(bun.default_allocator, lines_count);
+        // TODO: i hate this
+        var lines = std.ArrayListUnmanaged([]const u8).initCapacity(bun.default_allocator, lines_count) catch bun.outOfMemory();
         defer lines.deinit(bun.default_allocator);
         {
             var iter = std.mem.splitScalar(u8, filebuf, '\n');
@@ -208,7 +230,7 @@ pub const PatchFile = struct {
                     // TODO: return error
                     @panic("line count mismatch");
                 }
-                try lines.append(bun.default_allocator, line);
+                lines.append(bun.default_allocator, line) catch bun.outOfMemory();
             }
         }
 
@@ -222,7 +244,7 @@ pub const PatchFile = struct {
                         line_cursor += @intCast(part.lines.items.len);
                     },
                     .insertion => {
-                        const lines_to_insert = try lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len);
+                        const lines_to_insert = lines.addManyAt(bun.default_allocator, line_cursor, part.lines.items.len) catch bun.outOfMemory();
                         @memcpy(lines_to_insert, part.lines.items);
                         line_cursor += @intCast(part.lines.items.len);
                         if (part.no_newline_at_end_of_file) {
@@ -231,9 +253,9 @@ pub const PatchFile = struct {
                     },
                     .deletion => {
                         // TODO: check if the lines match in the original file?
-                        try lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{});
+                        lines.replaceRange(bun.default_allocator, line_cursor, part.lines.items.len, &.{}) catch bun.outOfMemory();
                         if (part.no_newline_at_end_of_file) {
-                            try lines.append(bun.default_allocator, "\n");
+                            lines.append(bun.default_allocator, "\n") catch bun.outOfMemory();
                         }
                         // line_cursor -= part.lines.items.len;
                     },
@@ -241,10 +263,26 @@ pub const PatchFile = struct {
             }
         }
 
-        const contents = try std.mem.join(bun.default_allocator, "\n", lines.items);
+        const file_fd = switch (bun.sys.openat(patch_dir, file_path, std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC, 0)) {
+            .err => |e| return .{ .err = e.withPath(file_path) },
+            .result => |fd| fd,
+        };
+        defer {
+            _ = bun.sys.close(file_fd);
+        }
+
+        const contents = std.mem.join(bun.default_allocator, "\n", lines.items) catch bun.outOfMemory();
         defer bun.default_allocator.free(contents);
 
-        try std.fs.cwd().writeFile2(.{ .data = contents, .sub_path = file_path, .flags = .{ .mode = stat.mode } });
+        var written: usize = 0;
+        while (written < contents.len) {
+            written += switch (bun.sys.write(file_fd, contents[written..])) {
+                .result => |w| w,
+                .err => |e| return .{ .err = e.withPath(file_path) },
+            };
+        }
+
+        return JSC.Maybe(void).success;
     }
 
     fn applyPatch2(patch: *const FilePatch) !void {
@@ -1128,18 +1166,73 @@ pub const TestingAPIs = struct {
 };
 
 pub const JS = struct {
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    const ApplyArgs = struct {
+        patchfile_txt: []const u8,
+        patchfile: PatchFile,
+        dirfd: bun.FileDescriptor,
+
+        pub fn deinit(this: ApplyArgs) void {
+            bun.default_allocator.free(this.patchfile_txt);
+            this.patchfile.deinit(bun.default_allocator);
+            if (bun.FileDescriptor.cwd().int() != this.dirfd) {
+                _ = bun.sys.close(this.dirfd);
+            }
+        }
+    };
+
+    pub const PatchApplyTask = struct {
+        args: ApplyArgs,
+
+        globalThis: *JSC.JSGlobalObject,
+        err: ?JSC.SystemError = null,
+
+        pub const AsyncPatchApplyTask = JSC.ConcurrentPromiseTask(PatchApplyTask);
+
+        pub fn create(
+            globalThis: *JSC.JSGlobalObject,
+            args: ApplyArgs,
+        ) !*AsyncPatchApplyTask {
+            const task = bun.new(PatchApplyTask, PatchApplyTask{
+                .args = args,
+                .globalThis = globalThis,
+            });
+            return try AsyncPatchApplyTask.createOnJSThread(bun.default_allocator, globalThis, task);
+        }
+
+        pub fn run(this: *PatchApplyTask) void {
+            if (this.args.patchfile.apply(bun.default_allocator, this.args.dirfd)) |err| {
+                this.err = err;
+            }
+        }
+
+        pub fn then(this: *PatchApplyTask, promise: *JSC.JSPromise) void {
+            defer this.deinit();
+
+            if (this.err) |err| {
+                const errJs = err.toErrorInstance(this.globalThis);
+                promise.reject(this.global, errJs);
+                return;
+            }
+
+            promise.resolve(this.global, .true);
+        }
+
+        fn deinit(this: *PatchApplyTask) void {
+            this.args.deinit();
+            bun.destroy(this);
+        }
+    };
+
+    pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const patchfile_js = arguments.nextEat() orelse {
             globalThis.throw("apply: expected at least 1 argument, got 0", .{});
-            return .undefined;
+            return .{ .err = .undefined };
         };
 
-        var close_fd: bool = false;
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
-            close_fd = true;
             var bunstr = dir_js.toBunString(globalThis);
             defer bunstr.deref();
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
@@ -1148,27 +1241,56 @@ pub const JS = struct {
             break :brk switch (bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
                 .err => |e| {
                     globalThis.throwValue(e.withPath(path).toJSC(globalThis));
-                    return .undefined;
+                    return .{ .err = .undefined };
                 },
                 .result => |fd| fd,
             };
         } else bun.FileDescriptor.cwd();
-        defer if (close_fd) {
-            _ = bun.sys.close(dir_fd);
-        };
 
         const patchfile_bunstr = patchfile_js.toBunString(globalThis);
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
-        defer patchfile_src.deinit();
 
-        var patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
+        const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
+            if (bun.FileDescriptor.cwd().int() != dir_fd.int()) {
+                _ = bun.sys.close(dir_fd);
+            }
+            patchfile_src.deinit();
             globalThis.throwError(e, "failed to parse patchfile");
+            return .{ .err = .undefined };
+        };
+
+        return .{
+            .result = ApplyArgs{
+                .dirfd = dir_fd,
+                .patchfile = patch_file,
+                .patchfile_txt = patchfile_src.slice(),
+            },
+        };
+    }
+
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const args = switch (parseApplyArgs(globalThis, callframe)) {
+            .err => |e| return e,
+            .result => |a| a,
+        };
+
+        const task = PatchApplyTask.create(globalThis, args) catch |e| {
+            globalThis.throwError(e, "failed to create PatchApplyTask");
             return .undefined;
         };
-        defer patch_file.deinit(bun.default_allocator);
+        task.schedule();
+        return .true;
+    }
 
-        if (patch_file.apply(bun.default_allocator, dir_fd)) |err| {
+    pub fn applySync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var args = switch (parseApplyArgs(globalThis, callframe)) {
+            .err => |e| return e,
+            .result => |a| a,
+        };
+        defer args.deinit();
+
+        if (args.patchfile.apply(bun.default_allocator, args.dir_fd)) |err| {
             globalThis.throwValue(err.toErrorInstance(globalThis));
             return .undefined;
         }

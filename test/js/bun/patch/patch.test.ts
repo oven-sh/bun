@@ -1,6 +1,65 @@
+import { $ } from "bun";
 import { describe, test, expect, it } from "bun:test";
 import { patchInternals } from "bun:internal-for-testing";
+import { tempDirWithFiles } from "harness";
+import { join } from "node:path";
+import { apply } from "bun:patch";
 const { parse } = patchInternals;
+
+const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
+  const { stdout, stderr } =
+    await $`git -c core.safecrlf=false diff --src-prefix=a/ --dst-prefix=b/ --ignore-cr-at-eol --irreversible-delete --full-index --no-index ${aFolder} ${bFolder}`
+      .env(
+        // https://github.com/pnpm/pnpm/blob/45f4262f0369cadf41cea3b823e8932eae157c4b/patching/plugin-commands-patching/src/patchCommit.ts#L117
+        {
+          ...process.env,
+          // #region Predictable output
+          // These variables aim to ignore the global git config so we get predictable output
+          // https://git-scm.com/docs/git#Documentation/git.txt-codeGITCONFIGNOSYSTEMcode
+          GIT_CONFIG_NOSYSTEM: "1",
+          HOME: "",
+          XDG_CONFIG_HOME: "",
+          USERPROFILE: "",
+        },
+      )
+      .cwd(cwd)
+      // For some reason git diff returns exit code 1 when it is not an error
+      // So we must check that there is no stderr output instead of the exit code
+      // to determine if the command was successful
+      .throws(false);
+
+  if (stderr.length > 0) throw new Error(stderr.toString());
+
+  const patch = stdout.toString();
+
+  return patch
+    .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
+    .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
+    .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
+    .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "")
+    .replace(/\n\\ No newline at end of file\n$/, "\n");
+};
+
+describe("apply", () => {
+  test("simple insertion", async () => {
+    const afile = `hello!\n`;
+    const bfile = `hello!\nwassup?\n`;
+
+    const tempdir = tempDirWithFiles("patch-test", {
+      "a/hello.txt": afile,
+      "b/hello.txt": bfile,
+    });
+
+    const afolder = join(tempdir, "a");
+    const bfolder = join(tempdir, "b");
+
+    const patchfile = await makeDiff(afolder, bfolder, tempdir);
+
+    await apply(patchfile, afolder);
+
+    expect(await $`cat ${join(afolder, "hello.txt")}`.text()).toBe(bfile);
+  });
+});
 
 describe("parse", () => {
   test("works for a simple case", () => {
@@ -439,3 +498,19 @@ const oldStylePatch = /* diff */ `patch-package
      return new GraphQLError('Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but "' + name + '" does not.', node);
    }
 `;
+function escapeStringRegexp(string: string) {
+  if (typeof string !== "string") {
+    throw new TypeError("Expected a string");
+  }
+
+  // Escape characters with special meaning either inside or outside character sets.
+  // Use a simple backslash escape when it’s always valid, and a `\xnn` escape when the simpler form would be disallowed by Unicode patterns’ stricter grammar.
+  return string.replace(/[|\\{}()[\]^$+*?.]/g, "\\$&").replace(/-/g, "\\x2d");
+}
+
+function removeTrailingAndLeadingSlash(p: string): string {
+  if (p[0] === "/" || p.endsWith("/")) {
+    return p.replace(/^\/|\/$/g, "");
+  }
+  return p;
+}

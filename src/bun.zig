@@ -3219,7 +3219,7 @@ pub const dns = @import("./dns.zig");
 /// When you don't need a super accurate timestamp, this is a fast way to get one.
 ///
 /// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp
-pub fn getRoughTimestampMillis() u64 {
+pub fn getRoughTickCountMs() u64 {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
@@ -3227,8 +3227,8 @@ pub fn getRoughTimestampMillis() u64 {
             pub extern "C" fn clock_gettime_nsec_np(i32) u64;
         }.clock_gettime_nsec_np;
         // time.h
-        const CLOCK_MONOTONIC_RAW_APPROX = 5;
-        return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW_APPROX) *| std.time.ns_per_ms;
+        const CLOCK_UPTIME_RAW_APPROX = 9;
+        return clock_gettime_nsec_np(CLOCK_UPTIME_RAW_APPROX) *| std.time.ns_per_ms;
     }
 
     if (comptime Environment.isLinux) {

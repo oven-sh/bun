@@ -1271,7 +1271,7 @@ pub const TestRunnerTask = struct {
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
         } else {
-            jsc_vm.runErrorHandlerWithDedupe(rejection, null);
+            jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
         }
 
         if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
@@ -1321,6 +1321,7 @@ pub const TestRunnerTask = struct {
         }
 
         jsc_vm.onUnhandledRejectionCtx = this;
+        jsc_vm.onUnhandledRejection = onUnhandledRejection;
 
         if (this.needs_before_each) {
             this.needs_before_each = false;

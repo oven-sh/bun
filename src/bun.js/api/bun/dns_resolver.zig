@@ -1168,6 +1168,380 @@ pub const GlobalData = struct {
     }
 };
 
+pub const InternalDNS = struct {
+    const log = Output.scoped(.dns, true);
+    pub const Request = struct {
+        const Key = struct {
+            host: ?[:0]const u8,
+            port: u16,
+            hash: u64,
+
+            pub fn init(name: ?[:0]const u8, port: u16) @This() {
+                const hash = if (name) |n| brk: {
+                    var hasher = std.hash.Wyhash.init(0);
+                    hasher.update(n);
+                    const hash = hasher.final();
+                    break :brk hash;
+                } else 0;
+                return .{
+                    .host = name,
+                    .port = port,
+                    .hash = hash,
+                };
+            }
+
+            pub fn toOwned(this: @This()) @This() {
+                if (this.host) |host| {
+                    const host_copy = bun.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                    return .{
+                        .host = host_copy,
+                        .port = this.port,
+                        .hash = this.hash,
+                    };
+                } else {
+                    return this;
+                }
+            }
+        };
+
+        const Result = extern struct {
+            info: ?*std.c.addrinfo,
+            err: c_int,
+        };
+
+        pub const MacAsyncDNS = struct {
+            file_poll: ?*bun.Async.FilePoll = null,
+            machport: ?*anyopaque = null,
+
+            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            pub fn onMachportChange(this: *Request) void {
+                if (!getaddrinfo_send_reply(this.libinfo.machport.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
+                    libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
+                }
+            }
+        };
+
+        key: Key,
+        result: ?Result = null,
+
+        notify: std.ArrayListUnmanaged(*bun.uws.ConnectingSocket) = .{},
+        // number of sockets that have a reference to result or are waiting for the result
+        // while this is non-zero, this entry cannot be freed
+        refcount: usize = 0,
+        valid: bool = true,
+
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else {},
+
+        pub fn deinit(this: *@This()) void {
+            bun.assert(this.notify.items.len == 0);
+            if (this.result) |res| {
+                if (res.info) |info| {
+                    std.c.freeaddrinfo(info);
+                }
+            }
+            if (this.key.host) |host| {
+                bun.default_allocator.free(host);
+            }
+        }
+    };
+
+    const GlobalCache = struct {
+        const MAX_ENTRIES = 256;
+
+        lock: bun.Lock = bun.Lock.init(),
+        cache: [MAX_ENTRIES]*Request = undefined,
+        len: usize = 0,
+
+        const This = @This();
+
+        const CacheResult = union(enum) {
+            inflight: *Request,
+            resolved: *Request,
+            none,
+        };
+
+        fn get(
+            this: *This,
+            key: Request.Key,
+        ) ?*Request {
+            for (this.cache[0..this.len]) |entry| {
+                if (entry.key.hash == key.hash and entry.key.port == key.port and entry.valid) {
+                    return entry;
+                }
+            }
+            return null;
+        }
+
+        fn isNearlyFull(this: *This) bool {
+            // 80% full (value is kind of arbitrary)
+            return this.len * 5 >= this.cache.len * 4;
+        }
+
+        fn remove(this: *This, entry: *Request) void {
+            const len = this.len;
+            // equivalent of swapRemove
+            for (0..len) |i| {
+                if (this.cache[i] == entry) {
+                    this.cache[i] = this.cache[len - 1];
+                    this.len -= 1;
+                    dns_cache_size = len - 1;
+                    return;
+                }
+            }
+        }
+
+        fn tryPush(this: *This, entry: *Request) bool {
+            // is the cache full?
+            if (this.len >= this.cache.len) {
+                // check if there is an element to evict
+                for (this.cache[0..this.len]) |*e| {
+                    if (e.*.refcount == 0) {
+                        e.*.deinit();
+                        e.* = entry;
+                        return true;
+                    }
+                }
+                return false;
+            } else {
+                // just append to the end
+                this.cache[this.len] = entry;
+                this.len += 1;
+                return true;
+            }
+        }
+    };
+
+    var global_cache = GlobalCache{};
+
+    // we just hardcode a STREAM socktype
+    const hints: std.c.addrinfo = .{
+        .addr = null,
+        .addrlen = 0,
+        .canonname = null,
+        .family = std.c.AF.UNSPEC,
+        .flags = 0,
+        .next = null,
+        .protocol = 0,
+        .socktype = std.c.SOCK.STREAM,
+    };
+
+    extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, req: *Request) void;
+    extern fn us_internal_dns_callback_threadsafe(socket: *bun.uws.ConnectingSocket, req: *Request) void;
+
+    fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
+        // need to acquire the global cache lock to ensure that the notify list is not modified while we are iterating over it
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
+
+        req.result = .{
+            .info = info,
+            .err = err,
+        };
+        for (req.notify.items) |socket| {
+            us_internal_dns_callback_threadsafe(socket, req);
+        }
+        req.notify.clearAndFree(bun.default_allocator);
+    }
+
+    fn workPoolCallback(req: *Request) void {
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
+
+        if (Environment.isWindows) {
+            const wsa = std.os.windows.ws2_32;
+            const wsa_hints = wsa.addrinfo{
+                .flags = 0,
+                .family = wsa.AF.UNSPEC,
+                .socktype = wsa.SOCK.STREAM,
+                .protocol = 0,
+                .addrlen = 0,
+                .canonname = null,
+                .addr = null,
+                .next = null,
+            };
+
+            var addrinfo: ?*wsa.addrinfo = null;
+            const err = wsa.getaddrinfo(
+                if (req.key.host) |host| host.ptr else null,
+                if (port.len > 0) portZ.ptr else null,
+                &wsa_hints,
+                &addrinfo,
+            );
+            afterResult(req, @ptrCast(addrinfo), err);
+        } else {
+            var addrinfo: ?*std.c.addrinfo = null;
+            const err = std.c.getaddrinfo(
+                if (req.key.host) |host| host.ptr else null,
+                if (port.len > 0) portZ.ptr else null,
+                &hints,
+                &addrinfo,
+            );
+            afterResult(req, addrinfo, @intFromEnum(err));
+        }
+    }
+
+    pub fn lookupLibinfo(req: *Request, socket: *bun.uws.ConnectingSocket) bool {
+        const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
+        const loop = bun.uws.us_connecting_socket_get_loop(socket).internal_loop_data.getParent();
+
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
+
+        var machport: ?*anyopaque = null;
+        const errno = getaddrinfo_async_start_(
+            &machport,
+            if (req.key.host) |host| host.ptr else null,
+            if (port.len > 0) portZ.ptr else null,
+            &hints,
+            libinfoCallback,
+            req,
+        );
+
+        if (errno != 0 or machport == null) {
+            return false;
+        }
+
+        var poll = bun.Async.FilePoll.init(loop, bun.toFD(@intFromPtr(machport)), .{}, InternalDNSRequest, req);
+        const rc = poll.register(loop.loop(), .machport, true);
+
+        if (rc == .err) {
+            poll.deinit();
+            return false;
+        }
+
+        req.libinfo = .{
+            .file_poll = poll,
+            .machport = machport,
+        };
+
+        return true;
+    }
+
+    fn libinfoCallback(
+        status: i32,
+        addr_info: ?*std.c.addrinfo,
+        arg: ?*anyopaque,
+    ) callconv(.C) void {
+        const req = bun.cast(*Request, arg);
+        afterResult(req, addr_info, @intCast(status));
+    }
+
+    var dns_cache_hits_completed: usize = 0;
+    var dns_cache_hits_inflight: usize = 0;
+    var dns_cache_size: usize = 0;
+    var dns_cache_misses: usize = 0;
+    var dns_cache_errors: usize = 0;
+    var getaddrinfo_calls: usize = 0;
+
+    pub fn createDNSCacheStatsObject(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObject(globalObject, 7);
+        object.put(globalObject, JSC.ZigString.static("cache_hits_completed"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cache_hits_inflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("size"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cache_misses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("errors"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("getaddrinfo"), JSC.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .Monotonic)));
+        return object;
+    }
+
+    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.JSFunction.create(globalObject, "createDNSCacheStatsObject", createDNSCacheStatsObject, 0, .{});
+    }
+
+    fn getaddrinfo(_host: ?[*:0]const u8, port: u16, socket: *bun.uws.ConnectingSocket) callconv(.C) void {
+        const host: ?[:0]const u8 = std.mem.span(_host);
+        const key = Request.Key.init(host, port);
+
+        global_cache.lock.lock();
+        getaddrinfo_calls += 1;
+        // is there a cache hit?
+        if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE")) {
+            if (global_cache.get(key)) |entry| {
+                if (entry.result != null) {
+                    log("getaddrinfo({s}:{d}) = cache hit", .{ host orelse "", port });
+                    // result is already available, we can notify the socket immediately
+                    entry.refcount += 1;
+                    dns_cache_hits_completed += 1;
+                    global_cache.lock.unlock();
+                    us_internal_dns_callback(socket, entry);
+                    return;
+                } else {
+                    log("getaddrinfo({s}:{d}) = cache hit (inflight)", .{ host orelse "", port });
+                    // add this socket to the list of sockets to be notified when the request is resolved
+                    entry.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+                    entry.refcount += 1;
+                    dns_cache_hits_inflight += 1;
+                    global_cache.lock.unlock();
+                    return;
+                }
+            }
+        }
+
+        // no cache hit, we have to make a new request
+        const req = bun.default_allocator.create(Request) catch bun.outOfMemory();
+        req.* = .{
+            .key = key.toOwned(),
+            .refcount = 1,
+        };
+        req.notify.append(bun.default_allocator, socket) catch bun.outOfMemory();
+        _ = global_cache.tryPush(req);
+        dns_cache_misses += 1;
+        dns_cache_size = global_cache.len;
+        global_cache.lock.unlock();
+
+        // doesn't work yet
+        if (comptime Environment.isMac) {
+            if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO")) {
+                const res = lookupLibinfo(req, socket);
+                log("getaddrinfo({s}:{d}) = cache miss (libinfo)", .{ host orelse "", port });
+                if (res) return;
+                // if we were not able to use libinfo, we fall back to the work pool
+            }
+        }
+
+        log("getaddrinfo({s}:{d}) = cache miss (libc)", .{ host orelse "", port });
+        // schedule the request to be executed on the work pool
+        bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
+    }
+
+    fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
+
+        req.valid = err == 0;
+        dns_cache_errors += @as(usize, @intFromBool(err != 0));
+
+        req.refcount -= 1;
+        if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
+            log("cache --", .{});
+            global_cache.remove(req);
+            req.deinit();
+        }
+    }
+
+    fn getRequestResult(req: *Request) callconv(.C) *Request.Result {
+        return &req.result.?;
+    }
+};
+
+pub const InternalDNSRequest = InternalDNS.Request;
+
+comptime {
+    @export(InternalDNS.getaddrinfo, .{
+        .name = "Bun__addrinfo_get",
+    });
+    @export(InternalDNS.freeaddrinfo, .{
+        .name = "Bun__addrinfo_freeRequest",
+    });
+    @export(InternalDNS.getRequestResult, .{
+        .name = "Bun__addrinfo_getRequestResult",
+    });
+}
+
 pub const DNSResolver = struct {
     const log = Output.scoped(.DNSResolver, false);
 
@@ -2538,8 +2912,6 @@ pub const DNSResolver = struct {
             },
         );
     }
-    // pub fn cancel(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    //     const arguments = callframe.arguments(3);
-
-    // }
 };
+
+pub const getDNSCacheStats = InternalDNS.getDNSCacheStats;

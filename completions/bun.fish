@@ -115,10 +115,11 @@ complete -c bun \
 complete -c bun \
 	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
 
+# Complete dev and create as first subcommand.
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'dev' -d 'Start dev server'
+	-n "__fish_use_subcommand" -a 'dev' -d 'Start dev server'
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
+	-n "__fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'next' -d 'new Next.js project'

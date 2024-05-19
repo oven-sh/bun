@@ -57,9 +57,6 @@ set -l bun_builtin_cmds dev create help bun upgrade discord run install remove a
 set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init pm x
 set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install remove add init pm x
 set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add init pm x
-set -l bun_builtin_cmds_without_install create dev help bun upgrade discord run remove add init pm x
-set -l bun_builtin_cmds_without_remove create dev help bun upgrade discord run install add init pm x
-set -l bun_builtin_cmds_without_add create dev help bun upgrade discord run remove install init pm x
 set -l bun_builtin_cmds_without_pm create dev help bun upgrade discord run init pm x
 
 # clear

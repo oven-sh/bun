@@ -1338,7 +1338,7 @@ pub const FileSystem = struct {
                 var buf2: bun.PathBuffer = undefined;
                 var current_buf: *bun.PathBuffer = &buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
-                while (file.isReparsePoint()) : (depth += 1) {
+                while (file.is_reparse_point) : (depth += 1) {
                     const read = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
                     std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
                     file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
@@ -1353,7 +1353,7 @@ pub const FileSystem = struct {
                     cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
                 }
 
-                if (file.isDirectory()) {
+                if (file.is_directory) {
                     cache.kind = .dir;
                 } else {
                     cache.kind = .file;

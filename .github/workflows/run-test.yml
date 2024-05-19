@@ -50,6 +50,10 @@ jobs:
           path: bun
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || github.run_id }}
+      - name: Download pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
       - if: ${{ runner.os != 'Windows' }}
         name: Setup Bun
         shell: bash

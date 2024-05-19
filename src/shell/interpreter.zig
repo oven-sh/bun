@@ -10547,7 +10547,7 @@ pub const Interpreter = struct {
                             return .{ .err = err };
                         };
 
-                        return .{ .result = attributes.isDirectory() };
+                        return .{ .result = attributes.is_directory };
                     }
                     const stat = switch (Syscall.lstat(path)) {
                         .result => |x| x,

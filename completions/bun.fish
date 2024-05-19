@@ -156,19 +156,16 @@ complete -c bun \
 
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project'
+	-n "__fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project'
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json'
+	-n "__fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json'
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
+	-n "__fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
-
-complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand add remove" -F
+	-n "__fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
 
 
 for i in (seq (count $bun_install_boolean_flags))

@@ -135,21 +135,24 @@ complete -c bun \
 complete -c bun \
 	-s "h" -l "help" -d 'See all commands and flags' -x
 
+# Complete "-v/--version" if we have no subcommand.
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -l "version" -s "v"  -a '--version' -d 'Bun\'s version' -x
+	-n "not __fish_use_subcommand" -l "version" -s "v" -d 'Bun\'s version' -x
+
+# Complete additional subcommands.
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x
+	-n "__fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x
 
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_bun; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); __fish_use_subcommand" -a 'bun' -d 'Generate a new bundle'
+	-n "__fish_use_subcommand" -a 'bun' -d 'Generate a new bundle'
 
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_bun; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from bun" -F -d 'Bundle this'
+	-n "__fish_seen_subcommand_from bun" -F -d 'Bundle this'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create; and not __fish_seen_subcommand_from (__fish__get_bun_bins); and not __fish_seen_subcommand_from (__fish__get_bun_scripts); and __fish_seen_subcommand_from react; or __fish_seen_subcommand_from next" -F -d "Create in directory"
+	-n "__fish_seen_subcommand_from create; and __fish_seen_subcommand_from react next" -F -d "Create in directory"
 
 
 complete -c bun \

@@ -4586,7 +4586,7 @@ pub const Package = extern struct {
                 }
             }
 
-            if (json.asProperty("patched_dependencies")) |patched_deps| {
+            if (json.asProperty("patchedDependencies")) |patched_deps| {
                 const obj = patched_deps.expr.data.e_object;
                 lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
                 for (obj.properties.slice()) |prop| {

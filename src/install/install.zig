@@ -9349,7 +9349,7 @@ pub const PackageManager = struct {
                 break :brk this.destination_dir_subpath_buf[0..alias.len :0];
             };
 
-            var resolution_buf: [512]u8 = undefined;
+            var resolution_buf: [1024]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
@@ -9362,8 +9362,19 @@ pub const PackageManager = struct {
                 .allocator = this.lockfile.allocator,
                 .package_name = name,
                 .patch = brk: {
-                    const name_hash = this.lockfile.packages.items(.name_hash)[package_id];
-                    const patch_path = this.lockfile.patched_dependencies.get(name_hash) orelse break :brk PackageInstall.Patch.NULL;
+                    // reuse the resolution buf
+                    var sfb = std.heap.StackFallbackAllocator(1024){
+                        .buffer = resolution_buf,
+                        .fallback_allocator = this.lockfile.allocator,
+                        .fixed_buffer_allocator = std.heap.FixedBufferAllocator{
+                            .buffer = resolution_buf[0..],
+                            .end_index = resolution_label.len,
+                        },
+                    };
+                    const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, resolution_label }) catch unreachable;
+                    defer sfb.get().free(name_and_version);
+                    const name_and_version_hash = String.Builder.stringHash(name_and_version);
+                    const patch_path = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk PackageInstall.Patch.NULL;
                     break :brk .{
                         .patch_path = patch_path,
                         .root_project_dir = FileSystem.instance.top_level_dir,

@@ -3226,7 +3226,7 @@ pub fn getRoughTickCountMs() u64 {
             pub extern "C" fn mach_continuous_approximate_time() u64;
         }.mach_continuous_approximate_time;
 
-        return mach_continuous_approximate_time() *| std.time.ns_per_ms;
+        return mach_continuous_approximate_time() / std.time.ns_per_ms;
     }
 
     if (comptime Environment.isLinux) {

@@ -58,6 +58,7 @@ set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install 
 set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install remove add init pm x
 set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add init pm x
 set -l bun_builtin_cmds_without_pm create dev help bun upgrade discord run init pm x
+set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
     # Do nothing if we already have a builtin subcommand,
@@ -99,18 +100,20 @@ complete -e -c bun
 # Dynamically emit scripts and binaries
 complete -c bun -f -a "(__bun_complete_bins_scripts)"
 
+# Complete flags if we have no subcommand or a flag-friendly one.
+set -l flag_applies "__fish_use_subcommand; or __fish_seen_subcommand_from $bun_builtin_cmds_accepting_flags"
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
+	-n $flag_applies --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from'
+	-n $flag_applies --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"'
+	-n $flag_applies --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react'
+	-n $flag_applies --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'use' -r -d 'Use a framework (ex: next)'
+	-n $flag_applies --no-files -l 'use' -r -d 'Use a framework (ex: next)'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
+	-n $flag_applies --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
 
 complete -c bun \
 	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'dev' -d 'Start dev server'

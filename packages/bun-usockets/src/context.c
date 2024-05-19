@@ -17,7 +17,6 @@
 
 #include "libusockets.h"
 #include "internal/internal.h"
-#include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -393,6 +392,8 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 
     void* ptr;
     if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
+        // Fast-path: it's already cached.
+        // Avoid the connection logic.
         *is_connecting = 1;
         return (struct us_connecting_socket_t *) us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
     }

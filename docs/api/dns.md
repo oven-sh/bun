@@ -14,6 +14,20 @@ In Bun v1.1.9, we added support for DNS caching. This cache is used by `bun inst
 
 At the time of writing, we cache up to 255 entries for a maximum of 30 seconds (each). If any connections to a host fail, we remove the entry from the cache. When multiple connections are made to the same host simultaneously, DNS lookups are deduplicated to avoid making multiple requests for the same host.
 
+### When should I prefetch a DNS entry?
+
+Web browsers expose [`<link rel="dns-prefetch">`](https://developer.mozilla.org/en-US/docs/Web/Performance/dns-prefetch) to allow developers to prefetch DNS entries. This is useful when you know you'll need to connect to a host in the near future and want to avoid the initial DNS lookup.
+
+In Bun, you can use the `dns.prefetch` API to achieve the same effect. 
+
+```ts
+import {dns} from "bun";
+
+dns.prefetch("my.database-host.com", 5432);
+```
+
+An example where you might want to use this is a database driver. When your application first starts up, you can prefetch the DNS entry for the database host so that by the time it finishes loading everything, the DNS query to resolve the database host may already be completed.
+
 ### `dns.prefetch`
 
 {% callout %}

@@ -121,16 +121,19 @@ complete -c bun \
 complete -c bun \
 	-n "__fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
 
+# Complete "next" and "react" if we've seen "create".
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'next' -d 'new Next.js project'
+	-n "__fish_seen_subcommand_from create" -a 'next' -d 'new Next.js project'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'react' -d 'new React project'
+	-n "__fish_seen_subcommand_from create" -a 'react' -d 'new React project'
 
+# Complete "upgrade" as first subcommand.
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x
+	-n "__fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x
+# Complete "-h/--help" unconditionally.
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand"  -a '--help' -d 'See all commands and flags' -x
+	-s "h" -l "help" -d 'See all commands and flags' -x
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -l "version" -s "v"  -a '--version' -d 'Bun\'s version' -x

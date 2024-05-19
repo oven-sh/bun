@@ -59,19 +59,46 @@ set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install 
 set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add init pm x
 set -l bun_builtin_cmds_without_pm create dev help bun upgrade discord run init pm x
 
-# clear
+function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
+    # Do nothing if we already have a builtin subcommand,
+    # or any subcommand other than "run".
+    if __fish_seen_subcommand_from $bun_builtin_cmds_without_run
+    or not __fish_use_subcommand && not __fish_seen_subcommand_from run
+        return
+    end
+    # Do we already have a bin or script subcommand?
+    set -l bins (__fish__get_bun_bins)
+    if __fish_seen_subcommand_from $bins
+        return
+    end
+    # Scripts have descriptions appended with a tab separator.
+    # Strip off descriptions for the purposes of subcommand testing.
+    set -l scripts (__fish__get_bun_scripts)
+    if __fish_seen_subcommand_from $(string split \t -f 1 -- $scripts)
+        return
+    end
+    # Emit scripts.
+    for script in $scripts
+        echo $script
+    end
+    # Emit binaries and JS files (but only if we're doing `bun run`).
+    if __fish_seen_subcommand_from run
+        for bin in $bins
+            echo "$bin"\t"package bin"
+        end
+        for file in (__fish__get_bun_bun_js_files)
+            echo "$file"\t"Bun.js"
+        end
+    end
+end
+
+
+# Clear existing completions
 complete -e -c bun
 
-complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_run; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a '(__fish__get_bun_scripts)' -d 'script'
-complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_run; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from run" -a '(__fish__get_bun_bins)' -d 'package bin'
-complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_run; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from run" -a '(__fish__get_bun_scripts)' -d 'script'
-complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_run; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from run" -a '(__fish__get_bun_bun_js_files)' -d 'Bun.js'
-complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'run' -f -d 'Run a script or bin'
+# Dynamically emit scripts and binaries
+complete -c bun -f -a "(__bun_complete_bins_scripts)"
+
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
 complete -c bun \

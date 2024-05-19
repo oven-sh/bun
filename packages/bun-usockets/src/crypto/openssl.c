@@ -1518,11 +1518,11 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
 // TODO does this need more changes?
 struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size) {
+    int port, int options, int socket_ext_size, int* is_connected) {
   return us_socket_context_connect(
-      0, &context->sc, host, port, options,
+      2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size);
+          socket_ext_size, is_connected);
 }
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(

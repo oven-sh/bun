@@ -582,9 +582,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var allocator = stack_fallback.get();
             const host_ = allocator.dupeZ(u8, host) catch return null;
             defer allocator.free(host_);
-
-            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context)) orelse return null;
-            const socket_ = ThisSocket{ .socket = .{ .connecting = socket } };
+            var did_dns_resolve: i32 = 0;
+            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
+            const socket_ = if (did_dns_resolve == 1)
+                ThisSocket{
+                    .socket = .{ .done = @ptrCast(socket) },
+                }
+            else
+                ThisSocket{
+                    .socket = .{ .connecting = @ptrCast(socket) },
+                };
 
             var holder = socket_.ext(Context);
             holder.* = ctx;
@@ -677,16 +684,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             defer if (host) |allocated_host| allocator.free(allocated_host[0..raw_host.len]);
 
-            const connecting = us_socket_context_connect(
+            var did_dns_resolve: i32 = 0;
+            const socket_ptr = us_socket_context_connect(
                 comptime ssl_int,
                 socket_ctx,
                 host,
                 port,
                 0,
                 @sizeOf(*anyopaque),
-            );
-
-            const socket = ThisSocket{ .socket = .{ .connecting = connecting } };
+                &did_dns_resolve,
+            ) orelse return error.FailedToOpenSocket;
+            const socket = if (did_dns_resolve == 1)
+                ThisSocket{
+                    .socket = .{ .done = @ptrCast(socket_ptr) },
+                }
+            else
+                ThisSocket{
+                    .socket = .{ .connecting = @ptrCast(socket_ptr) },
+                };
 
             const holder = socket.ext(*anyopaque);
             holder.* = ptr;
@@ -1357,7 +1372,7 @@ extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) *ConnectingSocket;
+pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;

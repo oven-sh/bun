@@ -17,6 +17,7 @@
 
 #include "libusockets.h"
 #include "internal/internal.h"
+#include <netdb.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -344,12 +345,57 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
+
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, void* request, int options, int socket_ext_size) {
+    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(request);
+    if (result->error) {
+        errno = result->error;
+        Bun__addrinfo_freeRequest(request, 1);
+        return NULL;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, options);
+    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+        int err = errno;
+        Bun__addrinfo_freeRequest(request, err);
+        return NULL;
+    }
+
+    Bun__addrinfo_freeRequest(request, 0);
+    bsd_socket_nodelay(connect_socket_fd, 1);
+
+    /* Connect sockets are semi-sockets just like listen sockets */
+    struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
+    us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(p, context->loop, LIBUS_SOCKET_WRITABLE);
+
+    struct us_socket_t *socket = (struct us_socket_t *) p;
+
+    /* Link it into context so that timeout fires properly */
+    socket->context = context;
+    socket->timeout = 255;
+    socket->long_timeout = 255;
+    socket->low_prio_state = 0;
+    socket->connect_state = NULL;
+    us_internal_socket_context_link_socket(context, socket);
+
+    return socket;
+}
+
+struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
 #ifndef LIBUS_NO_SSL
-    if (ssl) {
-        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size);
+    if (ssl == 1) {
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, is_connecting);
     }
 #endif
+
+    struct us_loop_t* loop = us_socket_context_loop(ssl, context);
+
+    void* ptr;
+    if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
+        *is_connecting = 1;
+        return (struct us_connecting_socket_t *) us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
+    }
 
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
@@ -360,13 +406,13 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
 
-    Bun__addrinfo_get(host, port, c);
-
 #ifdef _WIN32
-    context->loop->uv_loop->active_handles++;
+    loop->uv_loop->active_handles++;
 #else
-    context->loop->num_polls++;
+    loop->num_polls++;
 #endif
+
+    Bun__addrinfo_set(ptr, c);
 
     return c;
 }

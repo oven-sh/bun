@@ -32,3 +32,7 @@ await Promise.all(promises);
 
 const end = performance.now();
 console.log("fetch() took", (end - start) | 0, "ms");
+
+if (typeof globalThis.Bun?.dns?.getCacheStats === "function") {
+  console.log("DNS cache stats", Bun.dns.getCacheStats());
+}

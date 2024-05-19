@@ -648,6 +648,17 @@ void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *con
     context->on_connect_error = on_connect_error;
 }
 
+void us_socket_context_on_socket_connect_error(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code)) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) {
+        us_internal_ssl_socket_context_on_socket_connect_error((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t * (*)(struct us_internal_ssl_socket_t *, int)) on_connect_error);
+        return;
+    }
+#endif
+    
+    context->on_socket_connect_error = on_connect_error;
+}
+
 void *us_socket_context_ext(int ssl, struct us_socket_context_t *context) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {

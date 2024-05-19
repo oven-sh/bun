@@ -112,7 +112,7 @@ const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "linux-arm64": "72.1",
   "win32-x64": "72.1",
   "win32-arm64": "72.1",
-}
+};
 
 it("ICU version does not regress", () => {
   const min = MIN_ICU_VERSIONS_BY_PLATFORM_ARCH[`${process.platform}-${process.arch}`];

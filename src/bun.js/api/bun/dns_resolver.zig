@@ -1322,9 +1322,7 @@ pub const InternalDNS = struct {
                 if (entry.key.hash == key.hash and entry.key.port == key.port and entry.valid) {
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
-                        if (this.deleteEntryAt(len, i)) |deleted| {
-                            deleted.deinit();
-                        }
+                        entry.deinit();
                         len = this.len;
                         continue;
                     }

@@ -3218,7 +3218,9 @@ pub const dns = @import("./dns.zig");
 
 /// When you don't need a super accurate timestamp, this is a fast way to get one.
 ///
-/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp
+/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
+///
+/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
 pub fn getRoughTickCountMs() u64 {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html

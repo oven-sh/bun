@@ -1331,8 +1331,7 @@ pub const InternalDNS = struct {
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
         pub fn getCacheTimestamp() u32 {
-            const now = bun.getRoughTickCountMs();
-            return @truncate(now / 1000);
+            return @truncate(bun.getRoughTickCountMs());
         }
 
         fn isNearlyFull(this: *This) bool {

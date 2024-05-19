@@ -1354,7 +1354,7 @@ pub const InternalDNS = struct {
             // equivalent of swapRemove
             for (0..len) |i| {
                 if (this.cache[i] == entry) {
-                    this.deleteEntryAt(i, len);
+                    this.deleteEntryAt(len, i);
                     return;
                 }
             }

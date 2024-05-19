@@ -1142,7 +1142,7 @@ extern "C"
     }
   }
 
-  void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection)
+  void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection, bool send_crlf)
   {
     if (ssl)
     {
@@ -1158,7 +1158,9 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
       {
-        uwsRes->AsyncSocket<true>::write("\r\n", 2);
+        if (send_crlf) {
+          uwsRes->AsyncSocket<true>::write("\r\n", 2);
+        }
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
@@ -1178,9 +1180,11 @@ extern "C"
       }
       if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
       {
-        // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
-        // If not, they may throw a ConnectionError.
-        uwsRes->AsyncSocket<false>::write("\r\n", 2);
+        if (send_crlf) {
+          // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
+          // If not, they may throw a ConnectionError.
+          uwsRes->AsyncSocket<false>::write("\r\n", 2);
+        }
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone();

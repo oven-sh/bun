@@ -271,6 +271,12 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)t;
 
+  // only add the timer to the event loop once
+  if (internal_cb->has_added_timer_to_event_loop) {
+    return;
+  }
+  internal_cb->has_added_timer_to_event_loop = 1;
+
   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
 
   uv_timer_t *uv_timer = (uv_timer_t *)(internal_cb + 1);

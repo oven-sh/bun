@@ -71,24 +71,24 @@ complete -c bun \
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_run; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from run" -a '(__fish__get_bun_bun_js_files)' -d 'Bun.js'
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'run' -f -d 'Run a script or bin' 
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'run' -f -d 'Run a script or bin'
 complete -c bun \
 	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -s 'u' -l 'origin' -r -d 'Server URL. Rewrites import paths'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from' 
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'p' -l 'port' -r -d 'Port number to start server from'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"' 
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'd' -l 'define' -r -d 'Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\"'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react' 
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files  -s 'e' -l 'external' -r -d 'Exclude module from transpilation (can use * wildcards). ex: -e react'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'use' -r -d 'Use a framework (ex: next)' 
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'use' -r -d 'Use a framework (ex: next)'
 complete -c bun \
-	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime' 
-	
+	-n "not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) install remove add;" --no-files -l 'hot' -r -d 'Enable hot reloading in Bun\'s JavaScript runtime'
+
 complete -c bun \
 	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'dev' -d 'Start dev server'
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template' 
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template'
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'next' -d 'new Next.js project'
@@ -97,14 +97,14 @@ complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'react' -d 'new React project'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x 
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'upgrade' -d 'Upgrade bun to the latest version' -x
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand"  -a '--help' -d 'See all commands and flags' -x
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -l "version" -s "v"  -a '--version' -d 'Bun\'s version' -x
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x 
+	-n "not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a 'discord' -d 'Open bun\'s Discord server' -x
 
 
 complete -c bun \
@@ -119,21 +119,21 @@ complete -c bun \
 
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project' 
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project'
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json' 
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json'
 
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json' 
-	
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'add' -F -d 'Add a package to package.json'
+
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json' 
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'remove' -F -d 'Remove a package from package.json'
 
 complete -c bun \
 	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand add remove" -F
 
-		  
+
 for i in (seq (count $bun_install_boolean_flags))
 	complete -c bun \
 		-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from install add remove;" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
@@ -150,7 +150,7 @@ complete -c bun \
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add;" -d 'History' -a '(__history_completions)'
-  
+
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls cache hash hash-print hash-string' -f
 

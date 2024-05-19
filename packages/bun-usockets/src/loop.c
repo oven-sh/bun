@@ -285,8 +285,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     if (c) {
                         /* Emit error, close without emitting on_close */
                         s->context->on_connect_error(s->connect_state, error);
+                        us_connecting_socket_close(c->ssl, c);
                     } else {
                         s->context->on_socket_connect_error(s, error);
+                        // close is called by the caller
                     }
                     
                     s = NULL;

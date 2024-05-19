@@ -403,6 +403,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     }
 
     Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+    bsd_socket_nodelay(connect_socket_fd, 1);
 
     struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
     s->context = c->context;
@@ -414,13 +415,14 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     // TODO check this, specifically how it interacts with the SSL code
     memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
 
+    // store the socket so we can close it if we need to
+    c->socket = s;
+    s->connect_state = c;
+
     /* Connect sockets are semi-sockets just like listen sockets */
     us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
 
-    // store the socket so we can close it if we need to
-    c->socket = s;
-    s->connect_state = c;
 }
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {

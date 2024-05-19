@@ -170,20 +170,20 @@ complete -c bun \
 
 for i in (seq (count $bun_install_boolean_flags))
 	complete -c bun \
-		-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from install add remove;" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
+		-n "__fish_seen_subcommand_from install add remove" -l "$bun_install_boolean_flags[$i]" -d "$bun_install_boolean_flags_descriptions[$i]"
 end
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from install add remove;" -l 'cwd' -d 'Change working directory'
+	-n "__fish_seen_subcommand_from install add remove" -l 'cwd' -d 'Change working directory'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from install add remove;" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
+	-n "__fish_seen_subcommand_from install add remove" -l 'cache-dir' -d 'Choose a cache directory (default: $HOME/.bun/install/cache)'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add;" -d 'Popular' -a '(__fish__get_bun_packages)'
+	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
 
 complete -c bun \
-	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from add;" -d 'History' -a '(__history_completions)'
+	-n "__fish_seen_subcommand_from add" -d 'History' -a '(__history_completions)'
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls cache hash hash-print hash-string' -f
@@ -191,4 +191,4 @@ complete -c bun \
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
 
-complete -c bun -n "not __fish_seen_subcommand_from $bun_builtin_cmds (__fish__get_bun_bins) (__fish__get_bun_scripts)" -a "$bun_builtin_cmds" -f
+complete -c bun -n "__fish_use_subcommand" -a "$bun_builtin_cmds" -f

@@ -952,6 +952,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         ThisSocket.from(socket).ext(ContextType).*
                     else
                         ThisSocket.from(socket).ext(ContextType);
+
+                    // We close immediately in this case
+                    // uSockets doesn't know if this is a TLS socket or not.
+                    // So we have to do that logic in here.
+                    ThisSocket.from(socket).close(0, null);
+
                     Fields.onConnectError(
                         val,
                         ThisSocket.from(socket),

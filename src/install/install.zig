@@ -2646,11 +2646,11 @@ pub const PackageManager = struct {
             false,
         );
 
-        const init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");
-        if (!init_cwd_gop.found_existing) {
-            init_cwd_gop.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_gop.key_ptr.*);
-            init_cwd_gop.value_ptr.* = .{
-                .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
+        const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
+        if (!init_cwd_entry.found_existing) {
+            init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
+            init_cwd_entry.value_ptr.* = .{
+                .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
                 .conditional = false,
             };
         }

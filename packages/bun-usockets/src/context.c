@@ -345,22 +345,12 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 }
 
 
-struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, void* request, int options, int socket_ext_size) {
-    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(request);
-    if (result->error) {
-        errno = result->error;
-        Bun__addrinfo_freeRequest(request, 1);
-        return NULL;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, options);
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct addrinfo* info, int options, int socket_ext_size) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(info, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        int err = errno;
-        Bun__addrinfo_freeRequest(request, err);
         return NULL;
     }
 
-    Bun__addrinfo_freeRequest(request, 0);
     bsd_socket_nodelay(connect_socket_fd, 1);
 
     /* Connect sockets are semi-sockets just like listen sockets */
@@ -381,7 +371,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     return socket;
 }
 
-struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
         return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, is_connecting);
@@ -392,13 +382,21 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 
     void* ptr;
     if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
-        // Fast-path: it's already cached.
-        // Avoid the connection logic.
+        struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ptr);
+        // fast failure path
+        if (result->error) {
+            errno = result->error;
+            Bun__addrinfo_freeRequest(ptr, 1);
+            return NULL;
+        }
 
-        // with happy eyeballs we can't use the fast path since we need to initiate multiple connections
-
-        // *is_connecting = 1;
-        // return (struct us_connecting_socket_t *) us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
+        // if there is only one result we can immediately connect
+        if (result->info && result->info->ai_next == NULL) {
+            *is_connecting = 1;
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
+            Bun__addrinfo_freeRequest(ptr, s == NULL);
+            return s;
+        }
     }
 
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);

@@ -271,7 +271,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
 
 /* Land in on_open or on_connection_error or return null or return socket */
-struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
     const char *host, int port, int options, int socket_ext_size, int *is_connecting);
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context,

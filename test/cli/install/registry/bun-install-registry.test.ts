@@ -2913,7 +2913,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exited).toBe(0);
     });
 
-    test.only("INIT_CWD is set to the correct directory", async () => {
+    test("INIT_CWD is set to the correct directory", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({

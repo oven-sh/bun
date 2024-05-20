@@ -392,3 +392,46 @@ it("it should only call open once", async () => {
 it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
   expect([fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url))]).toRun();
 });
+
+it("should not call open if the connection had an error", async () => {
+  const server = Bun.listen({
+    port: 0,
+    hostname: "0.0.0.0",
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data(socket, data) {},
+    },
+  });
+
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  let client: Socket<undefined> | null = null;
+  let hadError = false;
+  try {
+    client = await Bun.connect({
+      port: server.port,
+      hostname: "::1",
+      socket: {
+        open(socket) {
+          expect().fail("open should not be called, the connection should fail");
+        },
+        connectError(socket, error) {
+          expect(hadError).toBe(false);
+          hadError = true;
+          resolve();
+        },
+        close(socket) {
+          expect().fail("close should not be called, the connection should fail");
+        },
+        data(socket, data) {},
+      },
+    });
+  } catch (e) {}
+
+  await Bun.sleep(50);
+  await promise;
+  server.stop();
+  expect(hadError).toBe(true);
+});

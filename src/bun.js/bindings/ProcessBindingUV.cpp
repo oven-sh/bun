@@ -1,4 +1,7 @@
 #include "ProcessBindingUV.h"
+#include "JavaScriptCore/ArrayAllocationProfile.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/ThrowScope.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSMap.h"
@@ -98,14 +101,17 @@ namespace ProcessBindingUV {
 
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto arg0 = callFrame->argument(0);
     auto& vm = globalObject->vm();
+    auto arg0 = callFrame->argument(0);
 
-    // Node.js will actualy crash here, lol.
-    if (!arg0.isInt32())
-        return JSValue::encode(jsString(vm, makeString("Unknown system error "_s, arg0.toWTFString(globalObject))));
+    // Node.js crashes here:
+    // However, we should ensure this function never throws
+    // That's why we do not call toPrimitive here or throw on invalid input.
+    if (UNLIKELY(!arg0.isInt32AsAnyInt())) {
+        return JSValue::encode(jsString(vm, String("Unknown system error"_s)));
+    }
 
-    auto err = arg0.asInt32();
+    auto err = arg0.toInt32(globalObject);
     switch (err) {
 #define CASE(name, value, desc) \
     case value:                 \
@@ -113,9 +119,12 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
 
         BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
+    default: {
+        break;
+    }
     }
 
-    return JSValue::encode(jsString(vm, makeString("Unknown system error "_s, String::number(err))));
+    return JSValue::encode(jsString(vm, makeString("Unknown system error: "_s, err)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -123,12 +132,12 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
     auto& vm = globalObject->vm();
     auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
-#define PUT_PROPERTY(name, value, desc)                                             \
-    {                                                                               \
-        auto arr = JSC::constructEmptyArray(globalObject, nullptr, 2);              \
-        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(#name##_s))); \
-        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc##_s)));  \
-        map->set(globalObject, JSC::jsNumber(value), arr);                          \
+#define PUT_PROPERTY(name, value, desc)                                                                           \
+    {                                                                                                             \
+        auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2); \
+        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(#name##_s)));                               \
+        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc##_s)));                                \
+        map->set(globalObject, JSC::jsNumber(value), arr);                                                        \
     }
 
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
@@ -140,7 +149,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
 JSObject* create(VM& vm, JSGlobalObject* globalObject)
 {
     auto bindingObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
-
+    EnsureStillAliveScope ensureStillAlive(bindingObject);
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
 
 #define PUT_PROPERTY(name, value, desc) \

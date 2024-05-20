@@ -3956,7 +3956,6 @@ pub const Resolver = struct {
         // }
 
         if (parent) |parent_| {
-
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;

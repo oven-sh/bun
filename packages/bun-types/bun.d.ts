@@ -411,6 +411,19 @@ declare module "bun" {
     arrayBuffer(): ArrayBuffer;
 
     /**
+     * Read from stdout as an Uint8Array
+     *
+     * @returns Stdout as an Uint8Array
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
+     * ```
+     */
+    bytes(): Uint8Array;
+
+    /**
      * Read from stdout as a Blob
      *
      * @returns Stdout as a blob
@@ -688,7 +701,17 @@ declare module "bun" {
    * This function is faster because it uses uninitialized memory when copying. Since the entire
    * length of the buffer is known, it is safe to use uninitialized memory.
    */
-  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>): ArrayBuffer;
+  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength?: number): ArrayBuffer;
+  function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
+    maxLength: number,
+    asUint8Array: false,
+  ): ArrayBuffer;
+  function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
+    maxLength: number,
+    asUint8Array: true,
+  ): Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -704,6 +727,21 @@ declare module "bun" {
   function readableStreamToArrayBuffer(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   *
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
+   * chunks of different types, consider {@link readableStreamToBlob}
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   */
+  function readableStreamToBytes(
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
+  ): Promise<Uint8Array> | Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -960,6 +998,42 @@ declare module "bun" {
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
+
+    /**
+     *
+     * **Experimental API**
+     *
+     * Prefetch a hostname and port.
+     *
+     * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
+     *
+     * @param hostname The hostname to prefetch
+     * @param port The port to prefetch
+     *
+     * @example
+     * ```js
+     * import { dns } from 'bun';
+     * dns.prefetch('example.com', 443);
+     * // ... something expensive
+     * await fetch('https://example.com');
+     * ```
+     */
+    prefetch(hostname: string, port: number): void;
+
+    /**
+     * **Experimental API**
+     */
+    getCacheStats(): {
+      /**
+       * The number of times a cached DNS entry that was already resolved was used.
+       */
+      cacheHitsCompleted: number;
+      cacheHitsInflight: number;
+      cacheMisses: number;
+      size: number;
+      errors: number;
+      totalCount: number;
+    };
   };
 
   interface DNSLookup {
@@ -2414,7 +2488,7 @@ declare module "bun" {
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
     unix?: never;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
@@ -2424,7 +2498,7 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface ErrorLike extends Error {
     code?: string;
@@ -2454,6 +2528,19 @@ declare module "bun" {
      * @default false
      */
     lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     */
+    requestCert?: boolean;
 
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -2493,11 +2580,11 @@ declare module "bun" {
   }
 
   interface TLSServeOptions extends ServeOptions, TLSOptions {
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface SocketAddress {
@@ -2526,7 +2613,7 @@ declare module "bun" {
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
    */
-  interface Server {
+  interface Server extends Disposable {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -3079,7 +3166,9 @@ declare module "bun" {
     | "sha3-224"
     | "sha3-256"
     | "sha3-384"
-    | "sha3-512";
+    | "sha3-512"
+    | "shake128"
+    | "shake256";
 
   /**
    * Hardware-accelerated cryptographic hash functions
@@ -4221,6 +4310,15 @@ declare module "bun" {
       ): void;
 
       /**
+       * The serialization format to use for IPC messages. Defaults to `"advanced"`.
+       *
+       * To communicate with Node.js processes, use `"json"`.
+       *
+       * When `ipc` is not specified, this is ignored.
+       */
+      serialization?: "json" | "advanced";
+
+      /**
        * If true, the subprocess will have a hidden window.
        */
       windowsHide?: boolean;
@@ -4365,7 +4463,7 @@ declare module "bun" {
     In extends SpawnOptions.Writable = SpawnOptions.Writable,
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
-  > {
+  > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;

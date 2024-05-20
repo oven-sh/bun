@@ -19,6 +19,7 @@
 #include "internal/internal.h"
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
@@ -330,7 +331,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     us_poll_start(p, context->loop, LIBUS_SOCKET_READABLE);
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
-
+    ls->s.connect_state = NULL;
     ls->s.context = context;
     ls->s.timeout = 255;
     ls->s.long_timeout = 255;
@@ -343,33 +344,132 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *source_host, int options, int socket_ext_size) {
-#ifndef LIBUS_NO_SSL
-    if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, source_host, options, socket_ext_size);
-    }
-#endif
 
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(host, port, source_host, options);
-    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        return 0;
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, void* request, int options, int socket_ext_size) {
+    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(request);
+    if (result->error) {
+        errno = result->error;
+        Bun__addrinfo_freeRequest(request, 1);
+        return NULL;
     }
+
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, options);
+    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+        int err = errno;
+        Bun__addrinfo_freeRequest(request, err);
+        return NULL;
+    }
+
+    Bun__addrinfo_freeRequest(request, 0);
+    bsd_socket_nodelay(connect_socket_fd, 1);
 
     /* Connect sockets are semi-sockets just like listen sockets */
     struct us_poll_t *p = us_create_poll(context->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
     us_poll_start(p, context->loop, LIBUS_SOCKET_WRITABLE);
 
-    struct us_socket_t *connect_socket = (struct us_socket_t *) p;
+    struct us_socket_t *socket = (struct us_socket_t *) p;
 
     /* Link it into context so that timeout fires properly */
-    connect_socket->context = context;
-    connect_socket->timeout = 255;
-    connect_socket->long_timeout = 255;
-    connect_socket->low_prio_state = 0;
-    us_internal_socket_context_link_socket(context, connect_socket);
+    socket->context = context;
+    socket->timeout = 255;
+    socket->long_timeout = 255;
+    socket->low_prio_state = 0;
+    socket->connect_state = NULL;
+    us_internal_socket_context_link_socket(context, socket);
 
-    return connect_socket;
+    return socket;
+}
+
+struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
+#ifndef LIBUS_NO_SSL
+    if (ssl == 1) {
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, is_connecting);
+    }
+#endif
+
+    struct us_loop_t* loop = us_socket_context_loop(ssl, context);
+
+    void* ptr;
+    if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
+        // Fast-path: it's already cached.
+        // Avoid the connection logic.
+        *is_connecting = 1;
+        return (struct us_connecting_socket_t *) us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
+    }
+
+    struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
+    c->socket_ext_size = socket_ext_size;
+    c->context = context;
+    c->options = options;
+    c->ssl = ssl > 0;
+    c->timeout = 255;
+    c->long_timeout = 255;
+    c->pending_resolve_callback = 1;
+
+#ifdef _WIN32
+    loop->uv_loop->active_handles++;
+#else
+    loop->num_polls++;
+#endif
+
+    Bun__addrinfo_set(ptr, c);
+
+    return c;
+}
+
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    // make sure to decrement the active_handles counter, no matter what
+#ifdef _WIN32
+    c->context->loop->uv_loop->active_handles--;
+#else
+    c->context->loop->num_polls--;
+#endif
+
+    c->pending_resolve_callback = 0;
+    // if the socket was closed while we were resolving the address, free it
+    if (c->closed) {
+        us_connecting_socket_free(c);
+        return;
+    }
+    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
+    if (result->error) {
+        c->error = result->error;
+        c->context->on_connect_error(c, result->error);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+        us_connecting_socket_close(0, c);
+        return;
+    }
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, c->options);
+    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+        c->error = errno;
+        c->context->on_connect_error(c, errno);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
+        us_connecting_socket_close(0, c);
+        return;
+    }
+
+    Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+    bsd_socket_nodelay(connect_socket_fd, 1);
+
+    struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
+    s->context = c->context;
+    s->timeout = c->timeout;
+    s->long_timeout = c->long_timeout;
+    s->low_prio_state = 0;
+    /* Link it into context so that timeout fires properly */
+    us_internal_socket_context_link_socket(s->context, s);
+    // TODO check this, specifically how it interacts with the SSL code
+    memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
+
+    // store the socket so we can close it if we need to
+    c->socket = s;
+    s->connect_state = c;
+
+    /* Connect sockets are semi-sockets just like listen sockets */
+    us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+
 }
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {
@@ -396,6 +496,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->timeout = 255;
     connect_socket->long_timeout = 255;
     connect_socket->low_prio_state = 0;
+    connect_socket->connect_state = NULL;
     us_internal_socket_context_link_socket(context, connect_socket);
 
     return connect_socket;
@@ -431,7 +532,17 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         us_internal_socket_context_unlink_socket(s->context, s);
     }
 
-    struct us_socket_t *new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
+
+    struct us_connecting_socket_t *c = s->connect_state;
+
+    struct us_socket_t *new_s = s;
+    if (ext_size != -1) {
+        new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
+        if (c) {
+            c->socket = new_s;
+            c->context = context;
+        }
+    }
     new_s->timeout = 255;
     new_s->long_timeout = 255;
 
@@ -526,7 +637,7 @@ void us_socket_context_on_end(int ssl, struct us_socket_context_t *context, stru
     context->on_end = on_end;
 }
 
-void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code)) {
+void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *s, int code)) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         us_internal_ssl_socket_context_on_connect_error((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t * (*)(struct us_internal_ssl_socket_t *, int)) on_connect_error);
@@ -535,6 +646,17 @@ void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *con
 #endif
     
     context->on_connect_error = on_connect_error;
+}
+
+void us_socket_context_on_socket_connect_error(int ssl, struct us_socket_context_t *context, struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code)) {
+#ifndef LIBUS_NO_SSL
+    if (ssl) {
+        us_internal_ssl_socket_context_on_socket_connect_error((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t * (*)(struct us_internal_ssl_socket_t *, int)) on_connect_error);
+        return;
+    }
+#endif
+    
+    context->on_socket_connect_error = on_connect_error;
 }
 
 void *us_socket_context_ext(int ssl, struct us_socket_context_t *context) {

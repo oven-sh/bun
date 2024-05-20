@@ -273,14 +273,14 @@ it("should allow large amounts of data to be sent and received", async () => {
 }, 60_000);
 
 it("it should not crash when getting a ReferenceError on client socket open", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 8080,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
     },
   });
-  try {
+  {
     const { resolve, reject, promise } = Promise.withResolvers();
     let client: Socket<undefined> | null = null;
     const timeout = setTimeout(() => {
@@ -310,20 +310,18 @@ it("it should not crash when getting a ReferenceError on client socket open", as
 
     const result: any = await promise;
     expect(result?.message).toBe("Can't find variable: bytes");
-  } finally {
-    server.stop(true);
   }
 });
 
 it("it should not crash when returning a Error on client socket open", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 8080,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
     },
   });
-  try {
+  {
     const { resolve, reject, promise } = Promise.withResolvers();
     let client: Socket<undefined> | null = null;
     const timeout = setTimeout(() => {
@@ -352,7 +350,5 @@ it("it should not crash when returning a Error on client socket open", async () 
 
     const result: any = await promise;
     expect(result?.message).toBe("CustomError");
-  } finally {
-    server.stop(true);
   }
 });

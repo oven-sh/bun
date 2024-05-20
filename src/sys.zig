@@ -2096,23 +2096,99 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
+pub const WindowsFileAttributes = packed struct(windows.DWORD) {
+    //1 0x00000001 FILE_ATTRIBUTE_READONLY
+    is_readonly: bool,
+    //2 0x00000002 FILE_ATTRIBUTE_HIDDEN
+    is_hidden: bool,
+    //4 0x00000004 FILE_ATTRIBUTE_SYSTEM
+    is_system: bool,
+    //8
+    _03: bool,
+    //1 0x00000010 FILE_ATTRIBUTE_DIRECTORY
+    is_directory: bool,
+    //2 0x00000020 FILE_ATTRIBUTE_ARCHIVE
+    is_archive: bool,
+    //4 0x00000040 FILE_ATTRIBUTE_DEVICE
+    is_device: bool,
+    //8 0x00000080 FILE_ATTRIBUTE_NORMAL
+    is_normal: bool,
+    //1 0x00000100 FILE_ATTRIBUTE_TEMPORARY
+    is_temporary: bool,
+    //2 0x00000200 FILE_ATTRIBUTE_SPARSE_FILE
+    is_sparse_file: bool,
+    //4 0x00000400 FILE_ATTRIBUTE_REPARSE_POINT
+    is_reparse_point: bool,
+    //8 0x00000800 FILE_ATTRIBUTE_COMPRESSED
+    is_compressed: bool,
+    //1 0x00001000 FILE_ATTRIBUTE_OFFLINE
+    is_offline: bool,
+    //2 0x00002000 FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+    is_not_content_indexed: bool,
+    //4 0x00004000 FILE_ATTRIBUTE_ENCRYPTED
+    is_encrypted: bool,
+    //8 0x00008000 FILE_ATTRIBUTE_INTEGRITY_STREAM
+    is_integrity_stream: bool,
+    //1 0x00010000 FILE_ATTRIBUTE_VIRTUAL
+    is_virtual: bool,
+    //2 0x00020000 FILE_ATTRIBUTE_NO_SCRUB_DATA
+    is_no_scrub_data: bool,
+    //4 0x00040000 FILE_ATTRIBUTE_EA
+    is_ea: bool,
+    //8 0x00080000 FILE_ATTRIBUTE_PINNED
+    is_pinned: bool,
+    //1 0x00100000 FILE_ATTRIBUTE_UNPINNED
+    is_unpinned: bool,
+    //2
+    _21: bool,
+    //4 0x00040000 FILE_ATTRIBUTE_RECALL_ON_OPEN
+    is_recall_on_open: bool,
+    //8
+    _23: bool,
+    //1
+    _24: bool,
+    //2
+    _25: bool,
+    //4 0x00400000 FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    is_recall_on_data_access: bool,
+    //
+    __: u5,
+};
+
+pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
+    if (comptime !Environment.isWindows) @compileError("Windows only");
+
+    const T = std.meta.Child(@TypeOf(path));
+    if (T == u16) {
+        assertIsValidWindowsPath(bun.OSPathChar, path);
+        const dword = kernel32.GetFileAttributesW(path.ptr);
+        if (comptime Environment.isDebug) {
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), dword });
+        }
+        if (dword == windows.INVALID_FILE_ATTRIBUTES) {
+            return null;
+        }
+        const attributes: WindowsFileAttributes = @bitCast(dword);
+        return attributes;
+    } else {
+        var wbuf: bun.WPathBuffer = undefined;
+        const path_to_use = bun.strings.toWPath(&wbuf, path);
+        return getFileAttributes(path_to_use);
+    }
+}
+
 pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
     if (comptime Environment.isPosix) {
         return system.access(path, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
-        assertIsValidWindowsPath(bun.OSPathChar, path);
-        const attributes = kernel32.GetFileAttributesW(path.ptr);
-        if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), attributes });
-        }
-        if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+        const attributes = getFileAttributes(path) orelse return false;
+
+        if (file_only and attributes.is_directory) {
             return false;
         }
-        if (file_only and attributes & windows.FILE_ATTRIBUTE_DIRECTORY != 0) {
-            return false;
-        }
+
         return true;
     }
 
@@ -2125,10 +2201,7 @@ pub fn exists(path: []const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const path_to_use = bun.strings.toWPath(&wbuf, path);
-        assertIsValidWindowsPath(u16, path_to_use);
-        return kernel32.GetFileAttributesW(path_to_use.ptr) != windows.INVALID_FILE_ATTRIBUTES;
+        return getFileAttributes(path) != null;
     }
 
     @compileError("TODO: existsOSPath");

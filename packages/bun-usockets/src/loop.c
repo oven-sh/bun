@@ -40,6 +40,13 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.post_cb = post_cb;
     loop->data.iteration_nr = 0;
 
+    loop->data.closed_connecting_head = 0;
+    loop->data.dns_ready_head = 0;
+    loop->data.mutex = 0;
+
+    loop->data.parent_ptr = 0;
+    loop->data.parent_tag = 0;
+
     loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
     us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
 }
@@ -165,25 +172,63 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     }
 }
 
+// Called when DNS resolution completes
+// Does not wake up the loop.
+void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    struct us_loop_t *loop = c->context->loop;
+    Bun__lock(&loop->data.mutex);
+    c->addrinfo_req = addrinfo_req;
+    c->next = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = c;
+    Bun__unlock(&loop->data.mutex);
+}
+
+// Called when DNS resolution completes
+// Wakes up the loop.
+// Can be caleld from any thread.
+void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void* addrinfo_req) {
+    struct us_loop_t *loop = c->context->loop;
+    us_internal_dns_callback(c, addrinfo_req);
+    us_wakeup_loop(loop);
+}
+
+void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_connecting_socket_t *s) {
+    while (s) {
+        struct us_connecting_socket_t *next = s->next;
+        us_internal_socket_after_resolve(s);
+        s = next;
+    }
+}
+
+int us_internal_handle_dns_results(struct us_loop_t *loop) {
+    struct us_connecting_socket_t *s = __atomic_exchange_n(&loop->data.dns_ready_head, NULL, __ATOMIC_ACQ_REL);
+    us_internal_drain_pending_dns_resolve(loop, s);
+    return s != NULL;
+}
+
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
-    if (loop->data.closed_head) {
-        for (struct us_socket_t *s = loop->data.closed_head; s; ) {
-            struct us_socket_t *next = s->next;
-            us_poll_free((struct us_poll_t *) s, loop);
-            s = next;
-        }
-        loop->data.closed_head = 0;
+    for (struct us_socket_t *s = loop->data.closed_head; s; ) {
+        struct us_socket_t *next = s->next;
+        us_poll_free((struct us_poll_t *) s, loop);
+        s = next;
     }
-    if (loop->data.closed_udp_head) {
-        for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
-            struct us_udp_socket_t *next = s->next;
-            us_poll_free((struct us_poll_t *) s, loop);
-            s = next;
-        }
-        loop->data.closed_udp_head = 0;
+    loop->data.closed_head = 0;
+
+    for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
+        struct us_udp_socket_t *next = s->next;
+        us_poll_free((struct us_poll_t *) s, loop);
+        s = next;
     }
+    loop->data.closed_udp_head = 0;
+
+    for (struct us_connecting_socket_t *s = loop->data.closed_connecting_head; s; ) {
+        struct us_connecting_socket_t *next = s->next;
+        us_free(s);
+        s = next;
+    }
+    loop->data.closed_connecting_head = 0;
 }
 
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
@@ -197,11 +242,13 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
 /* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
+    us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
+    us_internal_handle_dns_results(loop);
     us_internal_free_closed_sockets(loop);
     loop->data.post_cb(loop);
 }
@@ -234,9 +281,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
 
                 /* It is perfectly possible to come here with an error */
                 if (error) {
+                    struct us_connecting_socket_t *c = s->connect_state; 
+
                     /* Emit error, close without emitting on_close */
-                    s->context->on_connect_error(s, 0);
-                    us_socket_close_connecting(0, s);
+
+                    /* There are two possible states here: 
+                        1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
+                        2. It's a us_socket_t* 
+
+                       We differentiate between these two cases by checking if the connect_state is null.
+                    */
+                    if (c) {
+                        s->context->on_connect_error(s->connect_state, error);
+                        us_connecting_socket_close(c->ssl, c);
+                    } else {
+                        s->context->on_socket_connect_error(s, error);
+                        // It's expected that close is called by the caller
+                    }
+                    
                     s = NULL;
                 } else {
                     /* All sockets poll for readable */
@@ -252,6 +314,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                     us_socket_timeout(0, s, 0);
 
                     s->context->on_open(s, 1, 0, 0);
+
+                    if (s->connect_state) {
+                        // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
+                        us_connecting_socket_free(s->connect_state);
+                        s->connect_state = NULL;
+                    }
                 }
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
@@ -273,6 +341,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         struct us_socket_t *s = (struct us_socket_t *) accepted_p;
 
                         s->context = listen_socket->s.context;
+                        s->connect_state = NULL;
                         s->timeout = 255;
                         s->long_timeout = 255;
                         s->low_prio_state = 0;
@@ -401,7 +470,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             /* Such as epollerr epollhup */
             if (error && s) {
                 /* Todo: decide what code we give here */
-                s = us_socket_close(0, s, 0, NULL);
+                s = us_socket_close(0, s, error, NULL);
                 return;
             }
             break;

@@ -1168,6 +1168,574 @@ pub const GlobalData = struct {
     }
 };
 
+pub const InternalDNS = struct {
+    const log = Output.scoped(.dns, true);
+
+    var __max_dns_time_to_live_seconds: ?u32 = null;
+    pub fn getMaxDNSTimeToLiveSeconds() u32 {
+        // Amazon Web Services recommends 5 seconds: https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
+        const default_max_dns_time_to_live_seconds = 30;
+
+        // This is racy, but it's okay because the number won't be invalid, just stale.
+        return __max_dns_time_to_live_seconds orelse {
+            if (bun.getenvZ("BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS")) |string_value| {
+                const value = std.fmt.parseInt(i64, string_value, 10) catch {
+                    __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
+                    return default_max_dns_time_to_live_seconds;
+                };
+                if (value < 0) {
+                    __max_dns_time_to_live_seconds = std.math.maxInt(u32);
+                } else {
+                    __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
+                }
+                return __max_dns_time_to_live_seconds.?;
+            }
+
+            __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
+            return default_max_dns_time_to_live_seconds;
+        };
+    }
+
+    pub const Request = struct {
+        pub usingnamespace bun.New(@This());
+        const Key = struct {
+            host: ?[:0]const u8,
+            port: u16,
+            hash: u64,
+
+            pub fn init(name: ?[:0]const u8, port: u16) @This() {
+                const hash = if (name) |n| brk: {
+                    break :brk bun.hash(n);
+                } else 0;
+                return .{
+                    .host = name,
+                    .port = port,
+                    .hash = hash,
+                };
+            }
+
+            pub fn toOwned(this: @This()) @This() {
+                if (this.host) |host| {
+                    const host_copy = bun.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                    return .{
+                        .host = host_copy,
+                        .port = this.port,
+                        .hash = this.hash,
+                    };
+                } else {
+                    return this;
+                }
+            }
+        };
+
+        const Result = extern struct {
+            info: ?*std.c.addrinfo,
+            err: c_int,
+        };
+
+        pub const MacAsyncDNS = struct {
+            file_poll: ?*bun.Async.FilePoll = null,
+            machport: ?*anyopaque = null,
+
+            extern fn getaddrinfo_send_reply(*anyopaque, *const JSC.DNS.LibInfo.GetaddrinfoAsyncHandleReply) bool;
+            pub fn onMachportChange(this: *Request) void {
+                if (!getaddrinfo_send_reply(this.libinfo.machport.?, LibInfo.getaddrinfo_async_handle_reply().?)) {
+                    libinfoCallback(@intFromEnum(std.c.E.NOSYS), null, this);
+                }
+            }
+        };
+
+        key: Key,
+        result: ?Result = null,
+
+        notify: std.ArrayListUnmanaged(DNSRequestOwner) = .{},
+
+        /// number of sockets that have a reference to result or are waiting for the result
+        /// while this is non-zero, this entry cannot be freed
+        refcount: u32 = 0,
+
+        /// Seconds since the epoch when this request was created.
+        /// Not a precise timestamp.
+        created_at: u32 = std.math.maxInt(u32),
+
+        lock: bun.Lock = bun.Lock.init(),
+
+        valid: bool = true,
+
+        libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else {},
+
+        pub fn isExpired(this: *Request, timestamp_to_store: *u32) bool {
+            if (this.refcount > 0 or this.result == null) {
+                return false;
+            }
+
+            const now = if (timestamp_to_store.* == 0) GlobalCache.getCacheTimestamp() else timestamp_to_store.*;
+            timestamp_to_store.* = now;
+
+            if (now -| this.created_at > getMaxDNSTimeToLiveSeconds()) {
+                this.valid = false;
+                return true;
+            }
+
+            return false;
+        }
+
+        pub fn deinit(this: *@This()) void {
+            bun.assert(this.notify.items.len == 0);
+            if (this.result) |res| {
+                if (res.info) |info| {
+                    std.c.freeaddrinfo(info);
+                }
+            }
+            if (this.key.host) |host| {
+                bun.default_allocator.free(host);
+            }
+
+            this.destroy();
+        }
+    };
+
+    const GlobalCache = struct {
+        const MAX_ENTRIES = 256;
+
+        lock: bun.Lock = bun.Lock.init(),
+        cache: [MAX_ENTRIES]*Request = undefined,
+        len: usize = 0,
+
+        const This = @This();
+
+        const CacheResult = union(enum) {
+            inflight: *Request,
+            resolved: *Request,
+            none,
+        };
+
+        fn get(
+            this: *This,
+            key: Request.Key,
+            timestamp_to_store: *u32,
+        ) ?*Request {
+            var len = this.len;
+            var i: usize = 0;
+            while (i < len) {
+                var entry = this.cache[i];
+                if (entry.key.hash == key.hash and entry.key.port == key.port and entry.valid) {
+                    if (entry.isExpired(timestamp_to_store)) {
+                        log("get: expired entry", .{});
+                        _ = this.deleteEntryAt(len, i);
+                        entry.deinit();
+                        len = this.len;
+                        continue;
+                    }
+
+                    return entry;
+                }
+
+                i += 1;
+            }
+
+            return null;
+        }
+
+        // To preserve memory, we use a 32 bit timestamp
+        // However, we're almost out of time to use 32 bit timestamps for anything
+        // So we set the epoch to January 1st, 2024 instead.
+        pub fn getCacheTimestamp() u32 {
+            return @truncate(bun.getRoughTickCountMs() / 1000);
+        }
+
+        fn isNearlyFull(this: *This) bool {
+            // 80% full (value is kind of arbitrary)
+            return @atomicLoad(usize, &this.len, .Monotonic) * 5 >= this.cache.len * 4;
+        }
+
+        fn deleteEntryAt(this: *This, len: usize, i: usize) ?*Request {
+            this.len -= 1;
+            dns_cache_size = len - 1;
+
+            if (len > 1) {
+                const prev = this.cache[len - 1];
+                this.cache[i] = prev;
+                return prev;
+            }
+
+            return null;
+        }
+
+        fn remove(this: *This, entry: *Request) void {
+            const len = this.len;
+            // equivalent of swapRemove
+            for (0..len) |i| {
+                if (this.cache[i] == entry) {
+                    _ = this.deleteEntryAt(len, i);
+                    return;
+                }
+            }
+        }
+
+        fn tryPush(this: *This, entry: *Request) bool {
+            // is the cache full?
+            if (this.len >= this.cache.len) {
+                // check if there is an element to evict
+                for (this.cache[0..this.len]) |*e| {
+                    if (e.*.refcount == 0) {
+                        e.*.deinit();
+                        e.* = entry;
+                        return true;
+                    }
+                }
+                return false;
+            } else {
+                // just append to the end
+                this.cache[this.len] = entry;
+                this.len += 1;
+                return true;
+            }
+        }
+    };
+
+    var global_cache = GlobalCache{};
+
+    // we just hardcode a STREAM socktype
+    const hints: std.c.addrinfo = .{
+        .addr = null,
+        .addrlen = 0,
+        .canonname = null,
+        .family = std.c.AF.UNSPEC,
+        .flags = 0,
+        .next = null,
+        .protocol = 0,
+        .socktype = std.c.SOCK.STREAM,
+    };
+
+    extern fn us_internal_dns_callback(socket: *bun.uws.ConnectingSocket, req: *Request) void;
+    extern fn us_internal_dns_callback_threadsafe(socket: *bun.uws.ConnectingSocket, req: *Request) void;
+
+    pub const DNSRequestOwner = union(enum) {
+        socket: *bun.uws.ConnectingSocket,
+        prefetch: *bun.uws.Loop,
+
+        pub fn notifyThreadsafe(this: DNSRequestOwner, req: *Request) void {
+            switch (this) {
+                .socket => |socket| us_internal_dns_callback_threadsafe(socket, req),
+                .prefetch => freeaddrinfo(req, 0),
+            }
+        }
+
+        pub fn notify(this: DNSRequestOwner, req: *Request) void {
+            switch (this) {
+                .prefetch => freeaddrinfo(req, 0),
+                .socket => us_internal_dns_callback(this.socket, req),
+            }
+        }
+
+        pub fn loop(this: DNSRequestOwner) *bun.uws.Loop {
+            return switch (this) {
+                .prefetch => this.prefetch,
+                .socket => bun.uws.us_connecting_socket_get_loop(this.socket),
+            };
+        }
+    };
+
+    fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
+        // Only lock while
+        req.lock.lock();
+
+        req.result = .{
+            .info = info,
+            .err = err,
+        };
+        var notify = req.notify;
+        defer notify.deinit(bun.default_allocator);
+        req.notify = .{};
+        req.refcount -= 1;
+        req.lock.unlock();
+
+        for (notify.items) |query| {
+            query.notifyThreadsafe(req);
+        }
+    }
+
+    fn workPoolCallback(req: *Request) void {
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
+
+        if (Environment.isWindows) {
+            const wsa = std.os.windows.ws2_32;
+            const wsa_hints = wsa.addrinfo{
+                .flags = 0,
+                .family = wsa.AF.UNSPEC,
+                .socktype = wsa.SOCK.STREAM,
+                .protocol = 0,
+                .addrlen = 0,
+                .canonname = null,
+                .addr = null,
+                .next = null,
+            };
+
+            var addrinfo: ?*wsa.addrinfo = null;
+            const err = wsa.getaddrinfo(
+                if (req.key.host) |host| host.ptr else null,
+                if (port.len > 0) portZ.ptr else null,
+                &wsa_hints,
+                &addrinfo,
+            );
+            afterResult(req, @ptrCast(addrinfo), err);
+        } else {
+            var addrinfo: ?*std.c.addrinfo = null;
+            const err = std.c.getaddrinfo(
+                if (req.key.host) |host| host.ptr else null,
+                if (port.len > 0) portZ.ptr else null,
+                &hints,
+                &addrinfo,
+            );
+            afterResult(req, addrinfo, @intFromEnum(err));
+        }
+    }
+
+    pub fn lookupLibinfo(req: *Request, loop: JSC.EventLoopHandle) bool {
+        const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
+
+        var port_buf: [128]u8 = undefined;
+        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
+        port_buf[port.len] = 0;
+        const portZ = port_buf[0..port.len :0];
+
+        var machport: ?*anyopaque = null;
+        const errno = getaddrinfo_async_start_(
+            &machport,
+            if (req.key.host) |host| host.ptr else null,
+            if (port.len > 0) portZ.ptr else null,
+            &hints,
+            libinfoCallback,
+            req,
+        );
+
+        if (errno != 0 or machport == null) {
+            return false;
+        }
+
+        var poll = bun.Async.FilePoll.init(loop, bun.toFD(@intFromPtr(machport)), .{}, InternalDNSRequest, req);
+        const rc = poll.register(loop.loop(), .machport, true);
+
+        if (rc == .err) {
+            poll.deinit();
+            return false;
+        }
+
+        req.libinfo = .{
+            .file_poll = poll,
+            .machport = machport,
+        };
+
+        return true;
+    }
+
+    fn libinfoCallback(
+        status: i32,
+        addr_info: ?*std.c.addrinfo,
+        arg: ?*anyopaque,
+    ) callconv(.C) void {
+        const req = bun.cast(*Request, arg);
+        afterResult(req, addr_info, @intCast(status));
+    }
+
+    var dns_cache_hits_completed: usize = 0;
+    var dns_cache_hits_inflight: usize = 0;
+    var dns_cache_size: usize = 0;
+    var dns_cache_misses: usize = 0;
+    var dns_cache_errors: usize = 0;
+    var getaddrinfo_calls: usize = 0;
+
+    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObject(globalObject, 6);
+        object.put(globalObject, JSC.ZigString.static("cacheHitsCompleted"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cacheHitsInflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cacheMisses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("size"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("errors"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("totalCount"), JSC.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .Monotonic)));
+        return object;
+    }
+
+    pub fn getaddrinfo(loop: *bun.uws.Loop, host: ?[:0]const u8, port: u16, is_cache_hit: ?*bool) ?*Request {
+        const preload = is_cache_hit == null;
+        const key = Request.Key.init(host, port);
+        global_cache.lock.lock();
+        getaddrinfo_calls += 1;
+        var timestamp_to_store: u32 = 0;
+        // is there a cache hit?
+        if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE")) {
+            if (global_cache.get(key, &timestamp_to_store)) |entry| {
+                if (preload) {
+                    global_cache.lock.unlock();
+                    return null;
+                }
+
+                entry.lock.lock();
+                entry.refcount += 1;
+
+                if (entry.result != null) {
+                    is_cache_hit.?.* = true;
+                    log("getaddrinfo({s}:{d}) = cache hit", .{ host orelse "", port });
+                    dns_cache_hits_completed += 1;
+                } else {
+                    log("getaddrinfo({s}:{d}) = cache hit (inflight)", .{ host orelse "", port });
+                    dns_cache_hits_inflight += 1;
+                }
+
+                entry.lock.unlock();
+                global_cache.lock.unlock();
+
+                return entry;
+            }
+        }
+
+        // no cache hit, we have to make a new request
+        const req = Request.new(.{
+            .key = key.toOwned(),
+            .refcount = @as(u32, @intFromBool(!preload)) + 1,
+
+            // Seconds since when this request was created
+            .created_at = if (timestamp_to_store == 0) GlobalCache.getCacheTimestamp() else timestamp_to_store,
+        });
+
+        _ = global_cache.tryPush(req);
+        dns_cache_misses += 1;
+        dns_cache_size = global_cache.len;
+        global_cache.lock.unlock();
+
+        // doesn't work yet
+        if (comptime Environment.isMac) {
+            if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO")) {
+                const res = lookupLibinfo(req, loop.internal_loop_data.getParent());
+                log("getaddrinfo({s}:{d}) = cache miss (libinfo)", .{ host orelse "", port });
+                if (res) return req;
+                // if we were not able to use libinfo, we fall back to the work pool
+            }
+        }
+
+        log("getaddrinfo({s}:{d}) = cache miss (libc)", .{ host orelse "", port });
+        // schedule the request to be executed on the work pool
+        bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
+        return req;
+    }
+
+    pub fn prefetchFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2).slice();
+
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("prefetch", 1, arguments.len);
+            return .zero;
+        }
+
+        const hostname_or_url = arguments[0];
+
+        var hostname_slice = JSC.ZigString.Slice.empty;
+        defer hostname_slice.deinit();
+        var port: u16 = 0;
+
+        if (hostname_or_url.isString()) {
+            hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
+
+            if (arguments.len > 1 and arguments[1].isAnyInt()) {
+                const portI = arguments[1].coerce(i32, globalThis);
+                if (portI < 0 or portI > 65535) {
+                    globalThis.throwInvalidArguments("port must be between 0 and 65535", .{});
+                    return .zero;
+                }
+                port = @intCast(portI);
+            } else {
+                globalThis.throwInvalidArguments("port must be an integer", .{});
+                return .zero;
+            }
+        } else {
+            globalThis.throwInvalidArguments("hostname must be a string", .{});
+            return .zero;
+        }
+
+        const hostname_z = bun.default_allocator.dupeZ(u8, hostname_slice.slice()) catch {
+            globalThis.throwOutOfMemory();
+            return .zero;
+        };
+        defer bun.default_allocator.free(hostname_z);
+
+        prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z, port);
+        return .undefined;
+    }
+
+    pub fn prefetch(loop: *bun.uws.Loop, hostname: ?[:0]const u8, port: u16) void {
+        _ = getaddrinfo(loop, hostname, port, null);
+    }
+
+    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, port: u16, socket: *?*anyopaque) callconv(.C) c_int {
+        const host: ?[:0]const u8 = std.mem.span(_host);
+        var is_cache_hit: bool = false;
+        const req = getaddrinfo(loop, host, port, &is_cache_hit).?;
+        socket.* = req;
+        return if (is_cache_hit) 0 else 1;
+    }
+
+    fn us_getaddrinfo_set(
+        request: *Request,
+        socket: *bun.uws.ConnectingSocket,
+    ) callconv(.C) void {
+        request.lock.lock();
+        const query = DNSRequestOwner{
+            .socket = socket,
+        };
+        if (request.result != null) {
+            request.lock.unlock();
+            query.notify(request);
+            return;
+        }
+
+        request.notify.append(bun.default_allocator, .{ .socket = socket }) catch bun.outOfMemory();
+        request.lock.unlock();
+    }
+
+    fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
+        req.lock.lock();
+        defer req.lock.unlock();
+
+        req.valid = err == 0;
+        dns_cache_errors += @as(usize, @intFromBool(err != 0));
+
+        req.refcount -= 1;
+        if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
+            global_cache.lock.lock();
+            log("cache --", .{});
+
+            defer global_cache.lock.unlock();
+            global_cache.remove(req);
+            req.deinit();
+        }
+    }
+
+    fn getRequestResult(req: *Request) callconv(.C) *Request.Result {
+        return &req.result.?;
+    }
+};
+
+pub const InternalDNSRequest = InternalDNS.Request;
+
+comptime {
+    @export(InternalDNS.us_getaddrinfo_set, .{
+        .name = "Bun__addrinfo_set",
+    });
+    @export(InternalDNS.us_getaddrinfo, .{
+        .name = "Bun__addrinfo_get",
+    });
+    @export(InternalDNS.freeaddrinfo, .{
+        .name = "Bun__addrinfo_freeRequest",
+    });
+    @export(InternalDNS.getRequestResult, .{
+        .name = "Bun__addrinfo_getRequestResult",
+    });
+}
+
 pub const DNSResolver = struct {
     const log = Output.scoped(.DNSResolver, false);
 
@@ -2537,9 +3105,14 @@ pub const DNSResolver = struct {
                 .name = "Bun__DNSResolver__lookupService",
             },
         );
+        @export(
+            InternalDNS.prefetchFromJS,
+            .{
+                .name = "Bun__DNSResolver__prefetch",
+            },
+        );
+        @export(InternalDNS.getDNSCacheStats, .{
+            .name = "Bun__DNSResolver__getCacheStats",
+        });
     }
-    // pub fn cancel(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    //     const arguments = callframe.arguments(3);
-
-    // }
 };

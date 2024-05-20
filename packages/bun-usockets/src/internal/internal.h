@@ -80,7 +80,8 @@ struct addrinfo_result {
     int error;
 };
 
-extern void Bun__addrinfo_get(const char* host, int port, struct us_connecting_socket_t *s);
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, int port, void** ptr);
+extern int Bun__addrinfo_set(void* ptr, struct us_connecting_socket_t* socket); 
 extern void Bun__addrinfo_freeRequest(void* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
 
@@ -242,7 +243,9 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_socket_long_timeout)(struct us_socket_t *);
   struct us_socket_t *(*on_end)(struct us_socket_t *);
   struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
+  struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
+  
 };
 
 /* Internal SSL interface */
@@ -340,6 +343,11 @@ void us_internal_ssl_socket_context_on_connect_error(
     struct us_internal_ssl_socket_t *(*on_connect_error)(
         struct us_internal_ssl_socket_t *s, int code));
 
+void us_internal_ssl_socket_context_on_socket_connect_error(
+        struct us_internal_ssl_socket_context_t *context,
+    struct us_internal_ssl_socket_t *(*on_socket_connect_error)(
+        struct us_internal_ssl_socket_t *s, int code));
+
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     struct us_internal_ssl_socket_context_t *context, const char *host,
     int port, int options, int socket_ext_size);
@@ -350,7 +358,7 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
 
 struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size);
+    int port, int options, int socket_ext_size, int* is_resolved);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,

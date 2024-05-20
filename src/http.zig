@@ -832,7 +832,11 @@ pub const HTTPThread = struct {
                 start_time = std.time.nanoTimestamp();
             }
             Output.flush();
-            this.loop.tickOnce(this);
+
+            this.loop.loop.inc();
+            this.loop.loop.tick();
+            this.loop.loop.dec();
+
             // this.loop.run();
             if (comptime Environment.isDebug) {
                 const end = std.time.nanoTimestamp();

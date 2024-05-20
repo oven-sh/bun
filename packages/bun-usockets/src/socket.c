@@ -191,7 +191,10 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         /* Any socket with prev = context is marked as closed */
         s->prev = (struct us_socket_t *) s->context;
 
-        return s->context->on_close(s, code, reason);
+        if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
+            return s->context->on_close(s, code, reason);
+        }
+        
     }
     return s;
 }

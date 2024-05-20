@@ -256,8 +256,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
-                        getValue(socket),
+                        TLSSocket.from(socket).ext(ContextType).*,
                         TLSSocket.from(socket),
+                        code,
+                    );
+                    return socket;
+                }
+                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                    Fields.onConnectError(
+                        @as(*align(alignment) ContextType, @ptrCast(@alignCast(us_connecting_socket_ext(1, socket)))).*,
+                        TLSSocket.fromConnecting(socket),
                         code,
                     );
                     return socket;
@@ -281,6 +289,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .on_writable = SocketHandler.on_writable,
                 .on_timeout = SocketHandler.on_timeout,
                 .on_connect_error = SocketHandler.on_connect_error,
+                .on_connect_error_connecting_socket = SocketHandler.on_connect_error_connecting_socket,
                 .on_end = SocketHandler.on_end,
                 .on_handshake = SocketHandler.on_handshake,
                 .on_long_timeout = SocketHandler.on_long_timeout,
@@ -582,9 +591,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var allocator = stack_fallback.get();
             const host_ = allocator.dupeZ(u8, host) catch return null;
             defer allocator.free(host_);
-
-            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context)) orelse return null;
-            const socket_ = ThisSocket{ .socket = .{ .connecting = socket } };
+            var did_dns_resolve: i32 = 0;
+            const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
+            const socket_ = if (did_dns_resolve == 1)
+                ThisSocket{
+                    .socket = .{ .done = @ptrCast(socket) },
+                }
+            else
+                ThisSocket{
+                    .socket = .{ .connecting = @ptrCast(socket) },
+                };
 
             var holder = socket_.ext(Context);
             holder.* = ctx;
@@ -677,16 +693,24 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             defer if (host) |allocated_host| allocator.free(allocated_host[0..raw_host.len]);
 
-            const connecting = us_socket_context_connect(
+            var did_dns_resolve: i32 = 0;
+            const socket_ptr = us_socket_context_connect(
                 comptime ssl_int,
                 socket_ctx,
                 host,
                 port,
                 0,
                 @sizeOf(*anyopaque),
-            );
-
-            const socket = ThisSocket{ .socket = .{ .connecting = connecting } };
+                &did_dns_resolve,
+            ) orelse return error.FailedToOpenSocket;
+            const socket = if (did_dns_resolve == 1)
+                ThisSocket{
+                    .socket = .{ .done = @ptrCast(socket_ptr) },
+                }
+            else
+                ThisSocket{
+                    .socket = .{ .connecting = @ptrCast(socket_ptr) },
+                };
 
             const holder = socket.ext(*anyopaque);
             holder.* = ptr;
@@ -768,7 +792,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
-                pub fn on_connect_error(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
@@ -778,6 +802,20 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     Fields.onConnectError(
                         val,
                         SocketHandlerType.fromConnecting(socket),
+                        code,
+                    );
+                    return socket;
+                }
+                pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
+                    const val = if (comptime ContextType == anyopaque)
+                        us_socket_ext(comptime ssl_int, socket)
+                    else if (comptime deref_)
+                        SocketHandlerType.from(socket).ext(ContextType).*
+                    else
+                        SocketHandlerType.from(socket).ext(ContextType);
+                    Fields.onConnectError(
+                        val,
+                        SocketHandlerType.from(socket),
                         code,
                     );
                     return socket;
@@ -804,8 +842,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
             if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null)
-                us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
+            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null) {
+                us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
+                us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
+            }
             if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
             if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
@@ -891,7 +931,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     );
                     return socket;
                 }
-                pub fn on_connect_error(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
@@ -901,6 +941,26 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     Fields.onConnectError(
                         val,
                         ThisSocket.fromConnecting(socket),
+                        code,
+                    );
+                    return socket;
+                }
+                pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
+                    const val = if (comptime ContextType == anyopaque)
+                        us_socket_ext(comptime ssl_int, socket)
+                    else if (comptime deref_)
+                        ThisSocket.from(socket).ext(ContextType).*
+                    else
+                        ThisSocket.from(socket).ext(ContextType);
+
+                    // We close immediately in this case
+                    // uSockets doesn't know if this is a TLS socket or not.
+                    // So we have to do that logic in here.
+                    ThisSocket.from(socket).close(0, null);
+
+                    Fields.onConnectError(
+                        val,
+                        ThisSocket.from(socket),
                         code,
                     );
                     return socket;
@@ -927,8 +987,10 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
             if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null)
-                us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
+            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null) {
+                us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
+                us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
+            }
             if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
             if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
@@ -1048,6 +1110,9 @@ pub const SocketContext = opaque {
             fn connect_error(socket: *ConnectingSocket, _: i32) callconv(.C) ?*ConnectingSocket {
                 return socket;
             }
+            fn socket_connect_error(socket: *Socket, _: i32) callconv(.C) ?*Socket {
+                return socket;
+            }
             fn end(socket: *Socket) callconv(.C) ?*Socket {
                 return socket;
             }
@@ -1062,6 +1127,7 @@ pub const SocketContext = opaque {
         us_socket_context_on_writable(ssl_int, ctx, DummyCallbacks.writable);
         us_socket_context_on_timeout(ssl_int, ctx, DummyCallbacks.timeout);
         us_socket_context_on_connect_error(ssl_int, ctx, DummyCallbacks.connect_error);
+        us_socket_context_on_socket_connect_error(ssl_int, ctx, DummyCallbacks.socket_connect_error);
         us_socket_context_on_end(ssl_int, ctx, DummyCallbacks.end);
         us_socket_context_on_handshake(ssl_int, ctx, DummyCallbacks.handshake, null);
         us_socket_context_on_long_timeout(ssl_int, ctx, DummyCallbacks.long_timeout);
@@ -1328,6 +1394,7 @@ pub const us_socket_events_t = extern struct {
     on_long_timeout: ?*const fn (*Socket) callconv(.C) ?*Socket = null,
     on_end: ?*const fn (*Socket) callconv(.C) ?*Socket = null,
     on_connect_error: ?*const fn (*Socket, i32) callconv(.C) ?*Socket = null,
+    on_connect_error_connecting_socket: ?*const fn (*ConnectingSocket, i32) callconv(.C) ?*ConnectingSocket = null,
     on_handshake: ?*const fn (*Socket, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void = null,
 };
 
@@ -1352,12 +1419,13 @@ extern fn us_socket_context_on_handshake(ssl: i32, context: ?*SocketContext, on_
 extern fn us_socket_context_on_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_long_timeout(ssl: i32, context: ?*SocketContext, on_timeout: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*ConnectingSocket, i32) callconv(.C) ?*ConnectingSocket) void;
+extern fn us_socket_context_on_socket_connect_error(ssl: i32, context: ?*SocketContext, on_connect_error: *const fn (*Socket, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_end(ssl: i32, context: ?*SocketContext, on_end: *const fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) *ConnectingSocket;
+pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;

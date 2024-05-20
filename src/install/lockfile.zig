@@ -4113,7 +4113,7 @@ pub const Package = extern struct {
                 continue;
             }
 
-            const abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
+            var abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
                 source.path.name.dir,
                 filepath_buf,
                 &.{ input_path, "package.json" },

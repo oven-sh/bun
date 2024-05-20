@@ -377,6 +377,9 @@ it("it should only call open once", async () => {
         expect(opened).toBe(false);
         opened = true;
       },
+      connectError(socket, error) {
+        expect().fail("connectError should not be called");
+      },
       close(socket) {
         server.stop();
         resolve();

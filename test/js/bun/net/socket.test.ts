@@ -361,8 +361,8 @@ it("it should only call open once", async () => {
       open(socket) {
         socket.end("Hello");
       },
-      data(socket, data) {}
-    }
+      data(socket, data) {},
+    },
   });
 
   const { resolve, reject, promise } = Promise.withResolvers();

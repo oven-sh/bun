@@ -1819,7 +1819,6 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          `+ pkg1@workspace:packages/pkg1`,
           `+ pkg2@workspace:packages/pkg2`,
           "",
           "2 packages installed",
@@ -1842,7 +1841,6 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          `+ pkg1@workspace:packages/pkg1`,
           `+ pkg2@workspace:packages/pkg2`,
           "",
           "2 packages installed",
@@ -1868,7 +1866,6 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          `+ pkg1@workspace:packages/pkg1`,
           `+ pkg2@workspace:packages/pkg2`,
           "",
           "2 packages installed",
@@ -1891,7 +1888,6 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          `+ pkg1@workspace:packages/pkg1`,
           `+ pkg2@workspace:packages/pkg2`,
           "",
           "2 packages installed",
@@ -1947,6 +1943,10 @@ describe("workspaces", async () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -1965,13 +1965,12 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        "",
-        `+ workspace-1@workspace:packages/workspace-1`,
-        "",
-        "1 package installed",
-      ]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -1994,13 +1993,12 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        "",
-        `+ workspace-1@workspace:packages/workspace-1`,
-        "",
-        "1 package installed",
-      ]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -2026,6 +2024,10 @@ describe("workspaces", async () => {
         "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
     });
   }
 });
@@ -2547,13 +2549,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("error:");
       expect(err).toContain("Saved lockfile");
       var out = await new Response(stdout).text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        "",
-        `+ pkg1@workspace:packages/pkg1`,
-        `+ pkg2@workspace:packages/pkg2`,
-        "",
-        "2 packages installed",
-      ]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
@@ -5631,10 +5627,9 @@ describe("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      "+ dragon-test-2-b@workspace:dragon-test-2-b",
       "+ dragon-test-2-a@workspace:dragon-test-2-a",
       "",
-      "4 packages installed",
+      "3 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
@@ -5644,13 +5639,9 @@ describe("yarn tests", () => {
     ]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
-      version: "2.0.0",
-    } as any);
-    expect(await readdirSorted(join(packageDir, "dragon-test-2-a", "node_modules"))).toEqual(["no-deps"]);
-    expect(await file(join(packageDir, "dragon-test-2-a", "node_modules", "no-deps", "package.json")).json()).toEqual({
-      name: "no-deps",
       version: "1.0.0",
-    } as any);
+    });
+    expect(await exists(join(packageDir, "dragon-test-2-a", "node_modules"))).toBeFalse();
     expect(await exited).toBe(0);
   });
 
@@ -5746,12 +5737,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      "+ my-workspace@workspace:my-workspace",
-      "",
-      "3 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "my-workspace",
@@ -5824,13 +5810,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      `+ a@workspace:packages/a`,
-      `+ b@workspace:packages/b`,
-      "",
-      "5 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "5 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "a",
@@ -6257,13 +6237,7 @@ describe("yarn tests", () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      "+ pkg-a@workspace:pkg-a",
-      "+ pkg-b@workspace:pkg-b",
-      "",
-      "4 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "no-deps",

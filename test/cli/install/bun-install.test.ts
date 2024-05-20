@@ -7189,18 +7189,17 @@ it("should not override npm dependency by workspace with mismatched version", as
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err).not.toContain("Saved lockfile");
-  expect(err).toContain('warn: Duplicate dependency: "bar" specified in package.json');
-  expect(await new Response(stdout).text()).toBeEmpty();
-  expect(await exited).toBe(1);
+  expect(err).toContain("Saved lockfile");
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ bar@0.0.2",
+    "",
+    "1 package installed",
+  ]);
+  expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);
-  try {
-    await access(join(package_dir, "bun.lockb"));
-    expect(() => {}).toThrow();
-  } catch (err: any) {
-    expect(err.code).toBe("ENOENT");
-  }
 });
 
 it("should override @scoped npm dependency by matching workspace", async () => {
@@ -7290,7 +7289,7 @@ it("should override aliased npm dependency by matching workspace", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "baz"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(baz_package);
   await access(join(package_dir, "bun.lockb"));

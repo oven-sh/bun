@@ -3834,26 +3834,34 @@ pub const Package = extern struct {
             },
             .npm => {
                 const npm = dependency_version.value.npm;
-                if (workspace_version != null and npm.version.satisfies(workspace_version.?, buf, buf)) {
-                    for (package_dependencies[0..dependencies_count]) |dep| {
-                        // `dependencies` & `workspaces` defined within the same `package.json`
-                        if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
-                            return null;
+                if (workspace_version != null) {
+                    if (npm.version.satisfies(workspace_version.?, buf, buf)) {
+                        const path = workspace_path.?.sliced(buf);
+                        if (Dependency.parseWithTag(
+                            allocator,
+                            external_alias.value,
+                            external_alias.hash,
+                            path.slice,
+                            .workspace,
+                            &path,
+                            log,
+                        )) |dep| {
+                            found_workspace = true;
+                            dependency_version = dep;
                         }
-                    }
-
-                    const path = workspace_path.?.sliced(buf);
-                    if (Dependency.parseWithTag(
-                        allocator,
-                        external_alias.value,
-                        external_alias.hash,
-                        path.slice,
-                        .workspace,
-                        &path,
-                        log,
-                    )) |dep| {
-                        found_workspace = true;
-                        dependency_version = dep;
+                    } else {
+                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                        for (package_dependencies[0..dependencies_count]) |*dep| {
+                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
+                                dep.* = .{
+                                    .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+                                    .name = external_alias.value,
+                                    .name_hash = external_alias.hash,
+                                    .version = dependency_version,
+                                };
+                                return null;
+                            }
+                        }
                     }
                 }
             },
@@ -3935,14 +3943,15 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = if (in_workspace or found_workspace or dependency_version.tag == .workspace) group.behavior.setWorkspace(true) else group.behavior,
+            .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,
         };
 
-        // `peerDependencies` may be specified on existing dependencies
-        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
+        // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
+        // the array is processed
+        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer() and !group.behavior.isWorkspace()) {
             const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
@@ -4392,13 +4401,18 @@ pub const Package = extern struct {
 
         const dependency_groups = comptime brk: {
             var out_groups: [
-                @as(usize, @intFromBool(features.dependencies)) +
+                @as(usize, @intFromBool(features.workspaces)) +
+                    @as(usize, @intFromBool(features.dependencies)) +
                     @as(usize, @intFromBool(features.dev_dependencies)) +
                     @as(usize, @intFromBool(features.optional_dependencies)) +
-                    @as(usize, @intFromBool(features.peer_dependencies)) +
-                    @as(usize, @intFromBool(features.workspaces))
+                    @as(usize, @intFromBool(features.peer_dependencies))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
+
+            if (features.workspaces) {
+                out_groups[out_group_i] = DependencyGroup.workspaces;
+                out_group_i += 1;
+            }
 
             if (features.dependencies) {
                 out_groups[out_group_i] = DependencyGroup.dependencies;
@@ -4416,11 +4430,6 @@ pub const Package = extern struct {
 
             if (features.peer_dependencies) {
                 out_groups[out_group_i] = DependencyGroup.peer;
-                out_group_i += 1;
-            }
-
-            if (features.workspaces) {
-                out_groups[out_group_i] = DependencyGroup.workspaces;
                 out_group_i += 1;
             }
 

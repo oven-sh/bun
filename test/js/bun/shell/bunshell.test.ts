@@ -384,7 +384,7 @@ describe("bunshell", () => {
     TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");
     TestBuilder.command`echo foo||echo hi`.stdout("foo\n").runAsTest("||");
     TestBuilder.command`echo foo>hi.txt`.ensureTempDir().fileEquals("hi.txt", "foo\n").runAsTest("||");
-    TestBuilder.command`echo hifriends#lol`.runAsTest("#");
+    TestBuilder.command`echo hifriends#lol`.stdout("hifriends#lol\n").runAsTest("#");
   });
 
   test("cmd subst", async () => {

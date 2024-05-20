@@ -53,7 +53,6 @@ end
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't install devDependencies" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds dev create help bun upgrade discord run install remove add init link unlink pm x
 set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init pm x
 set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install remove add init pm x
 set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add init pm x
@@ -191,4 +190,16 @@ complete -c bun \
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
 
-complete -c bun -n "__fish_use_subcommand" -a "$bun_builtin_cmds" -f
+# Add built-in subcommands with descriptions.
+complete -c bun -n "__fish_use_subcommand" -a "create" -f -d "Create a new project from a template"
+complete -c bun -n "__fish_use_subcommand" -a "build bun" --require-parameter -F -d "Transpile and bundle one or more files"
+complete -c bun -n "__fish_use_subcommand" -a "upgrade" -d "Upgrade Bun"
+complete -c bun -n "__fish_use_subcommand" -a "run" -d "Run a script or package binary"
+complete -c bun -n "__fish_use_subcommand" -a "install" -d "Install dependencies from package.json" -f
+complete -c bun -n "__fish_use_subcommand" -a "remove" -d "Remove a dependency from package.json" -f
+complete -c bun -n "__fish_use_subcommand" -a "add" -d "Add a dependency to package.json" -f
+complete -c bun -n "__fish_use_subcommand" -a "init" -d "Initialize a Bun project in this directory" -f
+complete -c bun -n "__fish_use_subcommand" -a "link" -d "Register or link a local npm package" -f
+complete -c bun -n "__fish_use_subcommand" -a "link" -d "Unregister a local npm package" -f
+complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package management utilities" -f
+complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f

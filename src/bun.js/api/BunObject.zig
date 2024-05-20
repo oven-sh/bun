@@ -633,7 +633,7 @@ pub fn inspect(
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
-                    const v = opt.asDouble();
+                    const v = opt.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -660,7 +660,7 @@ pub fn inspect(
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
-                    const v = depthArg.asDouble();
+                    const v = depthArg.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -1355,6 +1355,8 @@ pub const Crypto = struct {
             @"sha3-256",
             @"sha3-384",
             @"sha3-512",
+            shake128,
+            shake256,
 
             pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
                 var all = std.EnumArray(Algorithm, ZigString).initUndefined();
@@ -1396,6 +1398,8 @@ pub const Crypto = struct {
                 .{ "sha3-256", .@"sha3-256" },
                 .{ "sha3-384", .@"sha3-384" },
                 .{ "sha3-512", .@"sha3-512" },
+                .{ "shake128", .shake128 },
+                .{ "shake256", .shake256 },
                 // .{ "md5-sha1", .@"MD5-SHA1" },
                 // .{ "dsa-sha", .@"DSA-SHA" },
                 // .{ "dsa-sha1", .@"DSA-SHA1" },
@@ -2418,7 +2422,7 @@ pub const Crypto = struct {
                 return output_buf.value;
             } else {
                 // Clone to GC-managed memory
-                return JSC.ArrayBuffer.create(globalThis, output_digest_slice[0..len], .Buffer);
+                return JSC.ArrayBuffer.createBuffer(globalThis, output_digest_slice[0..len]);
             }
         }
 
@@ -2590,7 +2594,7 @@ pub const Crypto = struct {
                 return output_buf.value;
             } else {
                 // Clone to GC-managed memory
-                return JSC.ArrayBuffer.create(globalThis, result, .Buffer);
+                return JSC.ArrayBuffer.createBuffer(globalThis, result);
             }
         }
 
@@ -2636,6 +2640,8 @@ pub const Crypto = struct {
             .{ "sha3-256", std.crypto.hash.sha3.Sha3_256 },
             .{ "sha3-384", std.crypto.hash.sha3.Sha3_384 },
             .{ "sha3-512", std.crypto.hash.sha3.Sha3_512 },
+            .{ "shake128", std.crypto.hash.sha3.Shake128 },
+            .{ "shake256", std.crypto.hash.sha3.Shake256 },
         };
 
         pub fn hashByName(
@@ -2695,7 +2701,7 @@ pub const Crypto = struct {
                 var out: [Algorithm.digest_length]u8 = undefined;
                 h.final(&out);
                 // Clone to GC-managed memory
-                return JSC.ArrayBuffer.create(globalThis, &out, .Buffer);
+                return JSC.ArrayBuffer.createBuffer(globalThis, &out);
             }
         }
 
@@ -3685,7 +3691,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            globalThis.bunVM().onError(globalThis, args.ptr[0]);
+            _ = globalThis.bunVM().uncaughtException(globalThis, args.ptr[0], true);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -3787,7 +3793,7 @@ pub const Timer = struct {
             }
 
             if (result.isAnyError()) {
-                vm.onError(globalThis, result);
+                _ = vm.uncaughtException(globalThis, result, false);
                 this.deinit();
                 return;
             }
@@ -3796,7 +3802,7 @@ pub const Timer = struct {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();
-                        vm.onError(globalThis, promise.result(globalThis.vm()));
+                        _ = vm.unhandledRejection(globalThis, promise.result(globalThis.vm()), promise.asValue(globalThis));
                     },
                     .Fulfilled => {
                         this.deinit();
@@ -5265,7 +5271,7 @@ pub const EnvironmentVariables = struct {
 };
 
 export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.get().onError(globalObject, err);
+    _ = JSC.VirtualMachine.get().uncaughtException(globalObject, err, false);
 }
 
 comptime {

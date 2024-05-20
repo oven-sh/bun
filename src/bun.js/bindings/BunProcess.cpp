@@ -3,6 +3,11 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/Protect.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
@@ -20,6 +25,7 @@
 #include "wtf-bindings.h"
 
 #include "ProcessBindingTTYWrap.h"
+#include "wtf/text/ASCIILiteral.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -476,6 +482,38 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue arg0 = callFrame->argument(0);
+    if (!arg0.isCallable() && !arg0.isNull()) {
+        throwTypeError(globalObject, throwScope, "The \"callback\" argument must be callable or null"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobal)) {
+        zigGlobal = Bun__getDefaultGlobal();
+    }
+    jsCast<Process*>(zigGlobal->processObject())->setUncaughtExceptionCaptureCallback(arg0);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
+    if (UNLIKELY(!zigGlobal)) {
+        zigGlobal = Bun__getDefaultGlobal();
+    }
+    JSValue cb = jsCast<Process*>(zigGlobal->processObject())->getUncaughtExceptionCaptureCallback();
+    if (cb.isEmpty() || !cb.isCell()) {
+        return JSValue::encode(jsBoolean(false));
+    }
+
+    return JSValue::encode(jsBoolean(true));
+}
+
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
@@ -735,6 +773,7 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         String signalName = signalNumberToNameMap->get(signalNumber);
         Identifier signalNameIdentifier = Identifier::fromString(globalObject->vm(), signalName);
         MarkedArgumentBuffer args;
+        args.append(jsString(globalObject->vm(), signalNameIdentifier.string()));
         args.append(jsNumber(signalNumber));
         // TODO(@paperdave): add an ASSERT(isMainThread());
         // This should be true on posix if I understand sigaction right
@@ -745,6 +784,71 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
         process->wrapped().emitForBindings(signalNameIdentifier, args);
     });
 };
+
+extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+
+extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
+{
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    auto& wrapped = process->wrapped();
+    auto& vm = globalObject->vm();
+
+    MarkedArgumentBuffer args;
+    args.append(exception);
+    if (isRejection) {
+        args.append(jsString(vm, String("unhandledRejection"_s)));
+    } else {
+        args.append(jsString(vm, String("uncaughtException"_s)));
+    }
+
+    auto uncaughtExceptionMonitor = Identifier::fromString(globalObject->vm(), "uncaughtExceptionMonitor"_s);
+    if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
+        wrapped.emit(uncaughtExceptionMonitor, args);
+    }
+
+    auto uncaughtExceptionIdent = Identifier::fromString(globalObject->vm(), "uncaughtException"_s);
+
+    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
+    auto capture = process->getUncaughtExceptionCaptureCallback();
+    if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+        (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            // if an exception is thrown in the uncaughtException handler, we abort
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+            Bun__Process__exit(lexicalGlobalObject, 1);
+        }
+    } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+        wrapped.emit(uncaughtExceptionIdent, args);
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue reason, JSC::JSValue promise)
+{
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
+    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* process = jsCast<Process*>(globalObject->processObject());
+    MarkedArgumentBuffer args;
+    args.append(reason);
+    args.append(promise);
+    auto eventType = Identifier::fromString(globalObject->vm(), "unhandledRejection"_s);
+    auto& wrapped = process->wrapped();
+    if (wrapped.listenerCount(eventType) > 0) {
+        wrapped.emit(eventType, args);
+        return true;
+    } else {
+        return false;
+    }
+}
 
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
@@ -1415,7 +1519,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
 #if OS(LINUX)
         header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionCompiler"_s), JSC::jsString(vm, makeString(__GLIBC__, '.', __GLIBC_MINOR__)), 0);
-        header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(reinterpret_cast<const LChar*>(gnu_get_libc_version())), 0));
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "glibcVersionRuntime"_s), JSC::jsString(vm, String::fromUTF8(gnu_get_libc_version()), 0));
 #endif
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
@@ -1499,7 +1603,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
             JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
 
-            stack.split('\n', [&](WTF::StringView line) {
+            stack.split('\n', [&](const WTF::StringView& line) {
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 
@@ -2027,6 +2131,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Process* thisObject = jsCast<Process*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
@@ -2505,12 +2610,12 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
 
-    if (!value.isInt32()) {
+    if (!value.isInt32AsAnyInt()) {
         throwRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
         return false;
     }
 
-    int port = value.asInt32();
+    int port = value.toInt32(globalObject);
 
     if (port != 0) {
         if (port < 1024 || port > 65535) {
@@ -2698,6 +2803,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   exitCode                         processExitCode                                     CustomAccessor
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
@@ -2714,6 +2820,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   report                           constructProcessReportObject                        PropertyCallback
   revision                         constructRevision                                   PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
+  setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
   send                             constructProcessSend                                PropertyCallback
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback

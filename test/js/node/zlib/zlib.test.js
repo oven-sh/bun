@@ -6,6 +6,7 @@ import * as buffer from "node:buffer";
 import * as util from "node:util";
 import { resolve } from "node:path";
 import { tmpdirSync } from "harness";
+import * as stream from "node:stream";
 
 describe("zlib", () => {
   it("should be able to deflate and inflate", () => {
@@ -152,7 +153,7 @@ describe("zlib.brotli", () => {
   });
 
   it("fully works as a stream.Transform", async () => {
-    const x_dir = tmpdirSync("bun.test.");
+    const x_dir = tmpdirSync();
     const out_path_c = resolve(x_dir, "this.js.br");
     const out_path_d = resolve(x_dir, "this.js");
 
@@ -180,4 +181,26 @@ describe("zlib.brotli", () => {
       expect(actual).toEqual(expected);
     }
   });
+
+  it("streaming encode doesn't wait for entire input", async () => {
+    const createPRNG = seed => {
+      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+    };
+    const readStream = new stream.Readable();
+    const brotliStream = zlib.createBrotliCompress();
+    const rand = createPRNG(1);
+    let all = [];
+
+    brotliStream.on("data", chunk => all.push(chunk.length));
+    brotliStream.on("end", () => expect(all).toEqual([11180, 13, 14, 13, 13, 13, 14]));
+
+    for (let i = 0; i < 50; i++) {
+      let buf = Buffer.alloc(1024 * 1024);
+      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+      readStream.push(buf);
+    }
+    readStream.push(null);
+    readStream.pipe(brotliStream);
+  }, 15_000);
 });

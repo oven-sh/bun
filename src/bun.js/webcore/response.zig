@@ -70,6 +70,7 @@ pub const Response = struct {
 
     pub const getText = ResponseMixin.getText;
     pub const getBody = ResponseMixin.getBody;
+    pub const getBytes = ResponseMixin.getBytes;
     pub const getBodyUsed = ResponseMixin.getBodyUsed;
     pub const getJSON = ResponseMixin.getJSON;
     pub const getArrayBuffer = ResponseMixin.getArrayBuffer;
@@ -1993,10 +1994,41 @@ pub const Fetch = struct {
                         }
                     }
 
-                    // TODO: remove second isDisturbed check in useAsAnyBlob
-                    body = request.body.value.useAsAnyBlob();
+                    // Support headers getter on subclass
+                    //
+                    // class MyRequest extends Request {
+                    //    get headers() {
+                    //      return {a: "1"};
+                    //    }
+                    // }
+                    //
+                    // fetch(request)
+                    var fetch_headers_to_deref: ?*JSC.FetchHeaders = null;
+                    defer {
+                        if (fetch_headers_to_deref) |fetch_headers| {
+                            fetch_headers.deref();
+                        }
+                    }
 
-                    if (request.headers) |head| {
+                    if (get_fetch_headers: {
+                        if (can_use_fast_getters)
+                            break :get_fetch_headers request.headers;
+
+                        if (first_arg.fastGet(globalThis, .headers)) |headers_value| {
+                            // Faster path: existing FetchHeaders object:
+                            if (FetchHeaders.cast(headers_value)) |fetch_headers| {
+                                break :get_fetch_headers fetch_headers;
+                            }
+
+                            // Slow path: create a new FetchHeaders:
+                            if (FetchHeaders.createFromJS(globalThis, headers_value)) |fetch_headers| {
+                                fetch_headers_to_deref = fetch_headers;
+                                break :get_fetch_headers fetch_headers;
+                            }
+                        }
+
+                        break :get_fetch_headers null;
+                    }) |head| {
                         if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                             if (hostname) |host| {
                                 allocator.free(host);
@@ -2005,6 +2037,28 @@ pub const Fetch = struct {
                         }
                         headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
                     }
+
+                    // Creating headers can throw.
+                    if (globalThis.hasException()) {
+                        if (hostname) |host| {
+                            allocator.free(host);
+                            hostname = null;
+                        }
+                        return .zero;
+                    }
+
+                    // TODO: remove second isDisturbed check in useAsAnyBlob
+                    body = request.body.value.useAsAnyBlob();
+
+                    // Assume that useAsAnyBlob() has already thrown an error if it was going to.
+                    if (globalThis.hasException()) {
+                        if (hostname) |host| {
+                            allocator.free(host);
+                            hostname = null;
+                        }
+                        return .zero;
+                    }
+
                     if (request.signal) |signal_| {
                         _ = signal_.ref();
                         signal = signal_;

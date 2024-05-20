@@ -25,11 +25,17 @@ on:
         type: boolean
       no-cache:
         type: boolean
+      bun-version:
+        type: string
+        default: 1.1.7
 
 env:
   # Must specify exact version of LLVM for Windows
   LLVM_VERSION: 16.0.6
-  BUN_VERSION: 1.1.2
+  BUN_VERSION: ${{ inputs.bun-version }}
+  BUN_GARBAGE_COLLECTOR_LEVEL: 1
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: 1
+  CI: true
 
 jobs:
   build-submodules:
@@ -116,7 +122,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - name: Codegen
         run: |
           ./scripts/cross-compile-codegen.sh win32 x64
@@ -154,7 +160,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
         uses: actions/cache@v4
@@ -233,7 +239,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - name: Download bun-${{ inputs.tag }}-deps
         uses: actions/download-artifact@v4
         with:
@@ -294,8 +300,6 @@ jobs:
           cp -r build\bun.exe "$Dist\bun.exe"
           cp -r build\bun.pdb "$Dist\bun.pdb"
           Compress-Archive -Force "$Dist" "$Dist.zip"
-          $env:BUN_GARBAGE_COLLECTOR_LEVEL = "1"
-          $env:BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING = "1"
           .\build\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json
       - name: Upload bun-${{ inputs.tag }}
         uses: actions/upload-artifact@v4

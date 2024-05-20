@@ -410,9 +410,45 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         // the counting pass
         const pkg = entry.value.?.data.e_object;
 
-        if (pkg.get("link") != null or if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
-
         const pkg_path = entry.key.?.asString(allocator).?;
+
+        if (pkg.get("link")) |link| {
+            if (workspace_map) |wksp| {
+                if (link.data != .e_boolean) continue;
+                if (link.data.e_boolean.value) {
+                    if (pkg.get("resolved")) |resolved| {
+                        if (resolved.data != .e_string) continue;
+                        const resolved_str = resolved.asString(allocator).?;
+                        if (wksp.map.get(resolved_str)) |wksp_entry| {
+                            const pkg_name = packageNameFromPath(pkg_path);
+                            if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
+                                const pkg_name_hash = stringHash(pkg_name);
+                                const path_entry = this.workspace_paths.getOrPut(allocator, pkg_name_hash) catch bun.outOfMemory();
+                                if (!path_entry.found_existing) {
+                                    // Package resolve path is an entry in the workspace map, but
+                                    // the package name is different. This package doesn't exist
+                                    // in node_modules, but we still allow packages to resolve to it's
+                                    // resolution.
+                                    path_entry.value_ptr.* = builder.append(String, resolved_str);
+
+                                    if (wksp_entry.version) |version_string| {
+                                        const sliced_version = Semver.SlicedString.init(version_string, version_string);
+                                        const result = Semver.Version.parse(sliced_version);
+                                        if (result.valid and result.wildcard == .none) {
+                                            this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()) catch bun.outOfMemory();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            continue;
+        }
+
+        if (if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
 
         const workspace_entry = if (workspace_map) |map| map.map.get(pkg_path) else null;
         const is_workspace = workspace_entry != null;

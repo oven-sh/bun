@@ -18,7 +18,7 @@ describe("concat", () => {
   }
 
   function concatToString(chunks) {
-    return Array.from(new Uint8Array(concatArrayBuffers(chunks))).join("");
+    return Array.from(concatArrayBuffers(chunks, Infinity, true)).join("");
   }
 
   function polyfillToString(chunks) {
@@ -39,5 +39,17 @@ describe("concat", () => {
     expect(concatToString([Uint8Array.from([123]).buffer, Uint8Array.from([456])])).toBe(
       polyfillToString([Uint8Array.from([123]), Uint8Array.from([456])]),
     );
+  });
+
+  it("can be trimmed to a max length", () => {
+    const a = Uint8Array.from([1, 2, 3]);
+    const b = Uint8Array.from([4, 5, 6]);
+    expect(concatArrayBuffers([a, b], 4, true)).toEqual(Uint8Array.from([1, 2, 3, 4]));
+  });
+
+  it("can be trimmed to a max length (ArrayBuffer)", () => {
+    const a = Uint8Array.from([1, 2, 3]);
+    const b = Uint8Array.from([4, 5, 6]);
+    expect(concatArrayBuffers([a, b], 4)).toEqual(Uint8Array.from([1, 2, 3, 4]).buffer);
   });
 });

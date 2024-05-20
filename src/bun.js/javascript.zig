@@ -351,7 +351,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // This JSGlobalObject might not be the main script execution context
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
-    jsc_vm.onError(globalObject, value);
+    _ = jsc_vm.uncaughtException(globalObject, value, false);
     return JSC.JSValue.jsUndefined();
 }
 
@@ -379,7 +379,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    jsc_vm.onError(global, result);
+    _ = jsc_vm.unhandledRejection(global, result, promise.asValue(global));
     jsc_vm.autoGarbageCollect();
 }
 
@@ -607,7 +607,9 @@ pub const VirtualMachine = struct {
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
+    onUnhandledRejectionExceptionList: ?*ExceptionList = null,
     unhandled_error_counter: usize = 0,
+    is_handling_uncaught_exception: bool = false,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
@@ -774,10 +776,6 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn resetUnhandledRejection(this: *VirtualMachine) void {
-        this.onUnhandledRejection = defaultOnUnhandledRejection;
-    }
-
     pub fn loadExtraEnv(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
 
@@ -825,13 +823,50 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn onError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.unhandled_error_counter += 1;
-        this.onUnhandledRejection(this, globalObject, value);
+    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: c_int) c_int;
+    extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
+    extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
+
+    pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
+        if (isBunTest) {
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, reason);
+            return true;
+        }
+
+        const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
+        if (!handled) {
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, reason);
+        }
+        return handled;
+    }
+
+    pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool {
+        if (isBunTest) {
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, err);
+            return true;
+        }
+
+        if (this.is_handling_uncaught_exception) {
+            this.runErrorHandler(err, null);
+            Bun__Process__exit(globalObject, 1);
+            @panic("Uncaught exception while handling uncaught exception");
+        }
+        this.is_handling_uncaught_exception = true;
+        defer this.is_handling_uncaught_exception = false;
+        const handled = Bun__handleUncaughtException(globalObject, err, if (is_rejection) 1 else 0) > 0;
+        if (!handled) {
+            // TODO maybe we want a separate code path for uncaught exceptions
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, err);
+        }
+        return handled;
     }
 
     pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.runErrorHandler(value, null);
+        this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
     }
 
     pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
@@ -856,16 +891,17 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
+        const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
         if (this.hot_reload == .watch) {
             Output.flush();
             bun.reloadProcess(
                 bun.default_allocator,
-                !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"),
+                should_clear_terminal,
                 false,
             );
         }
 
-        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (should_clear_terminal) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -2168,6 +2204,10 @@ pub const VirtualMachine = struct {
         }
     }
 
+    export fn Bun__logUnhandledException(exception: JSC.JSValue) void {
+        get().runErrorHandler(exception, null);
+    }
+
     pub fn clearEntryPoint(
         this: *VirtualMachine,
     ) void {
@@ -2614,7 +2654,7 @@ pub const VirtualMachine = struct {
 
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
-        jsc_vm.onError(globalObject, exception.value());
+        _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
         return JSC.JSValue.jsUndefined();
     }
 
@@ -3550,7 +3590,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }

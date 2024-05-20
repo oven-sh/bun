@@ -1,17 +1,14 @@
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env, isWindows } from "harness";
-import { mkdtemp, realpath, rm, writeFile, exists, mkdir } from "fs/promises";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
+import { rm, writeFile, exists, mkdir } from "fs/promises";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
 
 let run_dir: string;
 
 beforeEach(async () => {
-  run_dir = await realpath(
-    await mkdtemp(join(tmpdir(), "bun-run.test." + Math.trunc(Math.random() * 9999999).toString(32))),
-  );
+  run_dir = tmpdirSync();
 });
 
 for (let withRun of [false, true]) {

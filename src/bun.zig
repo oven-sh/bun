@@ -1305,6 +1305,12 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     };
 }
 
+pub fn getFdPathZ(fd_: anytype, buf: *PathBuffer) ![:0]u8 {
+    const path_ = try getFdPath(fd_, buf);
+    buf[path_.len] = 0;
+    return buf[0..path_.len :0];
+}
+
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 

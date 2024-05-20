@@ -75,15 +75,16 @@ enum {
 void Bun__lock(uint32_t *lock);
 void Bun__unlock(uint32_t *lock);
 
+struct addrinfo_request;
 struct addrinfo_result {
     struct addrinfo *info;
     int error;
 };
 
-extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, int port, void** ptr);
-extern int Bun__addrinfo_set(void* ptr, struct us_connecting_socket_t* socket); 
-extern void Bun__addrinfo_freeRequest(void* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, int port, struct addrinfo_request** ptr);
+extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
+extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
+extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
 
 /* Loop related */
@@ -146,7 +147,7 @@ struct us_socket_t {
 };
 
 struct us_connecting_socket_t {
-    alignas(LIBUS_EXT_ALIGNMENT) void *addrinfo_req;
+    alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
     struct us_socket_context_t *context;
     struct us_connecting_socket_t *next;
     struct us_socket_t *connecting_head;

@@ -380,7 +380,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 
     struct us_loop_t* loop = us_socket_context_loop(ssl, context);
 
-    void* ptr;
+    struct addrinfo_request* ptr;
     if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ptr);
         // fast failure path
@@ -393,7 +393,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
         // if there is only one result we can immediately connect
         if (result->info && result->info->ai_next == NULL) {
             *is_connecting = 1;
-            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, result->info, options, socket_ext_size);
             Bun__addrinfo_freeRequest(ptr, s == NULL);
             return s;
         }

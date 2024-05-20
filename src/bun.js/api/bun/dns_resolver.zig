@@ -1258,8 +1258,6 @@ pub const InternalDNS = struct {
         /// Not a precise timestamp.
         created_at: u32 = std.math.maxInt(u32),
 
-        lock: bun.Lock = bun.Lock.init(),
-
         valid: bool = true,
 
         libinfo: if (Environment.isMac) MacAsyncDNS else void = if (Environment.isMac) .{} else {},
@@ -1438,8 +1436,7 @@ pub const InternalDNS = struct {
     };
 
     fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
-        // Only lock while
-        req.lock.lock();
+        global_cache.lock.lock();
 
         req.result = .{
             .info = info,
@@ -1449,7 +1446,9 @@ pub const InternalDNS = struct {
         defer notify.deinit(bun.default_allocator);
         req.notify = .{};
         req.refcount -= 1;
-        req.lock.unlock();
+
+        // is this correct, or should it go after the loop?
+        global_cache.lock.unlock();
 
         for (notify.items) |query| {
             query.notifyThreadsafe(req);
@@ -1574,7 +1573,6 @@ pub const InternalDNS = struct {
                     return null;
                 }
 
-                entry.lock.lock();
                 entry.refcount += 1;
 
                 if (entry.result != null) {
@@ -1586,7 +1584,6 @@ pub const InternalDNS = struct {
                     dns_cache_hits_inflight += 1;
                 }
 
-                entry.lock.unlock();
                 global_cache.lock.unlock();
 
                 return entry;
@@ -1607,7 +1604,6 @@ pub const InternalDNS = struct {
         dns_cache_size = global_cache.len;
         global_cache.lock.unlock();
 
-        // doesn't work yet
         if (comptime Environment.isMac) {
             if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO")) {
                 const res = lookupLibinfo(req, loop.internal_loop_data.getParent());
@@ -1682,33 +1678,30 @@ pub const InternalDNS = struct {
         request: *Request,
         socket: *bun.uws.ConnectingSocket,
     ) callconv(.C) void {
-        request.lock.lock();
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
         const query = DNSRequestOwner{
             .socket = socket,
         };
         if (request.result != null) {
-            request.lock.unlock();
             query.notify(request);
             return;
         }
 
         request.notify.append(bun.default_allocator, .{ .socket = socket }) catch bun.outOfMemory();
-        request.lock.unlock();
     }
 
     fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
-        req.lock.lock();
-        defer req.lock.unlock();
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
 
         req.valid = err == 0;
         dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
+        bun.assert(req.refcount > 0);
         req.refcount -= 1;
         if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
-            global_cache.lock.lock();
             log("cache --", .{});
-
-            defer global_cache.lock.unlock();
             global_cache.remove(req);
             req.deinit();
         }

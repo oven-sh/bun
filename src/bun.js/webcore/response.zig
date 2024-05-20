@@ -1688,7 +1688,7 @@ pub const Fetch = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
-            
+
             task.result = result;
 
             // metadata should be provided only once so we preserve it until we consume it
@@ -1702,10 +1702,10 @@ pub const Fetch = struct {
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
 
-            if(task.ignore_data) {
+            if (task.ignore_data) {
                 task.response_buffer.reset();
-                
-                if(task.scheduled_response_buffer.list.capacity > 0) {
+
+                if (task.scheduled_response_buffer.list.capacity > 0) {
                     task.scheduled_response_buffer.deinit();
                     task.scheduled_response_buffer = .{
                         .allocator = task.memory_reporter.allocator(),
@@ -1715,11 +1715,10 @@ pub const Fetch = struct {
                         },
                     };
                 }
-                if(success and result.has_more) {
-                    // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true    
+                if (success and result.has_more) {
+                    // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
                     return;
                 }
-                
             } else {
                 if (success) {
                     _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
@@ -1727,7 +1726,7 @@ pub const Fetch = struct {
                 // reset for reuse
                 task.response_buffer.reset();
             }
-            
+
             if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
                     return;

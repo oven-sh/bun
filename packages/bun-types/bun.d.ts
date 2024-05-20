@@ -1003,22 +1003,21 @@ declare module "bun" {
      *
      * **Experimental API**
      *
-     * Prefetch a hostname and port.
+     * Prefetch a hostname.
      *
      * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
      *
      * @param hostname The hostname to prefetch
-     * @param port The port to prefetch
      *
      * @example
      * ```js
      * import { dns } from 'bun';
-     * dns.prefetch('example.com', 443);
+     * dns.prefetch('example.com');
      * // ... something expensive
      * await fetch('https://example.com');
      * ```
      */
-    prefetch(hostname: string, port: number): void;
+    prefetch(hostname: string): void;
 
     /**
      * **Experimental API**

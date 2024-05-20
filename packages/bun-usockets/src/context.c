@@ -345,8 +345,8 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 }
 
 
-struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct addrinfo* info, int options, int socket_ext_size) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(info, options);
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
@@ -371,6 +371,18 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     return socket;
 }
 
+static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr_storage *addr) {
+    if (info->ai_family == AF_INET) {
+        struct sockaddr_in *addr_in = (struct sockaddr_in *) addr;
+        memcpy(addr_in, info->ai_addr, info->ai_addrlen);
+        addr_in->sin_port = htons(port);
+    } else {
+        struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *) addr;
+        memcpy(addr_in6, info->ai_addr, info->ai_addrlen);
+        addr_in6->sin6_port = htons(port);
+    }
+}
+
 void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
@@ -380,21 +392,23 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 
     struct us_loop_t* loop = us_socket_context_loop(ssl, context);
 
-    struct addrinfo_request* ptr;
-    if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
-        struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ptr);
+    struct addrinfo_request* ai_req;
+    if (Bun__addrinfo_get(loop, host, &ai_req) == 0) {
+        struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
         // fast failure path
         if (result->error) {
             errno = result->error;
-            Bun__addrinfo_freeRequest(ptr, 1);
+            Bun__addrinfo_freeRequest(ai_req, 1);
             return NULL;
         }
 
         // if there is only one result we can immediately connect
         if (result->info && result->info->ai_next == NULL) {
+            struct sockaddr_storage addr;
+            init_addr_with_port(result->info, port, &addr);
             *is_connecting = 1;
-            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, result->info, options, socket_ext_size);
-            Bun__addrinfo_freeRequest(ptr, s == NULL);
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+            Bun__addrinfo_freeRequest(ai_req, s == NULL);
             return s;
         }
     }
@@ -407,6 +421,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     c->timeout = 255;
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
+    c->port = port;
 
 #ifdef _WIN32
     loop->uv_loop->active_handles++;
@@ -414,7 +429,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     loop->num_polls++;
 #endif
 
-    Bun__addrinfo_set(ptr, c);
+    Bun__addrinfo_set(ai_req, c);
 
     return c;
 }
@@ -444,7 +459,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int error = 0;
     for (struct addrinfo *info = result->info; info; info = info->ai_next) {
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, c->options);
+        struct sockaddr_storage addr;
+        init_addr_with_port(info, c->port, &addr);
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }

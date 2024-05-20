@@ -81,7 +81,7 @@ struct addrinfo_result {
     int error;
 };
 
-extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, int port, struct addrinfo_request** ptr);
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
@@ -156,6 +156,7 @@ struct us_connecting_socket_t {
     unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1;
     unsigned char timeout;
     unsigned char long_timeout;
+    uint16_t port;
     int error;
 };
 

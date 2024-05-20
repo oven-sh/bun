@@ -888,11 +888,11 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 //     return 0; // no ecn defaults to 0
 // }
 
-static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
+static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRIPTOR fd)
 {
 #ifdef _WIN32
     do {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
+        if (connect(fd, (struct sockaddr *)addr, addr->ss_len) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
             return 0;
         }
     } while (WSAGetLastError() == WSAEINTR);
@@ -900,46 +900,13 @@ static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
     return WSAGetLastError();
 #else
      do {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || errno == EINPROGRESS) {
+        if (connect(fd, (struct sockaddr *)addr, addr->ss_len) == 0 || errno == EINPROGRESS) {
             return 0;
         }
     } while (errno == EINTR);
 
     return errno;
 #endif
-}
-
-static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)
-{
-    int lastErr = 0;
-    while (rp != NULL) {
-        lastErr = bsd_do_connect_raw(rp, *fd);
-        if (lastErr == 0) {
-            return 0;
-        }
-
-        rp = rp->ai_next;
-        bsd_close_socket(*fd);
-
-        if (rp == NULL) {
-            if (lastErr != 0) {
-                errno = lastErr;
-            }
-            return LIBUS_SOCKET_ERROR;
-        }
-
-        LIBUS_SOCKET_DESCRIPTOR resultFd = bsd_create_socket(rp->ai_family, SOCK_STREAM, 0);
-        if (resultFd < 0) {
-            return LIBUS_SOCKET_ERROR;
-        }
-        *fd = resultFd;
-    }
-
-    if (lastErr != 0) {
-        errno = lastErr;
-    }
-
-    return LIBUS_SOCKET_ERROR;
 }
 
 #ifdef _WIN32
@@ -987,8 +954,8 @@ static int is_loopback(struct addrinfo *addrinfo) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int options) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addrinfo->ai_family, SOCK_STREAM, 0);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
@@ -1027,17 +994,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int
 
 #endif
 
-    if (bsd_do_connect_raw(addrinfo, fd) != 0) {
+    if (bsd_do_connect_raw(addr, fd) != 0) {
         bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
     return fd;
-
-    // if (bsd_do_connect(addrinfo, &fd) != 0) {
-    //     return LIBUS_SOCKET_ERROR;
-    // }
-    
-    // return fd;
 }
 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {

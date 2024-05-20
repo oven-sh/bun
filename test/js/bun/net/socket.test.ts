@@ -352,3 +352,39 @@ it("it should not crash when returning a Error on client socket open", async () 
     expect(result?.message).toBe("CustomError");
   }
 });
+
+it("it should only call open once", async () => {
+  const server = Bun.listen({
+    port: 0,
+    hostname: "localhost",
+    socket: {
+      open(socket) {
+        socket.end("Hello");
+      },
+      data(socket, data) {}
+    }
+  });
+
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  let client: Socket<undefined> | null = null;
+  let opened = false;
+  client = await Bun.connect({
+    port: server.port,
+    hostname: "localhost",
+    socket: {
+      open(socket) {
+        expect(opened).toBe(false);
+        opened = true;
+      },
+      close(socket) {
+        server.stop();
+        resolve();
+      },
+      data(socket, data) {},
+    },
+  });
+
+  await promise;
+  expect(opened).toBe(true);
+});

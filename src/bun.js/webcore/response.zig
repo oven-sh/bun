@@ -886,10 +886,10 @@ pub const Fetch = struct {
             // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
             var buffer_reset = true;
             defer {
-                if(buffer_reset) {
+                if (buffer_reset) {
                     this.scheduled_response_buffer.deinit();
                 }
-                
+
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
@@ -968,7 +968,7 @@ pub const Fetch = struct {
                             const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                             const chunk = scheduled_response_buffer.items;
-                            
+
                             if (this.result.has_more) {
                                 readable.ptr.Bytes.onData(
                                     .{

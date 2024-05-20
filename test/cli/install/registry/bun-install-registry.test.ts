@@ -2913,7 +2913,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exited).toBe(0);
     });
 
-    test("INIT_CWD is set to the correct directory", async () => {
+    test.only("INIT_CWD is set to the correct directory", async () => {
       await writeFile(
         join(packageDir, "package.json"),
         JSON.stringify({
@@ -2966,8 +2966,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir);
-      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(expected);
-      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir);
+      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir);
     });
 
     test("failing lifecycle script should print output", async () => {

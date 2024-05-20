@@ -282,13 +282,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 /* It is perfectly possible to come here with an error */
                 if (error) {
                     struct us_connecting_socket_t *c = s->connect_state; 
+
+                    /* Emit error, close without emitting on_close */
+
+                    /* There are two possible states here: 
+                        1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
+                        2. It's a us_socket_t* 
+
+                       We differentiate between these two cases by checking if the connect_state is null.
+                    */
                     if (c) {
-                        /* Emit error, close without emitting on_close */
                         s->context->on_connect_error(s->connect_state, error);
                         us_connecting_socket_close(c->ssl, c);
                     } else {
                         s->context->on_socket_connect_error(s, error);
-                        // close is called by the caller
+                        // It's expected that close is called by the caller
                     }
                     
                     s = NULL;

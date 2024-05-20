@@ -506,6 +506,12 @@ pub const Bunfig = struct {
                             }
                         }
                     }
+
+                    if (_bun.get("ignoreWorkspace")) |optional| {
+                        if (optional.asBool()) |ignore_workspace| {
+                            install.ignore_workspace = ignore_workspace;
+                        }
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {

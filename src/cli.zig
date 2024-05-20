@@ -266,6 +266,7 @@ pub const Arguments = struct {
         };
 
         defer config_file.close();
+
         const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
@@ -286,6 +287,7 @@ pub const Arguments = struct {
             ctx.log.level = original_level;
         }
         ctx.log.level = logger.Log.Level.warn;
+
         try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
@@ -297,7 +299,18 @@ pub const Arguments = struct {
 
         return null;
     }
+
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+        return loadConfig_(allocator, user_config_path_, ctx, cmd, false);
+    }
+
+    pub fn loadConfig_(
+        allocator: std.mem.Allocator,
+        user_config_path_: ?string,
+        ctx: Command.Context,
+        comptime cmd: Command.Tag,
+        override_absolute_working_dir: ?bool,
+    ) !void {
         var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
@@ -310,7 +323,6 @@ pub const Arguments = struct {
         }
 
         var config_path_: []const u8 = user_config_path_ orelse "";
-
         var auto_loaded: bool = false;
         if (config_path_.len == 0 and (user_config_path_ != null or
             Command.Tag.always_loads_config.get(cmd) or
@@ -334,7 +346,7 @@ pub const Arguments = struct {
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         } else {
-            if (ctx.args.absolute_working_dir == null) {
+            if ((override_absolute_working_dir orelse false) or ctx.args.absolute_working_dir == null) {
                 var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
@@ -348,6 +360,7 @@ pub const Arguments = struct {
                 &parts,
                 .auto,
             );
+
             config_buf[config_path_.len] = 0;
             config_path = config_buf[0..config_path_.len :0];
         }
@@ -1447,6 +1460,7 @@ pub const Command = struct {
             },
             .InstallCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
+
                 const ctx = try Command.init(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
@@ -2224,7 +2238,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 Command.Tag.HelpCommand => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
                 Command.Tag.UpgradeCommand => {
                     const intro_text =
@@ -2283,7 +2297,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
             }
         }
@@ -2329,6 +2343,7 @@ pub const Command = struct {
 
         pub const uses_global_options: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(true, .{
             .CreateCommand = false,
+            .BunxCommand = false,
             .InstallCommand = false,
             .AddCommand = false,
             .RemoveCommand = false,
@@ -2336,7 +2351,6 @@ pub const Command = struct {
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,
-            .BunxCommand = false,
         });
     };
 };

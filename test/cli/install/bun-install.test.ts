@@ -1005,6 +1005,72 @@ it("should ignore peerDependencies within workspaces", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should ignore workspaces when installing a package inside a workspace", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      workspaces: ["bar", "packages/*"],
+    }),
+  );
+
+  const barPath = join(package_dir, "bar");
+  await mkdir(barPath);
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "Bar",
+      version: "0.0.2",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "nominally-scoped"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "nominally-scoped", "package.json"),
+    JSON.stringify({
+      name: "@org/nominally-scoped",
+      version: "0.1.4",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "second-asterisk"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "second-asterisk", "package.json"),
+    JSON.stringify({
+      name: "AsteriskTheSecond",
+      version: "0.1.4",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "asterisk"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "asterisk", "package.json"),
+    JSON.stringify({
+      name: "Asterisk",
+      version: "0.0.4",
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--ignore-workspace"],
+    cwd: barPath,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*/, "").split(/\r?\n/)).toEqual(["done", ""]);
+  expect(await exited).toBe(0);
+  expect(requested).toBe(0);
+  expect(async () => await readdirSorted(join(package_dir, "node_modules"))).toThrow("No such file or directory");
+});
+
 it("should handle installing the same peerDependency with different versions", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -6017,6 +6083,7 @@ it("should install dependencies in root package of workspace", async () => {
       workspaces: ["moo"],
     }),
   );
+
   await mkdir(join(package_dir, "moo"));
   const moo_package = JSON.stringify({
     name: "moo",
@@ -6039,6 +6106,7 @@ it("should install dependencies in root package of workspace", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
+
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     " + moo@workspace:moo",
@@ -6057,6 +6125,79 @@ it("should install dependencies in root package of workspace", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "moo", "package.json")).text()).toEqual(moo_package);
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should ignore workspaces when installing a package inside a workspace with bunfig", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      workspaces: ["bar", "packages/*"],
+    }),
+  );
+
+  const barPath = join(package_dir, "bar");
+  await mkdir(barPath);
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "Bar",
+      version: "0.0.2",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "nominally-scoped"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "nominally-scoped", "package.json"),
+    JSON.stringify({
+      name: "@org/nominally-scoped",
+      version: "0.1.4",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "second-asterisk"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "second-asterisk", "package.json"),
+    JSON.stringify({
+      name: "AsteriskTheSecond",
+      version: "0.1.4",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "asterisk"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "asterisk", "package.json"),
+    JSON.stringify({
+      name: "Asterisk",
+      version: "0.0.4",
+    }),
+  );
+
+  await writeFile(
+    join(package_dir, "bar", "bunfig.toml"),
+    `${await file(join(package_dir, "bunfig.toml")).text()}
+ignoreWorkspace=true
+`,
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: barPath,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*/, "").split(/\r?\n/)).toEqual(["done", ""]);
+  expect(await exited).toBe(0);
+  expect(requested).toBe(0);
+  expect(async () => await readdirSorted(join(package_dir, "node_modules"))).toThrow("No such file or directory");
 });
 
 it("should install dependencies in root package of workspace (*)", async () => {
@@ -7073,8 +7214,6 @@ it("should handle installing workspaces with multiple glob patterns", async () =
     },
   });
 
-  console.log("TEMPDIR", package_dir);
-
   const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
   const err1 = stderr.toString();
   expect(err1).toContain("Saved lockfile");
@@ -7143,7 +7282,6 @@ it.todo("should handle installing workspaces with absolute glob patterns", async
       },
     },
   });
-  console.log("TEMP DIR", package_dir);
 
   const { stdout, stderr } = await Bun.$`${bunExe()} install`.env(env).cwd(package_dir).throws(true);
   const err1 = stderr.toString();

@@ -2879,6 +2879,9 @@ pub const Api = struct {
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
 
+        /// ignore_workspace
+        ignore_workspace: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 

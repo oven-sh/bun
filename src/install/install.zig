@@ -6978,6 +6978,7 @@ pub const PackageManager = struct {
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
         const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
+
         return initWithCLI(ctx, cli, subcommand);
     }
 
@@ -7009,6 +7010,8 @@ pub const PackageManager = struct {
         const original_cwd: string = cwd_buf[0..top_level_dir_no_trailing_slash.len];
 
         var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
+
+        const before_top_level_dir = try ctx.allocator.dupe(u8, fs.top_level_dir);
 
         // Step 1. Find the nearest package.json directory
         //
@@ -7082,9 +7085,24 @@ pub const PackageManager = struct {
             };
 
             const child_cwd = this_cwd;
+
+            // Reading a first time the config to know if we need to ignore the workspace or not
+            try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
+
+            var ignore_workspace = false;
+
+            if (cli.ignore_workspace) {
+                ignore_workspace = true;
+            }
+
+            if (ctx.install) |install_| {
+                ignore_workspace = install_.ignore_workspace orelse false;
+            }
+
             // Check if this is a workspace; if so, use root package
             var found = false;
-            if (comptime subcommand != .link) {
+
+            if ((comptime subcommand != .link) and !ignore_workspace) {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
@@ -7152,8 +7170,15 @@ pub const PackageManager = struct {
             break :brk child_json;
         };
 
-        try bun.sys.chdir(fs.top_level_dir).unwrap();
-        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
+        // If the top level dir is different than before, then we don't ignore the workspace and we found one,
+        // so we need to read again the config and override the working dir
+        if (!strings.eql(before_top_level_dir, fs.top_level_dir)) {
+            try bun.sys.chdir(fs.top_level_dir).unwrap();
+            ctx.args.absolute_working_dir = try ctx.allocator.dupe(u8, fs.top_level_dir);
+
+            try BunArguments.loadConfig_(ctx.allocator, cli.config, ctx, .InstallCommand, true);
+        }
+
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = '/';
         cwd_buf[fs.top_level_dir.len + 1] = 0;
@@ -7278,6 +7303,7 @@ pub const PackageManager = struct {
 
             break :brk @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
         };
+
         return manager;
     }
 
@@ -7773,6 +7799,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-progress                         Disable the progress bar") catch unreachable,
         clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
         clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
+        clap.parseParam("--ignore-workspace                    Skip verifying if the current package is in a workspace or not") catch unreachable,
         clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
         clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
@@ -7849,6 +7876,7 @@ pub const PackageManager = struct {
         ignore_scripts: bool = false,
         trusted: bool = false,
         no_summary: bool = false,
+        ignore_workspace: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -8070,6 +8098,7 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            cli.ignore_workspace = args.flag("--ignore-workspace");
 
             // link and unlink default to not saving, all others default to
             // saving.
@@ -8124,6 +8153,7 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
+
                 try bun.sys.chdir(final_path).unwrap();
             }
 
@@ -8988,7 +9018,7 @@ pub const PackageManager = struct {
 
         // pub fn printTreeDeps(this: *PackageInstaller) void {
         //     for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
-        //         std.debug.print("tree #{d:3}: ", .{j});
+        // std.debug.print("tree #{d:3}: ", .{j});
         //         for (0..this.lockfile.buffers.trees.items.len) |tree_id| {
         //             std.debug.print("{d} ", .{@intFromBool(deps.isSet(tree_id))});
         //         }
@@ -10674,9 +10704,11 @@ pub const PackageManager = struct {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
             }
+
             manager.enqueueDependencyList(root.dependencies);
         } else {
             // Anything that needs to be downloaded from an update needs to be scheduled here
+
             manager.drainDependencyList();
         }
 

@@ -731,6 +731,7 @@ pub const Fetch = struct {
         response: JSC.Weak(FetchTasklet) = .{},
         /// native response ref if we still need it when JS is discarted
         native_response: ?*Response = null,
+        ignore_data: bool = false,
         /// stream strong ref if any is available
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong = .{},
         request_headers: Headers = Headers{ .allocator = undefined },
@@ -1478,6 +1479,8 @@ pub const Fetch = struct {
                 response.unref();
                 this.native_response = null;
             }
+
+            this.ignore_data = true;
         }
 
         export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
@@ -1685,6 +1688,7 @@ pub const Fetch = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
+            
             task.result = result;
 
             // metadata should be provided only once so we preserve it until we consume it
@@ -1697,12 +1701,33 @@ pub const Fetch = struct {
 
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
-            if (success) {
-                _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
-            }
-            // reset for reuse
-            task.response_buffer.reset();
 
+            if(task.ignore_data) {
+                task.response_buffer.reset();
+                
+                if(task.scheduled_response_buffer.list.capacity > 0) {
+                    task.scheduled_response_buffer.deinit();
+                    task.scheduled_response_buffer = .{
+                        .allocator = task.memory_reporter.allocator(),
+                        .list = .{
+                            .items = &.{},
+                            .capacity = 0,
+                        },
+                    };
+                }
+                if(success and result.has_more) {
+                    // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true    
+                    return;
+                }
+                
+            } else {
+                if (success) {
+                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
+                }
+                // reset for reuse
+                task.response_buffer.reset();
+            }
+            
             if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
                     return;

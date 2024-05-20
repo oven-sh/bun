@@ -55,7 +55,7 @@ By default, running unverified scripts are blocked.
   - Everything can be installed with one WinGet command:
 
     ```ps1
-    > winget install "Visual Studio Community 2022"  --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
+    > winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
     ```
 
 After Visual Studio, you need the following:

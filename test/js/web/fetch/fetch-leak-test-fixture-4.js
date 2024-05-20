@@ -6,7 +6,6 @@ function getHeapStats() {
 
 const server = process.argv[2];
 const batch = 50;
-const delay = 100;
 const iterations = 10;
 
 try {
@@ -18,13 +17,13 @@ try {
       }
       await Promise.all(promises);
     }
-    await Bun.sleep(delay);
 
     {
       Bun.gc(true);
       const stats = getHeapStats();
       expect(stats.Response || 0).toBeLessThanOrEqual(batch + 1);
       expect(stats.Promise || 0).toBeLessThanOrEqual(batch + 2);
+      console.error(i, stats.Promise, stats.Response);
     }
   }
   process.exit(0);

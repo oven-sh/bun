@@ -105,8 +105,21 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
-it.skipIf(process.platform === "win32")("ICU version does not regress", () => {
-  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(72);
+const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
+  "darwin-x64": "70.1",
+  "darwin-arm64": "72.1",
+  "linux-x64": "72.1",
+  "linux-arm64": "72.1",
+  "win32-x64": "72.1",
+  "win32-arm64": "72.1",
+};
+
+it("ICU version does not regress", () => {
+  const min = MIN_ICU_VERSIONS_BY_PLATFORM_ARCH[`${process.platform}-${process.arch}`];
+  if (!min) {
+    throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
+  }
+  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
 });
 
 it("process.env.TZ", () => {

@@ -687,8 +687,6 @@ it("should add dependency alongside workspaces", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "+ bar@workspace:packages/bar",
-    "",
     "installed baz@0.0.3 with binaries:",
     " - baz-run",
     "",
@@ -1546,7 +1544,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   expect(out2.replace(/\s*\[[0-9\.]+m?s\] done\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     "installed uglify-js@github:mishoo/UglifyJS#e219a9a with binaries:",
-    "  - uglifyjs",
+    " - uglifyjs",
   ]);
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
@@ -1625,7 +1623,7 @@ it("should add dependencies to workspaces directly", async () => {
     "",
     `installed foo@${relative(package_dir, add_dir).replace(/\\/g, "/")}`,
     "",
-    "1 package installed",
+    "2 packages installed",
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(package_dir))).toEqual([
@@ -1644,7 +1642,7 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "foo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "foo", "moo"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "foo"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
 });

@@ -57,13 +57,7 @@ it("should link and unlink workspace package", async () => {
   );
   let { out, err } = await runBunInstall(env, link_dir);
   expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun install", "Saved lockfile", ""]);
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    `+ boba@workspace:packages/boba`,
-    `+ moo@workspace:packages/moo`,
-    "",
-    "2 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
 
   let { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "link"],

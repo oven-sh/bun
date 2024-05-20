@@ -7133,7 +7133,7 @@ pub const PackageManager = struct {
         // Step 1. Find the nearest package.json directory
         //
         // We will walk up from the cwd, trying to find the nearest package.json file.
-        const root_package_json_file = brk: {
+        const root_package_json_file = root_package_json_file: {
             var this_cwd: string = original_cwd;
             var created_package_json = false;
             const child_json = child: {
@@ -7262,7 +7262,7 @@ pub const PackageManager = struct {
                                     child_json.close();
                                     try json_file.seekTo(0);
                                     workspace_name_hash = String.Builder.stringHash(entry.name);
-                                    break :brk json_file;
+                                    break :root_package_json_file json_file;
                                 }
                             }
 
@@ -7273,7 +7273,7 @@ pub const PackageManager = struct {
             }
 
             fs.top_level_dir = child_cwd;
-            break :brk child_json;
+            break :root_package_json_file child_json;
         };
 
         try bun.sys.chdir(fs.top_level_dir).unwrap();
@@ -7612,18 +7612,10 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
-                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
-                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
-                    current_package_json_buf,
-                    0,
-                );
-                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
-
-                const package_json_source = logger.Source.initPathString(
-                    package_json_cwd,
-                    current_package_json_buf[0..current_package_json_contents_len],
-                );
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                    Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
+                    Global.crash();
+                };
                 lockfile.initEmpty(ctx.allocator);
 
                 try package.parse(&lockfile, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
@@ -7788,18 +7780,10 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
-                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
-                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
-                    current_package_json_buf,
-                    0,
-                );
-                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
-
-                const package_json_source = logger.Source.initPathString(
-                    package_json_cwd,
-                    current_package_json_buf[0..current_package_json_contents_len],
-                );
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                    Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
+                    Global.crash();
+                };
                 lockfile.initEmpty(ctx.allocator);
 
                 try package.parse(&lockfile, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);

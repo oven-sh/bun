@@ -201,7 +201,10 @@ void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_con
 }
 
 int us_internal_handle_dns_results(struct us_loop_t *loop) {
-    struct us_connecting_socket_t *s = __atomic_exchange_n(&loop->data.dns_ready_head, NULL, __ATOMIC_ACQ_REL);
+    Bun__lock(&loop->data.mutex);
+    struct us_connecting_socket_t *s = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = NULL;
+    Bun__unlock(&loop->data.mutex);
     us_internal_drain_pending_dns_resolve(loop, s);
     return s != NULL;
 }

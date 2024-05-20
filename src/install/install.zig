@@ -181,6 +181,7 @@ pub const ExternalStringMap = extern struct {
     value: ExternalStringList = .{},
 };
 
+pub const PackageNameAndVersionHash = u64;
 pub const PackageNameHash = u64; // Use String.Builder.stringHash to compute this
 pub const TruncatedPackageNameHash = u32; // @truncate String.Builder.stringHash to compute this
 
@@ -863,1554 +864,1581 @@ pub const ExtractData = struct {
     json_buf: []u8 = "",
 };
 
-pub const PackageInstall = struct {
-    cache_dir: std.fs.Dir,
-    cache_dir_subpath: stringZ = "",
-    destination_dir_subpath: stringZ = "",
-    destination_dir_subpath_buf: []u8,
+const PkgInstallKind = enum {
+    regular,
+    patch,
+};
+pub const PackageInstall = NewPackageInstall(.regular);
+pub const PreparePatchPackageInstall = NewPackageInstall(.patch);
+pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
+    const do_progress = kind != .patch;
+    const ProgressT = if (do_progress) *Progress else struct {};
+    return struct {
+        cache_dir: std.fs.Dir,
+        cache_dir_subpath: stringZ = "",
+        destination_dir_subpath: stringZ = "",
+        destination_dir_subpath_buf: []u8,
 
-    allocator: std.mem.Allocator,
+        allocator: std.mem.Allocator,
 
-    progress: *Progress,
+        progress: ProgressT,
 
-    package_name: string,
-    package_version: string,
-    patch: Patch = .{},
-    file_count: u32 = 0,
-    node_modules: *const PackageManager.NodeModulesFolder,
+        package_name: string,
+        package_version: string,
+        patch: Patch = .{},
+        file_count: u32 = 0,
+        node_modules: *const PackageManager.NodeModulesFolder,
 
-    const Patch = struct {
-        root_project_dir: ?[]const u8 = null,
-        patch_path: string = undefined,
+        const ThisPackageInstall = @This();
 
-        pub const NULL = Patch{};
+        const Patch = switch (kind) {
+            .regular => struct {
+                root_project_dir: ?[]const u8 = null,
+                patch_path: string = undefined,
 
-        pub fn isNull(this: Patch) bool {
-            return this.root_project_dir == null;
-        }
-    };
+                pub const NULL = Patch{};
 
-    const debug = Output.scoped(.install, true);
-
-    pub const Summary = struct {
-        fail: u32 = 0,
-        success: u32 = 0,
-        skipped: u32 = 0,
-        successfully_installed: ?Bitset = null,
-
-        /// Package name hash -> number of scripts skipped.
-        /// Multiple versions of the same package might add to the count, and each version
-        /// might have a different number of scripts
-        packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
-    };
-
-    pub const Method = enum {
-        clonefile,
-
-        /// Slower than clonefile
-        clonefile_each_dir,
-
-        /// On macOS, slow.
-        /// On Linux, fast.
-        hardlink,
-
-        /// Slowest if single-threaded
-        /// Note that copyfile does technically support recursion
-        /// But I suspect it is slower in practice than manually doing it because:
-        /// - it adds syscalls
-        /// - it runs in userspace
-        /// - it reads each dir twice incase the first pass modifies it
-        copyfile,
-
-        /// Used for file: when file: points to a parent directory
-        /// example: "file:../"
-        symlink,
-
-        const BackendSupport = std.EnumArray(Method, bool);
-        pub const map = std.ComptimeStringMap(Method, .{
-            .{ "clonefile", Method.clonefile },
-            .{ "clonefile_each_dir", Method.clonefile_each_dir },
-            .{ "hardlink", Method.hardlink },
-            .{ "copyfile", Method.copyfile },
-            .{ "symlink", Method.symlink },
-        });
-
-        pub const macOS = BackendSupport.initDefault(false, .{
-            .clonefile = true,
-            .clonefile_each_dir = true,
-            .hardlink = true,
-            .copyfile = true,
-            .symlink = true,
-        });
-
-        pub const linux = BackendSupport.initDefault(false, .{
-            .hardlink = true,
-            .copyfile = true,
-            .symlink = true,
-        });
-
-        pub const windows = BackendSupport.initDefault(false, .{
-            .hardlink = true,
-            .copyfile = true,
-        });
-
-        pub inline fn isSupported(this: Method) bool {
-            if (comptime Environment.isMac) return macOS.get(this);
-            if (comptime Environment.isLinux) return linux.get(this);
-            if (comptime Environment.isWindows) return windows.get(this);
-
-            return false;
-        }
-    };
-
-    // 1. verify that .bun-tag exists (was it installed from bun?)
-    // 2. check .bun-tag against the resolved version
-    fn verifyGitResolution(
-        this: *PackageInstall,
-        repo: *const Repository,
-        buf: []const u8,
-        root_node_modules_dir: std.fs.Dir,
-    ) bool {
-        bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
-        this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
-        const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
-        defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
-        var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
-        const allocator = git_tag_stack_fallback.get();
-
-        var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
-        defer {
-            if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
-        }
-
-        const bun_tag_file = File.readFrom(
-            destination_dir,
-            bun_tag_path,
-            allocator,
-        ).unwrap() catch return false;
-        defer allocator.free(bun_tag_file);
-
-        return strings.eqlLong(repo.resolved.slice(buf), bun_tag_file, true);
-    }
-
-    pub fn verify(
-        this: *PackageInstall,
-        resolution: *const Resolution,
-        buf: []const u8,
-        root_node_modules_dir: std.fs.Dir,
-    ) bool {
-        return switch (resolution.tag) {
-            .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
-            .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
-            else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
+                pub fn isNull(this: Patch) bool {
+                    return this.root_project_dir == null;
+                }
+            },
+            .patch => struct {},
         };
-    }
 
-    fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
-        const allocator = this.allocator;
-        var total: usize = 0;
-        var read: usize = 0;
+        const debug = Output.scoped(.install, true);
 
-        var body_pool = Npm.Registry.BodyPool.get(allocator);
-        var mutable: MutableString = body_pool.data;
-        defer {
-            body_pool.data = mutable;
-            Npm.Registry.BodyPool.release(body_pool);
-        }
+        pub const Summary = struct {
+            fail: u32 = 0,
+            success: u32 = 0,
+            skipped: u32 = 0,
+            successfully_installed: ?Bitset = null,
 
-        // Read the file
-        // Return false on any error.
-        // Don't keep it open while we're parsing the JSON.
-        // The longer the file stays open, the more likely it causes issues for
-        // other processes on Windows.
-        const source = brk: {
-            mutable.reset();
-            mutable.list.expandToCapacity();
-            bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ "package.json");
-            this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len] = 0;
-            const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
+            /// Package name hash -> number of scripts skipped.
+            /// Multiple versions of the same package might add to the count, and each version
+            /// might have a different number of scripts
+            packages_with_blocked_scripts: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, usize) = .{},
+        };
+
+        pub const Method = enum {
+            clonefile,
+
+            /// Slower than clonefile
+            clonefile_each_dir,
+
+            /// On macOS, slow.
+            /// On Linux, fast.
+            hardlink,
+
+            /// Slowest if single-threaded
+            /// Note that copyfile does technically support recursion
+            /// But I suspect it is slower in practice than manually doing it because:
+            /// - it adds syscalls
+            /// - it runs in userspace
+            /// - it reads each dir twice incase the first pass modifies it
+            copyfile,
+
+            /// Used for file: when file: points to a parent directory
+            /// example: "file:../"
+            symlink,
+
+            const BackendSupport = std.EnumArray(Method, bool);
+            pub const map = std.ComptimeStringMap(Method, .{
+                .{ "clonefile", Method.clonefile },
+                .{ "clonefile_each_dir", Method.clonefile_each_dir },
+                .{ "hardlink", Method.hardlink },
+                .{ "copyfile", Method.copyfile },
+                .{ "symlink", Method.symlink },
+            });
+
+            pub const macOS = BackendSupport.initDefault(false, .{
+                .clonefile = true,
+                .clonefile_each_dir = true,
+                .hardlink = true,
+                .copyfile = true,
+                .symlink = true,
+            });
+
+            pub const linux = BackendSupport.initDefault(false, .{
+                .hardlink = true,
+                .copyfile = true,
+                .symlink = true,
+            });
+
+            pub const windows = BackendSupport.initDefault(false, .{
+                .hardlink = true,
+                .copyfile = true,
+            });
+
+            pub inline fn isSupported(this: Method) bool {
+                if (comptime Environment.isMac) return macOS.get(this);
+                if (comptime Environment.isLinux) return linux.get(this);
+                if (comptime Environment.isWindows) return windows.get(this);
+
+                return false;
+            }
+        };
+
+        // 1. verify that .bun-tag exists (was it installed from bun?)
+        // 2. check .bun-tag against the resolved version
+        fn verifyGitResolution(
+            this: *@This(),
+            repo: *const Repository,
+            buf: []const u8,
+            root_node_modules_dir: std.fs.Dir,
+        ) bool {
+            bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ ".bun-tag");
+            this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len] = 0;
+            const bun_tag_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + ".bun-tag".len :0];
             defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
+            var git_tag_stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
+            const allocator = git_tag_stack_fallback.get();
 
             var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
             defer {
                 if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
             }
 
-            var package_json_file = File.openat(destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
-            defer package_json_file.close();
+            const bun_tag_file = File.readFrom(
+                destination_dir,
+                bun_tag_path,
+                allocator,
+            ).unwrap() catch return false;
+            defer allocator.free(bun_tag_file);
 
-            // Heuristic: most package.jsons will be less than 2048 bytes.
-            read = package_json_file.read(mutable.list.items[total..]).unwrap() catch return false;
-            var remain = mutable.list.items[@min(total, read)..];
-            if (read > 0 and remain.len < 1024) {
-                mutable.growBy(4096) catch return false;
-                mutable.list.expandToCapacity();
+            return strings.eqlLong(repo.resolved.slice(buf), bun_tag_file, true);
+        }
+
+        // TODO: patched dependencies
+        pub fn verify(
+            this: *@This(),
+            resolution: *const Resolution,
+            buf: []const u8,
+            root_node_modules_dir: std.fs.Dir,
+        ) bool {
+            return switch (resolution.tag) {
+                .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
+                .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
+                else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
+            };
+        }
+
+        fn verifyPackageJSONNameAndVersion(this: *@This(), root_node_modules_dir: std.fs.Dir) bool {
+            const allocator = this.allocator;
+            var total: usize = 0;
+            var read: usize = 0;
+
+            var body_pool = Npm.Registry.BodyPool.get(allocator);
+            var mutable: MutableString = body_pool.data;
+            defer {
+                body_pool.data = mutable;
+                Npm.Registry.BodyPool.release(body_pool);
             }
 
-            while (read > 0) : (read = package_json_file.read(remain).unwrap() catch return false) {
-                total += read;
-
+            // Read the package.json file
+            // Return false on any error.
+            // Don't keep it open while we're parsing the JSON.
+            // The longer the file stays open, the more likely it causes issues for
+            // other processes on Windows.
+            const source = brk: {
+                mutable.reset();
                 mutable.list.expandToCapacity();
-                remain = mutable.list.items[total..];
+                bun.copy(u8, this.destination_dir_subpath_buf[this.destination_dir_subpath.len..], std.fs.path.sep_str ++ "package.json");
+                this.destination_dir_subpath_buf[this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len] = 0;
+                const package_json_path: [:0]u8 = this.destination_dir_subpath_buf[0 .. this.destination_dir_subpath.len + std.fs.path.sep_str.len + "package.json".len :0];
+                defer this.destination_dir_subpath_buf[this.destination_dir_subpath.len] = 0;
 
-                if (remain.len < 1024) {
+                var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
+                defer {
+                    if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+                }
+
+                var package_json_file = File.openat(destination_dir, package_json_path, std.os.O.RDONLY, 0).unwrap() catch return false;
+                defer package_json_file.close();
+
+                // Heuristic: most package.jsons will be less than 2048 bytes.
+                read = package_json_file.read(mutable.list.items[total..]).unwrap() catch return false;
+                var remain = mutable.list.items[@min(total, read)..];
+                if (read > 0 and remain.len < 1024) {
                     mutable.growBy(4096) catch return false;
+                    mutable.list.expandToCapacity();
                 }
-                mutable.list.expandToCapacity();
-                remain = mutable.list.items[total..];
-            }
 
-            // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-            if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
+                while (read > 0) : (read = package_json_file.read(remain).unwrap() catch return false) {
+                    total += read;
 
-            break :brk logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
-        };
+                    mutable.list.expandToCapacity();
+                    remain = mutable.list.items[total..];
 
-        var log = logger.Log.init(allocator);
-        defer log.deinit();
-
-        initializeStore();
-
-        var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
-        _ = package_json_checker.parseExpr() catch return false;
-        if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
-        const found_version = package_json_checker.found_version;
-        // Check if the version matches
-        if (!strings.eql(found_version, this.package_version)) {
-            const offset = brk: {
-                // ASCII only.
-                for (0..found_version.len) |c| {
-                    switch (found_version[c]) {
-                        // newlines & whitespace
-                        ' ',
-                        '\t',
-                        '\n',
-                        '\r',
-                        std.ascii.control_code.vt,
-                        std.ascii.control_code.ff,
-
-                        // version separators
-                        'v',
-                        '=',
-                        => {},
-                        else => {
-                            break :brk c;
-                        },
+                    if (remain.len < 1024) {
+                        mutable.growBy(4096) catch return false;
                     }
+                    mutable.list.expandToCapacity();
+                    remain = mutable.list.items[total..];
                 }
-                // If we didn't find any of these characters, there's no point in checking the version again.
-                // it will never match.
-                return false;
+
+                // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+                if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
+
+                break :brk logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
             };
 
-            if (!strings.eql(found_version[offset..], this.package_version)) return false;
-        }
+            var log = logger.Log.init(allocator);
+            defer log.deinit();
 
-        // lastly, check the name.
-        return strings.eql(package_json_checker.found_name, this.package_name);
-    }
+            initializeStore();
 
-    pub const Result = union(Tag) {
-        success: void,
-        fail: struct {
-            err: anyerror,
-            step: Step,
+            var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
+            _ = package_json_checker.parseExpr() catch return false;
+            if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
+            const found_version = package_json_checker.found_version;
+            // Check if the version matches
+            if (!strings.eql(found_version, this.package_version)) {
+                const offset = brk: {
+                    // ASCII only.
+                    for (0..found_version.len) |c| {
+                        switch (found_version[c]) {
+                            // newlines & whitespace
+                            ' ',
+                            '\t',
+                            '\n',
+                            '\r',
+                            std.ascii.control_code.vt,
+                            std.ascii.control_code.ff,
 
-            pub inline fn isPackageMissingFromCache(this: @This()) bool {
-                return (this.err == error.FileNotFound or this.err == error.ENOENT) and this.step == .opening_cache_dir;
+                            // version separators
+                            'v',
+                            '=',
+                            => {},
+                            else => {
+                                break :brk c;
+                            },
+                        }
+                    }
+                    // If we didn't find any of these characters, there's no point in checking the version again.
+                    // it will never match.
+                    return false;
+                };
+
+                if (!strings.eql(found_version[offset..], this.package_version)) return false;
             }
-        },
 
-        pub inline fn success() Result {
-            return .{ .success = {} };
+            // lastly, check the name.
+            return strings.eql(package_json_checker.found_name, this.package_name);
         }
 
-        pub fn fail(err: anyerror, step: Step) Result {
-            return .{
-                .fail = .{
-                    .err = err,
-                    .step = step,
+        pub const Result = union(Tag) {
+            success: void,
+            fail: struct {
+                err: anyerror,
+                step: Step,
+
+                pub inline fn isPackageMissingFromCache(this: @This()) bool {
+                    return (this.err == error.FileNotFound or this.err == error.ENOENT) and this.step == .opening_cache_dir;
+                }
+            },
+
+            pub inline fn success() Result {
+                return .{ .success = {} };
+            }
+
+            pub fn fail(err: anyerror, step: Step) Result {
+                return .{
+                    .fail = .{
+                        .err = err,
+                        .step = step,
+                    },
+                };
+            }
+
+            pub fn isFail(this: @This()) bool {
+                return switch (this) {
+                    .success => false,
+                    .fail => true,
+                };
+            }
+
+            pub const Tag = enum {
+                success,
+                fail,
+            };
+        };
+
+        pub const Step = enum {
+            copyfile,
+            opening_cache_dir,
+            opening_dest_dir,
+            copying_files,
+            linking,
+            linking_dependency,
+            patching,
+
+            pub fn name(this: Step) []const u8 {
+                return switch (this) {
+                    .copyfile, .copying_files => "copying files from cache to destination",
+                    .opening_cache_dir => "opening cache/package/version dir",
+                    .opening_dest_dir => "opening node_modules/package dir",
+                    .linking => "linking bins",
+                    .linking_dependency => "linking dependency/workspace to node_modules",
+                    .patching => "patching dependency",
+                };
+            }
+        };
+
+        var supported_method: Method = if (Environment.isMac)
+            Method.clonefile
+        else
+            Method.hardlink;
+
+        fn installWithClonefileEachDir(this: *@This(), destination_dir: std.fs.Dir) !Result {
+            var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
+                .fail = .{ .err = err, .step = .opening_cache_dir },
+            };
+            defer cached_package_dir.close();
+            var walker_ = Walker.walk(
+                cached_package_dir,
+                this.allocator,
+                &[_]bun.OSPathSlice{},
+                &[_]bun.OSPathSlice{},
+            ) catch |err| return Result{
+                .fail = .{ .err = err, .step = .opening_cache_dir },
+            };
+            defer walker_.deinit();
+
+            const FileCopier = struct {
+                pub fn copy(
+                    destination_dir_: std.fs.Dir,
+                    walker: *Walker,
+                ) !u32 {
+                    var real_file_count: u32 = 0;
+                    var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    while (try walker.next()) |entry| {
+                        switch (entry.kind) {
+                            .directory => {
+                                _ = bun.sys.mkdirat(bun.toFD(destination_dir_.fd), entry.path, 0o755);
+                            },
+                            .file => {
+                                bun.copy(u8, &stackpath, entry.path);
+                                stackpath[entry.path.len] = 0;
+                                const path: [:0]u8 = stackpath[0..entry.path.len :0];
+                                const basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
+                                switch (C.clonefileat(
+                                    entry.dir.fd,
+                                    basename,
+                                    destination_dir_.fd,
+                                    path,
+                                    0,
+                                )) {
+                                    0 => {},
+                                    else => |errno| switch (std.os.errno(errno)) {
+                                        .XDEV => return error.NotSupported, // not same file system
+                                        .OPNOTSUPP => return error.NotSupported,
+                                        .NOENT => return error.FileNotFound,
+                                        // sometimes the downlowded npm package has already node_modules with it, so just ignore exist error here
+                                        .EXIST => {},
+                                        .ACCES => return error.AccessDenied,
+                                        else => return error.Unexpected,
+                                    },
+                                }
+
+                                real_file_count += 1;
+                            },
+                            else => {},
+                        }
+                    }
+
+                    return real_file_count;
+                }
+            };
+
+            var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
+                .fail = .{ .err = err, .step = .opening_dest_dir },
+            };
+
+            defer subdir.close();
+
+            this.file_count = FileCopier.copy(
+                subdir,
+                &walker_,
+            ) catch |err| return Result{
+                .fail = .{ .err = err, .step = .copying_files },
+            };
+
+            return Result{
+                .success = {},
+            };
+        }
+
+        // https://www.unix.com/man-page/mojave/2/fclonefileat/
+        fn installWithClonefile(this: *@This(), destination_dir: std.fs.Dir) !Result {
+            if (comptime !Environment.isMac) @compileError("clonefileat() is macOS only.");
+
+            if (this.destination_dir_subpath[0] == '@') {
+                if (strings.indexOfCharZ(this.destination_dir_subpath, std.fs.path.sep)) |slash| {
+                    this.destination_dir_subpath_buf[slash] = 0;
+                    const subdir = this.destination_dir_subpath_buf[0..slash :0];
+                    destination_dir.makeDirZ(subdir) catch {};
+                    this.destination_dir_subpath_buf[slash] = std.fs.path.sep;
+                }
+            }
+
+            return switch (C.clonefileat(
+                this.cache_dir.fd,
+                this.cache_dir_subpath,
+                destination_dir.fd,
+                this.destination_dir_subpath,
+                0,
+            )) {
+                0 => .{ .success = {} },
+                else => |errno| switch (std.os.errno(errno)) {
+                    .XDEV => error.NotSupported, // not same file system
+                    .OPNOTSUPP => error.NotSupported,
+                    .NOENT => error.FileNotFound,
+                    // We first try to delete the directory
+                    // But, this can happen if this package contains a node_modules folder
+                    // We want to continue installing as many packages as we can, so we shouldn't block while downloading
+                    // We use the slow path in this case
+                    .EXIST => try this.installWithClonefileEachDir(destination_dir),
+                    .ACCES => return error.AccessDenied,
+                    else => error.Unexpected,
                 },
             };
         }
 
-        pub fn isFail(this: @This()) bool {
-            return switch (this) {
-                .success => false,
-                .fail => true,
-            };
-        }
+        const InstallDirState = struct {
+            cached_package_dir: std.fs.Dir = undefined,
+            walker: Walker = undefined,
+            subdir: std.fs.Dir = if (Environment.isWindows) std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE } else undefined,
+            buf: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
+            buf2: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
+            to_copy_buf: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
+            to_copy_buf2: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
 
-        pub const Tag = enum {
-            success,
-            fail,
-        };
-    };
-
-    pub const Step = enum {
-        copyfile,
-        opening_cache_dir,
-        opening_dest_dir,
-        copying_files,
-        linking,
-        linking_dependency,
-        patching,
-
-        pub fn name(this: Step) []const u8 {
-            return switch (this) {
-                .copyfile, .copying_files => "copying files from cache to destination",
-                .opening_cache_dir => "opening cache/package/version dir",
-                .opening_dest_dir => "opening node_modules/package dir",
-                .linking => "linking bins",
-                .linking_dependency => "linking dependency/workspace to node_modules",
-                .patching => "patching dependency",
-            };
-        }
-    };
-
-    var supported_method: Method = if (Environment.isMac)
-        Method.clonefile
-    else
-        Method.hardlink;
-
-    fn installWithClonefileEachDir(this: *PackageInstall, destination_dir: std.fs.Dir) !Result {
-        var cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        defer cached_package_dir.close();
-        var walker_ = Walker.walk(
-            cached_package_dir,
-            this.allocator,
-            &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        defer walker_.deinit();
-
-        const FileCopier = struct {
-            pub fn copy(
-                destination_dir_: std.fs.Dir,
-                walker: *Walker,
-            ) !u32 {
-                var real_file_count: u32 = 0;
-                var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
-                while (try walker.next()) |entry| {
-                    switch (entry.kind) {
-                        .directory => {
-                            _ = bun.sys.mkdirat(bun.toFD(destination_dir_.fd), entry.path, 0o755);
-                        },
-                        .file => {
-                            bun.copy(u8, &stackpath, entry.path);
-                            stackpath[entry.path.len] = 0;
-                            const path: [:0]u8 = stackpath[0..entry.path.len :0];
-                            const basename: [:0]u8 = stackpath[entry.path.len - entry.basename.len .. entry.path.len :0];
-                            switch (C.clonefileat(
-                                entry.dir.fd,
-                                basename,
-                                destination_dir_.fd,
-                                path,
-                                0,
-                            )) {
-                                0 => {},
-                                else => |errno| switch (std.os.errno(errno)) {
-                                    .XDEV => return error.NotSupported, // not same file system
-                                    .OPNOTSUPP => return error.NotSupported,
-                                    .NOENT => return error.FileNotFound,
-                                    // sometimes the downlowded npm package has already node_modules with it, so just ignore exist error here
-                                    .EXIST => {},
-                                    .ACCES => return error.AccessDenied,
-                                    else => return error.Unexpected,
-                                },
-                            }
-
-                            real_file_count += 1;
-                        },
-                        else => {},
-                    }
+            pub fn deinit(this: *@This()) void {
+                if (!Environment.isWindows) {
+                    this.subdir.close();
                 }
-
-                return real_file_count;
+                defer this.walker.deinit();
+                defer this.cached_package_dir.close();
             }
         };
 
-        var subdir = destination_dir.makeOpenPath(bun.span(this.destination_dir_subpath), .{}) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_dest_dir },
-        };
+        threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
 
-        defer subdir.close();
+        fn initInstallDir(this: *@This(), state: *InstallDirState, destination_dir: std.fs.Dir) Result {
+            const destbase = destination_dir;
+            const destpath = this.destination_dir_subpath;
 
-        this.file_count = FileCopier.copy(
-            subdir,
-            &walker_,
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .copying_files },
-        };
+            state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
+                .fail = .{ .err = err, .step = .opening_cache_dir },
+            };
+            state.walker = Walker.walk(
+                state.cached_package_dir,
+                this.allocator,
+                &[_]bun.OSPathSlice{},
+                &[_]bun.OSPathSlice{},
+            ) catch bun.outOfMemory();
 
-        return Result{
-            .success = {},
-        };
-    }
-
-    // https://www.unix.com/man-page/mojave/2/fclonefileat/
-    fn installWithClonefile(this: *PackageInstall, destination_dir: std.fs.Dir) !Result {
-        if (comptime !Environment.isMac) @compileError("clonefileat() is macOS only.");
-
-        if (this.destination_dir_subpath[0] == '@') {
-            if (strings.indexOfCharZ(this.destination_dir_subpath, std.fs.path.sep)) |slash| {
-                this.destination_dir_subpath_buf[slash] = 0;
-                const subdir = this.destination_dir_subpath_buf[0..slash :0];
-                destination_dir.makeDirZ(subdir) catch {};
-                this.destination_dir_subpath_buf[slash] = std.fs.path.sep;
-            }
-        }
-
-        return switch (C.clonefileat(
-            this.cache_dir.fd,
-            this.cache_dir_subpath,
-            destination_dir.fd,
-            this.destination_dir_subpath,
-            0,
-        )) {
-            0 => .{ .success = {} },
-            else => |errno| switch (std.os.errno(errno)) {
-                .XDEV => error.NotSupported, // not same file system
-                .OPNOTSUPP => error.NotSupported,
-                .NOENT => error.FileNotFound,
-                // We first try to delete the directory
-                // But, this can happen if this package contains a node_modules folder
-                // We want to continue installing as many packages as we can, so we shouldn't block while downloading
-                // We use the slow path in this case
-                .EXIST => try this.installWithClonefileEachDir(destination_dir),
-                .ACCES => return error.AccessDenied,
-                else => error.Unexpected,
-            },
-        };
-    }
-
-    const InstallDirState = struct {
-        cached_package_dir: std.fs.Dir = undefined,
-        walker: Walker = undefined,
-        subdir: std.fs.Dir = if (Environment.isWindows) std.fs.Dir{ .fd = std.os.windows.INVALID_HANDLE_VALUE } else undefined,
-        buf: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
-        buf2: bun.windows.WPathBuffer = if (Environment.isWindows) undefined else {},
-        to_copy_buf: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
-        to_copy_buf2: if (Environment.isWindows) []u16 else void = if (Environment.isWindows) undefined else {},
-
-        pub fn deinit(this: *@This()) void {
             if (!Environment.isWindows) {
-                this.subdir.close();
+                state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
+                    .iterate = true,
+                    .access_sub_paths = true,
+                }) catch |err| {
+                    state.cached_package_dir.close();
+                    state.walker.deinit();
+                    return Result.fail(err, .opening_dest_dir);
+                };
+                return Result.success();
             }
-            defer this.walker.deinit();
-            defer this.cached_package_dir.close();
-        }
-    };
 
-    threadlocal var node_fs_for_package_installer: bun.JSC.Node.NodeFS = .{};
-
-    fn initInstallDir(this: *PackageInstall, state: *InstallDirState, destination_dir: std.fs.Dir) Result {
-        const destbase = destination_dir;
-        const destpath = this.destination_dir_subpath;
-
-        state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result{
-            .fail = .{ .err = err, .step = .opening_cache_dir },
-        };
-        state.walker = Walker.walk(
-            state.cached_package_dir,
-            this.allocator,
-            &[_]bun.OSPathSlice{},
-            &[_]bun.OSPathSlice{},
-        ) catch bun.outOfMemory();
-
-        if (!Environment.isWindows) {
-            state.subdir = destbase.makeOpenPath(bun.span(destpath), .{
-                .iterate = true,
-                .access_sub_paths = true,
-            }) catch |err| {
+            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
+            if (dest_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
                 state.cached_package_dir.close();
                 state.walker.deinit();
                 return Result.fail(err, .opening_dest_dir);
+            }
+
+            var i: usize = dest_path_length;
+            if (state.buf[i] != '\\') {
+                state.buf[i] = '\\';
+                i += 1;
+            }
+
+            i += bun.strings.toWPathNormalized(state.buf[i..], destpath).len;
+            state.buf[i] = std.fs.path.sep_windows;
+            i += 1;
+            state.buf[i] = 0;
+            const fullpath = state.buf[0..i :0];
+
+            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
+                state.cached_package_dir.close();
+                state.walker.deinit();
+                return Result.fail(err, .copying_files);
             };
+            state.to_copy_buf = state.buf[fullpath.len..];
+
+            const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
+            if (cache_path_length == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                state.cached_package_dir.close();
+                state.walker.deinit();
+                return Result.fail(err, .copying_files);
+            }
+            const cache_path = state.buf2[0..cache_path_length];
+            var to_copy_buf2: []u16 = undefined;
+            if (state.buf2[cache_path.len - 1] != '\\') {
+                state.buf2[cache_path.len] = '\\';
+                to_copy_buf2 = state.buf2[cache_path.len + 1 ..];
+            } else {
+                to_copy_buf2 = state.buf2[cache_path.len..];
+            }
+
+            state.to_copy_buf2 = to_copy_buf2;
             return Result.success();
         }
 
-        const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destbase.fd, &state.buf, state.buf.len, 0);
-        if (dest_path_length == 0) {
-            const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-            state.cached_package_dir.close();
-            state.walker.deinit();
-            return Result.fail(err, .opening_dest_dir);
-        }
+        fn installWithCopyfile(this: *@This(), destination_dir: std.fs.Dir) Result {
+            var state = InstallDirState{};
+            const res = this.initInstallDir(&state, destination_dir);
+            if (res.isFail()) return res;
+            defer state.deinit();
 
-        var i: usize = dest_path_length;
-        if (state.buf[i] != '\\') {
-            state.buf[i] = '\\';
-            i += 1;
-        }
+            const FileCopier = struct {
+                pub fn copy(
+                    destination_dir_: std.fs.Dir,
+                    walker: *Walker,
+                    progress_: ProgressT,
+                    to_copy_into1: if (Environment.isWindows) []u16 else void,
+                    head1: if (Environment.isWindows) []u16 else void,
+                    to_copy_into2: if (Environment.isWindows) []u16 else void,
+                    head2: if (Environment.isWindows) []u16 else void,
+                ) !u32 {
+                    var real_file_count: u32 = 0;
 
-        i += bun.strings.toWPathNormalized(state.buf[i..], destpath).len;
-        state.buf[i] = std.fs.path.sep_windows;
-        i += 1;
-        state.buf[i] = 0;
-        const fullpath = state.buf[0..i :0];
+                    var copy_file_state: bun.CopyFileState = .{};
 
-        _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-            state.cached_package_dir.close();
-            state.walker.deinit();
-            return Result.fail(err, .copying_files);
-        };
-        state.to_copy_buf = state.buf[fullpath.len..];
-
-        const cache_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(state.cached_package_dir.fd, &state.buf2, state.buf2.len, 0);
-        if (cache_path_length == 0) {
-            const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-            state.cached_package_dir.close();
-            state.walker.deinit();
-            return Result.fail(err, .copying_files);
-        }
-        const cache_path = state.buf2[0..cache_path_length];
-        var to_copy_buf2: []u16 = undefined;
-        if (state.buf2[cache_path.len - 1] != '\\') {
-            state.buf2[cache_path.len] = '\\';
-            to_copy_buf2 = state.buf2[cache_path.len + 1 ..];
-        } else {
-            to_copy_buf2 = state.buf2[cache_path.len..];
-        }
-
-        state.to_copy_buf2 = to_copy_buf2;
-        return Result.success();
-    }
-
-    fn installWithCopyfile(this: *PackageInstall, destination_dir: std.fs.Dir) Result {
-        var state = InstallDirState{};
-        const res = this.initInstallDir(&state, destination_dir);
-        if (res.isFail()) return res;
-        defer state.deinit();
-
-        const FileCopier = struct {
-            pub fn copy(
-                destination_dir_: std.fs.Dir,
-                walker: *Walker,
-                progress_: *Progress,
-                to_copy_into1: if (Environment.isWindows) []u16 else void,
-                head1: if (Environment.isWindows) []u16 else void,
-                to_copy_into2: if (Environment.isWindows) []u16 else void,
-                head2: if (Environment.isWindows) []u16 else void,
-            ) !u32 {
-                var real_file_count: u32 = 0;
-
-                var copy_file_state: bun.CopyFileState = .{};
-
-                while (try walker.next()) |entry| {
-                    if (comptime Environment.isWindows) {
-                        switch (entry.kind) {
-                            .directory, .file => {},
-                            else => continue,
-                        }
-
-                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
-                            return error.NameTooLong;
-                        }
-
-                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
-                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
-                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
-
-                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
-                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
-                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
-
-                        switch (entry.kind) {
-                            .directory => {
-                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
-                                    bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
-                                }
-                            },
-                            .file => {
-                                if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) == 0) {
-                                    if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
-                                        bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};
-                                        if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
-                                            continue;
-                                        }
-                                    }
-
-                                    progress_.root.end();
-                                    progress_.refresh();
-
-                                    if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
-                                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                                    } else {
-                                        Output.prettyError("<r><red>error<r> copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
-                                    }
-
-                                    Global.crash();
-                                }
-                            },
-                            else => unreachable, // handled above
-                        }
-                    } else {
-                        if (entry.kind != .file) continue;
-                        real_file_count += 1;
-                        const openFile = std.fs.Dir.openFile;
-                        const createFile = std.fs.Dir.createFile;
-
-                        var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
-                        defer in_file.close();
-
-                        var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-                            if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
-                                bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
+                    while (try walker.next()) |entry| {
+                        if (comptime Environment.isWindows) {
+                            switch (entry.kind) {
+                                .directory, .file => {},
+                                else => continue,
                             }
-                            break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
-                                progress_.root.end();
 
-                                progress_.refresh();
+                            if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                                return error.NameTooLong;
+                            }
 
-                                Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                                Global.crash();
-                            };
-                        };
-                        defer outfile.close();
+                            @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                            head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                            const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
 
-                        if (comptime Environment.isPosix) {
-                            const stat = in_file.stat() catch continue;
-                            _ = C.fchmod(outfile.handle, @intCast(stat.mode));
-                        }
+                            @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                            head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                            const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
-                            progress_.root.end();
-
-                            progress_.refresh();
-
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                            Global.crash();
-                        };
-                    }
-                }
-
-                return real_file_count;
-            }
-        };
-
-        this.file_count = FileCopier.copy(
-            state.subdir,
-            &state.walker,
-            this.progress,
-            if (Environment.isWindows) state.to_copy_buf else void{},
-            if (Environment.isWindows) &state.buf else void{},
-            if (Environment.isWindows) state.to_copy_buf2 else void{},
-            if (Environment.isWindows) &state.buf2 else void{},
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .copying_files },
-        };
-
-        return Result{
-            .success = {},
-        };
-    }
-
-    fn NewTaskQueue(comptime TaskType: type) type {
-        return struct {
-            remaining: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-            errored_task: ?*TaskType = null,
-            thread_pool: *ThreadPool,
-            wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-
-            pub fn completeOne(this: *@This()) void {
-                @fence(.Release);
-                if (this.remaining.fetchSub(1, .Monotonic) == 1) {
-                    _ = this.wake_value.fetchAdd(1, .Monotonic);
-                    bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
-                }
-            }
-
-            pub fn push(this: *@This(), task: *TaskType) void {
-                _ = this.remaining.fetchAdd(1, .Monotonic);
-                this.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
-            }
-
-            pub fn wait(this: *@This()) void {
-                @fence(.Acquire);
-                this.wake_value.store(0, .Monotonic);
-                while (this.remaining.load(.Monotonic) > 0) {
-                    bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
-                }
-            }
-        };
-    }
-
-    const HardLinkWindowsInstallTask = struct {
-        bytes: []u16,
-        src: [:0]bun.OSPathChar,
-        dest: [:0]bun.OSPathChar,
-        basename: u16,
-        task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
-        err: ?anyerror = null,
-
-        pub const Queue = NewTaskQueue(@This());
-        var queue: Queue = undefined;
-        pub fn getQueue() *Queue {
-            queue = Queue{
-                .thread_pool = &PackageManager.instance.thread_pool,
-            };
-            return &queue;
-        }
-
-        pub fn init(src: []const bun.OSPathChar, dest: []const bun.OSPathChar, basename: []const bun.OSPathChar) *@This() {
-            const allocation_size =
-                (src.len) + 1 + (dest.len) + 1;
-
-            const combined = bun.default_allocator.alloc(u16, allocation_size) catch bun.outOfMemory();
-            var remaining = combined;
-            @memcpy(remaining[0..src.len], src);
-            remaining[src.len] = 0;
-            const src_ = remaining[0..src.len :0];
-            remaining = remaining[src.len + 1 ..];
-
-            @memcpy(remaining[0..dest.len], dest);
-            remaining[dest.len] = 0;
-            const dest_ = remaining[0..dest.len :0];
-            remaining = remaining[dest.len + 1 ..];
-
-            return @This().new(.{
-                .bytes = combined,
-                .src = src_,
-                .dest = dest_,
-                .basename = @truncate(basename.len),
-            });
-        }
-
-        pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
-            var iter = @fieldParentPtr(@This(), "task", task);
-            defer queue.completeOne();
-            if (iter.run()) |err| {
-                iter.err = err;
-                queue.errored_task = iter;
-                return;
-            }
-            iter.deinit();
-        }
-
-        pub fn deinit(task: *@This()) void {
-            bun.default_allocator.free(task.bytes);
-            task.destroy();
-        }
-
-        pub usingnamespace bun.New(@This());
-
-        pub fn run(task: *@This()) ?anyerror {
-            const src = task.src;
-            const dest = task.dest;
-
-            if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
-                return null;
-            }
-
-            switch (bun.windows.GetLastError()) {
-                .ALREADY_EXISTS, .FILE_EXISTS, .CANNOT_MAKE => {
-                    // Race condition: this shouldn't happen
-                    if (comptime Environment.isDebug)
-                        debug(
-                            "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
-                            .{bun.fmt.fmtPath(u16, dest, .{})},
-                        );
-                    _ = bun.windows.DeleteFileW(dest.ptr);
-                    if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
-                        return null;
-                    }
-                },
-                else => {},
-            }
-
-            dest[dest.len - task.basename - 1] = 0;
-            const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
-            _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
-            dest[dest.len - task.basename - 1] = std.fs.path.sep;
-
-            if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
-                return null;
-            }
-
-            if (PackageManager.verbose_install) {
-                const once_log = struct {
-                    var once = false;
-
-                    pub fn get() bool {
-                        const prev = once;
-                        once = true;
-                        return !prev;
-                    }
-                }.get();
-
-                if (once_log) {
-                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
-                        bun.fmt.fmtOSPath(src, .{}),
-                        bun.fmt.fmtOSPath(dest, .{}),
-                    });
-                }
-            }
-
-            if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
-                return null;
-            }
-
-            return bun.windows.getLastError();
-        }
-    };
-
-    fn installWithHardlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
-        var state = InstallDirState{};
-        const res = this.initInstallDir(&state, dest_dir);
-        if (res.isFail()) return res;
-        defer state.deinit();
-
-        const FileCopier = struct {
-            pub fn copy(
-                destination_dir: std.fs.Dir,
-                walker: *Walker,
-                to_copy_into1: if (Environment.isWindows) []u16 else void,
-                head1: if (Environment.isWindows) []u16 else void,
-                to_copy_into2: if (Environment.isWindows) []u16 else void,
-                head2: if (Environment.isWindows) []u16 else void,
-            ) !u32 {
-                var real_file_count: u32 = 0;
-                var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue() else {};
-
-                while (try walker.next()) |entry| {
-                    if (comptime Environment.isPosix) {
-                        switch (entry.kind) {
-                            .directory => {
-                                bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
-                            },
-                            .file => {
-                                std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
-                                    if (err != error.PathAlreadyExists) {
-                                        return err;
+                            switch (entry.kind) {
+                                .directory => {
+                                    if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                                        bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
                                     }
-
-                                    std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
-                                };
-
-                                real_file_count += 1;
-                            },
-                            else => {},
-                        }
-                    } else {
-                        switch (entry.kind) {
-                            .file => {},
-                            else => continue,
-                        }
-
-                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
-                            return error.NameTooLong;
-                        }
-
-                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
-                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
-                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
-
-                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
-                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
-                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
-
-                        queue.push(HardLinkWindowsInstallTask.init(src, dest, entry.basename));
-                        real_file_count += 1;
-                    }
-                }
-
-                if (comptime Environment.isWindows) {
-                    queue.wait();
-
-                    if (queue.errored_task) |task| {
-                        if (task.err) |err| {
-                            return err;
-                        }
-                    }
-                }
-
-                return real_file_count;
-            }
-        };
-
-        this.file_count = FileCopier.copy(
-            state.subdir,
-            &state.walker,
-            state.to_copy_buf,
-            if (Environment.isWindows) &state.buf else void{},
-            state.to_copy_buf2,
-            if (Environment.isWindows) &state.buf2 else void{},
-        ) catch |err| {
-            bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-            if (comptime Environment.isWindows) {
-                if (err == error.FailedToCopyFile) {
-                    return Result.fail(err, .copying_files);
-                }
-            } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
-                return err;
-            }
-            return Result.fail(err, .copying_files);
-        };
-
-        return Result{
-            .success = {},
-        };
-    }
-
-    fn installWithSymlink(this: *PackageInstall, dest_dir: std.fs.Dir) !Result {
-        var state = InstallDirState{};
-        const res = this.initInstallDir(&state, dest_dir);
-        if (res.isFail()) return res;
-        defer state.deinit();
-
-        var buf2: bun.PathBuffer = undefined;
-        var to_copy_buf2: []u8 = undefined;
-        if (Environment.isPosix) {
-            const cache_dir_path = try bun.getFdPath(state.cached_package_dir.fd, &buf2);
-            if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
-                buf2[cache_dir_path.len] = std.fs.path.sep;
-                to_copy_buf2 = buf2[cache_dir_path.len + 1 ..];
-            } else {
-                to_copy_buf2 = buf2[cache_dir_path.len..];
-            }
-        }
-
-        const FileCopier = struct {
-            pub fn copy(
-                destination_dir: std.fs.Dir,
-                walker: *Walker,
-                to_copy_into1: if (Environment.isWindows) []u16 else void,
-                head1: if (Environment.isWindows) []u16 else void,
-                to_copy_into2: []if (Environment.isWindows) u16 else u8,
-                head2: []if (Environment.isWindows) u16 else u8,
-            ) !u32 {
-                var real_file_count: u32 = 0;
-                while (try walker.next()) |entry| {
-                    if (comptime Environment.isPosix) {
-                        switch (entry.kind) {
-                            .directory => {
-                                bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
-                            },
-                            .file => {
-                                @memcpy(to_copy_into2[0..entry.path.len], entry.path);
-                                head2[entry.path.len + (head2.len - to_copy_into2.len)] = 0;
-                                const target: [:0]u8 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
-
-                                std.os.symlinkat(target, destination_dir.fd, entry.path) catch |err| {
-                                    if (err != error.PathAlreadyExists) {
-                                        return err;
-                                    }
-
-                                    std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
-                                    try std.os.symlinkat(entry.basename, destination_dir.fd, entry.path);
-                                };
-
-                                real_file_count += 1;
-                            },
-                            else => {},
-                        }
-                    } else {
-                        switch (entry.kind) {
-                            .directory, .file => {},
-                            else => continue,
-                        }
-
-                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
-                            return error.NameTooLong;
-                        }
-
-                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
-                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
-                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
-
-                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
-                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
-                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
-
-                        switch (entry.kind) {
-                            .directory => {
-                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
-                                    bun.MakePath.makePath(u16, destination_dir, entry.path) catch {};
-                                }
-                            },
-                            .file => {
-                                switch (bun.sys.symlinkW(dest, src, .{})) {
-                                    .err => |err| {
+                                },
+                                .file => {
+                                    if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) == 0) {
                                         if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
-                                            bun.MakePath.makePath(u16, destination_dir, entry_dirname) catch {};
-                                            if (bun.sys.symlinkW(dest, src, .{}) == .result) {
+                                            bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};
+                                            if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
                                                 continue;
                                             }
                                         }
 
-                                        if (PackageManager.verbose_install) {
-                                            const once_log = struct {
-                                                var once = false;
-
-                                                pub fn get() bool {
-                                                    const prev = once;
-                                                    once = true;
-                                                    return !prev;
-                                                }
-                                            }.get();
-
-                                            if (once_log) {
-                                                Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
-                                                    bun.fmt.fmtOSPath(src, .{}),
-                                                    bun.fmt.fmtOSPath(dest, .{}),
-                                                });
-                                            }
+                                        if (comptime do_progress) {
+                                            progress_.root.end();
+                                            progress_.refresh();
                                         }
 
-                                        return bun.errnoToZigErr(err.errno);
-                                    },
-                                    .result => {},
+                                        if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
+                                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                        } else {
+                                            Output.prettyError("<r><red>error<r> copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                        }
+
+                                        Global.crash();
+                                    }
+                                },
+                                else => unreachable, // handled above
+                            }
+                        } else {
+                            if (entry.kind != .file) continue;
+                            real_file_count += 1;
+                            const openFile = std.fs.Dir.openFile;
+                            const createFile = std.fs.Dir.createFile;
+
+                            var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                            defer in_file.close();
+
+                            debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
+                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                                if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                                    bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                            },
-                            else => unreachable, // handled above
+                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
+                                    if (do_progress) {
+                                        progress_.root.end();
+                                        progress_.refresh();
+                                    }
+
+                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                    Global.crash();
+                                };
+                            };
+                            defer outfile.close();
+
+                            if (comptime Environment.isPosix) {
+                                const stat = in_file.stat() catch continue;
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                            }
+
+                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                                if (do_progress) {
+                                    progress_.root.end();
+                                    progress_.refresh();
+                                }
+
+                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                Global.crash();
+                            };
                         }
+                    }
+
+                    return real_file_count;
+                }
+            };
+
+            this.file_count = FileCopier.copy(
+                state.subdir,
+                &state.walker,
+                this.progress,
+                if (Environment.isWindows) state.to_copy_buf else void{},
+                if (Environment.isWindows) &state.buf else void{},
+                if (Environment.isWindows) state.to_copy_buf2 else void{},
+                if (Environment.isWindows) &state.buf2 else void{},
+            ) catch |err| return Result{
+                .fail = .{ .err = err, .step = .copying_files },
+            };
+
+            return Result{
+                .success = {},
+            };
+        }
+
+        fn NewTaskQueue(comptime TaskType: type) type {
+            return struct {
+                remaining: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+                errored_task: ?*TaskType = null,
+                thread_pool: *ThreadPool,
+                wake_value: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+                pub fn completeOne(this: *@This()) void {
+                    @fence(.Release);
+                    if (this.remaining.fetchSub(1, .Monotonic) == 1) {
+                        _ = this.wake_value.fetchAdd(1, .Monotonic);
+                        bun.Futex.wake(&this.wake_value, std.math.maxInt(u32));
                     }
                 }
 
-                return real_file_count;
-            }
-        };
-
-        this.file_count = FileCopier.copy(
-            state.subdir,
-            &state.walker,
-            if (Environment.isWindows) state.to_copy_buf else void{},
-            if (Environment.isWindows) &state.buf else void{},
-            if (Environment.isWindows) state.to_copy_buf2 else to_copy_buf2,
-            if (Environment.isWindows) &state.buf2 else &buf2,
-        ) catch |err| {
-            if (comptime Environment.isWindows) {
-                if (err == error.FailedToCopyFile) {
-                    return Result.fail(err, .copying_files);
+                pub fn push(this: *@This(), task: *TaskType) void {
+                    _ = this.remaining.fetchAdd(1, .Monotonic);
+                    this.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
                 }
-            } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
-                return err;
-            }
-            return Result.fail(err, .copying_files);
-        };
 
-        return Result{
-            .success = {},
-        };
-    }
-
-    pub fn uninstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
-        destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
-    }
-
-    // these are just a symlink/junction
-    pub fn uninstallLinkBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
-        if (comptime Environment.isWindows) {
-            bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
-                if (err == error.ENOTDIR) {
-                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath);
-                }
-            };
-        } else {
-            bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
-                if (err == error.EISDIR or err == error.EPERM) {
-                    _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                pub fn wait(this: *@This()) void {
+                    @fence(.Acquire);
+                    this.wake_value.store(0, .Monotonic);
+                    while (this.remaining.load(.Monotonic) > 0) {
+                        bun.Futex.wait(&this.wake_value, 0, std.time.ns_per_ms * 5) catch {};
+                    }
                 }
             };
         }
-    }
 
-    pub fn uninstallBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
-        var rand_path_buf: [48]u8 = undefined;
-        const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
-        switch (bun.sys.renameat(bun.toFD(destination_dir), this.destination_dir_subpath, bun.toFD(destination_dir), temp_path)) {
-            .err => {
-                // if it fails, that means the directory doesn't exist or was inaccessible
-            },
-            .result => {
-                // Uninstall can sometimes take awhile in a large directory
-                // tree. Since we're renaming the directory to a randomly
-                // generated name, we can delete it in another thread without
-                // worrying about race conditions or blocking the main thread.
-                //
-                // This should be a slight improvement to CI environments.
-                //
-                // on macOS ARM64 in a project with Gatsby, @mui/icons-material, and Next.js:
-                //
-                // ❯ hyperfine "bun install --ignore-scripts" "bun-1.1.2 install --ignore-scripts" --prepare="rm -rf node_modules/**/package.json" --warmup=2
-                // Benchmark 1: bun install --ignore-scripts
-                //   Time (mean ± σ):      2.281 s ±  0.027 s    [User: 0.041 s, System: 6.851 s]
-                //   Range (min … max):    2.231 s …  2.312 s    10 runs
-                //
-                // Benchmark 2: bun-1.1.2 install --ignore-scripts
-                //   Time (mean ± σ):      3.315 s ±  0.033 s    [User: 0.029 s, System: 2.237 s]
-                //   Range (min … max):    3.279 s …  3.356 s    10 runs
-                //
-                // Summary
-                //   bun install --ignore-scripts ran
-                //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
-                //
+        const HardLinkWindowsInstallTask = struct {
+            bytes: []u16,
+            src: [:0]bun.OSPathChar,
+            dest: [:0]bun.OSPathChar,
+            basename: u16,
+            task: bun.JSC.WorkPoolTask = .{ .callback = &runFromThreadPool },
+            err: ?anyerror = null,
 
-                const UninstallTask = struct {
-                    absolute_path: []const u8,
-                    task: JSC.WorkPoolTask = .{ .callback = &run },
-                    pub fn run(task: *JSC.WorkPoolTask) void {
-                        var unintall_task = @fieldParentPtr(@This(), "task", task);
-                        var debug_timer = bun.Output.DebugTimer.start();
-                        defer {
-                            _ = PackageManager.instance.decrementPendingTasks();
-                            PackageManager.instance.wake();
-                        }
-
-                        defer unintall_task.deinit();
-                        const dirname = std.fs.path.dirname(unintall_task.absolute_path) orelse {
-                            Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{unintall_task.absolute_path});
-                            return;
-                        };
-                        const basename = std.fs.path.basename(unintall_task.absolute_path);
-
-                        var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
-                            if (comptime Environment.isDebug) {
-                                Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
-                            }
-                            return;
-                        };
-                        defer _ = bun.sys.close(bun.toFD(dir.fd));
-
-                        dir.deleteTree(basename) catch |err| {
-                            if (comptime Environment.isDebug) {
-                                Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
-                            }
-                        };
-
-                        if (Environment.isDebug) {
-                            _ = &debug_timer;
-                            debug("deleteTree({s}, {s}) = {}", .{ basename, dirname, debug_timer });
-                        }
-                    }
-
-                    pub fn deinit(uninstall_task: *@This()) void {
-                        bun.default_allocator.free(uninstall_task.absolute_path);
-                        uninstall_task.destroy();
-                    }
-
-                    pub usingnamespace bun.New(@This());
+            pub const Queue = NewTaskQueue(@This());
+            var queue: Queue = undefined;
+            pub fn getQueue() *Queue {
+                queue = Queue{
+                    .thread_pool = &PackageManager.instance.thread_pool,
                 };
-                var task = UninstallTask.new(.{
-                    .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
+                return &queue;
+            }
+
+            pub fn init(src: []const bun.OSPathChar, dest: []const bun.OSPathChar, basename: []const bun.OSPathChar) *@This() {
+                const allocation_size =
+                    (src.len) + 1 + (dest.len) + 1;
+
+                const combined = bun.default_allocator.alloc(u16, allocation_size) catch bun.outOfMemory();
+                var remaining = combined;
+                @memcpy(remaining[0..src.len], src);
+                remaining[src.len] = 0;
+                const src_ = remaining[0..src.len :0];
+                remaining = remaining[src.len + 1 ..];
+
+                @memcpy(remaining[0..dest.len], dest);
+                remaining[dest.len] = 0;
+                const dest_ = remaining[0..dest.len :0];
+                remaining = remaining[dest.len + 1 ..];
+
+                return @This().new(.{
+                    .bytes = combined,
+                    .src = src_,
+                    .dest = dest_,
+                    .basename = @truncate(basename.len),
                 });
-                PackageManager.instance.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
-                _ = PackageManager.instance.incrementPendingTasks(1);
-            },
-        }
-    }
+            }
 
-    pub fn isDanglingSymlink(path: [:0]const u8) bool {
-        if (comptime Environment.isLinux) {
-            const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
-            switch (Syscall.getErrno(rc)) {
-                .SUCCESS => {
-                    _ = Syscall.system.close(@intCast(rc));
-                    return false;
-                },
-                else => return true,
+            pub fn runFromThreadPool(task: *bun.JSC.WorkPoolTask) void {
+                var iter = @fieldParentPtr(@This(), "task", task);
+                defer queue.completeOne();
+                if (iter.run()) |err| {
+                    iter.err = err;
+                    queue.errored_task = iter;
+                    return;
+                }
+                iter.deinit();
             }
-        } else if (comptime Environment.isWindows) {
-            switch (bun.sys.sys_uv.open(path, 0, 0)) {
-                .err => {
-                    return true;
-                },
-                .result => |fd| {
-                    _ = bun.sys.close(fd);
-                    return false;
-                },
-            }
-        } else {
-            const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
-            switch (Syscall.getErrno(rc)) {
-                .SUCCESS => {
-                    _ = Syscall.system.close(rc);
-                    return false;
-                },
-                else => return true,
-            }
-        }
-    }
 
-    pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
-        const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
-        const bin_path = bin_path: {
-            const fd = bun.sys.openatWindows(node_mod_fd, path, std.os.O.RDONLY).unwrap() catch return true;
-            defer _ = bun.sys.close(fd);
-            const size = fd.asFile().readAll(temp_buffer) catch return true;
-            const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
-            bun.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
-            break :bin_path decoded.bin_path;
+            pub fn deinit(task: *@This()) void {
+                bun.default_allocator.free(task.bytes);
+                task.destroy();
+            }
+
+            pub usingnamespace bun.New(@This());
+
+            pub fn run(task: *@This()) ?anyerror {
+                const src = task.src;
+                const dest = task.dest;
+
+                if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                    return null;
+                }
+
+                switch (bun.windows.GetLastError()) {
+                    .ALREADY_EXISTS, .FILE_EXISTS, .CANNOT_MAKE => {
+                        // Race condition: this shouldn't happen
+                        if (comptime Environment.isDebug)
+                            debug(
+                                "CreateHardLinkW returned EEXIST, this shouldn't happen: {}",
+                                .{bun.fmt.fmtPath(u16, dest, .{})},
+                            );
+                        _ = bun.windows.DeleteFileW(dest.ptr);
+                        if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                            return null;
+                        }
+                    },
+                    else => {},
+                }
+
+                dest[dest.len - task.basename - 1] = 0;
+                const dirpath = dest[0 .. dest.len - task.basename - 1 :0];
+                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, dirpath, 0, false).unwrap() catch {};
+                dest[dest.len - task.basename - 1] = std.fs.path.sep;
+
+                if (bun.windows.CreateHardLinkW(dest.ptr, src.ptr, null) != 0) {
+                    return null;
+                }
+
+                if (PackageManager.verbose_install) {
+                    const once_log = struct {
+                        var once = false;
+
+                        pub fn get() bool {
+                            const prev = once;
+                            once = true;
+                            return !prev;
+                        }
+                    }.get();
+
+                    if (once_log) {
+                        Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                            bun.fmt.fmtOSPath(src, .{}),
+                            bun.fmt.fmtOSPath(dest, .{}),
+                        });
+                    }
+                }
+
+                if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
+                    return null;
+                }
+
+                return bun.windows.getLastError();
+            }
         };
 
-        {
-            const fd = bun.sys.openatWindows(node_mod_fd, bin_path, std.os.O.RDONLY).unwrap() catch return true;
-            _ = bun.sys.close(fd);
-        }
+        fn installWithHardlink(this: *@This(), dest_dir: std.fs.Dir) !Result {
+            var state = InstallDirState{};
+            const res = this.initInstallDir(&state, dest_dir);
+            if (res.isFail()) return res;
+            defer state.deinit();
 
-        return false;
-    }
+            const FileCopier = struct {
+                pub fn copy(
+                    destination_dir: std.fs.Dir,
+                    walker: *Walker,
+                    to_copy_into1: if (Environment.isWindows) []u16 else void,
+                    head1: if (Environment.isWindows) []u16 else void,
+                    to_copy_into2: if (Environment.isWindows) []u16 else void,
+                    head2: if (Environment.isWindows) []u16 else void,
+                ) !u32 {
+                    var real_file_count: u32 = 0;
+                    var queue = if (Environment.isWindows) HardLinkWindowsInstallTask.getQueue() else {};
 
-    pub fn installFromLink(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
-        const dest_path = this.destination_dir_subpath;
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallLinkBeforeInstall(destination_dir);
+                    while (try walker.next()) |entry| {
+                        if (comptime Environment.isPosix) {
+                            switch (entry.kind) {
+                                .directory => {
+                                    bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
+                                },
+                                .file => {
+                                    std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0) catch |err| {
+                                        if (err != error.PathAlreadyExists) {
+                                            return err;
+                                        }
 
-        const subdir = std.fs.path.dirname(dest_path);
+                                        std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
+                                        try std.os.linkat(entry.dir.fd, entry.basename, destination_dir.fd, entry.path, 0);
+                                    };
 
-        var dest_buf: bun.PathBuffer = undefined;
-        // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
-        const symlinked_path = this.cache_dir_subpath;
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
-            .fail = .{
-                .err = err,
-                .step = .linking_dependency,
-            },
-        };
+                                    real_file_count += 1;
+                                },
+                                else => {},
+                            }
+                        } else {
+                            switch (entry.kind) {
+                                .file => {},
+                                else => continue,
+                            }
 
-        const dest = std.fs.path.basename(dest_path);
-        // When we're linking on Windows, we want to avoid keeping the source directory handle open
-        if (comptime Environment.isWindows) {
-            var wbuf: bun.WPathBuffer = undefined;
-            const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, dest_buf.len, 0);
-            if (dest_path_length == 0) {
-                const e = bun.windows.Win32Error.get();
-                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                return Result.fail(err, .linking_dependency);
-            }
+                            if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                                return error.NameTooLong;
+                            }
 
-            var i: usize = dest_path_length;
-            if (wbuf[i] != '\\') {
-                wbuf[i] = '\\';
-                i += 1;
-            }
+                            @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                            head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                            const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
 
-            if (subdir) |dir| {
-                i += bun.strings.toWPathNormalized(wbuf[i..], dir).len;
-                wbuf[i] = std.fs.path.sep_windows;
-                i += 1;
-                wbuf[i] = 0;
-                const fullpath = wbuf[0..i :0];
+                            @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                            head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                            const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
 
-                _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                    return Result.fail(err, .linking_dependency);
-                };
-            }
-
-            const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);
-            var offset: usize = res.written;
-            if (dest_buf[offset - 1] != std.fs.path.sep_windows) {
-                dest_buf[offset] = std.fs.path.sep_windows;
-                offset += 1;
-            }
-            @memcpy(dest_buf[offset .. offset + dest.len], dest);
-            offset += dest.len;
-            dest_buf[offset] = 0;
-
-            const dest_z = dest_buf[0..offset :0];
-
-            to_buf[to_path.len] = 0;
-            const target_z = to_buf[0..to_path.len :0];
-
-            // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
-            // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
-            switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
-                .err => |err_| brk: {
-                    var err = err_;
-                    if (err.getErrno() == .EXIST) {
-                        _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
-                        switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
-                            .err => |e| err = e,
-                            .result => break :brk,
+                            queue.push(HardLinkWindowsInstallTask.init(src, dest, entry.basename));
+                            real_file_count += 1;
                         }
                     }
 
-                    return Result{
+                    if (comptime Environment.isWindows) {
+                        queue.wait();
+
+                        if (queue.errored_task) |task| {
+                            if (task.err) |err| {
+                                return err;
+                            }
+                        }
+                    }
+
+                    return real_file_count;
+                }
+            };
+
+            this.file_count = FileCopier.copy(
+                state.subdir,
+                &state.walker,
+                state.to_copy_buf,
+                if (Environment.isWindows) &state.buf else void{},
+                state.to_copy_buf2,
+                if (Environment.isWindows) &state.buf2 else void{},
+            ) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                if (comptime Environment.isWindows) {
+                    if (err == error.FailedToCopyFile) {
+                        return Result.fail(err, .copying_files);
+                    }
+                } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
+                    return err;
+                }
+                return Result.fail(err, .copying_files);
+            };
+
+            return Result{
+                .success = {},
+            };
+        }
+
+        fn installWithSymlink(this: *@This(), dest_dir: std.fs.Dir) !Result {
+            var state = InstallDirState{};
+            const res = this.initInstallDir(&state, dest_dir);
+            if (res.isFail()) return res;
+            defer state.deinit();
+
+            var buf2: bun.PathBuffer = undefined;
+            var to_copy_buf2: []u8 = undefined;
+            if (Environment.isPosix) {
+                const cache_dir_path = try bun.getFdPath(state.cached_package_dir.fd, &buf2);
+                if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
+                    buf2[cache_dir_path.len] = std.fs.path.sep;
+                    to_copy_buf2 = buf2[cache_dir_path.len + 1 ..];
+                } else {
+                    to_copy_buf2 = buf2[cache_dir_path.len..];
+                }
+            }
+
+            const FileCopier = struct {
+                pub fn copy(
+                    destination_dir: std.fs.Dir,
+                    walker: *Walker,
+                    to_copy_into1: if (Environment.isWindows) []u16 else void,
+                    head1: if (Environment.isWindows) []u16 else void,
+                    to_copy_into2: []if (Environment.isWindows) u16 else u8,
+                    head2: []if (Environment.isWindows) u16 else u8,
+                ) !u32 {
+                    var real_file_count: u32 = 0;
+                    while (try walker.next()) |entry| {
+                        if (comptime Environment.isPosix) {
+                            switch (entry.kind) {
+                                .directory => {
+                                    bun.MakePath.makePath(std.meta.Elem(@TypeOf(entry.path)), destination_dir, entry.path) catch {};
+                                },
+                                .file => {
+                                    @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                                    head2[entry.path.len + (head2.len - to_copy_into2.len)] = 0;
+                                    const target: [:0]u8 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                                    std.os.symlinkat(target, destination_dir.fd, entry.path) catch |err| {
+                                        if (err != error.PathAlreadyExists) {
+                                            return err;
+                                        }
+
+                                        std.os.unlinkat(destination_dir.fd, entry.path, 0) catch {};
+                                        try std.os.symlinkat(entry.basename, destination_dir.fd, entry.path);
+                                    };
+
+                                    real_file_count += 1;
+                                },
+                                else => {},
+                            }
+                        } else {
+                            switch (entry.kind) {
+                                .directory, .file => {},
+                                else => continue,
+                            }
+
+                            if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                                return error.NameTooLong;
+                            }
+
+                            @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                            head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                            const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
+
+                            @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                            head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                            const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                            switch (entry.kind) {
+                                .directory => {
+                                    if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                                        bun.MakePath.makePath(u16, destination_dir, entry.path) catch {};
+                                    }
+                                },
+                                .file => {
+                                    switch (bun.sys.symlinkW(dest, src, .{})) {
+                                        .err => |err| {
+                                            if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                                bun.MakePath.makePath(u16, destination_dir, entry_dirname) catch {};
+                                                if (bun.sys.symlinkW(dest, src, .{}) == .result) {
+                                                    continue;
+                                                }
+                                            }
+
+                                            if (PackageManager.verbose_install) {
+                                                const once_log = struct {
+                                                    var once = false;
+
+                                                    pub fn get() bool {
+                                                        const prev = once;
+                                                        once = true;
+                                                        return !prev;
+                                                    }
+                                                }.get();
+
+                                                if (once_log) {
+                                                    Output.warn("CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n", .{
+                                                        bun.fmt.fmtOSPath(src, .{}),
+                                                        bun.fmt.fmtOSPath(dest, .{}),
+                                                    });
+                                                }
+                                            }
+
+                                            return bun.errnoToZigErr(err.errno);
+                                        },
+                                        .result => {},
+                                    }
+                                },
+                                else => unreachable, // handled above
+                            }
+                        }
+                    }
+
+                    return real_file_count;
+                }
+            };
+
+            this.file_count = FileCopier.copy(
+                state.subdir,
+                &state.walker,
+                if (Environment.isWindows) state.to_copy_buf else void{},
+                if (Environment.isWindows) &state.buf else void{},
+                if (Environment.isWindows) state.to_copy_buf2 else to_copy_buf2,
+                if (Environment.isWindows) &state.buf2 else &buf2,
+            ) catch |err| {
+                if (comptime Environment.isWindows) {
+                    if (err == error.FailedToCopyFile) {
+                        return Result.fail(err, .copying_files);
+                    }
+                } else if (err == error.NotSameFileSystem or err == error.ENXIO) {
+                    return err;
+                }
+                return Result.fail(err, .copying_files);
+            };
+
+            return Result{
+                .success = {},
+            };
+        }
+
+        pub fn uninstall(this: *@This(), destination_dir: std.fs.Dir) void {
+            destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
+        }
+
+        // these are just a symlink/junction
+        pub fn uninstallLinkBeforeInstall(this: *@This(), destination_dir: std.fs.Dir) void {
+            if (comptime Environment.isWindows) {
+                bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
+                    if (err == error.ENOTDIR) {
+                        _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                    }
+                };
+            } else {
+                bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
+                    if (err == error.EISDIR or err == error.EPERM) {
+                        _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                    }
+                };
+            }
+        }
+
+        pub fn uninstallBeforeInstall(this: *@This(), destination_dir: std.fs.Dir) void {
+            var rand_path_buf: [48]u8 = undefined;
+            const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
+            switch (bun.sys.renameat(bun.toFD(destination_dir), this.destination_dir_subpath, bun.toFD(destination_dir), temp_path)) {
+                .err => {
+                    // if it fails, that means the directory doesn't exist or was inaccessible
+                },
+                .result => {
+                    // Uninstall can sometimes take awhile in a large directory
+                    // tree. Since we're renaming the directory to a randomly
+                    // generated name, we can delete it in another thread without
+                    // worrying about race conditions or blocking the main thread.
+                    //
+                    // This should be a slight improvement to CI environments.
+                    //
+                    // on macOS ARM64 in a project with Gatsby, @mui/icons-material, and Next.js:
+                    //
+                    // ❯ hyperfine "bun install --ignore-scripts" "bun-1.1.2 install --ignore-scripts" --prepare="rm -rf node_modules/**/package.json" --warmup=2
+                    // Benchmark 1: bun install --ignore-scripts
+                    //   Time (mean ± σ):      2.281 s ±  0.027 s    [User: 0.041 s, System: 6.851 s]
+                    //   Range (min … max):    2.231 s …  2.312 s    10 runs
+                    //
+                    // Benchmark 2: bun-1.1.2 install --ignore-scripts
+                    //   Time (mean ± σ):      3.315 s ±  0.033 s    [User: 0.029 s, System: 2.237 s]
+                    //   Range (min … max):    3.279 s …  3.356 s    10 runs
+                    //
+                    // Summary
+                    //   bun install --ignore-scripts ran
+                    //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
+                    //
+
+                    const UninstallTask = struct {
+                        absolute_path: []const u8,
+                        task: JSC.WorkPoolTask = .{ .callback = &run },
+                        pub fn run(task: *JSC.WorkPoolTask) void {
+                            var unintall_task = @fieldParentPtr(@This(), "task", task);
+                            var debug_timer = bun.Output.DebugTimer.start();
+                            defer {
+                                _ = PackageManager.instance.decrementPendingTasks();
+                                PackageManager.instance.wake();
+                            }
+
+                            defer unintall_task.deinit();
+                            const dirname = std.fs.path.dirname(unintall_task.absolute_path) orelse {
+                                Output.debugWarn("Unexpectedly failed to get dirname of {s}", .{unintall_task.absolute_path});
+                                return;
+                            };
+                            const basename = std.fs.path.basename(unintall_task.absolute_path);
+
+                            var dir = bun.openDirA(std.fs.cwd(), dirname) catch |err| {
+                                if (comptime Environment.isDebug) {
+                                    Output.debugWarn("Failed to delete {s}: {s}", .{ unintall_task.absolute_path, @errorName(err) });
+                                }
+                                return;
+                            };
+                            defer _ = bun.sys.close(bun.toFD(dir.fd));
+
+                            dir.deleteTree(basename) catch |err| {
+                                if (comptime Environment.isDebug) {
+                                    Output.debugWarn("Failed to delete {s} in {s}: {s}", .{ basename, dirname, @errorName(err) });
+                                }
+                            };
+
+                            if (Environment.isDebug) {
+                                _ = &debug_timer;
+                                debug("deleteTree({s}, {s}) = {}", .{ basename, dirname, debug_timer });
+                            }
+                        }
+
+                        pub fn deinit(uninstall_task: *@This()) void {
+                            bun.default_allocator.free(uninstall_task.absolute_path);
+                            uninstall_task.destroy();
+                        }
+
+                        pub usingnamespace bun.New(@This());
+                    };
+                    var task = UninstallTask.new(.{
+                        .absolute_path = bun.default_allocator.dupeZ(u8, bun.path.joinAbsString(FileSystem.instance.top_level_dir, &.{ this.node_modules.path.items, temp_path }, .auto)) catch bun.outOfMemory(),
+                    });
+                    PackageManager.instance.thread_pool.schedule(bun.ThreadPool.Batch.from(&task.task));
+                    _ = PackageManager.instance.incrementPendingTasks(1);
+                },
+            }
+        }
+
+        pub fn isDanglingSymlink(path: [:0]const u8) bool {
+            if (comptime Environment.isLinux) {
+                const rc = Syscall.system.open(path, @as(u32, std.os.O.PATH | 0), @as(u32, 0));
+                switch (Syscall.getErrno(rc)) {
+                    .SUCCESS => {
+                        _ = Syscall.system.close(@intCast(rc));
+                        return false;
+                    },
+                    else => return true,
+                }
+            } else if (comptime Environment.isWindows) {
+                switch (bun.sys.sys_uv.open(path, 0, 0)) {
+                    .err => {
+                        return true;
+                    },
+                    .result => |fd| {
+                        _ = bun.sys.close(fd);
+                        return false;
+                    },
+                }
+            } else {
+                const rc = Syscall.system.open(path, @as(u32, 0), @as(u32, 0));
+                switch (Syscall.getErrno(rc)) {
+                    .SUCCESS => {
+                        _ = Syscall.system.close(rc);
+                        return false;
+                    },
+                    else => return true,
+                }
+            }
+        }
+
+        pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
+            const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
+            const bin_path = bin_path: {
+                const fd = bun.sys.openatWindows(node_mod_fd, path, std.os.O.RDONLY).unwrap() catch return true;
+                defer _ = bun.sys.close(fd);
+                const size = fd.asFile().readAll(temp_buffer) catch return true;
+                const decoded = WinBinLinkingShim.looseDecode(temp_buffer[0..size]) orelse return true;
+                bun.assert(decoded.flags.isValid()); // looseDecode ensures valid flags
+                break :bin_path decoded.bin_path;
+            };
+
+            {
+                const fd = bun.sys.openatWindows(node_mod_fd, bin_path, std.os.O.RDONLY).unwrap() catch return true;
+                _ = bun.sys.close(fd);
+            }
+
+            return false;
+        }
+
+        pub fn installFromLink(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir) Result {
+            const dest_path = this.destination_dir_subpath;
+            // If this fails, we don't care.
+            // we'll catch it the next error
+            if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallLinkBeforeInstall(destination_dir);
+
+            const subdir = std.fs.path.dirname(dest_path);
+
+            var dest_buf: bun.PathBuffer = undefined;
+            // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
+            const symlinked_path = this.cache_dir_subpath;
+            var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
+                .fail = .{
+                    .err = err,
+                    .step = .linking_dependency,
+                },
+            };
+
+            const dest = std.fs.path.basename(dest_path);
+            // When we're linking on Windows, we want to avoid keeping the source directory handle open
+            if (comptime Environment.isWindows) {
+                var wbuf: bun.WPathBuffer = undefined;
+                const dest_path_length = bun.windows.kernel32.GetFinalPathNameByHandleW(destination_dir.fd, &wbuf, dest_buf.len, 0);
+                if (dest_path_length == 0) {
+                    const e = bun.windows.Win32Error.get();
+                    const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                    return Result.fail(err, .linking_dependency);
+                }
+
+                var i: usize = dest_path_length;
+                if (wbuf[i] != '\\') {
+                    wbuf[i] = '\\';
+                    i += 1;
+                }
+
+                if (subdir) |dir| {
+                    i += bun.strings.toWPathNormalized(wbuf[i..], dir).len;
+                    wbuf[i] = std.fs.path.sep_windows;
+                    i += 1;
+                    wbuf[i] = 0;
+                    const fullpath = wbuf[0..i :0];
+
+                    _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
+                        return Result.fail(err, .linking_dependency);
+                    };
+                }
+
+                const res = strings.copyUTF16IntoUTF8(dest_buf[0..], []const u16, wbuf[0..i], true);
+                var offset: usize = res.written;
+                if (dest_buf[offset - 1] != std.fs.path.sep_windows) {
+                    dest_buf[offset] = std.fs.path.sep_windows;
+                    offset += 1;
+                }
+                @memcpy(dest_buf[offset .. offset + dest.len], dest);
+                offset += dest.len;
+                dest_buf[offset] = 0;
+
+                const dest_z = dest_buf[0..offset :0];
+
+                to_buf[to_path.len] = 0;
+                const target_z = to_buf[0..to_path.len :0];
+
+                // https://github.com/npm/cli/blob/162c82e845d410ede643466f9f8af78a312296cc/workspaces/arborist/lib/arborist/reify.js#L738
+                // https://github.com/npm/cli/commit/0e58e6f6b8f0cd62294642a502c17561aaf46553
+                switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
+                    .err => |err_| brk: {
+                        var err = err_;
+                        if (err.getErrno() == .EXIST) {
+                            _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                            switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
+                                .err => |e| err = e,
+                                .result => break :brk,
+                            }
+                        }
+
+                        return Result{
+                            .fail = .{
+                                .err = bun.errnoToZigErr(err.errno),
+                                .step = .linking_dependency,
+                            },
+                        };
+                    },
+                    .result => {},
+                }
+            } else {
+                var dest_dir = if (subdir) |dir| brk: {
+                    break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
                         .fail = .{
-                            .err = bun.errnoToZigErr(err.errno),
+                            .err = err,
                             .step = .linking_dependency,
                         },
                     };
-                },
-                .result => {},
-            }
-        } else {
-            var dest_dir = if (subdir) |dir| brk: {
-                break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
+                } else destination_dir;
+                defer {
+                    if (subdir != null) dest_dir.close();
+                }
+
+                const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
                     .fail = .{
                         .err = err,
                         .step = .linking_dependency,
                     },
                 };
-            } else destination_dir;
-            defer {
-                if (subdir != null) dest_dir.close();
-            }
 
-            const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
-                .fail = .{
-                    .err = err,
-                    .step = .linking_dependency,
-                },
-            };
-
-            const target = Path.relative(dest_dir_path, to_path);
-            std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
-                .fail = .{
-                    .err = err,
-                    .step = .linking_dependency,
-                },
-            };
-        }
-
-        if (isDanglingSymlink(symlinked_path)) return Result{
-            .fail = .{
-                .err = error.DanglingSymlink,
-                .step = .linking_dependency,
-            },
-        };
-
-        return Result{
-            .success = {},
-        };
-    }
-
-    pub fn getInstallMethod(this: *const PackageInstall) Method {
-        return if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
-            Method.symlink
-        else
-            supported_method;
-    }
-
-    pub fn packageMissingFromCache(this: *PackageInstall, manager: *PackageManager, package_id: PackageID) bool {
-        return switch (manager.getPreinstallState(package_id)) {
-            .done => false,
-            else => brk: {
-                const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
-                if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
-                break :brk !exists;
-            },
-        };
-    }
-
-    pub fn install(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir) Result {
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
-
-        // Package has a .patch file that must be applied
-        // We can't use hardlinks or symlinks because they will modify the source
-        // So we:
-        // 1. clone the original package source to a temp directory
-        // 2. apply patch to the temp directory
-        // 3. rename() the temp directory to the original destination directory
-        // Are steps 2-3 strictly necessary? Probably not, but they have the added benefit
-        // of being atomic and thus resilient to unexpected crashes etc.
-        if (!this.patch.isNull()) {
-            const dir = this.patch.root_project_dir.?;
-            const patchfile_path = this.patch.patch_path;
-
-            // parse the patch file
-            const absolute_patchfile_path = bun.path.join(&[_][]const u8{
-                dir,
-                patchfile_path,
-            }, .auto);
-            // TODO: can the patch file be anything other than utf-8?
-            const patchfile_txt = std.fs.cwd().readFileAlloc(
-                this.allocator,
-                absolute_patchfile_path,
-                1024 * 1024 * 1024 * 4,
-            ) catch |e| return .{
-                .fail = .{ .err = e, .step = .patching },
-            };
-            defer this.allocator.free(patchfile_txt);
-            var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
-                return .{ .fail = .{ .err = e, .step = .patching } };
-            };
-            defer patchfile.deinit(bun.default_allocator);
-
-            // create temp dir
-            var tmpname_buf: [1024]u8 = undefined;
-            const tempdir_name = bun.span(
-                bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |e| return .{
-                    .fail = .{ .err = e, .step = .patching },
-                },
-            );
-            var tmpdir = std.fs.cwd().makeOpenPath(tempdir_name, .{}) catch |e| return .{
-                .fail = .{ .err = e, .step = .patching },
-            };
-            defer tmpdir.close();
-
-            // install original package to tempdir
-            const result = this.installImpl(skip_delete, tmpdir, .copyfile);
-            if (result.isFail()) return result;
-
-            var patch_pkg_dir = tmpdir.openDir(this.package_name, .{}) catch |e| return .{
-                .fail = .{ .err = e, .step = .patching },
-            };
-            defer patch_pkg_dir.close();
-
-            // apply patch
-            if (patchfile.apply(this.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
-                defer e.deref();
-                return .{
-                    .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
-                };
-            }
-
-            // rename to original destination dir
-            const path_in_tmpdir = bun.path.joinZ(
-                &[_][]const u8{
-                    tempdir_name,
-                    this.destination_dir_subpath,
-                },
-                .auto,
-            );
-            var allocated = false;
-            const package_name_z = brk: {
-                if (this.package_name.len < tmpname_buf.len) {
-                    @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
-                    tmpname_buf[this.package_name.len] = 0;
-                    break :brk tmpname_buf[0..this.package_name.len :0];
-                }
-                allocated = true;
-                break :brk this.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
-            };
-            defer if (allocated) this.allocator.free(package_name_z);
-            if (bun.sys.renameat2(
-                bun.toFD(std.fs.cwd()),
-                path_in_tmpdir,
-                bun.toFD(destination_dir.fd),
-                package_name_z,
-                .{},
-            ).asErr()) |e| {
-                return .{
+                const target = Path.relative(dest_dir_path, to_path);
+                std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                     .fail = .{
-                        .err = bun.errnoToZigErr(e.getErrno()),
-                        .step = .patching,
+                        .err = err,
+                        .step = .linking_dependency,
                     },
                 };
             }
 
-            return Result.success();
+            if (isDanglingSymlink(symlinked_path)) return Result{
+                .fail = .{
+                    .err = error.DanglingSymlink,
+                    .step = .linking_dependency,
+                },
+            };
+
+            return Result{
+                .success = {},
+            };
         }
 
-        return this.installImpl(skip_delete, destination_dir, this.getInstallMethod());
-    }
-
-    fn installImpl(this: *PackageInstall, skip_delete: bool, destination_dir: std.fs.Dir, method_: Method) Result {
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
-
-        var supported_method_to_use = method_;
-
-        switch (supported_method_to_use) {
-            .clonefile => {
-                if (comptime Environment.isMac) {
-
-                    // First, attempt to use clonefile
-                    // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
-                    if (this.installWithClonefile(destination_dir)) |result| {
-                        return result;
-                    } else |err| {
-                        switch (err) {
-                            error.NotSupported => {
-                                supported_method = .copyfile;
-                                supported_method_to_use = .copyfile;
-                            },
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
-                        }
-                    }
-                }
-            },
-            .clonefile_each_dir => {
-                if (comptime Environment.isMac) {
-                    if (this.installWithClonefileEachDir(destination_dir)) |result| {
-                        return result;
-                    } else |err| {
-                        switch (err) {
-                            error.NotSupported => {
-                                supported_method = .copyfile;
-                                supported_method_to_use = .copyfile;
-                            },
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
-                        }
-                    }
-                }
-            },
-            .hardlink => {
-                if (this.installWithHardlink(destination_dir)) |result| {
-                    return result;
-                } else |err| outer: {
-                    if (comptime !Environment.isWindows) {
-                        if (err == error.NotSameFileSystem) {
-                            supported_method = .copyfile;
-                            supported_method_to_use = .copyfile;
-                            break :outer;
-                        }
-                    }
-
-                    switch (err) {
-                        error.FileNotFound => return Result{
-                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                        },
-                        else => return Result{
-                            .fail = .{ .err = err, .step = .copying_files },
-                        },
-                    }
-                }
-            },
-            .symlink => {
-                if (comptime Environment.isWindows) {
-                    supported_method_to_use = .copyfile;
-                } else {
-                    if (this.installWithSymlink(destination_dir)) |result| {
-                        return result;
-                    } else |err| {
-                        switch (err) {
-                            error.FileNotFound => return Result{
-                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
-                            },
-                            else => return Result{
-                                .fail = .{ .err = err, .step = .copying_files },
-                            },
-                        }
-                    }
-                }
-            },
-            else => {},
+        pub fn getInstallMethod(this: *const @This()) Method {
+            return if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
+                Method.symlink
+            else
+                supported_method;
         }
 
-        if (supported_method_to_use != .copyfile) return Result{
-            .success = {},
-        };
+        pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID) bool {
+            return switch (manager.getPreinstallState(package_id)) {
+                .done => false,
+                else => brk: {
+                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+                    if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+                    break :brk !exists;
+                },
+            };
+        }
 
-        // TODO: linux io_uring
-        return this.installWithCopyfile(destination_dir);
-    }
-};
+        pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir) Result {
+            // If this fails, we don't care.
+            // we'll catch it the next error
+            if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
+
+            // Package has a .patch file that must be applied
+            // We can't use hardlinks or symlinks because they will modify the source
+            // So we:
+            // 1. clone the original package source to a temp directory
+            // 2. apply patch to the temp directory
+            // 3. rename() the temp directory to the original destination directory
+            // Are steps 2-3 strictly necessary? Probably not, but they have the added benefit
+            // of being atomic and thus resilient to unexpected crashes etc.
+            if (kind != .patch) {
+                if (!this.patch.isNull()) {
+                    const dir = this.patch.root_project_dir.?;
+                    const patchfile_path = this.patch.patch_path;
+
+                    // parse the patch file
+                    const absolute_patchfile_path = bun.path.join(&[_][]const u8{
+                        dir,
+                        patchfile_path,
+                    }, .auto);
+                    // TODO: can the patch file be anything other than utf-8?
+                    const patchfile_txt = std.fs.cwd().readFileAlloc(
+                        this.allocator,
+                        absolute_patchfile_path,
+                        1024 * 1024 * 1024 * 4,
+                    ) catch |e| return .{
+                        .fail = .{ .err = e, .step = .patching },
+                    };
+                    defer this.allocator.free(patchfile_txt);
+                    var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
+                        return .{ .fail = .{ .err = e, .step = .patching } };
+                    };
+                    defer patchfile.deinit(bun.default_allocator);
+
+                    // create temp dir
+                    var tmpname_buf: [1024]u8 = undefined;
+                    const tempdir_name = bun.span(
+                        bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |e| return .{
+                            .fail = .{ .err = e, .step = .patching },
+                        },
+                    );
+                    const __tmpdir = bun.fs.FileSystem.instance.tmpdir() catch |e|
+                        return .{
+                        .fail = .{ .err = e, .step = .patching },
+                    };
+                    var tmpdir = __tmpdir.makeOpenPath(tempdir_name, .{}) catch |e| return .{
+                        .fail = .{ .err = e, .step = .patching },
+                    };
+                    defer tmpdir.close();
+
+                    // install original package to tempdir
+                    const result = this.installImpl(skip_delete, tmpdir, .copyfile);
+                    if (result.isFail()) return result;
+
+                    var patch_pkg_dir = tmpdir.openDir(this.package_name, .{}) catch |e| return .{
+                        .fail = .{ .err = e, .step = .patching },
+                    };
+                    defer patch_pkg_dir.close();
+
+                    // apply patch
+                    if (patchfile.apply(this.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
+                        defer e.deref();
+                        return .{
+                            .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
+                        };
+                    }
+
+                    // rename to original destination dir
+                    const path_in_tmpdir = bun.path.joinZ(
+                        &[_][]const u8{
+                            tempdir_name,
+                            this.destination_dir_subpath,
+                        },
+                        .auto,
+                    );
+                    var allocated = false;
+                    const package_name_z = brk: {
+                        if (this.package_name.len < tmpname_buf.len) {
+                            @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
+                            tmpname_buf[this.package_name.len] = 0;
+                            break :brk tmpname_buf[0..this.package_name.len :0];
+                        }
+                        allocated = true;
+                        break :brk this.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
+                    };
+                    defer if (allocated) this.allocator.free(package_name_z);
+                    if (bun.sys.renameat2(
+                        bun.toFD(__tmpdir.fd),
+                        path_in_tmpdir,
+                        bun.toFD(destination_dir.fd),
+                        package_name_z,
+                        .{},
+                    ).asErr()) |e| {
+                        return .{
+                            .fail = .{
+                                .err = bun.errnoToZigErr(e.getErrno()),
+                                .step = .patching,
+                            },
+                        };
+                    }
+
+                    return Result.success();
+                }
+            }
+
+            return this.installImpl(skip_delete, destination_dir, this.getInstallMethod());
+        }
+
+        fn installImpl(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir, method_: Method) Result {
+            // If this fails, we don't care.
+            // we'll catch it the next error
+            if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstallBeforeInstall(destination_dir);
+
+            var supported_method_to_use = method_;
+
+            switch (supported_method_to_use) {
+                .clonefile => {
+                    if (comptime Environment.isMac) {
+
+                        // First, attempt to use clonefile
+                        // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
+                        if (this.installWithClonefile(destination_dir)) |result| {
+                            return result;
+                        } else |err| {
+                            switch (err) {
+                                error.NotSupported => {
+                                    supported_method = .copyfile;
+                                    supported_method_to_use = .copyfile;
+                                },
+                                error.FileNotFound => return Result{
+                                    .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                                },
+                                else => return Result{
+                                    .fail = .{ .err = err, .step = .copying_files },
+                                },
+                            }
+                        }
+                    }
+                },
+                .clonefile_each_dir => {
+                    if (comptime Environment.isMac) {
+                        if (this.installWithClonefileEachDir(destination_dir)) |result| {
+                            return result;
+                        } else |err| {
+                            switch (err) {
+                                error.NotSupported => {
+                                    supported_method = .copyfile;
+                                    supported_method_to_use = .copyfile;
+                                },
+                                error.FileNotFound => return Result{
+                                    .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                                },
+                                else => return Result{
+                                    .fail = .{ .err = err, .step = .copying_files },
+                                },
+                            }
+                        }
+                    }
+                },
+                .hardlink => {
+                    if (this.installWithHardlink(destination_dir)) |result| {
+                        return result;
+                    } else |err| outer: {
+                        if (comptime !Environment.isWindows) {
+                            if (err == error.NotSameFileSystem) {
+                                supported_method = .copyfile;
+                                supported_method_to_use = .copyfile;
+                                break :outer;
+                            }
+                        }
+
+                        switch (err) {
+                            error.FileNotFound => return Result{
+                                .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                            },
+                            else => return Result{
+                                .fail = .{ .err = err, .step = .copying_files },
+                            },
+                        }
+                    }
+                },
+                .symlink => {
+                    if (comptime Environment.isWindows) {
+                        supported_method_to_use = .copyfile;
+                    } else {
+                        if (this.installWithSymlink(destination_dir)) |result| {
+                            return result;
+                        } else |err| {
+                            switch (err) {
+                                error.FileNotFound => return Result{
+                                    .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                                },
+                                else => return Result{
+                                    .fail = .{ .err = err, .step = .copying_files },
+                                },
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+
+            if (supported_method_to_use != .copyfile) return Result{
+                .success = {},
+            };
+
+            // TODO: linux io_uring
+            return this.installWithCopyfile(destination_dir);
+        }
+    };
+}
 
 pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = std.Progress;
@@ -2532,7 +2560,6 @@ pub const PackageManager = struct {
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
-    patched_dependencies: Lockfile.PatchedDependenciesMap = .{},
 
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
@@ -7096,7 +7123,8 @@ pub const PackageManager = struct {
         remove,
         link,
         unlink,
-        // patch,
+        patch,
+        @"patch-commit",
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -7546,37 +7574,12 @@ pub const PackageManager = struct {
         file.close();
     }
 
-    // pub inline fn patch(ctx: Command.Context) !void {
-    //     var manager = init(ctx, subcommand) catch |err| brk: {
-    //         if (err == error.MissingPackageJSON) {
-    //             switch (op) {
-    //                 .update => {
-    //                     Output.prettyErrorln("<r>No package.json, so nothing to update\n", .{});
-    //                     Global.crash();
-    //                 },
-    //                 .remove => {
-    //                     Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
-    //                     Global.crash();
-    //                 },
-    //                 .patch => {
-    //                     Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
-    //                     Global.crash();
-    //                 },
-    //                 else => {
-    //                     try attemptToCreatePackageJSON();
-    //                     break :brk try PackageManager.init(ctx, subcommand);
-    //                 },
-    //             }
-    //         }
-
-    //         return err;
-    //     };
-
-    //     if (manager.options.shouldPrintCommandName()) {
-    //         Output.prettyErrorln("<r><b>bun " ++ @tagName(op) ++ " <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
-    //         Output.flush();
-    //     }
-    // }
+    // parse dependency of positional arg string (may include name@version for example)
+    // get the precise version from the lockfile (there may be multiple)
+    // copy the contents into a temp folder
+    pub inline fn patch(ctx: Command.Context) !void {
+        try updatePackageJSONAndInstallCatchError(ctx, .patch, .patch);
+    }
 
     pub inline fn update(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .update, .update);
@@ -7977,6 +7980,7 @@ pub const PackageManager = struct {
     };
 
     const patch_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
         clap.parseParam("--edit-dir <dir>                    The package that needs to be modified will be extracted to this directory") catch unreachable,
         clap.parseParam("--ignore-existing                     Ignore existing patch files when patching") catch unreachable,
     };
@@ -8090,6 +8094,32 @@ pub const PackageManager = struct {
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
+                Subcommand.patch => {
+                    const intro_text =
+                        \\<b>Usage: bun patch <r><cyan>\<script\><r>
+                        \\
+                        \\Prepare a package for patching.
+                        \\
+                        \\<b>Options:<r>
+                        \\  <cyan>--edit-dir<r>               <d>The package that needs to be modified will be extracted to this directory.<r>
+                        \\  <cyan>--ignore-existing<r>        <d>Ignore existing patch files when patching.<r>
+                        \\
+                    ;
+                    // const outro_text =
+                    //     \\<b>Options:<r>
+                    //     \\  <d>--edit-dir<r>
+                    //     \\  <b><green>bun update<r>
+                    //     \\
+                    //     \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
+                    // ;
+                    Output.pretty("\n" ++ intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&PackageManager.patch_params);
+                    // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
+                    Output.flush();
+                },
                 Subcommand.pm => {
                     PackageManagerCommand.printHelp();
                 },
@@ -8201,7 +8231,7 @@ pub const PackageManager = struct {
                 .remove => remove_params,
                 .link => link_params,
                 .unlink => unlink_params,
-                // .patch => patch_params,
+                .patch => patch_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -8247,12 +8277,12 @@ pub const PackageManager = struct {
                 cli.no_save = args.flag("--no-save");
             }
 
-            // if (comptime subcommand == .patch) {
-            //     cli.patch = .{
-            //         .edit_dir = args.option("--edit-dir"),
-            //         .ignore_existing = args.flag("--ignore-existing"),
-            //     };
-            // }
+            if (comptime subcommand == .patch) {
+                cli.patch = .{
+                    .edit_dir = args.option("--edit-dir"),
+                    .ignore_existing = args.flag("--ignore-existing"),
+                };
+            }
 
             if (args.option("--config")) |opt| {
                 cli.config = opt;
@@ -8316,6 +8346,11 @@ pub const PackageManager = struct {
             }
 
             cli.positionals = args.positionals();
+
+            if (subcommand == .patch and cli.positionals.len < 2) {
+                Output.errGeneric("Missing pkg to patch\n", .{});
+                Global.crash();
+            }
 
             if (cli.production and cli.trusted) {
                 Output.errGeneric("The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n", .{});
@@ -8489,10 +8524,10 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
                         Global.crash();
                     },
-                    // .patch => {
-                    //     Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
-                    //     Global.crash();
-                    // },
+                    .patch => {
+                        Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
+                        Global.crash();
+                    },
                     else => {
                         try attemptToCreatePackageJSON();
                         break :brk try PackageManager.init(ctx, subcommand);
@@ -8510,6 +8545,10 @@ pub const PackageManager = struct {
 
         switch (manager.options.log_level) {
             inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, op, log_level),
+        }
+
+        if (subcommand == .patch) {
+            try manager.preparePatch();
         }
 
         if (manager.any_failed_to_install) {
@@ -8851,6 +8890,88 @@ pub const PackageManager = struct {
                 }
             }
         }
+    }
+
+    fn preparePatch(manager: *PackageManager) !void {
+        const @"pkg + maybe version to patch" = manager.options.positionals[1];
+        const name: []const u8, const version: ?[]const u8 = brk: {
+            if (std.mem.indexOfScalar(u8, @"pkg + maybe version to patch", '@')) |version_delimiter| {
+                break :brk .{
+                    @"pkg + maybe version to patch"[0..version_delimiter],
+                    @"pkg + maybe version to patch"[version_delimiter..],
+                };
+            }
+            break :brk .{
+                @"pkg + maybe version to patch",
+                null,
+            };
+        };
+        _ = version; // autofix
+
+        const name_hash = String.Builder.stringHash(name);
+
+        const strbuf = manager.lockfile.buffers.string_bytes.items;
+
+        var i: usize = 0;
+        const pkg_hashes = manager.lockfile.packages.items(.name_hash);
+        while (i < manager.lockfile.packages.len) {
+            if (std.mem.indexOfScalar(u64, pkg_hashes[i..], name_hash)) |idx| {
+                defer i = idx + 1;
+                const pkg = manager.lockfile.packages.get(idx);
+                if (!std.mem.eql(u8, pkg.name.slice(strbuf), name)) continue;
+
+                const cache_dir_subpath: [:0]const u8, const cache_dir: std.fs.Dir =
+                    // TODO check satisifies version
+                    switch (pkg.resolution.tag) {
+                    .npm => brk: {
+                        const cache_dir_subpath = manager.cachedNPMPackageFolderName(name, pkg.resolution.value.npm.version);
+                        const cache_dir = manager.getCacheDirectory();
+                        break :brk .{ cache_dir_subpath, cache_dir };
+                    },
+                    else => @panic("TODO patch non-npm packages"),
+                };
+
+                // copy the contents into a tempdir
+                var tmpname_buf: [1024]u8 = undefined;
+                const tempdir_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
+                const tmpdir = try bun.fs.FileSystem.instance.tmpdir();
+                var destination_dir = try tmpdir.makeOpenPath(tempdir_name, .{});
+                defer destination_dir.close();
+
+                var resolution_buf: [512]u8 = undefined;
+                const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch unreachable;
+                const dummy_node_modules = .{
+                    .path = std.ArrayList(u8).init(manager.allocator),
+                    .tree_id = 0,
+                };
+                var pkg_install = PreparePatchPackageInstall{
+                    .allocator = manager.allocator,
+                    .cache_dir = cache_dir,
+                    .cache_dir_subpath = cache_dir_subpath,
+                    .destination_dir_subpath = tempdir_name,
+                    .destination_dir_subpath_buf = tmpname_buf[0..],
+                    .progress = .{},
+                    .package_name = name,
+                    .package_version = resolution_label,
+                    // dummy value
+                    .node_modules = &dummy_node_modules,
+                };
+
+                switch (pkg_install.installImpl(true, tmpdir, .copyfile)) {
+                    .success => {},
+                    .fail => {
+                        @panic("TODO print the error nicely");
+                    },
+                }
+
+                var outpath: bun.PathBuffer = undefined;
+                const tmpdirpath = try std.os.getFdPath(destination_dir.fd, &outpath);
+                std.debug.print("Patch folder: {s}\n", .{tmpdirpath});
+                return;
+            } else i = manager.lockfile.packages.len;
+        }
+
+        @panic("package not found");
     }
 
     var cwd_buf: bun.PathBuffer = undefined;
@@ -9388,7 +9509,7 @@ pub const PackageManager = struct {
 
                         var iter = this.lockfile.patched_dependencies.iterator();
                         while (iter.next()) |entry| {
-                            std.debug.print("  0x{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+                            std.debug.print("  0x{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.slice(this.lockfile.buffers.string_bytes.items) });
                         }
                     }
                     var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
@@ -9396,7 +9517,7 @@ pub const PackageManager = struct {
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     const patch_path = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk PackageInstall.Patch.NULL;
                     break :brk .{
-                        .patch_path = patch_path,
+                        .patch_path = patch_path.slice(this.lockfile.buffers.string_bytes.items),
                         .root_project_dir = FileSystem.instance.top_level_dir,
                     };
                 },

@@ -1326,6 +1326,7 @@ pub const Command = struct {
             RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
 
             RootCommandMatcher.case("update") => .UpdateCommand,
+            RootCommandMatcher.case("patch") => .PatchCommand,
 
             RootCommandMatcher.case("r"),
             RootCommandMatcher.case("remove"),
@@ -1458,6 +1459,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
+                return;
+            },
+            .PatchCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommand);
+
+                try PatchCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2030,7 +2038,7 @@ pub const Command = struct {
         ReplCommand,
         ReservedCommand,
         ExecCommand,
-        // PatchCommand,
+        PatchCommand,
 
         /// Used by crash reports.
         ///
@@ -2061,7 +2069,7 @@ pub const Command = struct {
                 .ReservedCommand => 'w',
                 .ExecCommand => 'e',
                 // TODO: @dave should we make this function return [2]u8 instead of u8, running out of letters in alphabet
-                // .PatchCommand => 'x',
+                .PatchCommand => 'x',
             };
         }
 
@@ -2072,7 +2080,6 @@ pub const Command = struct {
                 .BuildCommand => Arguments.build_params,
                 .TestCommand => Arguments.test_params,
                 .BunxCommand => Arguments.run_params,
-                // .PatchCommand => Arguments.patch_params,
                 else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
         }
@@ -2280,19 +2287,6 @@ pub const Command = struct {
                     , .{});
                     Output.flush();
                 },
-                // Command.Tag.PatchCommand => {
-                //     Output.pretty(
-                //         \\<b>Usage: bun patch <r><cyan>\<script\><r>
-                //         \\
-                //         \\Prepare a package for patching.
-                //         \\
-                //         \\<b>Options:<r>
-                //         \\  <cyan>--edit-dir<r>               <d>The package that needs to be modified will be extracted to this directory.<r>
-                //         \\  <cyan>--ignore-existing<r>        <d>Ignore existing patch files when patching.<r>
-                //         \\
-                //     , .{});
-                //     Output.flush();
-                // },
                 else => {
                     HelpCommand.printWithReason(.explicit);
                 },
@@ -2301,7 +2295,7 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand => true,
                 else => false,
             };
         }
@@ -2316,7 +2310,7 @@ pub const Command = struct {
                 .AddCommand,
                 .RemoveCommand,
                 .UpdateCommand,
-                // .PatchCommand,
+                .PatchCommand,
                 => true,
                 else => false,
             };
@@ -2329,6 +2323,7 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
@@ -2343,6 +2338,7 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -2353,6 +2349,7 @@ pub const Command = struct {
             .AddCommand = false,
             .RemoveCommand = false,
             .UpdateCommand = false,
+            .PatchCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,

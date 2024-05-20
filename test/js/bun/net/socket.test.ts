@@ -388,3 +388,7 @@ it("it should only call open once", async () => {
   await promise;
   expect(opened).toBe(true);
 });
+
+it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
+  expect([fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url))]).toRun();
+});

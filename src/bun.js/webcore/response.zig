@@ -888,7 +888,7 @@ pub const Fetch = struct {
             var buffer_reset = true;
             defer {
                 if (buffer_reset) {
-                    this.scheduled_response_buffer.deinit();
+                    this.scheduled_response_buffer.reset();
                 }
 
                 this.has_schedule_callback.store(false, .Monotonic);

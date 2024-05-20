@@ -883,7 +883,13 @@ pub const Fetch = struct {
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             const is_done = !success or !this.result.has_more;
+            // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
+            var buffer_reset = true;
             defer {
+                if(buffer_reset) {
+                    this.scheduled_response_buffer.deinit();
+                }
+                
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
@@ -937,9 +943,6 @@ pub const Fetch = struct {
                             },
                             bun.default_allocator,
                         );
-
-                        // clean for reuse later
-                        this.scheduled_response_buffer.reset();
                     } else {
                         var prev = this.readable_stream_ref;
                         this.readable_stream_ref = .{};
@@ -965,7 +968,7 @@ pub const Fetch = struct {
                             const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
                             const chunk = scheduled_response_buffer.items;
-
+                            
                             if (this.result.has_more) {
                                 readable.ptr.Bytes.onData(
                                     .{
@@ -973,9 +976,6 @@ pub const Fetch = struct {
                                     },
                                     bun.default_allocator,
                                 );
-
-                                // clean for reuse later
-                                this.scheduled_response_buffer.reset();
                             } else {
                                 var prev = body.value.Locked.readable;
                                 body.value.Locked.readable = .{};
@@ -995,7 +995,8 @@ pub const Fetch = struct {
                     } else {
                         response.body.value.Locked.size_hint = this.getSizeHint();
                     }
-                    // we will reach here when not streaming
+                    // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
+                    buffer_reset = false;
                     if (!this.result.has_more) {
                         var scheduled_response_buffer = this.scheduled_response_buffer.list;
                         this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());

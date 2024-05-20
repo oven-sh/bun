@@ -128,6 +128,7 @@ void us_internal_socket_context_unlink_socket(
     struct us_socket_context_t *context, struct us_socket_t *s);
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
+void us_internal_socket_after_open(struct us_socket_t *s, int error);
 int us_internal_handle_dns_results(struct us_loop_t *loop);
 
 /* Sockets are polls */
@@ -140,6 +141,7 @@ struct us_socket_t {
                          = was in low-prio queue in this iteration */
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
+  struct us_socket_t *connect_next;
   struct us_connecting_socket_t *connect_state;
 };
 
@@ -147,7 +149,7 @@ struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) void *addrinfo_req;
     struct us_socket_context_t *context;
     struct us_connecting_socket_t *next;
-    struct us_socket_t *socket;
+    struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
     unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1;

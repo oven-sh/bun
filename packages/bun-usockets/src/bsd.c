@@ -1027,11 +1027,17 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int
 
 #endif
 
-    if (bsd_do_connect(addrinfo, &fd) != 0) {
+    if (bsd_do_connect_raw(addrinfo, fd) != 0) {
+        bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
-    
     return fd;
+
+    // if (bsd_do_connect(addrinfo, &fd) != 0) {
+    //     return LIBUS_SOCKET_ERROR;
+    // }
+    
+    // return fd;
 }
 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {

@@ -275,20 +275,22 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     return bunShell;
 }
 
-extern "C" EncodedJSValue Bun__DNSResolver__lookup(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolve(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveSrv(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveTxt(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveSoa(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveNaptr(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveMx(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveCaa(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveNs(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolvePtr(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__resolveCname(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__getServers(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__reverse(JSGlobalObject*, JSC::CallFrame*);
-extern "C" EncodedJSValue Bun__DNSResolver__lookupService(JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
@@ -321,6 +323,10 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun__DNSResolver__reverse, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun__DNSResolver__lookupService, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 2, Bun__DNSResolver__prefetch, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getCacheStats"_s), 0, Bun__DNSResolver__getCacheStats, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     return dnsObject;
 }

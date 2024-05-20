@@ -2256,8 +2256,13 @@ pub const PackageInstall = struct {
             const result = this.installImpl(skip_delete, tmpdir, .copyfile);
             if (result.isFail()) return result;
 
+            var patch_pkg_dir = tmpdir.openDir(this.package_name, .{}) catch |e| return .{
+                .fail = .{ .err = e, .step = .patching },
+            };
+            defer patch_pkg_dir.close();
+
             // apply patch
-            if (patchfile.apply(this.allocator, bun.toFD(tmpdir.fd))) |e| {
+            if (patchfile.apply(this.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
                 defer e.deref();
                 return .{
                     .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
@@ -2265,16 +2270,29 @@ pub const PackageInstall = struct {
             }
 
             // rename to original destination dir
-            const path_in_tmpdir = std.fs.path.joinZ(this.allocator, &[_][]const u8{
-                tempdir_name,
-                this.destination_dir_subpath,
-            }) catch |e| return .{ .fail = .{ .err = e, .step = .patching } };
-            defer this.allocator.free(path_in_tmpdir);
+            const path_in_tmpdir = bun.path.joinZ(
+                &[_][]const u8{
+                    tempdir_name,
+                    this.destination_dir_subpath,
+                },
+                .auto,
+            );
+            var allocated = false;
+            const package_name_z = brk: {
+                if (this.package_name.len < tmpname_buf.len) {
+                    @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
+                    tmpname_buf[this.package_name.len] = 0;
+                    break :brk tmpname_buf[0..this.package_name.len :0];
+                }
+                allocated = true;
+                break :brk this.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
+            };
+            defer if (allocated) this.allocator.free(package_name_z);
             if (bun.sys.renameat2(
                 bun.toFD(std.fs.cwd()),
                 path_in_tmpdir,
                 bun.toFD(destination_dir.fd),
-                this.cache_dir_subpath,
+                package_name_z,
                 .{},
             ).asErr()) |e| {
                 return .{
@@ -2514,6 +2532,7 @@ pub const PackageManager = struct {
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
     peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
+    patched_dependencies: Lockfile.PatchedDependenciesMap = .{},
 
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
@@ -9349,7 +9368,7 @@ pub const PackageManager = struct {
                 break :brk this.destination_dir_subpath_buf[0..alias.len :0];
             };
 
-            var resolution_buf: [1024]u8 = undefined;
+            var resolution_buf: [512]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
@@ -9362,17 +9381,18 @@ pub const PackageManager = struct {
                 .allocator = this.lockfile.allocator,
                 .package_name = name,
                 .patch = brk: {
-                    // reuse the resolution buf
-                    var sfb = std.heap.StackFallbackAllocator(1024){
-                        .buffer = resolution_buf,
-                        .fallback_allocator = this.lockfile.allocator,
-                        .fixed_buffer_allocator = std.heap.FixedBufferAllocator{
-                            .buffer = resolution_buf[0..],
-                            .end_index = resolution_label.len,
-                        },
-                    };
+                    {
+                        std.debug.print("Debugging patched dependencies: {d}\n", .{
+                            this.lockfile.patched_dependencies.entries.len,
+                        });
+
+                        var iter = this.lockfile.patched_dependencies.iterator();
+                        while (iter.next()) |entry| {
+                            std.debug.print("  0x{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.* });
+                        }
+                    }
+                    var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
                     const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, resolution_label }) catch unreachable;
-                    defer sfb.get().free(name_and_version);
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     const patch_path = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk PackageInstall.Patch.NULL;
                     break :brk .{
@@ -10786,6 +10806,9 @@ pub const PackageManager = struct {
                                 manager.lockfile.workspace_versions.putAssumeCapacity(entry.key_ptr.*, version);
                             }
                         }
+
+                        // Update patched dependencies
+                        manager.lockfile.patched_dependencies = try lockfile.patched_dependencies.clone(manager.lockfile.allocator);
 
                         builder.clamp();
 

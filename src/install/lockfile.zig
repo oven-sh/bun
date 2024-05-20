@@ -901,6 +901,10 @@ pub fn cleanWithLogger(
     new.scripts = old_scripts;
     new.meta_hash = old.meta_hash;
 
+    const old_patched_dependencies = old.patched_dependencies;
+    old.patched_dependencies = .{};
+    new.patched_dependencies = old_patched_dependencies;
+
     // Don't allow invalid memory to happen
     if (updates.len > 0) {
         const slice = new.packages.slice();
@@ -5063,6 +5067,7 @@ pub fn deinit(this: *Lockfile) void {
     if (this.trusted_dependencies) |*trusted_dependencies| {
         trusted_dependencies.deinit(this.allocator);
     }
+    this.patched_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
     this.overrides.deinit(this.allocator);

@@ -8,8 +8,8 @@ const server = Bun.listen({
     open(socket) {
       socket.end();
     },
-    data(socket, data) {}
-  }
+    data(socket, data) {},
+  },
 });
 
 let connected = 0;
@@ -21,8 +21,8 @@ async function callback() {
       open(socket) {
         connected += 1;
       },
-      data(socket, data) {}
-    }
+      data(socket, data) {},
+    },
   });
 }
 

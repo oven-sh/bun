@@ -43,7 +43,7 @@ An example where you might want to use this is a database driver. When your appl
 **🚧** — This API is experimental and may change in the future.
 {% /callout %}
 
-To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful when you know you'll need to connect to a host in the soon and want to avoid the initial DNS lookup.
+To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful when you know you'll need to connect to a host soon and want to avoid the initial DNS lookup.
 
 ```ts
 dns.prefetch(hostname: string, port: number): void;

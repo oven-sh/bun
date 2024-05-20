@@ -2469,15 +2469,24 @@ pub const PackageManager = struct {
             comptime init_reset_store: bool,
         ) !*MapEntry {
             bun.assert(std.fs.path.isAbsolute(abs_package_json_path));
-            const entry = this.map.getOrPut(allocator, abs_package_json_path) catch bun.outOfMemory();
+
+            var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+            const path = if (comptime !Environment.isWindows)
+                abs_package_json_path
+            else brk: {
+                @memcpy(buf[0..abs_package_json_path.len], abs_package_json_path);
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, buf[0..abs_package_json_path.len]);
+                break :brk buf[0..abs_package_json_path.len];
+            };
+
+            const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
             if (entry.found_existing) {
                 return entry.value_ptr;
             }
 
-            // likely lives on the stack in a PathBuffer
-            const path = allocator.dupeZ(u8, abs_package_json_path) catch bun.outOfMemory();
+            const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
 
-            const source = try bun.sys.File.toSource(path, allocator).unwrap();
+            const source = try bun.sys.File.toSource(key, allocator).unwrap();
 
             if (comptime init_reset_store)
                 initializeStore();
@@ -2489,7 +2498,7 @@ pub const PackageManager = struct {
                 .source = source,
             };
 
-            entry.key_ptr.* = path;
+            entry.key_ptr.* = key;
 
             return entry.value_ptr;
         }
@@ -2503,7 +2512,17 @@ pub const PackageManager = struct {
             comptime init_reset_store: bool,
         ) !*MapEntry {
             bun.assert(std.fs.path.isAbsolute(source.path.text));
-            const entry = this.map.getOrPut(allocator, source.path.text) catch bun.outOfMemory();
+
+            var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+            const path = if (comptime !Environment.isWindows)
+                source.path.text
+            else brk: {
+                @memcpy(buf[0..source.path.text.len], source.path.text);
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, buf[0..source.path.text.len]);
+                break :brk buf[0..source.path.text.len];
+            };
+
+            const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
             if (entry.found_existing) {
                 return entry.value_ptr;
             }
@@ -2518,7 +2537,7 @@ pub const PackageManager = struct {
                 .source = source,
             };
 
-            entry.key_ptr.* = allocator.dupe(u8, source.path.text) catch bun.outOfMemory();
+            entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
 
             return entry.value_ptr;
         }
@@ -7208,13 +7227,13 @@ pub const PackageManager = struct {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
-                        var buf2: bun.PathBuffer = undefined;
-                        @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
-                        buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-                        buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
+                        var parent_path_buf: bun.PathBuffer = undefined;
+                        @memcpy(parent_path_buf[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
+                        parent_path_buf[parent_without_trailing_slash.len..parent_path_buf.len][0.."/package.json".len].* = "/package.json".*;
+                        parent_path_buf[parent_without_trailing_slash.len + "/package.json".len] = 0;
 
                         const json_file = std.fs.cwd().openFileZ(
-                            buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr,
+                            parent_path_buf[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr,
                             .{ .mode = .read_write },
                         ) catch {
                             continue;
@@ -7256,11 +7275,19 @@ pub const PackageManager = struct {
                                 else
                                     bun.path.relativeNormalized(json_source.path.name.dir, child_cwd, .auto, true);
 
-                                if (strings.eql(child_path, path)) {
+                                const maybe_workspace_path = if (comptime Environment.isWindows) brk: {
+                                    @memcpy(parent_path_buf[0..child_path.len], child_path);
+                                    bun.path.dangerouslyConvertPathToPosixInPlace(u8, parent_path_buf[0..child_path.len]);
+                                    break :brk parent_path_buf[0..child_path.len];
+                                } else child_path;
+
+                                if (strings.eqlLong(maybe_workspace_path, path, true)) {
                                     fs.top_level_dir = parent;
                                     found = true;
                                     child_json.close();
-                                    try json_file.seekTo(0);
+                                    if (comptime Environment.isWindows) {
+                                        try json_file.seekTo(0);
+                                    }
                                     workspace_name_hash = String.Builder.stringHash(entry.name);
                                     break :root_package_json_file json_file;
                                 }

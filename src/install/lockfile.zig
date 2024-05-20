@@ -4077,8 +4077,8 @@ pub const Package = extern struct {
         };
         debug("processWorkspaceName({s}) = {s}", .{ abs_package_json_path, entry.name });
         if (workspace_json.root.get("version")) |version_expr| {
-            if (version_expr.asString(allocator)) |version| {
-                entry.version = try allocator.dupe(u8, version);
+            if (version_expr.asStringCloned(allocator)) |version| {
+                entry.version = version;
             }
         }
 
@@ -4328,7 +4328,7 @@ pub const Package = extern struct {
             .values = workspace_names.values(),
         });
 
-        return @as(u32, @truncate(workspace_names.count()));
+        return @truncate(workspace_names.count());
     }
 
     pub fn parseWithJSON(

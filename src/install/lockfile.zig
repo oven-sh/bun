@@ -3425,7 +3425,7 @@ pub const Package = extern struct {
             id_mapping: ?[]PackageID,
         ) !Summary {
             var summary = Summary{};
-            const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
+            var to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
@@ -3626,6 +3626,8 @@ pub const Package = extern struct {
                                     {},
                                     Features.workspace,
                                 );
+
+                                to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
 
                                 var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
                                 const diff = try generate(

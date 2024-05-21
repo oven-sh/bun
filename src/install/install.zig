@@ -7076,26 +7076,38 @@ pub const PackageManager = struct {
 
             for (updates) |*request| {
                 if (request.e_string) |e_string| {
-                    e_string.data = switch (request.resolution.tag) {
-                        .npm => brk: {
+                    switch (request.resolution.tag) {
+                        .npm => {
                             if (request.version.tag == .dist_tag) {
                                 switch (options.exact_versions) {
                                     inline else => |exact_versions| {
                                         const fmt = if (exact_versions) "{}" else "^{}";
-                                        break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                        e_string.data = try std.fmt.allocPrint(allocator, fmt, .{
                                             request.resolution.value.npm.version.fmt(request.version_buf),
                                         });
                                     },
                                 }
                             }
-                            break :brk null;
+
+                            e_string.data = try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
-                        .uninitialized => switch (request.version.tag) {
-                            .uninitialized => try allocator.dupe(u8, latest),
-                            else => null,
+                        .uninitialized => {
+                            switch (request.version.tag) {
+                                .uninitialized => {
+                                    e_string.data = try allocator.dupe(u8, latest);
+                                },
+                                else => {
+                                    e_string.data = try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
+                                },
+                            }
                         },
-                        else => null,
-                    } orelse try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
+                        .workspace => {
+                            e_string.data = try allocator.dupe(u8, "workspace:*");
+                        },
+                        else => {
+                            e_string.data = try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
+                        },
+                    }
                 }
             }
         }

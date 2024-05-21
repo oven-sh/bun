@@ -764,10 +764,6 @@ pub fn normalizeStringGenericTZ(
                     }
                 }
             } else {
-                if (options.add_nt_prefix) {
-                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "\\??\\"));
-                    buf_i += 4;
-                }
                 // drive letter
                 buf[buf_i] = switch (path_[0]) {
                     'a'...'z' => path_[0] & (std.math.maxInt(T) ^ (1 << 5)),

@@ -4067,7 +4067,7 @@ pub const Expect = struct {
             inline else => |is_not| {
                 const signature = comptime getSignature(name, "<green>expected<r>", is_not);
                 const fmt = signature ++ "\n\n" ++ "Expected number of successful calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n";
-                globalObject.throwPretty(fmt, .{ index, total_count });
+                globalObject.throwPretty(fmt, .{ return_count, total_count });
                 return .zero;
             },
         }

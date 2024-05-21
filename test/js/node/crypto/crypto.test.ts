@@ -71,6 +71,13 @@ describe("CryptoHasher", () => {
       expect(hasher.digest("hex")).toBe(expected[algorithm]);
       expect(hasher.algorithm).toBe(algorithm);
     });
+
+    it(`new CryptoHasher ${algorithm} to Buffer`, () => {
+      var hasher = new CryptoHasher(algorithm);
+      expect(hasher.algorithm).toEqual(algorithm);
+      hasher.update("hello world");
+      expect(hasher.digest()).toEqual(Buffer.from(expected[algorithm], "hex"));
+    });
   }
 
   it("CryptoHasher resets when digest is called", () => {

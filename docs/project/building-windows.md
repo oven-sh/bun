@@ -72,7 +72,7 @@ After Visual Studio, you need the following:
 The Zig compiler is automatically downloaded, installed, and updated by the building process.
 {% /callout %}
 
-[WinGet](https://learn.microsoft.com/en-us/windows/package-manager/winget) or [Scoop](https://scoop.sh) can be used to install these remaining tools easily:
+[WinGet](https://learn.microsoft.com/windows/package-manager/winget) or [Scoop](https://scoop.sh) can be used to install these remaining tools easily:
 
 {% codetabs group="a" %}
 

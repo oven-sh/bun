@@ -1509,7 +1509,7 @@ pub const Chunk = struct {
 
         // attempt to pre-allocate
 
-        var filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var filename_buf: bun.PathBuffer = undefined;
         var filename = source.path.text;
         if (strings.hasPrefix(source.path.text, FileSystem.instance.top_level_dir)) {
             filename = filename[FileSystem.instance.top_level_dir.len - 1 ..];

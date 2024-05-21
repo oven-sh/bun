@@ -17,9 +17,9 @@ const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 const Path = bun.path;
 
-threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var final_path_buf: bun.PathBuffer = undefined;
+threadlocal var folder_name_buf: bun.PathBuffer = undefined;
+threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 pub const Repository = extern struct {
     owner: String = .{},

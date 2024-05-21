@@ -2536,7 +2536,7 @@ pub const ParseTask = struct {
         };
     };
 
-    threadlocal var override_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var override_file_path_buf: bun.PathBuffer = undefined;
 
     fn getEmptyAST(log: *Logger.Log, bundler: *Bundler, opts: js_parser.Parser.Options, allocator: std.mem.Allocator, source: Logger.Source, comptime RootType: type) !JSAst {
         const root = Expr.init(RootType, RootType{}, Logger.Loc.Empty);
@@ -4222,7 +4222,7 @@ const LinkerContext = struct {
             };
             defer dir.close();
 
-            var real_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var real_path_buf: bun.PathBuffer = undefined;
             chunk.template.placeholder.dir = try resolve_path.relativeAlloc(this.allocator, this.resolver.opts.root_dir, try bun.getFdPath(bun.toFD(dir.fd), &real_path_buf));
         }
 
@@ -9053,7 +9053,7 @@ const LinkerContext = struct {
                 // resolve any /./ and /../ occurrences
                 // use resolvePosix since we asserted above all seps are '/'
                 if (Environment.isWindows and std.mem.indexOf(u8, rel_path, "/./") != null) {
-                    var buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     const rel_path_fixed = c.allocator.dupe(u8, bun.path.normalizeBuf(rel_path, &buf, .posix)) catch bun.outOfMemory();
                     chunk.final_rel_path = rel_path_fixed;
                     continue;
@@ -9448,7 +9448,7 @@ const LinkerContext = struct {
 
         const code_with_inline_source_map_allocator = max_heap_allocator_inline_source_map.init(bun.default_allocator);
 
-        var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var pathbuf: bun.PathBuffer = undefined;
 
         for (chunks) |*chunk| {
             const trace2 = tracer(@src(), "writeChunkToDisk");

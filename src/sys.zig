@@ -340,7 +340,7 @@ pub fn Maybe(comptime ReturnTypeT: type) type {
     return JSC.Node.Maybe(ReturnTypeT, Error);
 }
 
-pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
     const Result = Maybe([]const u8);
     buf[0] = 0;
     const rc = std.c.getcwd(buf, bun.MAX_PATH_BYTES);

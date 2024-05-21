@@ -55,7 +55,7 @@ pub const StandaloneModuleGraph = struct {
             return null;
         }
         if (Environment.isWindows) {
-            var normalized_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var normalized_buf: bun.PathBuffer = undefined;
             const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
             return this.files.getPtr(normalized);
         }
@@ -262,7 +262,7 @@ pub const StandaloneModuleGraph = struct {
         std.mem.page_size;
 
     pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             Global.exit(1);
@@ -532,7 +532,7 @@ pub const StandaloneModuleGraph = struct {
             return;
         }
 
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
             Global.exit(1);
@@ -727,7 +727,7 @@ pub const StandaloneModuleGraph = struct {
                 } else |_| {
                     if (bun.argv.len > 0) {
                         // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
-                        var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var whichbuf: bun.PathBuffer = undefined;
                         if (bun.which(
                             &whichbuf,
                             bun.getenvZ("PATH") orelse return error.FileNotFound,

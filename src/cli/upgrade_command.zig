@@ -164,10 +164,10 @@ pub const UpgradeCheckerThread = struct {
 pub const UpgradeCommand = struct {
     pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
-    var github_repository_url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var current_executable_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var unzip_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var tmpdir_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var github_repository_url_buf: bun.PathBuffer = undefined;
+    var current_executable_buf: bun.PathBuffer = undefined;
+    var unzip_path_buf: bun.PathBuffer = undefined;
+    var tmpdir_path_buf: bun.PathBuffer = undefined;
 
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,

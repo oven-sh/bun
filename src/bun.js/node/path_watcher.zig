@@ -173,7 +173,7 @@ pub const PathWatcherManager = struct {
 
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
         var ctx = this.main_watcher;
         defer ctx.flushEvictions();
@@ -773,7 +773,7 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
-                var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buffer: bun.PathBuffer = undefined;
                 const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;

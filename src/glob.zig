@@ -127,7 +127,7 @@ fn dummyFilterFalse(val: []const u8) bool {
 
 pub fn statatWindows(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var buf: bun.PathBuffer = undefined;
     const dir = switch (Syscall.getFdPath(fd, &buf)) {
         .err => |e| return .{ .err = e },
         .result => |s| s,
@@ -195,7 +195,7 @@ pub const SyscallAccessor = struct {
         return Syscall.close(handle.value);
     }
 
-    pub fn getcwd(path_buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+    pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {
         return Syscall.getcwd(path_buf);
     }
 };
@@ -312,7 +312,7 @@ pub const DirEntryAccessor = struct {
         return null;
     }
 
-    pub fn getcwd(path_buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+    pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {
         @memcpy(path_buf, bun.fs.FileSystem.instance.fs.cwd);
     }
 };
@@ -423,7 +423,7 @@ pub fn GlobWalker_(
             const Directory = struct {
                 fd: Accessor.Handle,
                 iter: Accessor.DirIter,
-                path: [bun.MAX_PATH_BYTES]u8,
+                path: bun.PathBuffer,
                 dir_path: [:0]const u8,
 
                 component_idx: u32,
@@ -511,7 +511,7 @@ pub fn GlobWalker_(
                     );
                 };
 
-                var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
+                var path_buf: *bun.PathBuffer = &this.walker.pathBuf;
                 const root_path = root_work_item.path;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
@@ -730,7 +730,7 @@ pub fn GlobWalker_(
                                     continue;
                                 },
                                 .symlink => {
-                                    var scratch_path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
+                                    var scratch_path_buf: *bun.PathBuffer = &this.walker.pathBuf;
                                     @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
                                     scratch_path_buf[work_item.path.len] = 0;
                                     var symlink_full_path_z: [:0]u8 = scratch_path_buf[0..work_item.path.len :0];
@@ -1150,7 +1150,7 @@ pub fn GlobWalker_(
             this: *GlobWalker,
             idx: u32,
             dir_path: *[:0]u8,
-            path_buf: *[bun.MAX_PATH_BYTES]u8,
+            path_buf: *bun.PathBuffer,
             encountered_dot_dot: *bool,
         ) u32 {
             var component_idx = idx;
@@ -1213,7 +1213,7 @@ pub fn GlobWalker_(
             this: *GlobWalker,
             work_item_idx: u32,
             dir_path: *[:0]u8,
-            scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
+            scratch_path_buf: *bun.PathBuffer,
             encountered_dot_dot: *bool,
         ) u32 {
             var component_idx = work_item_idx;

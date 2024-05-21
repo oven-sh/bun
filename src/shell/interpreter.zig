@@ -1108,7 +1108,7 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var pathbuf: bun.PathBuffer = undefined;
         const cwd = switch (Syscall.getcwd(&pathbuf)) {
             .result => |cwd| cwd.ptr[0..cwd.len :0],
             .err => |err| {
@@ -4620,7 +4620,7 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf: bun.PathBuffer = undefined;
                 const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         break :blk bun.selfExePath() catch break :blk2;
@@ -6613,7 +6613,7 @@ pub const Interpreter = struct {
                     pub fn onCreateDir(vtable: *@This(), dirpath: bun.OSPathSliceZ) void {
                         if (!vtable.active) return;
                         if (bun.Environment.isWindows) {
-                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var buf: bun.PathBuffer = undefined;
                             const str = bun.strings.fromWPath(&buf, dirpath[0..dirpath.len]);
                             vtable.inner.created_directories.appendSlice(str) catch bun.outOfMemory();
                             vtable.inner.created_directories.append('\n') catch bun.outOfMemory();
@@ -6893,7 +6893,7 @@ pub const Interpreter = struct {
                 }
 
                 if (!this.bltn.stdout.needsIO()) {
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var path_buf: bun.PathBuffer = undefined;
                     const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                     var had_not_found = false;
                     for (args) |arg_raw| {
@@ -6933,7 +6933,7 @@ pub const Interpreter = struct {
                 const arg_raw = multiargs.args_slice[multiargs.arg_idx];
                 const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf: bun.PathBuffer = undefined;
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
                 const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
@@ -8068,7 +8068,7 @@ pub const Interpreter = struct {
                     if (this.target_fd) |fd| {
                         _ = fd;
 
-                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var buf: bun.PathBuffer = undefined;
                         _ = this.moveInDir(src, &buf);
                         return;
                     }
@@ -8083,7 +8083,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn moveInDir(this: *@This(), src: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) bool {
+                pub fn moveInDir(this: *@This(), src: [:0]const u8, buf: *bun.PathBuffer) bool {
                     const path_in_dir_ = bun.path.normalizeBuf(ResolvePath.basename(src), buf, .auto);
                     if (path_in_dir_.len + 1 >= buf.len) {
                         this.err = Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, .rename);
@@ -8109,7 +8109,7 @@ pub const Interpreter = struct {
                 }
 
                 fn moveMultipleIntoDir(this: *@This()) void {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var fixed_alloc = std.heap.FixedBufferAllocator.init(buf[0..bun.MAX_PATH_BYTES]);
 
                     for (this.sources) |src_raw| {
@@ -8647,7 +8647,7 @@ pub const Interpreter = struct {
 
                                             // Check that non of the paths will delete the root
                                             {
-                                                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                                var buf: bun.PathBuffer = undefined;
                                                 const cwd = switch (Syscall.getcwd(&buf)) {
                                                     .err => |err| {
                                                         return .{ .err = err };
@@ -9045,7 +9045,7 @@ pub const Interpreter = struct {
                         // Root, get cwd path on windows
                         if (bun.Environment.isWindows) {
                             if (this.parent_task == null) {
-                                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var buf: bun.PathBuffer = undefined;
                                 const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
                                     .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
                                     .err => |err| {
@@ -9271,7 +9271,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn bufJoin(this: *ShellRmTask, buf: *[bun.MAX_PATH_BYTES]u8, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]const u8) {
+                pub fn bufJoin(this: *ShellRmTask, buf: *bun.PathBuffer, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]const u8) {
                     _ = syscall_tag; // autofix
 
                     if (this.join_style == .posix) {
@@ -9284,14 +9284,14 @@ pub const Interpreter = struct {
                         .task = this,
                         .child_of_dir = false,
                     };
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     switch (dir_task.kind_hint) {
                         .idk, .file => return this.removeEntryFile(dir_task, dir_task.path, is_absolute, &buf, &remove_child_vtable),
                         .dir => return this.removeEntryDir(dir_task, is_absolute, &buf),
                     }
                 }
 
-                fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                     const path = dir_task.path;
                     const dirfd = this.cwd;
                     debug("removeEntryDir({s})", .{path});
@@ -9452,7 +9452,7 @@ pub const Interpreter = struct {
                 const DummyRemoveFile = struct {
                     var dummy: @This() = std.mem.zeroes(@This());
 
-                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = this; // autofix
                         _ = parent_dir_task; // autofix
                         _ = path; // autofix
@@ -9462,7 +9462,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = this; // autofix
                         _ = parent_dir_task; // autofix
                         _ = path; // autofix
@@ -9477,7 +9477,7 @@ pub const Interpreter = struct {
                     task: *ShellRmTask,
                     child_of_dir: bool,
 
-                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         if (this.child_of_dir) {
                             this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
                             return Maybe(void).success;
@@ -9485,7 +9485,7 @@ pub const Interpreter = struct {
                         return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
                         return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
                     }
@@ -9497,7 +9497,7 @@ pub const Interpreter = struct {
                     allow_enqueue: bool = true,
                     enqueued: bool = false,
 
-                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = parent_dir_task; // autofix
                         _ = path; // autofix
                         _ = is_absolute; // autofix
@@ -9507,7 +9507,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = is_absolute; // autofix
                         _ = buf; // autofix
 
@@ -9553,7 +9553,7 @@ pub const Interpreter = struct {
                                 },
                             }
                         } else {
-                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var buf: bun.PathBuffer = undefined;
                             if (this.removeEntryFile(dir_task, dir_task.path, dir_task.is_absolute, &buf, &state).asErr()) |e| {
                                 return .{ .err = e };
                             }
@@ -9564,17 +9564,17 @@ pub const Interpreter = struct {
                     }
                 }
 
-                fn removeEntryFile(this: *ShellRmTask, parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8, vtable: anytype) Maybe(void) {
+                fn removeEntryFile(this: *ShellRmTask, parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer, vtable: anytype) Maybe(void) {
                     const VTable = std.meta.Child(@TypeOf(vtable));
                     const Handler = struct {
-                        pub fn onIsDir(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        pub fn onIsDir(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *bun.PathBuffer) Maybe(void) {
                             if (@hasDecl(VTable, "onIsDir")) {
                                 return VTable.onIsDir(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                             }
                             return Maybe(void).success;
                         }
 
-                        pub fn onDirNotEmpty(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        pub fn onDirNotEmpty(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *bun.PathBuffer) Maybe(void) {
                             if (@hasDecl(VTable, "onDirNotEmpty")) {
                                 return VTable.onDirNotEmpty(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                             }
@@ -10586,8 +10586,8 @@ pub const Interpreter = struct {
                 }
 
                 fn runFromThreadPoolImpl(this: *ShellCpTask) ?bun.shell.ShellErr {
-                    var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf2: bun.PathBuffer = undefined;
+                    var buf3: bun.PathBuffer = undefined;
                     // We have to give an absolute path to our cp
                     // implementation for it to work with cwd
                     const src: [:0]const u8 = brk: {
@@ -11952,7 +11952,7 @@ pub const IOWriterChildPtr = struct {
 const ShellSyscall = struct {
     pub const unlinkatWithFlags = Syscall.unlinkatWithFlags;
     pub const rmdirat = Syscall.rmdirat;
-    fn getPath(dirfd: anytype, to: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) Maybe([:0]const u8) {
+    fn getPath(dirfd: anytype, to: [:0]const u8, buf: *bun.PathBuffer) Maybe([:0]const u8) {
         if (bun.Environment.isPosix) @compileError("Don't use this");
         if (bun.strings.eqlComptime(to[0..to.len], "/dev/null")) {
             return .{ .result = shell.WINDOWS_DEV_NULL };
@@ -11992,7 +11992,7 @@ const ShellSyscall = struct {
 
     fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             const path = switch (getPath(dir, path_, &buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
@@ -12011,7 +12011,7 @@ const ShellSyscall = struct {
         if (bun.Environment.isWindows) {
             if (flags & os.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     const p = switch (getPath(dir, path, &buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
@@ -12027,7 +12027,7 @@ const ShellSyscall = struct {
                 };
             }
 
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             const p = switch (getPath(dir, path, &buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },

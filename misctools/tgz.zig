@@ -37,7 +37,7 @@ pub fn main() anyerror!void {
         Global.exit(1);
     }
 
-    var tarball_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var tarball_path_buf: bun.PathBuffer = undefined;
     var basename = std.fs.path.basename(bun.asByteSlice(args[args.len - 1]));
     while (RecognizedExtensions.has(std.fs.path.extension(basename))) {
         basename = basename[0 .. basename.len - std.fs.path.extension(basename).len];

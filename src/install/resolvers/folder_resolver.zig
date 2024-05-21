@@ -117,7 +117,7 @@ pub const FolderResolution = union(Tag) {
             std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
 
         if (strings.startsWithChar(normalized, '.')) {
-            var tempcat: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var tempcat: bun.PathBuffer = undefined;
 
             bun.copy(u8, &tempcat, normalized);
             tempcat[normalized.len..][0.."/package.json".len].* = (std.fs.path.sep_str ++ "package.json").*;
@@ -239,7 +239,7 @@ pub const FolderResolution = union(Tag) {
     };
 
     pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
-        var joined: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var joined: bun.PathBuffer = undefined;
         const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
         const abs = paths.abs;
         const rel = paths.rel;
@@ -256,7 +256,7 @@ pub const FolderResolution = union(Tag) {
 
         const package: Lockfile.Package = switch (global_or_relative) {
             .global => brk: {
-                var path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path: bun.PathBuffer = undefined;
                 std.mem.copyForwards(u8, &path, non_normalized_path);
                 break :brk readPackageJSONFromDisk(
                     manager,

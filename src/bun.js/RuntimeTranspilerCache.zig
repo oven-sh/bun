@@ -153,7 +153,7 @@ pub const RuntimeTranspilerCache = struct {
             defer tracer.end();
 
             // atomically write to a tmpfile and then move it to the final destination
-            var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var tmpname_buf: bun.PathBuffer = undefined;
             const tmpfilename = bun.sliceTo(try bun.fs.FileSystem.instance.tmpname(std.fs.path.extension(destination_path.slice()), &tmpname_buf, input_hash), 0);
 
             const output_bytes = output_code.byteSlice();
@@ -365,7 +365,7 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     pub fn getCacheFilePath(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         input_hash: u64,
     ) ![:0]const u8 {
         const cache_dir = try getCacheDir(buf);
@@ -376,7 +376,7 @@ pub const RuntimeTranspilerCache = struct {
         return buf[0 .. cache_dir.len + 1 + cache_filename_len :0];
     }
 
-    fn reallyGetCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+    fn reallyGetCacheDir(buf: *bun.PathBuffer) [:0]const u8 {
         if (comptime bun.Environment.isDebug) {
             bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE") != null;
         }
@@ -424,11 +424,11 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     // Only do this at most once per-thread.
-    threadlocal var runtime_transpiler_cache_static_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var runtime_transpiler_cache_static_buffer: bun.PathBuffer = undefined;
     threadlocal var runtime_transpiler_cache: ?[:0]const u8 = null;
     pub var is_disabled = false;
 
-    fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
+    fn getCacheDir(buf: *bun.PathBuffer) ![:0]const u8 {
         if (is_disabled) return error.CacheDisabled;
         const path = runtime_transpiler_cache orelse path: {
             const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
@@ -454,7 +454,7 @@ pub const RuntimeTranspilerCache = struct {
         var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.fromFile");
         defer tracer.end();
 
-        var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var cache_file_path_buf: bun.PathBuffer = undefined;
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
         bun.assert(cache_file_path.len > 0);
         return fromFileWithCacheFilePath(
@@ -528,7 +528,7 @@ pub const RuntimeTranspilerCache = struct {
         var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.toFile");
         defer tracer.end();
 
-        var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var cache_file_path_buf: bun.PathBuffer = undefined;
         const output_code: Entry.OutputCode = switch (source_code.encoding()) {
             .utf8 => .{ .utf8 = source_code.byteSlice() },
             else => .{ .string = source_code },

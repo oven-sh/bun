@@ -193,7 +193,7 @@ pub const Loader = struct {
 
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const ccache_path = bun.which(
             &buf,
             this.get("PATH") orelse return,

@@ -2097,7 +2097,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.blob = .{ .Blob = blob };
             const file = &this.blob.store().?.data.file;
-            var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var file_buf: bun.PathBuffer = undefined;
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
                 file.pathlike.fd

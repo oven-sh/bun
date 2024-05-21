@@ -3482,7 +3482,7 @@ pub const FileReader = struct {
 
         pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
-            var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var file_buf: bun.PathBuffer = undefined;
             var is_nonblocking_tty = false;
 
             const fd = if (file.pathlike == .fd)

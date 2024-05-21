@@ -678,6 +678,8 @@ function emitAbortedNT(self, streams, streamId, error) {
     stream.rstCode = constants.NGHTTP2_CANCEL;
     stream.emit("aborted");
     stream.destroy();
+    stream.emit("end");
+    stream.emit("close");
   }
 }
 class ClientHttp2Session extends Http2Session {
@@ -842,6 +844,8 @@ class ClientHttp2Session extends Http2Session {
         stream.rstCode = constants.NGHTTP2_CANCEL;
         stream.emit("aborted");
         stream.destroy();
+        stream.emit("end");
+        stream.emit("close");
       } else {
         process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }

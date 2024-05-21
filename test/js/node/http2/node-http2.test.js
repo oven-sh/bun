@@ -1055,7 +1055,8 @@ describe("Client Basics", () => {
           done(err);
         }
         done();
-    }});
+      }
+    });
   });
   it("should handle bad GOAWAY server frame size", done => {
     const server = net.createServer(socket => {

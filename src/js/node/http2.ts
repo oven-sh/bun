@@ -654,28 +654,30 @@ function emitStreamNT(self, streams, streamId) {
 
 function emitStreamErrorNT(self, streams, streamId, error, destroy) {
   const stream = streams.get(streamId);
-  const error_instance = streamErrorFromCode(error);
   if (stream) {
     if (!stream[bunHTTP2Closed]) {
       stream[bunHTTP2Closed] = true;
     }
-    stream.rstCode = error;
-    stream.emit("error", error_instance);
-    if (destroy) stream.destroy(error_instance);
+    if (constants.NGHTTP2_CANCEL != error && !stream.aborted) {
+      const error_instance = streamErrorFromCode(error);
+      stream.emit("error", error_instance);
+      if (destroy) stream.destroy(error_instance, error);
+    } else {
+      if (destroy) stream.destroy();
+    }
   }
 }
 
 function emitAbortedNT(self, streams, streamId, error) {
   const stream = streams.get(streamId);
-  const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
   if (stream) {
     if (!stream[bunHTTP2Closed]) {
       stream[bunHTTP2Closed] = true;
     }
 
     stream.rstCode = constants.NGHTTP2_CANCEL;
-    stream.emit("aborted", error);
-    stream.emit("error", error_instance);
+    stream.emit("aborted");
+    stream.destroy();
   }
 }
 class ClientHttp2Session extends Http2Session {
@@ -718,12 +720,14 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
-        const error_instance = streamErrorFromCode(error);
         if (!stream[bunHTTP2Closed]) {
           stream[bunHTTP2Closed] = true;
         }
-        stream.rstCode = error;
-        stream.emit("error", error_instance);
+        if (error !== constants.NGHTTP2_CANCEL && !stream.aborted) {
+          stream.rstCode = error;
+          const error_instance = streamErrorFromCode(error);
+          stream.emit("error", error_instance);
+        }
       } else {
         process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
       }
@@ -831,14 +835,13 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
-        const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
         if (!stream[bunHTTP2Closed]) {
           stream[bunHTTP2Closed] = true;
         }
 
         stream.rstCode = constants.NGHTTP2_CANCEL;
-        stream.emit("aborted", error);
-        stream.emit("error", error_instance);
+        stream.emit("aborted");
+        stream.destroy();
       } else {
         process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }
@@ -859,7 +862,7 @@ class ClientHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
           stream.rstCode = errorCode;
-          stream.destroy(sessionErrorFromCode(errorCode));
+          stream.destroy(sessionErrorFromCode(errorCode), errorCode);
         }
       }
       self[bunHTTP2Socket]?.end();
@@ -1151,7 +1154,7 @@ class ClientHttp2Session extends Http2Session {
     this[bunHTTP2Socket] = null;
     // this should not be needed since RST + GOAWAY should be sent
     for (let [_, stream] of this.#streams) {
-      if (error) {
+      if (error && code != constants.NGHTTP2_CANCEL) {
         stream.emit("error", error);
       }
       stream.destroy();

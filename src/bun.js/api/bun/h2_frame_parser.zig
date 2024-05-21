@@ -1726,7 +1726,7 @@ pub const H2FrameParser = struct {
         if (stream.signal) |_signal| {
             return JSC.JSValue.jsBoolean(_signal.aborted());
         }
-        return JSC.JSValue.jsBoolean(true);
+        return JSC.JSValue.jsBoolean(stream.rstCode == @intFromEnum(ErrorCode.CANCEL));
     }
     pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         JSC.markBinding(@src());

@@ -81,6 +81,7 @@ function doHttp2Request(url, headers, payload, options, request_options) {
     data += chunk;
   });
   req.on("error", reject);
+  req.on("aborted", reject);
   req.on("end", () => {
     resolve({ data, headers: response_headers });
     client.close();
@@ -636,8 +637,8 @@ describe("Client Basics", () => {
       await promise;
       expect("unreachable").toBe(true);
     } catch (err) {
-      expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-      expect(err.message).toBe("Stream closed with error code 8");
+      // aborted event should not pass any arguments
+      expect(err).toBeUndefined();
     }
   });
   it("aborted event should work with abortController", async () => {
@@ -647,16 +648,16 @@ describe("Client Basics", () => {
     client.on("error", reject);
     const req = client.request({ ":path": "/" }, { signal: abortController.signal });
     req.on("aborted", resolve);
+    // error should not be called when aborted
+    req.on("error", reject);
     req.on("end", () => {
       resolve();
       client.close();
     });
     abortController.abort();
-    const result = await promise;
-    expect(result).toBeDefined();
-    expect(result.name).toBe("AbortError");
-    expect(result.message).toBe("The operation was aborted.");
-    expect(result.code).toBe(20);
+    // https://nodejs.org/api/http2.html#event-aborted
+    // aborted event will not pass any arguments
+    await promise;
     expect(req.aborted).toBeTrue();
     expect(req.rstCode).toBe(8);
   });
@@ -666,15 +667,12 @@ describe("Client Basics", () => {
     client.on("error", reject);
     const req = client.request({ ":path": "/" }, { signal: AbortSignal.abort() });
     req.on("aborted", resolve);
+    req.on("error", reject);
     req.on("end", () => {
       resolve();
       client.close();
     });
-    const result = await promise;
-    expect(result).toBeDefined();
-    expect(result.name).toBe("AbortError");
-    expect(result.message).toBe("The operation was aborted.");
-    expect(result.code).toBe(20);
+    await promise;
     expect(req.rstCode).toBe(8);
     expect(req.aborted).toBeTrue();
   });

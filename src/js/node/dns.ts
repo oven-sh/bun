@@ -4,8 +4,8 @@ const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 
 function translateErrorCode(promise: Promise<any>) {
-  return promise.then(undefined, error => {
-    return withTranslatedError(error);
+  return promise.catch(error => {
+    return Promise.reject(withTranslatedError(error));
   });
 }
 

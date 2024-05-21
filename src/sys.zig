@@ -638,9 +638,7 @@ pub fn normalizePathWindows(
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
-        return .{
-            .result = norm,
-        };
+        return .{ .result = norm };
     }
 
     const base_fd = if (dir_fd == bun.invalid_fd)
@@ -1702,7 +1700,6 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
             bun.strings.toNTPath(&w_buf_from, from),
             to_dir,
             bun.strings.toNTPath(&w_buf_to, to),
-            // @paperdave why waas this set to false?
             true,
         );
 

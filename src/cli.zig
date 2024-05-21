@@ -1931,7 +1931,7 @@ pub const Command = struct {
                     var win_resolver = resolve_path.PosixToWinNormalizer{};
                     var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
                     if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, true, .windows);
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
                     }
                     break :brk bun.openFile(
                         resolved,
@@ -1978,12 +1978,7 @@ pub const Command = struct {
                 if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
                 var fd_path_buf: bun.PathBuffer = undefined;
-                const path = bun.getFdPath(file, &fd_path_buf) catch return false;
-                break :brk resolve_path.normalizeString(
-                    resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
-                    true,
-                    .windows,
-                );
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
             };
         }
 

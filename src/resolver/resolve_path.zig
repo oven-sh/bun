@@ -9,7 +9,7 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
-pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+pub fn z(input: []const u8, output: *bun.PathBuffer) [:0]const u8 {
     if (input.len > bun.MAX_PATH_BYTES) {
         if (comptime bun.Environment.allow_assert) @panic("path too long");
         return "";

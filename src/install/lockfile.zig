@@ -1085,8 +1085,8 @@ pub const Printer = struct {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
 
-        var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf1: bun.PathBuffer = undefined;
+        var lockfile_path_buf2: bun.PathBuffer = undefined;
 
         var lockfile_path: stringZ = "";
 

@@ -1172,7 +1172,7 @@ pub const Blob = struct {
         comptime needs_open: bool,
     ) JSC.JSValue {
         const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
-            var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var file_path: bun.PathBuffer = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
                 // we deliberately don't use O_TRUNC here
@@ -1255,7 +1255,7 @@ pub const Blob = struct {
         comptime needs_open: bool,
     ) JSC.JSValue {
         const fd: bun.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
-            var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var file_path: bun.PathBuffer = undefined;
             switch (bun.sys.open(
                 pathlike.path.sliceZ(&file_path),
                 if (!Environment.isWindows)
@@ -1736,7 +1736,7 @@ pub const Blob = struct {
                     std.os.O.RDONLY | __opener_flags;
 
                 pub inline fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var path_string = if (@hasField(This, "file_store"))
                         this.file_store.pathlike.path
                     else
@@ -1953,8 +1953,8 @@ pub const Blob = struct {
             }
 
             fn copyfile(this: *CopyFileWindows) void {
-                var pathbuf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var pathbuf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var pathbuf1: bun.PathBuffer = undefined;
+                var pathbuf2: bun.PathBuffer = undefined;
                 var destination_file_store = &this.destination_file_store.data.file;
                 var source_file_store = &this.source_file_store.data.file;
 
@@ -2290,7 +2290,7 @@ pub const Blob = struct {
             const open_source_flags = O.CLOEXEC | O.RDONLY;
 
             pub fn doOpenFile(this: *CopyFile, comptime which: IOWhich) !void {
-                var path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf1: bun.PathBuffer = undefined;
                 // open source file first
                 // if it fails, we don't want the extra destination file hanging out
                 if (which == .both or which == .source) {
@@ -2496,8 +2496,8 @@ pub const Blob = struct {
             }
 
             pub fn doClonefile(this: *CopyFile) anyerror!void {
-                var source_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var source_buf: bun.PathBuffer = undefined;
+                var dest_buf: bun.PathBuffer = undefined;
 
                 while (true) {
                     const dest = this.destination_file_store.pathlike.path.sliceZ(
@@ -2552,7 +2552,7 @@ pub const Blob = struct {
                     if (comptime Environment.isMac) {
                         if (this.offset == 0 and this.source_file_store.pathlike == .path and this.destination_file_store.pathlike == .path) {
                             do_clonefile: {
-                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var path_buf: bun.PathBuffer = undefined;
 
                                 // stat the output file, make sure it:
                                 // 1. Exists
@@ -2983,7 +2983,7 @@ pub const Blob = struct {
             const pathlike = store.data.file.pathlike;
             const vm = globalThis.bunVM();
             const fd: bun.FileDescriptor = if (pathlike == .fd) pathlike.fd else brk: {
-                var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var file_path: bun.PathBuffer = undefined;
                 switch (bun.sys.open(
                     pathlike.path.sliceZ(&file_path),
                     std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
@@ -3363,7 +3363,7 @@ pub const Blob = struct {
     /// resolve file stat like size, last_modified
     fn resolveFileStat(store: *Store) void {
         if (store.data.file.pathlike == .path) {
-            var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buffer: bun.PathBuffer = undefined;
             switch (bun.sys.stat(store.data.file.pathlike.path.sliceZ(&buffer))) {
                 .result => |stat| {
                     store.data.file.max_size = if (bun.isRegularFile(stat.mode) or stat.size > 0)

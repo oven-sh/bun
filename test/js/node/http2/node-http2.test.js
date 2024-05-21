@@ -1042,18 +1042,21 @@ describe("Client Basics", () => {
       server.subprocess.kill();
     }
   });
-  it("should not be able to write on socket", async () => {
-    const server = nodeEchoServer_;
-    try {
-      const client = http2.connect(server.url);
-      client.socket.write("hello");
-      client.socket.end();
-      expect("unreachable").toBe(true);
-    } catch (err) {
-      expect(err.code).toBe("ERR_HTTP2_NO_SOCKET_MANIPULATION");
-    } finally {
-      server.subprocess.kill();
-    }
+  it("should not be able to write on socket", done => {
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS, (session, socket) => {
+      try {
+        client.socket.write("hello");
+        client.socket.end();
+        expect().fail("unreachable");
+      } catch (err) {
+        try {
+          expect(err.code).toBe("ERR_HTTP2_NO_SOCKET_MANIPULATION");
+        } catch (err) {
+          done(err);
+        }
+        done();
+      }
+    });
   });
   it("should handle bad GOAWAY server frame size", done => {
     const server = net.createServer(socket => {

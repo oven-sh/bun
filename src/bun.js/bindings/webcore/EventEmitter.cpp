@@ -217,11 +217,6 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     auto* thisObject = protectedThis->m_thisObject.get();
     JSC::JSValue thisValue = thisObject ? JSC::JSValue(thisObject) : JSC::jsUndefined();
 
-    if (UNLIKELY(listeners.isEmpty() && eventType == vm.propertyNames->error) && arguments.size() > 0) {
-        Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
-        return;
-    }
-
     for (auto& registeredListener : listeners) {
         if (UNLIKELY(registeredListener->wasRemoved()))
             continue;

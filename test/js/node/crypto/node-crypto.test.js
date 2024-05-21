@@ -250,35 +250,31 @@ describe("createHash", () => {
   };
 
   const unsupported = [
-    "sha224withrsaencryption",
-    "rsa-sha224",
-    "sha256withrsaencryption",
-    "rsa-sha256",
-    "sha384withrsaencryption",
-    "rsa-sha384",
-    "sha512withrsaencryption",
-    "rsa-sha512",
-    "rsa-sha1",
-    "ecdsa-with-sha1",
-    "dsa-sha",
-    "dsa-sha1",
-    "dsa",
-    "dsa-with-sha224",
-    "dsa-sha224",
-    "dsa-with-sha256",
-    "dsa-sha256",
-    "dsa-with-sha384",
-    "dsa-sha384",
-    "dsa-with-sha512",
-    "dsa-sha512",
-    "dsa-ripemd160",
-    "ripemd160withrsa",
-    "rsa-ripemd160",
-    "md5withrsaencryption",
-    "rsa-md5",
+    "blake2s256",
+    "id-rsassa-pkcs1-v1_5-with-sha3-224",
+    "id-rsassa-pkcs1-v1_5-with-sha3-256",
+    "id-rsassa-pkcs1-v1_5-with-sha3-384",
+    "id-rsassa-pkcs1-v1_5-with-sha3-512",
+    "md5-sha1",
+    "ripemd",
+    "rsa-sha1-2",
+    "rsa-sha3-224",
+    "rsa-sha3-256",
+    "rsa-sha3-384",
+    "rsa-sha3-512",
+    "rsa-sha512/224",
+    "rsa-sha512/256",
+    "rsa-sm3",
+    "sha1withrsaencryption",
+    "sha512-224withrsaencryption",
+    "sha512-256withrsaencryption",
+    "sm3",
+    "sm3withrsaencryption",
+    "ssl3-md5",
+    "ssl3-sha1",
   ];
 
-  for (const name_ of getHashes()) {
+  for (const name_ in nodeValues) {
     const name = name_.toLowerCase();
 
     it.todoIf(unsupported.includes(name))(`${name} - "Hello World"`, () => {

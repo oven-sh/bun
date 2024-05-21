@@ -115,6 +115,7 @@ describe("tls.Server", () => {
             {
               ...clientOptionsBase,
               port: (server.address() as AddressInfo).port,
+              host: "127.0.0.1",
               servername,
             },
             () => {
@@ -174,6 +175,7 @@ describe("tls.Server", () => {
       server.listen(0, () => {
         const options = {
           port: (server?.address() as AddressInfo).port,
+          host: "127.0.0.1",
           key: agent1Key,
           cert: agent1Cert,
           ca: [ca1],
@@ -278,6 +280,7 @@ describe("tls.Server", () => {
         {
           ...options,
           port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
         },
         () => {

@@ -270,8 +270,16 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
 
-/* Land in on_open or on_connection_error or return null or return socket */
-struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
+/*
+    Returns one of 
+    - struct us_socket_t * - indicated by the value at on_connecting being set to 1
+      This is the fast path where the DNS result is available immediately and only a single remote
+      address is available
+    - struct us_connecting_socket_t * - indicated by the value at on_connecting being set to 0
+      This is the slow path where we must either go through DNS resolution or create multiple sockets
+      per the happy eyeballs algorithm
+*/
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
     const char *host, int port, int options, int socket_ext_size, int *is_connecting);
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context,

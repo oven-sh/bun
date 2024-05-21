@@ -94,7 +94,7 @@ If you intend on building WebKit locally (optional), you should install these pa
 {% codetabs group="a" %}
 
 ```ps1#WinGet
-> winget install ezwinports.make Cygwin.Cygwin Python.Python.3.9
+> winget install ezwinports.make Cygwin.Cygwin Python.Python.3.12
 ```
 
 ```ps1#Scoop

@@ -146,11 +146,11 @@ JSC_DEFINE_JIT_OPERATION(${DOMJITName(
 }
 
 function appendSymbols(to: Map<string, string>, symbolName: (name: string) => string, prop) {
-  var { defaultValue, getter, setter, accesosr, fn, DOMJIT, cache } = prop;
+  var { defaultValue, getter, setter, accessor, fn, DOMJIT, cache } = prop;
 
-  if (accesosr) {
-    getter = accesosr.getter;
-    setter = accesosr.setter;
+  if (accessor) {
+    getter = accessor.getter;
+    setter = accessor.setter;
   }
 
   if (getter && !to.get(getter)) {
@@ -182,7 +182,7 @@ function propRow(
     getter,
     setter,
     fn,
-    accesosr,
+    accessor,
     fn,
     length = 0,
     cache,
@@ -203,9 +203,9 @@ function propRow(
     extraPropertyAttributes += " | PropertyAttribute::DontDelete";
   }
 
-  if (accesosr) {
-    getter = accesosr.getter;
-    setter = accesosr.setter;
+  if (accessor) {
+    getter = accessor.getter;
+    setter = accessor.setter;
   }
 
   var symbol = symbolName(typeName, name);

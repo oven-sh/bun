@@ -402,8 +402,8 @@ throw new Error('0');`,
     cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap", "--outfile", hotRunnerRoot],
     env: bunEnv,
     cwd,
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
     stdin: "ignore",
   });
   await using runner = spawn({

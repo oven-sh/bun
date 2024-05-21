@@ -2271,9 +2271,9 @@ pub const Fetch = struct {
         if (is_file_url) {
             defer allocator.free(url_proxy_buffer);
             defer unix_socket_path.deinit();
-            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf: bun.PathBuffer = undefined;
             const PercentEncoding = @import("../../url.zig").PercentEncoding;
-            var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf2: bun.PathBuffer = undefined;
             var stream = std.io.fixedBufferStream(&path_buf2);
             var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
                 @TypeOf(&stream.writer()),
@@ -2299,7 +2299,7 @@ pub const Fetch = struct {
                     break :brk url_path_decoded;
                 }
 
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
                     globalThis.throwError(err, "Failed to resolve file url");
                     return .zero;

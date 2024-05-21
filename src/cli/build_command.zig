@@ -184,7 +184,7 @@ pub const BuildCommand = struct {
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
 
-        var src_root_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src_root_dir_buf: bun.PathBuffer = undefined;
         const src_root_dir: string = brk1: {
             const path = brk2: {
                 if (ctx.bundler_options.root_dir.len > 0) {
@@ -433,7 +433,7 @@ pub const BuildCommand = struct {
                     // So don't do that unless we actually need to.
                     // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
-                    var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var filepath_buf: bun.PathBuffer = undefined;
                     filepath_buf[0] = '.';
                     filepath_buf[1] = '/';
 
@@ -460,7 +460,7 @@ pub const BuildCommand = struct {
                                     }
                                 }
                                 const JSC = bun.JSC;
-                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var path_buf: bun.PathBuffer = undefined;
                                 switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                                     &path_buf,
                                     JSC.Node.Arguments.WriteFile{

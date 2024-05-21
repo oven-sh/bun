@@ -21,6 +21,10 @@
 #include <string.h>
 #include <errno.h>
 
+#ifndef _WIN32
+#include <arpa/inet.h>
+#endif
+
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
 }
@@ -383,6 +387,34 @@ static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr
     }
 }
 
+static int try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *storage) {
+    memset(storage, 0, sizeof(struct sockaddr_storage));
+    // Try to parse as IPv4
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)storage;
+    if (inet_pton(AF_INET, ip_str, &addr4->sin_addr) == 1) {
+        addr4->sin_port = htons(port);
+        addr4->sin_family = AF_INET;
+#ifdef __APPLE__
+        addr4->sin_len = sizeof(struct sockaddr_in);
+#endif
+        return 0;
+    }
+
+    // Try to parse as IPv6
+    struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)storage;
+    if (inet_pton(AF_INET6, ip_str, &addr6->sin6_addr) == 1) {
+        addr6->sin6_port = htons(port);
+        addr6->sin6_family = AF_INET6;
+#ifdef __APPLE__
+        addr6->sin6_len = sizeof(struct sockaddr_in6);
+#endif
+        return 0;
+    }
+
+    // If we reach here, the input is neither IPv4 nor IPv6
+    return 1;
+}
+
 void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
@@ -392,8 +424,16 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 
     struct us_loop_t* loop = us_socket_context_loop(ssl, context);
 
+    // fast path for IP addresses in text form
+    struct sockaddr_storage addr;
+    if (try_parse_ip(host, port, &addr) == 0) {
+        *is_connecting = 1;
+        return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+    }
+
     struct addrinfo_request* ai_req;
     if (Bun__addrinfo_get(loop, host, &ai_req) == 0) {
+        // fast path for cached results
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
         // fast failure path
         if (result->error) {

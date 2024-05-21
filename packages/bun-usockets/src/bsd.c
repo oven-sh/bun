@@ -891,8 +891,9 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRIPTOR fd)
 {
 #ifdef _WIN32
+    int namelen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
     do {
-        if (connect(fd, (struct sockaddr *)addr, addr->ss_len) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
             return 0;
         }
     } while (WSAGetLastError() == WSAEINTR);
@@ -911,42 +912,32 @@ static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRI
 
 #ifdef _WIN32
 
-static int convert_null_addr(struct addrinfo *addrinfo, struct addrinfo* result, struct sockaddr_storage *inaddr) {
+static int convert_null_addr(const struct sockaddr_storage *addr, struct sockaddr_storage* result) {
     // 1. check that all addrinfo results are 0.0.0.0 or ::
-    if (addrinfo->ai_family == AF_INET) {
-        struct sockaddr_in *addr = (struct sockaddr_in *) addrinfo->ai_addr;
-        if (addr->sin_addr.s_addr == htonl(INADDR_ANY)) {
-            memcpy(inaddr, addr, sizeof(struct sockaddr_in));
-            ((struct sockaddr_in *) inaddr)->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-            memcpy(result, addrinfo, sizeof(struct addrinfo));
-            result->ai_addr = (struct sockaddr *) inaddr;
-            result->ai_next = NULL;
-
+    if (addr->ss_family == AF_INET) {
+        struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
+        if (addr4->sin_addr.s_addr == htonl(INADDR_ANY)) {
+            memcpy(result, addr, sizeof(struct sockaddr_in));
+            ((struct sockaddr_in *) result)->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             return 1;
         }
-    } else if (addrinfo->ai_family == AF_INET6) {
-        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) addrinfo->ai_addr;
-        if (memcmp(&addr->sin6_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
-            memcpy(inaddr, addr, sizeof(struct sockaddr_in6));
-            memcpy(&((struct sockaddr_in6 *) inaddr)->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr));
-
-            memcpy(result, addrinfo, sizeof(struct addrinfo));
-            result->ai_addr = (struct sockaddr *) inaddr;
-            result->ai_next = NULL;
-
+    } else if (addr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
+        if (memcmp(&addr6->sin6_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
+            memcpy(result, addr, sizeof(struct sockaddr_in6));
+            memcpy(&((struct sockaddr_in6 *) result)->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr));
             return 1;
         }
     }
     return 0;
 } 
 
-static int is_loopback(struct addrinfo *addrinfo) {
-    if (addrinfo->ai_family == AF_INET) {
-        struct sockaddr_in *addr = (struct sockaddr_in *) addrinfo->ai_addr;
+static int is_loopback(struct sockaddr_storage *sockaddr) {
+    if (sockaddr->ss_family == AF_INET) {
+        struct sockaddr_in *addr = (struct sockaddr_in *) sockaddr;
         return addr->sin_addr.s_addr == htonl(INADDR_LOOPBACK);
-    } else if (addrinfo->ai_family == AF_INET6) {
-        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) addrinfo->ai_addr;
+    } else if (sockaddr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) sockaddr;
         return memcmp(&addr->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr)) == 0;
     } else {
         return 0;
@@ -964,11 +955,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 
     // On windows we can't connect to the null address directly. 
     // To match POSIX behavior, we need to connect to localhost instead.
-    struct addrinfo alt_result;
-    struct sockaddr_storage storage;
-
-    if (convert_null_addr(addrinfo, &alt_result, &storage)) {
-        addrinfo = &alt_result;
+    struct sockaddr_storage converted;
+    if (convert_null_addr(addr, &converted)) {
+        addr = &converted;
     }
 
     // This sets the socket to fail quickly if no connection can be established to localhost,
@@ -977,7 +966,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     // see https://github.com/libuv/libuv/blob/bf61390769068de603e6deec8e16623efcbe761a/src/win/tcp.c#L806
     TCP_INITIAL_RTO_PARAMETERS retransmit_ioctl;
     DWORD bytes;
-    if (is_loopback(addrinfo)) {
+    if (is_loopback(addr)) {
         memset(&retransmit_ioctl, 0, sizeof(retransmit_ioctl));
         retransmit_ioctl.Rtt = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
         retransmit_ioctl.MaxSynRetransmissions = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;

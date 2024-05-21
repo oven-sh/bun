@@ -345,22 +345,12 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 }
 
 
-struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, void* request, int options, int socket_ext_size) {
-    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(request);
-    if (result->error) {
-        errno = result->error;
-        Bun__addrinfo_freeRequest(request, 1);
-        return NULL;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, options);
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        int err = errno;
-        Bun__addrinfo_freeRequest(request, err);
         return NULL;
     }
 
-    Bun__addrinfo_freeRequest(request, 0);
     bsd_socket_nodelay(connect_socket_fd, 1);
 
     /* Connect sockets are semi-sockets just like listen sockets */
@@ -381,7 +371,19 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     return socket;
 }
 
-struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
+static void init_addr_with_port(struct addrinfo* info, int port, struct sockaddr_storage *addr) {
+    if (info->ai_family == AF_INET) {
+        struct sockaddr_in *addr_in = (struct sockaddr_in *) addr;
+        memcpy(addr_in, info->ai_addr, info->ai_addrlen);
+        addr_in->sin_port = htons(port);
+    } else {
+        struct sockaddr_in6 *addr_in6 = (struct sockaddr_in6 *) addr;
+        memcpy(addr_in6, info->ai_addr, info->ai_addrlen);
+        addr_in6->sin6_port = htons(port);
+    }
+}
+
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* is_connecting) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
         return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, is_connecting);
@@ -390,12 +392,25 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
 
     struct us_loop_t* loop = us_socket_context_loop(ssl, context);
 
-    void* ptr;
-    if (Bun__addrinfo_get(loop, host, port, &ptr) == 0) {
-        // Fast-path: it's already cached.
-        // Avoid the connection logic.
-        *is_connecting = 1;
-        return (struct us_connecting_socket_t *) us_socket_context_connect_resolved_dns(context, ptr, options, socket_ext_size);
+    struct addrinfo_request* ai_req;
+    if (Bun__addrinfo_get(loop, host, &ai_req) == 0) {
+        struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
+        // fast failure path
+        if (result->error) {
+            errno = result->error;
+            Bun__addrinfo_freeRequest(ai_req, 1);
+            return NULL;
+        }
+
+        // if there is only one result we can immediately connect
+        if (result->info && result->info->ai_next == NULL) {
+            struct sockaddr_storage addr;
+            init_addr_with_port(result->info, port, &addr);
+            *is_connecting = 1;
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+            Bun__addrinfo_freeRequest(ai_req, s == NULL);
+            return s;
+        }
     }
 
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
@@ -406,6 +421,7 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
     c->timeout = 255;
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
+    c->port = port;
 
 #ifdef _WIN32
     loop->uv_loop->active_handles++;
@@ -413,7 +429,7 @@ struct us_connecting_socket_t *us_socket_context_connect(int ssl, struct us_sock
     loop->num_polls++;
 #endif
 
-    Bun__addrinfo_set(ptr, c);
+    Bun__addrinfo_set(ai_req, c);
 
     return c;
 }
@@ -440,36 +456,110 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         us_connecting_socket_close(0, c);
         return;
     }
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(result->info, c->options);
-    if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
-        c->error = errno;
-        c->context->on_connect_error(c, errno);
+
+    int error = 0;
+    for (struct addrinfo *info = result->info; info; info = info->ai_next) {
+        struct sockaddr_storage addr;
+        init_addr_with_port(info, c->port, &addr);
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options);
+        if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            continue;
+        }
+        bsd_socket_nodelay(connect_socket_fd, 1);
+
+        struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
+        s->context = c->context;
+        s->timeout = c->timeout;
+        s->long_timeout = c->long_timeout;
+        s->low_prio_state = 0;
+        /* Link it into context so that timeout fires properly */
+        us_internal_socket_context_link_socket(s->context, s);
+
+        // TODO check this, specifically how it interacts with the SSL code
+        // does this work when we create multiple sockets at once? will we need multiple SSL contexts?
+        // no, we won't need multiple contexts - the context is only initialized on_open
+        memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
+
+        // store the socket so we can close it if we need to
+        s->connect_next = c->connecting_head;
+        c->connecting_head = s;
+
+        s->connect_state = c;
+
+        /* Connect sockets are semi-sockets just like listen sockets */
+        us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
+        us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+    }
+
+    if (!c->connecting_head) {
+        c->error = error;
+        c->context->on_connect_error(c, error);
         Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
         us_connecting_socket_close(0, c);
         return;
     }
 
     Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-    bsd_socket_nodelay(connect_socket_fd, 1);
+}
 
-    struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
-    s->context = c->context;
-    s->timeout = c->timeout;
-    s->long_timeout = c->long_timeout;
-    s->low_prio_state = 0;
-    /* Link it into context so that timeout fires properly */
-    us_internal_socket_context_link_socket(s->context, s);
-    // TODO check this, specifically how it interacts with the SSL code
-    memcpy(us_socket_ext(0, s), us_connecting_socket_ext(0, c), c->socket_ext_size);
+void us_internal_socket_after_open(struct us_socket_t *s, int error) {
+    struct us_connecting_socket_t *c = s->connect_state; 
+    /* It is perfectly possible to come here with an error */
+    if (error) {
 
-    // store the socket so we can close it if we need to
-    c->socket = s;
-    s->connect_state = c;
+        /* Emit error, close without emitting on_close */
 
-    /* Connect sockets are semi-sockets just like listen sockets */
-    us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
+        /* There are two possible states here: 
+            1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
+            2. It's a us_socket_t* 
 
+            We differentiate between these two cases by checking if the connect_state is null.
+        */
+        if (c) {
+            // remove this connecting socket from the list of connecting sockets
+            // if it was the last one, signal the error to the user
+            for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
+                if (*next == s) {
+                    *next = s->connect_next;
+                    break;
+                }
+            }
+            us_socket_close(0, s, 0, 0);
+            if (!c->connecting_head) {
+                c->context->on_connect_error(c, error);
+                us_connecting_socket_close(0, c);
+            }
+        } else {
+            s->context->on_socket_connect_error(s, error);
+            // It's expected that close is called by the caller
+        }
+    } else {
+        /* All sockets poll for readable */
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE);
+
+        /* We always use nodelay */
+        bsd_socket_nodelay(us_poll_fd(&s->p), 1);
+
+        /* We are now a proper socket */
+        us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET);
+
+        /* If we used a connection timeout we have to reset it here */
+        us_socket_timeout(0, s, 0);
+
+        // if there is a connect_state, we need to close all other connection attempts that are currently in progress
+        if (c) {
+            for (struct us_socket_t *next = c->connecting_head; next; next = next->connect_next) {
+                if (next != s) {
+                    us_socket_close(0, next, 0, 0);
+                }
+            }
+            // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
+            us_connecting_socket_free(c);
+            s->connect_state = NULL;
+        }
+
+        s->context->on_open(s, 1, 0, 0);
+    }
 }
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context, const char *server_path, size_t pathlen, int options, int socket_ext_size) {
@@ -539,7 +629,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     if (ext_size != -1) {
         new_s = (struct us_socket_t *) us_poll_resize(&s->p, s->context->loop, sizeof(struct us_socket_t) + ext_size);
         if (c) {
-            c->socket = new_s;
+            c->connecting_head = new_s;
             c->context = context;
         }
     }

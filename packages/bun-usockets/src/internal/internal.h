@@ -75,15 +75,16 @@ enum {
 void Bun__lock(uint32_t *lock);
 void Bun__unlock(uint32_t *lock);
 
+struct addrinfo_request;
 struct addrinfo_result {
     struct addrinfo *info;
     int error;
 };
 
-extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, int port, void** ptr);
-extern int Bun__addrinfo_set(void* ptr, struct us_connecting_socket_t* socket); 
-extern void Bun__addrinfo_freeRequest(void* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(void* addrinfo_req);
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
+extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
+extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
+extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
 
 /* Loop related */
@@ -128,6 +129,7 @@ void us_internal_socket_context_unlink_socket(
     struct us_socket_context_t *context, struct us_socket_t *s);
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
+void us_internal_socket_after_open(struct us_socket_t *s, int error);
 int us_internal_handle_dns_results(struct us_loop_t *loop);
 
 /* Sockets are polls */
@@ -140,19 +142,21 @@ struct us_socket_t {
                          = was in low-prio queue in this iteration */
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
+  struct us_socket_t *connect_next;
   struct us_connecting_socket_t *connect_state;
 };
 
 struct us_connecting_socket_t {
-    alignas(LIBUS_EXT_ALIGNMENT) void *addrinfo_req;
+    alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
     struct us_socket_context_t *context;
     struct us_connecting_socket_t *next;
-    struct us_socket_t *socket;
+    struct us_socket_t *connecting_head;
     int options;
     int socket_ext_size;
     unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1;
     unsigned char timeout;
     unsigned char long_timeout;
+    uint16_t port;
     int error;
 };
 

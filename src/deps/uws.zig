@@ -589,8 +589,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            const host_ = allocator.dupeZ(u8, host) catch return null;
-            defer allocator.free(host_);
+
+            // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
+            const clean_host = if (host.len > 1 and host[0] == '[' and host[host.len - 1] == ']')
+                host[1 .. host.len - 1]
+            else
+                host;
+
+            const host_ = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            defer allocator.free(host);
+
             var did_dns_resolve: i32 = 0;
             const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
             const socket_ = if (did_dns_resolve == 1)
@@ -682,22 +690,20 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
-            const host: ?[*:0]u8 = brk: {
-                // getaddrinfo expects `node` to be null if localhost
-                if (raw_host.len < 6 and (bun.strings.eqlComptime(raw_host, "[::1]") or bun.strings.eqlComptime(raw_host, "[::]"))) {
-                    break :brk null;
-                }
+            // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
+            const clean_host = if (raw_host.len > 1 and raw_host[0] == '[' and raw_host[raw_host.len - 1] == ']')
+                raw_host[1 .. raw_host.len - 1]
+            else
+                raw_host;
 
-                break :brk allocator.dupeZ(u8, raw_host) catch bun.outOfMemory();
-            };
-
-            defer if (host) |allocated_host| allocator.free(allocated_host[0..raw_host.len]);
+            const host = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
             const socket_ptr = us_socket_context_connect(
                 comptime ssl_int,
                 socket_ctx,
-                host,
+                host.ptr,
                 port,
                 0,
                 @sizeOf(*anyopaque),
@@ -1425,7 +1431,7 @@ extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
+pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;

@@ -280,50 +280,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                struct us_socket_t *s = (struct us_socket_t *) p;
-
-                /* It is perfectly possible to come here with an error */
-                if (error) {
-                    struct us_connecting_socket_t *c = s->connect_state; 
-
-                    /* Emit error, close without emitting on_close */
-
-                    /* There are two possible states here: 
-                        1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
-                        2. It's a us_socket_t* 
-
-                       We differentiate between these two cases by checking if the connect_state is null.
-                    */
-                    if (c) {
-                        s->context->on_connect_error(s->connect_state, error);
-                        us_connecting_socket_close(c->ssl, c);
-                    } else {
-                        s->context->on_socket_connect_error(s, error);
-                        // It's expected that close is called by the caller
-                    }
-                    
-                    s = NULL;
-                } else {
-                    /* All sockets poll for readable */
-                    us_poll_change(p, s->context->loop, LIBUS_SOCKET_READABLE);
-
-                    /* We always use nodelay */
-                    bsd_socket_nodelay(us_poll_fd(p), 1);
-
-                    /* We are now a proper socket */
-                    us_internal_poll_set_type(p, POLL_TYPE_SOCKET);
-
-                    /* If we used a connection timeout we have to reset it here */
-                    us_socket_timeout(0, s, 0);
-
-                    s->context->on_open(s, 1, 0, 0);
-
-                    if (s->connect_state) {
-                        // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
-                        us_connecting_socket_free(s->connect_state);
-                        s->connect_state = NULL;
-                    }
-                }
+                us_internal_socket_after_open((struct us_socket_t *) p, error);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;

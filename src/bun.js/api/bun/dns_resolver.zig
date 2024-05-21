@@ -1200,16 +1200,14 @@ pub const InternalDNS = struct {
         pub usingnamespace bun.New(@This());
         const Key = struct {
             host: ?[:0]const u8,
-            port: u16,
             hash: u64,
 
-            pub fn init(name: ?[:0]const u8, port: u16) @This() {
+            pub fn init(name: ?[:0]const u8) @This() {
                 const hash = if (name) |n| brk: {
                     break :brk bun.hash(n);
                 } else 0;
                 return .{
                     .host = name,
-                    .port = port,
                     .hash = hash,
                 };
             }
@@ -1219,7 +1217,6 @@ pub const InternalDNS = struct {
                     const host_copy = bun.default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
                     return .{
                         .host = host_copy,
-                        .port = this.port,
                         .hash = this.hash,
                     };
                 } else {
@@ -1257,8 +1254,6 @@ pub const InternalDNS = struct {
         /// Seconds since the epoch when this request was created.
         /// Not a precise timestamp.
         created_at: u32 = std.math.maxInt(u32),
-
-        lock: bun.Lock = bun.Lock.init(),
 
         valid: bool = true,
 
@@ -1319,7 +1314,7 @@ pub const InternalDNS = struct {
             var i: usize = 0;
             while (i < len) {
                 var entry = this.cache[i];
-                if (entry.key.hash == key.hash and entry.key.port == key.port and entry.valid) {
+                if (entry.key.hash == key.hash and entry.valid) {
                     if (entry.isExpired(timestamp_to_store)) {
                         log("get: expired entry", .{});
                         _ = this.deleteEntryAt(len, i);
@@ -1438,8 +1433,7 @@ pub const InternalDNS = struct {
     };
 
     fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
-        // Only lock while
-        req.lock.lock();
+        global_cache.lock.lock();
 
         req.result = .{
             .info = info,
@@ -1449,7 +1443,9 @@ pub const InternalDNS = struct {
         defer notify.deinit(bun.default_allocator);
         req.notify = .{};
         req.refcount -= 1;
-        req.lock.unlock();
+
+        // is this correct, or should it go after the loop?
+        global_cache.lock.unlock();
 
         for (notify.items) |query| {
             query.notifyThreadsafe(req);
@@ -1457,11 +1453,6 @@ pub const InternalDNS = struct {
     }
 
     fn workPoolCallback(req: *Request) void {
-        var port_buf: [128]u8 = undefined;
-        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
-        port_buf[port.len] = 0;
-        const portZ = port_buf[0..port.len :0];
-
         if (Environment.isWindows) {
             const wsa = std.os.windows.ws2_32;
             const wsa_hints = wsa.addrinfo{
@@ -1478,7 +1469,7 @@ pub const InternalDNS = struct {
             var addrinfo: ?*wsa.addrinfo = null;
             const err = wsa.getaddrinfo(
                 if (req.key.host) |host| host.ptr else null,
-                if (port.len > 0) portZ.ptr else null,
+                null,
                 &wsa_hints,
                 &addrinfo,
             );
@@ -1487,7 +1478,7 @@ pub const InternalDNS = struct {
             var addrinfo: ?*std.c.addrinfo = null;
             const err = std.c.getaddrinfo(
                 if (req.key.host) |host| host.ptr else null,
-                if (port.len > 0) portZ.ptr else null,
+                null,
                 &hints,
                 &addrinfo,
             );
@@ -1498,16 +1489,11 @@ pub const InternalDNS = struct {
     pub fn lookupLibinfo(req: *Request, loop: JSC.EventLoopHandle) bool {
         const getaddrinfo_async_start_ = LibInfo.getaddrinfo_async_start() orelse return false;
 
-        var port_buf: [128]u8 = undefined;
-        const port = std.fmt.bufPrintIntToSlice(&port_buf, req.key.port, 10, .lower, .{});
-        port_buf[port.len] = 0;
-        const portZ = port_buf[0..port.len :0];
-
         var machport: ?*anyopaque = null;
         const errno = getaddrinfo_async_start_(
             &machport,
             if (req.key.host) |host| host.ptr else null,
-            if (port.len > 0) portZ.ptr else null,
+            null,
             &hints,
             libinfoCallback,
             req,
@@ -1560,9 +1546,9 @@ pub const InternalDNS = struct {
         return object;
     }
 
-    pub fn getaddrinfo(loop: *bun.uws.Loop, host: ?[:0]const u8, port: u16, is_cache_hit: ?*bool) ?*Request {
+    pub fn getaddrinfo(loop: *bun.uws.Loop, host: ?[:0]const u8, is_cache_hit: ?*bool) ?*Request {
         const preload = is_cache_hit == null;
-        const key = Request.Key.init(host, port);
+        const key = Request.Key.init(host);
         global_cache.lock.lock();
         getaddrinfo_calls += 1;
         var timestamp_to_store: u32 = 0;
@@ -1574,19 +1560,17 @@ pub const InternalDNS = struct {
                     return null;
                 }
 
-                entry.lock.lock();
                 entry.refcount += 1;
 
                 if (entry.result != null) {
                     is_cache_hit.?.* = true;
-                    log("getaddrinfo({s}:{d}) = cache hit", .{ host orelse "", port });
+                    log("getaddrinfo({s}) = cache hit", .{host orelse ""});
                     dns_cache_hits_completed += 1;
                 } else {
-                    log("getaddrinfo({s}:{d}) = cache hit (inflight)", .{ host orelse "", port });
+                    log("getaddrinfo({s}) = cache hit (inflight)", .{host orelse ""});
                     dns_cache_hits_inflight += 1;
                 }
 
-                entry.lock.unlock();
                 global_cache.lock.unlock();
 
                 return entry;
@@ -1607,17 +1591,16 @@ pub const InternalDNS = struct {
         dns_cache_size = global_cache.len;
         global_cache.lock.unlock();
 
-        // doesn't work yet
         if (comptime Environment.isMac) {
             if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO")) {
                 const res = lookupLibinfo(req, loop.internal_loop_data.getParent());
-                log("getaddrinfo({s}:{d}) = cache miss (libinfo)", .{ host orelse "", port });
+                log("getaddrinfo({s}) = cache miss (libinfo)", .{host orelse ""});
                 if (res) return req;
                 // if we were not able to use libinfo, we fall back to the work pool
             }
         }
 
-        log("getaddrinfo({s}:{d}) = cache miss (libc)", .{ host orelse "", port });
+        log("getaddrinfo({s}) = cache miss (libc)", .{host orelse ""});
         // schedule the request to be executed on the work pool
         bun.JSC.WorkPool.go(bun.default_allocator, *Request, req, workPoolCallback) catch bun.outOfMemory();
         return req;
@@ -1635,22 +1618,9 @@ pub const InternalDNS = struct {
 
         var hostname_slice = JSC.ZigString.Slice.empty;
         defer hostname_slice.deinit();
-        var port: u16 = 0;
 
         if (hostname_or_url.isString()) {
             hostname_slice = hostname_or_url.toSlice(globalThis, bun.default_allocator);
-
-            if (arguments.len > 1 and arguments[1].isAnyInt()) {
-                const portI = arguments[1].coerce(i32, globalThis);
-                if (portI < 0 or portI > 65535) {
-                    globalThis.throwInvalidArguments("port must be between 0 and 65535", .{});
-                    return .zero;
-                }
-                port = @intCast(portI);
-            } else {
-                globalThis.throwInvalidArguments("port must be an integer", .{});
-                return .zero;
-            }
         } else {
             globalThis.throwInvalidArguments("hostname must be a string", .{});
             return .zero;
@@ -1662,18 +1632,18 @@ pub const InternalDNS = struct {
         };
         defer bun.default_allocator.free(hostname_z);
 
-        prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z, port);
+        prefetch(JSC.VirtualMachine.get().uwsLoop(), hostname_z);
         return .undefined;
     }
 
-    pub fn prefetch(loop: *bun.uws.Loop, hostname: ?[:0]const u8, port: u16) void {
-        _ = getaddrinfo(loop, hostname, port, null);
+    pub fn prefetch(loop: *bun.uws.Loop, hostname: ?[:0]const u8) void {
+        _ = getaddrinfo(loop, hostname, null);
     }
 
-    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, port: u16, socket: *?*anyopaque) callconv(.C) c_int {
+    fn us_getaddrinfo(loop: *bun.uws.Loop, _host: ?[*:0]const u8, socket: *?*anyopaque) callconv(.C) c_int {
         const host: ?[:0]const u8 = std.mem.span(_host);
         var is_cache_hit: bool = false;
-        const req = getaddrinfo(loop, host, port, &is_cache_hit).?;
+        const req = getaddrinfo(loop, host, &is_cache_hit).?;
         socket.* = req;
         return if (is_cache_hit) 0 else 1;
     }
@@ -1682,33 +1652,30 @@ pub const InternalDNS = struct {
         request: *Request,
         socket: *bun.uws.ConnectingSocket,
     ) callconv(.C) void {
-        request.lock.lock();
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
         const query = DNSRequestOwner{
             .socket = socket,
         };
         if (request.result != null) {
-            request.lock.unlock();
             query.notify(request);
             return;
         }
 
         request.notify.append(bun.default_allocator, .{ .socket = socket }) catch bun.outOfMemory();
-        request.lock.unlock();
     }
 
     fn freeaddrinfo(req: *Request, err: c_int) callconv(.C) void {
-        req.lock.lock();
-        defer req.lock.unlock();
+        global_cache.lock.lock();
+        defer global_cache.lock.unlock();
 
         req.valid = err == 0;
         dns_cache_errors += @as(usize, @intFromBool(err != 0));
 
+        bun.assert(req.refcount > 0);
         req.refcount -= 1;
         if (req.refcount == 0 and (global_cache.isNearlyFull() or !req.valid)) {
-            global_cache.lock.lock();
             log("cache --", .{});
-
-            defer global_cache.lock.unlock();
             global_cache.remove(req);
             req.deinit();
         }

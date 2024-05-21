@@ -359,7 +359,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
         if (!line.includes("error")) continue;
         str = "";
 
-        if (reloadCounter === (isWindows ? 10 : 50)) {
+        if (reloadCounter === 50) {
           runner.kill();
           break;
         }
@@ -383,7 +383,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       if (any) await onReload();
     }
     await runner.exited;
-    expect(reloadCounter).toBe(isWindows ? 10 : 50);
+    expect(reloadCounter).toBe(50);
   },
   isDebug ? Infinity : 10_000,
 );
@@ -436,7 +436,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
       if (!line.includes("error")) continue;
       str = "";
 
-      if (reloadCounter === (isWindows ? 10 : 50)) {
+      if (reloadCounter === 50) {
         runner.kill();
         break;
       }
@@ -457,7 +457,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
 
     if (any) await onReload();
   }
-  expect(reloadCounter).toBe(isWindows ? 10 : 50);
+  expect(reloadCounter).toBe(50);
   bundler.kill();
 });
 
@@ -538,7 +538,7 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
           sampleMemory10 = rss;
         }
 
-        if (reloadCounter >= (isWindows ? 10 : 50)) {
+        if (reloadCounter >= 50) {
           sampleMemory100 = rss;
           runner.kill();
           break;

@@ -4067,14 +4067,14 @@ pub const Expect = struct {
             inline else => |is_not| {
                 const signature = comptime getSignature(name, "<green>expected<r>", is_not);
                 const fmt = signature ++ "\n\n" ++ "Expected number of successful calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n";
-                globalObject.throwPretty(fmt, .{ index, total_count });
+                globalObject.throwPretty(fmt, .{ return_count, total_count });
                 return .zero;
             },
         }
     }
 
     pub fn toHaveReturned(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        return toHaveReturnedTimesFn(this, globalObject, callframe, 0);
+        return toHaveReturnedTimesFn(this, globalObject, callframe, 1);
     }
 
     pub fn toHaveReturnedTimes(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

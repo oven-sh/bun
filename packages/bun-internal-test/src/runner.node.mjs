@@ -186,7 +186,7 @@ function checkSlowTests() {
       );
       proc?.stdout?.destroy?.();
       proc?.stderr?.destroy?.();
-      proc?.kill?.();
+      proc?.kill?.(9);
     } else if (now - start > SHORT_TIMEOUT_DURATION) {
       console.error(
         `\x1b[33mwarning\x1b[0;2m:\x1b[0m Test ${JSON.stringify(path)} has been running for ${Math.ceil(

@@ -275,14 +275,12 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
   expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
   expect(await exists(join(run_dir, ".cache", "uglify-js", "3.17.4", "package.json"))).toBeTrue();
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited1).toBe(0);
@@ -302,13 +300,11 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
   expect(await readdirSorted(join(run_dir, ".cache", "uglify-js"))).toEqual(["3.17.4"]);
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual(["print(42);", ""]);
   expect(await exited2).toBe(0);
@@ -343,7 +339,6 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
@@ -353,7 +348,6 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(await file(join(run_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain(
     "\nmodule.exports = ",
   );
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.split(/\r?\n/)).toEqual([
     "directory: package/",
@@ -378,7 +372,6 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   if (err2) throw new Error(err2);
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
@@ -388,7 +381,6 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(await file(join(run_dir, ".cache", "decompress", "4.2.1", "index.js")).text()).toContain(
     "\nmodule.exports = ",
   );
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.split(/\r?\n/)).toEqual([
     "directory: package/",

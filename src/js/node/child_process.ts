@@ -456,14 +456,11 @@ function exec(command, options, callback) {
   return execFile(opts.file, opts.options, opts.callback);
 }
 
+const kCustomPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
+
 const customPromiseExecFunction = orig => {
   return (...args) => {
-    let resolve;
-    let reject;
-    const promise = new Promise((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
+    const { resolve, reject, promise } = Promise.withResolvers();
 
     promise.child = orig(...args, (err, stdout, stderr) => {
       if (err !== null) {
@@ -479,11 +476,21 @@ const customPromiseExecFunction = orig => {
   };
 };
 
-Object.defineProperty(exec, Symbol.for("nodejs.util.promisify.custom"), {
+Object.defineProperty(exec, kCustomPromisifySymbol, {
   __proto__: null,
   configurable: true,
   value: customPromiseExecFunction(exec),
 });
+
+exec[kCustomPromisifySymbol][kCustomPromisifySymbol] = exec[kCustomPromisifySymbol];
+
+Object.defineProperty(execFile, kCustomPromisifySymbol, {
+  __proto__: null,
+  configurable: true,
+  value: customPromiseExecFunction(execFile),
+});
+
+execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromisifySymbol];
 
 /**
  * Spawns a new process synchronously using the given `file`.

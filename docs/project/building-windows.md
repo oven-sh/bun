@@ -77,6 +77,7 @@ The Zig compiler is automatically downloaded, installed, and updated by the buil
 {% codetabs group="a" %}
 
 ```ps1#WinGet
+## Select "Add LLVM to the system PATH for all users" in the LLVM installer
 > winget install -i LLVM.LLVM -v 16.0.6 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
 ```
 

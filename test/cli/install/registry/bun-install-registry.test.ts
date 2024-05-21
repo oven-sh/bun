@@ -1724,7 +1724,7 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
-  test.only("adding packages in workspaces", async () => {
+  test("adding packages in workspaces", async () => {
     await writeFile(
       join(packageDir, "package.json"),
       JSON.stringify({

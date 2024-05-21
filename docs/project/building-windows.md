@@ -77,7 +77,7 @@ The Zig compiler is automatically downloaded, installed, and updated by the buil
 {% codetabs group="a" %}
 
 ```ps1#WinGet
-> winget install LLVM.LLVM -v 16.0.6 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
+> winget install -i LLVM.LLVM -v 16.0.6 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
 ```
 
 ```ps1#Scoop

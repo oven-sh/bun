@@ -5230,11 +5230,10 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
-                    if (dirent_path_prev != null and bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
-                        dirent_path_prev.?.ref();
-                    } else {
+                    if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
                         dirent_path_prev = bun.String.createUTF8(path_u8);
                     }
+                    dirent_path_prev.?.ref();
                     entries.append(.{
                         .name = bun.String.createUTF8(utf8_name),
                         .path = dirent_path_prev.?,
@@ -5249,6 +5248,9 @@ pub const NodeFS = struct {
                 },
                 else => bun.outOfMemory(),
             }
+        }
+        if (dirent_path_prev) |*p| {
+            p.deref();
         }
 
         return Maybe(void).success;
@@ -5367,11 +5369,10 @@ pub const NodeFS = struct {
                 switch (comptime ExpectedType) {
                     Dirent => {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
-                        if (dirent_path_prev != null and bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
-                            dirent_path_prev.?.ref();
-                        } else {
+                        if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
                             dirent_path_prev = bun.String.createUTF8(path_u8);
                         }
+                        dirent_path_prev.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
                             .path = dirent_path_prev.?,
@@ -5386,6 +5387,9 @@ pub const NodeFS = struct {
                     },
                     else => @compileError("Impossible"),
                 }
+            }
+            if (dirent_path_prev) |*p| {
+                p.deref();
             }
         }
 

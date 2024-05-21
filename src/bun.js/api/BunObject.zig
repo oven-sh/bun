@@ -2588,7 +2588,13 @@ pub const Crypto = struct {
                 output_digest_buf = std.mem.zeroes(EVP.Digest);
             }
 
-            const result = this.evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice);
+            const result = switch (this.*) {
+                .evp => |*evp| evp.final(globalThis.bunVM().rareData().boringEngine(), output_digest_slice),
+                .zig => |*inner| brk: {
+                    inner.final(output_digest_slice);
+                    break :brk output_digest_slice[0..inner.digest_length];
+                },
+            };
 
             if (output) |output_buf| {
                 return output_buf.value;

@@ -890,8 +890,8 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
 static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRIPTOR fd)
 {
-#ifdef _WIN32
     int namelen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+#ifdef _WIN32
     do {
         if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
             return 0;
@@ -901,7 +901,7 @@ static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRI
     return WSAGetLastError();
 #else
      do {
-        if (connect(fd, (struct sockaddr *)addr, addr->ss_len) == 0 || errno == EINPROGRESS) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS) {
             return 0;
         }
     } while (errno == EINTR);

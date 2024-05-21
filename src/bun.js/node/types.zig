@@ -1767,11 +1767,14 @@ pub const Dirent = struct {
     }
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return this.name.toJS(globalObject);
+        return this.name.transferToJS(globalObject);
     }
 
-    pub fn getPath(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return this.path.toJS(globalObject);
+    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const js_value = this.path.toJS(globalThis);
+        this.path.deref();
+        // this.path.* = dead; // this is the getter for both .path and .parentPath so it cannot direct transfer
+        return js_value;
     }
 
     pub fn isBlockDevice(

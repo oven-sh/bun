@@ -20,18 +20,14 @@ const CERT_EXPIRED: TLSOptions = {
 };
 
 async function createServer(cert: TLSOptions, callback: (port: number) => Promise<any>) {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     tls: cert,
     fetch() {
       return new Response("Hello World");
     },
   });
-  try {
-    await callback(server.port);
-  } finally {
-    server.stop(true);
-  }
+  await callback(server.port);
 }
 
 it("can handle multiple requests with non native checkServerIdentity", async () => {

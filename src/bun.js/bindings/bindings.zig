@@ -3068,6 +3068,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
+    extern fn ZigGlobalObject__readableStreamToBytes(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToFormData(*JSGlobalObject, JSValue, JSValue) JSValue;
@@ -3076,6 +3077,11 @@ pub const JSGlobalObject = extern struct {
     pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
         if (comptime is_bindgen) unreachable;
         return ZigGlobalObject__readableStreamToArrayBuffer(this, value);
+    }
+
+    pub fn readableStreamToBytes(this: *JSGlobalObject, value: JSValue) JSValue {
+        if (comptime is_bindgen) unreachable;
+        return ZigGlobalObject__readableStreamToBytes(this, value);
     }
 
     pub fn readableStreamToText(this: *JSGlobalObject, value: JSValue) JSValue {
@@ -3589,14 +3595,14 @@ pub const JSValue = enum(JSValueReprInt) {
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
-        key: [*c]ZigString,
+        key: *ZigString,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
     ) callconv(.C) void;
 
-    pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, [*c]ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, [*c]ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
 
     pub fn forEachProperty(
         this: JSValue,
@@ -4049,7 +4055,7 @@ pub const JSValue = enum(JSValueReprInt) {
             JSValue => number,
             u0 => jsNumberFromInt32(0),
             f32, f64 => jsNumberFromDouble(@as(f64, number)),
-            c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
+            u31, c_ushort, u8, i16, i32, c_int, i8, u16 => jsNumberFromInt32(@as(i32, @intCast(number))),
             c_long, u32, u52, c_uint, i64, isize => jsNumberFromInt64(@as(i64, @intCast(number))),
             usize, u64 => jsNumberFromUint64(@as(u64, @intCast(number))),
             comptime_int => switch (number) {

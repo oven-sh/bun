@@ -2576,6 +2576,23 @@ pub const Resolver = struct {
 
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
+            if ((input_path.len == 2 and input_path[1] == ':') or
+                (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
+            {
+                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                win32_normalized_dir_info_cache_buf[2] = '\\';
+                input_path.len = 3;
+            }
+
+            // Filter out \\hello\, a UNC server path but without a share.
+            // When there isn't a share name, such path is not considered to exist.
+            if (bun.strings.hasPrefixComptime(input_path, "\\\\")) {
+                const first_slash = bun.strings.indexOfChar(input_path[2..], '\\') orelse
+                    return null;
+                _ = bun.strings.indexOfChar(input_path[2 + first_slash ..], '\\') orelse
+                    return null;
+            }
         }
 
         assert(std.fs.path.isAbsolute(input_path));
@@ -2601,8 +2618,8 @@ pub const Resolver = struct {
             .hash = 0,
             .status = .not_found,
         };
-        const root_path = if (comptime Environment.isWindows)
-            ResolvePath.windowsFilesystemRoot(path)
+        const root_path = if (Environment.isWindows)
+            bun.strings.pathWithoutTrailingSlashOne(ResolvePath.windowsFilesystemRoot(path))
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2614,7 +2631,8 @@ pub const Resolver = struct {
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
 
-        while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
+        while (top.len > root_path.len) : (top = Dirname.dirname(top)) {
+            assert(top.ptr == root_path.ptr);
             const result = try r.dir_cache.getOrPut(top);
 
             if (result.status != .unknown) {
@@ -2719,7 +2737,11 @@ pub const Resolver = struct {
                         .{ .no_follow = !follow_symlinks, .iterate = true },
                     )
                 else if (comptime Environment.isWindows) open_req: {
-                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{ .iterable = true, .no_follow = !follow_symlinks, .read_only = true });
+                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{
+                        .iterable = true,
+                        .no_follow = !follow_symlinks,
+                        .read_only = true,
+                    });
                     if (dirfd_result.unwrap()) |result| {
                         break :open_req result.asDir();
                     } else |err| {
@@ -3956,7 +3978,6 @@ pub const Resolver = struct {
         // }
 
         if (parent) |parent_| {
-
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;

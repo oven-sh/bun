@@ -630,9 +630,18 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
     defer holder.deinit(vm);
     const exception = holder.zigException();
 
+    var source_code_slice: ?ZigString.Slice = null;
+    defer if (source_code_slice) |slice| slice.deinit();
+
     var err = ZigString.init("trace output").toErrorInstance(global);
     err.toZigException(global, exception);
-    vm.remapZigException(exception, err, null, &holder.need_to_clear_parser_arena_on_deinit);
+    vm.remapZigException(
+        exception,
+        err,
+        null,
+        &holder.need_to_clear_parser_arena_on_deinit,
+        &source_code_slice,
+    );
 
     if (Output.enable_ansi_colors_stderr)
         VirtualMachine.printStackTrace(

@@ -312,6 +312,11 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     return @as(usize, @intCast(i));
 }
 
+pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
+    if (T == u8) return indexOf(haystack, needle);
+    return std.mem.indexOf(T, haystack, needle);
+}
+
 pub fn split(self: string, delimiter: string) SplitIterator {
     return SplitIterator{
         .buffer = self,

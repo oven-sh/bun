@@ -99,6 +99,7 @@ typedef struct ResolvedSource {
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool needsDeref;
+    bool already_bundled;
 } ResolvedSource;
 static const uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
@@ -278,6 +279,10 @@ BunString toStringRef(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 BunString toStringRef(WTF::String& wtfString);
 BunString toStringRef(const WTF::String& wtfString);
 BunString toStringRef(WTF::StringImpl* wtfString);
+
+// This creates a detached string view, which cannot be ref/unref.
+// Be very careful using this, and ensure the memory owner does not get destroyed.
+BunString toStringView(WTF::StringView view);
 }
 
 using Uint8Array_alias = JSC::JSUint8Array;

@@ -77,7 +77,7 @@ pub const JSONOptions = struct {
     always_decode_escape_sequences: bool = false,
 };
 
-pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
+pub fn decodeStringLiteralEscapeSequencesToUTF16(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
     var log = logger.Log.init(allocator);
     defer log.deinit();
     const source = logger.Source.initEmptyFile("");

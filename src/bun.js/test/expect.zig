@@ -4074,7 +4074,7 @@ pub const Expect = struct {
     }
 
     pub fn toHaveReturned(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        return toHaveReturnedTimesFn(this, globalObject, callframe, 0);
+        return toHaveReturnedTimesFn(this, globalObject, callframe, 1);
     }
 
     pub fn toHaveReturnedTimes(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

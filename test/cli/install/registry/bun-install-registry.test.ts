@@ -1724,6 +1724,123 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
+  test.only("adding packages in workspaces", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "bar": "workspace:*",
+        },
+      }),
+    );
+
+    await mkdir(join(packageDir, "packages", "bar"), { recursive: true });
+    await mkdir(join(packageDir, "packages", "boba"));
+    await mkdir(join(packageDir, "packages", "pkg5"));
+
+    await writeFile(join(packageDir, "packages", "bar", "package.json"), JSON.stringify({ name: "bar" }));
+    await writeFile(
+      join(packageDir, "packages", "boba", "package.json"),
+      JSON.stringify({ name: "boba", version: "1.0.0", dependencies: { "pkg5": "*" } }),
+    );
+    await writeFile(
+      join(packageDir, "packages", "pkg5", "package.json"),
+      JSON.stringify({
+        name: "pkg5",
+        version: "1.2.3",
+        dependencies: {
+          "bar": "workspace:*",
+        },
+      }),
+    );
+
+    let { stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    });
+
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bar@workspace:packages/bar",
+      "",
+      "3 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "bar"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "boba"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "pkg5"))).toBeTrue();
+
+    // add a package to the root workspace
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bar@workspace:packages/bar",
+      "",
+      "installed no-deps@2.0.0",
+      "",
+      "4 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      workspaces: ["packages/*"],
+      dependencies: {
+        bar: "workspace:*",
+        "no-deps": "^2.0.0",
+      },
+    });
+
+    // add a package in a workspace
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "two-range-deps"],
+      cwd: join(packageDir, "packages", "boba"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ pkg5@workspace:packages/pkg5",
+      "",
+      "installed two-range-deps@1.0.0",
+      "",
+      "6 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
+      name: "boba",
+      version: "1.0.0",
+      dependencies: {
+        "pkg5": "*",
+        "two-range-deps": "^1.0.0",
+      },
+    });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@types",
+      "bar",
+      "boba",
+      "no-deps",
+      "pkg5",
+      "two-range-deps",
+    ]);
+  });
   test("it should detect duplicate workspace dependencies", async () => {
     await writeFile(
       join(packageDir, "package.json"),

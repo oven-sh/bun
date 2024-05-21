@@ -1671,7 +1671,7 @@ pub fn spawnProcessWindows(
     uv_process_options.stdio_count = @intCast(stdio_containers.items.len);
 
     uv_process_options.exit_cb = &Process.onExitUV;
-    var process = Process.new(.{
+    const process = Process.new(.{
         .event_loop = options.windows.loop,
         .pid = 0,
     });
@@ -1715,6 +1715,13 @@ pub fn spawnProcessWindows(
         .process_ = process,
         .extra_pipes = try std.ArrayList(WindowsSpawnResult.StdioResult).initCapacity(bun.default_allocator, options.extra_fds.len),
     };
+
+    // By putting this process in a Job Object, any child process will be caught
+    // so that killing this process will kill all children processes.
+    //
+    // It seems that just associating the process does the work neccecary.
+    if (bun.windows.CreateJobObjectA(null, null)) |job|
+        _ = bun.windows.AssignProcessToJobObject(job, process.poller.uv.process_handle);
 
     const result_stdios = .{ &result.stdin, &result.stdout, &result.stderr };
     inline for (0..3) |i| {

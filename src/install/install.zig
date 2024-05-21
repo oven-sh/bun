@@ -2456,18 +2456,17 @@ pub const PackageManager = struct {
 
         pub const Map = bun.StringHashMapUnmanaged(MapEntry);
 
+        pub const GetJSONOptions = struct {
+            init_reset_store: bool = true,
+            always_decode_escape_sequences: bool = true,
+        };
+
         map: Map = .{},
 
         /// Given an absolute path to a workspace package.json, return the AST
         /// and contents of the file. If the package.json is not present in the
         /// cache, it will be read from disk and parsed, and stored in the cache.
-        pub fn getWithPath(
-            this: *@This(),
-            allocator: std.mem.Allocator,
-            log: *logger.Log,
-            abs_package_json_path: anytype,
-            comptime init_reset_store: bool,
-        ) !*MapEntry {
+        pub fn getWithPath(this: *@This(), allocator: std.mem.Allocator, log: *logger.Log, abs_package_json_path: anytype, comptime opts: GetJSONOptions) !*MapEntry {
             bun.assert(std.fs.path.isAbsolute(abs_package_json_path));
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
@@ -2488,10 +2487,13 @@ pub const PackageManager = struct {
 
             const source = try bun.sys.File.toSource(key, allocator).unwrap();
 
-            if (comptime init_reset_store)
+            if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json = try json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator);
+            const json = if (comptime opts.always_decode_escape_sequences)
+                try json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
+            else
+                try json_parser.ParsePackageJSONUTF8(&source, log, allocator);
 
             entry.value_ptr.* = .{
                 .root = json.deepClone(allocator) catch bun.outOfMemory(),
@@ -2509,7 +2511,7 @@ pub const PackageManager = struct {
             allocator: std.mem.Allocator,
             log: *logger.Log,
             source: logger.Source,
-            comptime init_reset_store: bool,
+            comptime opts: GetJSONOptions,
         ) !*MapEntry {
             bun.assert(std.fs.path.isAbsolute(source.path.text));
 
@@ -2527,10 +2529,13 @@ pub const PackageManager = struct {
                 return entry.value_ptr;
             }
 
-            if (comptime init_reset_store)
+            if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json = try json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator);
+            const json = if (comptime opts.always_decode_escape_sequences)
+                try json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
+            else
+                try json_parser.ParsePackageJSONUTF8(&source, log, allocator);
 
             entry.value_ptr.* = .{
                 .root = json.deepClone(allocator) catch bun.outOfMemory(),
@@ -8544,7 +8549,9 @@ pub const PackageManager = struct {
             manager.allocator,
             manager.log,
             manager.original_package_json_path,
-            true,
+            .{
+                .always_decode_escape_sequences = false,
+            },
         ) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
@@ -8691,7 +8698,7 @@ pub const PackageManager = struct {
         @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
         const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
 
-        const root_package_json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, true);
+        const root_package_json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{});
 
         try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
 

@@ -3614,7 +3614,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = try PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, true);
+                                const json = try PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{});
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -4066,7 +4066,9 @@ pub const Package = extern struct {
         abs_package_json_path: [:0]const u8,
         log: *logger.Log,
     ) !WorkspaceEntry {
-        const workspace_json = try json_cache.getWithPath(allocator, log, abs_package_json_path, false);
+        const workspace_json = try json_cache.getWithPath(allocator, log, abs_package_json_path, .{
+            .init_reset_store = false,
+        });
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
         const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;

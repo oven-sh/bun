@@ -637,7 +637,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
             var buf: bun.OSPathBuffer = undefined;
 
-            // const normdest = bun.path.normalizeStringGenericTZ(bun.OSPathChar, dest, &buf, true, std.fs.path.sep, bun.path.isSepAnyT, false, true);
             const normdest: bun.OSPathSliceZ = if (Environment.isWindows)
                 switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf)) {
                     .err => |err| {

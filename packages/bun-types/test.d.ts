@@ -1445,6 +1445,22 @@ declare module "bun:test" {
      */
     toEndWith(expected: string): void;
     /**
+     * Ensures that a mock function has returned successfully at least once.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturned(): void;
+
+    /**
+     * Ensures that a mock function has returned successfully at `times` times.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturnedTimes(times: number): void;
+
+    /**
      * Ensures that a mock function is called.
      */
     toHaveBeenCalled(): void;

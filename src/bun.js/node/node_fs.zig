@@ -773,7 +773,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 switch (this.*) {
                     .with_file_types => |*res| {
                         for (res.items) |item| {
-                            item.name.deref();
+                            item.deref();
                         }
                         res.clearAndFree();
                     },
@@ -887,7 +887,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                         for (entries.items) |*item| {
                             switch (ResultType) {
                                 bun.String => item.deref(),
-                                Dirent => item.name.deref(),
+                                Dirent => item.deref(),
                                 Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
                                 else => @compileError("unreachable"),
                             }
@@ -5036,15 +5036,16 @@ pub const NodeFS = struct {
     fn readdirWithEntries(
         args: Arguments.Readdir,
         fd: bun.FileDescriptor,
+        basename: [:0]const u8,
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = fd.asDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
-        var iterator = DirIterator.iterate(
-            dir,
-            comptime if (is_u16) .u16 else .u8,
-        );
+
+        var dirent_path: ?bun.String = null;
+
+        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -5052,7 +5053,7 @@ pub const NodeFS = struct {
                 for (entries.items) |*item| {
                     switch (ExpectedType) {
                         Dirent => {
-                            item.name.deref();
+                            item.deref();
                         },
                         Buffer => {
                             item.destroy();
@@ -5072,12 +5073,19 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
+            if (ExpectedType == Dirent) {
+                if (dirent_path == null) {
+                    dirent_path = bun.String.createUTF8(basename);
+                }
+            }
             if (comptime !is_u16) {
                 const utf8_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
+                        dirent_path.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
+                            .path = dirent_path.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5093,8 +5101,10 @@ pub const NodeFS = struct {
                 const utf16_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
+                        dirent_path.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF16(utf16_name),
+                            .path = dirent_path.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5104,6 +5114,9 @@ pub const NodeFS = struct {
                     else => @compileError("unreachable"),
                 }
             }
+        }
+        if (dirent_path) |*p| {
+            p.deref();
         }
 
         return Maybe(void).success;
@@ -5118,8 +5131,8 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
         comptime is_root: bool,
     ) Maybe(void) {
+        const root_basename = async_task.root_path.slice();
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-
         const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
@@ -5139,7 +5152,7 @@ pub const NodeFS = struct {
                         else => {},
                     }
 
-                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    const path_parts = [_]string{ root_basename, basename };
                     return .{
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
@@ -5163,11 +5176,12 @@ pub const NodeFS = struct {
 
         var iterator = DirIterator.iterate(fd.asDir(), .u8);
         var entry = iterator.next();
+        var dirent_path_prev: ?bun.String = null;
 
         while (switch (entry) {
             .err => |err| {
                 if (comptime !is_root) {
-                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    const path_parts = [_]string{ root_basename, basename };
                     return .{
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
@@ -5215,8 +5229,14 @@ pub const NodeFS = struct {
 
             switch (comptime ExpectedType) {
                 Dirent => {
+                    const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
+                    if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                        dirent_path_prev = bun.String.createUTF8(path_u8);
+                    }
+                    dirent_path_prev.?.ref();
                     entries.append(.{
-                        .name = bun.String.createUTF8(name_to_copy),
+                        .name = bun.String.createUTF8(utf8_name),
+                        .path = dirent_path_prev.?,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5228,6 +5248,9 @@ pub const NodeFS = struct {
                 },
                 else => bun.outOfMemory(),
             }
+        }
+        if (dirent_path_prev) |*p| {
+            p.deref();
         }
 
         return Maybe(void).success;
@@ -5306,6 +5329,7 @@ pub const NodeFS = struct {
 
             var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
+            var dirent_path_prev: ?bun.String = null;
 
             while (switch (entry) {
                 .err => |err| {
@@ -5344,8 +5368,14 @@ pub const NodeFS = struct {
 
                 switch (comptime ExpectedType) {
                     Dirent => {
+                        const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
+                        if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                            dirent_path_prev = bun.String.createUTF8(path_u8);
+                        }
+                        dirent_path_prev.?.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF8(name_to_copy),
+                            .name = bun.String.createUTF8(utf8_name),
+                            .path = dirent_path_prev.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5357,6 +5387,9 @@ pub const NodeFS = struct {
                     },
                     else => @compileError("Impossible"),
                 }
+            }
+            if (dirent_path_prev) |*p| {
+                p.deref();
             }
         }
 
@@ -5429,7 +5462,7 @@ pub const NodeFS = struct {
         defer _ = Syscall.close(fd);
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-        return switch (readdirWithEntries(args, fd, ExpectedType, &entries)) {
+        return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
             .err => |err| return .{
                 .err = err,
             },

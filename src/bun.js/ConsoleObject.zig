@@ -1691,12 +1691,11 @@ pub const Formatter = struct {
             pub fn forEach(
                 globalThis: *JSGlobalObject,
                 ctx_ptr: ?*anyopaque,
-                key_: [*c]ZigString,
+                key: *ZigString,
                 value: JSValue,
                 is_symbol: bool,
                 is_private_symbol: bool,
             ) callconv(.C) void {
-                const key = key_.?[0];
                 if (key.eqlComptime("constructor")) return;
 
                 var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);

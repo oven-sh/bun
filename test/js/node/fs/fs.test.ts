@@ -481,6 +481,16 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("Dirent has the expected fields", () => {
+  const dir = tmpdirSync();
+  writeFileSync(join(dir, "file.txt"), "");
+  const dirs = readdirSync(dir, { withFileTypes: true });
+  expect(dirs.length).toBe(1);
+  expect(dirs[0].name).toBe("file.txt");
+  expect(dirs[0].path).toBe(dir);
+  expect(dirs[0].parentPath).toBe(dir);
+});
+
 it("promises.readdir on a large folder", async () => {
   const huge = tmpdirSync();
   for (let i = 0; i < 128; i++) {
@@ -2214,10 +2224,8 @@ describe("fs/promises", () => {
     const full = resolve(import.meta.dir, "../");
     const [bun, subprocess] = await Promise.all([
       (async function () {
-        console.time("readdir(path, {recursive: true})");
         const files = await promises.readdir(full, { recursive: true });
         files.sort();
-        console.timeEnd("readdir(path, {recursive: true})");
         return files;
       })(),
       (async function () {
@@ -2243,6 +2251,112 @@ describe("fs/promises", () => {
     const text = await new Response(subprocess.stdout).text();
     const node = JSON.parse(text);
     expect(bun).toEqual(node as string[]);
+  }, 100000);
+
+  it("readdir(path, {withFileTypes: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        const files = await promises.readdir(full, { withFileTypes: true });
+        files.sort();
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { withFileTypes: true }).sort()), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun.length).toEqual(node.length);
+    expect([...new Set(node.map(v => v.path))]).toEqual([full]);
+    expect([...new Set(bun.map(v => v.path))]).toEqual([full]);
+    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+  }, 100000);
+
+  it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
+        files.sort((a, b) => a.path.localeCompare(b.path));
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun.length).toEqual(node.length);
+    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+  }, 100000);
+
+  it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        const files = readdirSync(full, { withFileTypes: true, recursive: true });
+        files.sort((a, b) => a.path.localeCompare(b.path));
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun.length).toEqual(node.length);
+    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
@@ -2273,6 +2387,8 @@ describe("fs/promises", () => {
 
       if (!withFileTypes) {
         expect(results[0]).toContain(relative(full, import.meta.path));
+      } else {
+        expect(results[0][0].path).toEqual(full);
       }
 
       const newMaxFD = getMaxFD();
@@ -2308,6 +2424,48 @@ describe("fs/promises", () => {
     } else {
       it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
       it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+    }
+  }
+
+  for (let withFileTypes of [false, true] as const) {
+    const warmup = 1;
+    const iterCount = 200;
+    const full = resolve(import.meta.dir, "../");
+
+    const doIt = async () => {
+      for (let i = 0; i < warmup; i++) {
+        readdirSync(full, { withFileTypes });
+      }
+
+      const maxFD = getMaxFD();
+
+      const results = new Array(iterCount);
+      for (let i = 0; i < iterCount; i++) {
+        results[i] = readdirSync(full, { recursive: true, withFileTypes });
+      }
+
+      for (let i = 0; i < iterCount; i++) {
+        results[i].sort();
+      }
+      expect(results[0].length).toBeGreaterThan(0);
+      for (let i = 1; i < iterCount; i++) {
+        expect(results[i]).toEqual(results[0]);
+      }
+
+      if (!withFileTypes) {
+        expect(results[0]).toContain(relative(full, import.meta.path));
+      } else {
+        expect(results[0][0].path).toEqual(full);
+      }
+
+      const newMaxFD = getMaxFD();
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
+    if (withFileTypes) {
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+    } else {
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
     }
   }
 

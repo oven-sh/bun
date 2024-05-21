@@ -1749,6 +1749,7 @@ pub const Stats = union(enum) {
 /// @since v12.12.0
 pub const Dirent = struct {
     name: bun.String,
+    path: bun.String,
     // not publicly exposed
     kind: Kind,
 
@@ -1767,6 +1768,10 @@ pub const Dirent = struct {
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return this.name.toJS(globalObject);
+    }
+
+    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return this.path.toJS(globalThis);
     }
 
     pub fn isBlockDevice(
@@ -1819,8 +1824,13 @@ pub const Dirent = struct {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 
-    pub fn finalize(this: *Dirent) callconv(.C) void {
+    pub fn deref(this: *const Dirent) void {
         this.name.deref();
+        this.path.deref();
+    }
+
+    pub fn finalize(this: *Dirent) callconv(.C) void {
+        this.deref();
         bun.destroy(this);
     }
 };

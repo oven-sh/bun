@@ -3595,14 +3595,14 @@ pub const JSValue = enum(JSValueReprInt) {
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
-        key: [*c]ZigString,
+        key: *ZigString,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
     ) callconv(.C) void;
 
-    pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, [*c]ZigString, JSValue, bool, bool) callconv(.C) void) void;
-    pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, [*c]ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
 
     pub fn forEachProperty(
         this: JSValue,

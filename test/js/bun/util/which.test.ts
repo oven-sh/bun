@@ -29,6 +29,11 @@ function writeFixture(path: string) {
   fs.chmodSync(script_name, "755");
 }
 
+test("which rlly long", async () => {
+  const longstr = "a".repeat(100000);
+  expect(() => which(longstr)).toThrow("bin path is too long");
+});
+
 if (isWindows) {
   test("which", () => {
     expect(which("cmd")).toBe("C:\\Windows\\system32\\cmd.exe");

@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
+    if (segment.len + 1 + bin.len > bun.MAX_PATH_BYTES) return null;
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
     bun.copy(u8, buf[segment.len + 1 ..], bin);
@@ -15,6 +16,7 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+    if (bin.len > bun.MAX_PATH_BYTES) return null;
     bun.Output.scoped(.which, true)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
 
     if (bun.Environment.os == .windows) {

@@ -1840,6 +1840,44 @@ describe("workspaces", async () => {
       "pkg5",
       "two-range-deps",
     ]);
+
+    // add a dependency to a workspace with the same name as another workspace
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "bar@0.0.7"],
+      cwd: join(packageDir, "packages", "boba"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ pkg5@workspace:packages/pkg5",
+      "",
+      "installed bar@0.0.7",
+      "",
+      "4 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
+      name: "boba",
+      version: "1.0.0",
+      dependencies: {
+        "pkg5": "*",
+        "two-range-deps": "^1.0.0",
+        "bar": "0.0.7",
+      },
+    });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@types",
+      "bar",
+      "boba",
+      "no-deps",
+      "pkg5",
+      "two-range-deps",
+    ]);
   });
   test("it should detect duplicate workspace dependencies", async () => {
     await writeFile(

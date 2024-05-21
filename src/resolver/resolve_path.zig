@@ -1081,6 +1081,11 @@ pub const Platform = enum {
 pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) []u8 {
     return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
 }
+pub fn normalizeStringZ(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) [:0]u8 {
+    const normalized = normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
+    parser_buffer[normalized.len] = 0;
+    return parser_buffer[0..normalized.len :0];
+}
 
 pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []u8 {
     return normalizeBufT(u8, str, buf, _platform);

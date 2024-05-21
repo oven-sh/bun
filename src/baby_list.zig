@@ -65,6 +65,16 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub fn deepClone(this: @This(), allocator: std.mem.Allocator) !@This() {
+            if (comptime Type != bun.JSAst.Expr and Type != bun.JSAst.G.Property) @compileError("Unsupported type for BabyList.deepClone()");
+            var list_ = try initCapacity(allocator, this.len);
+            for (this.slice()) |item| {
+                list_.appendAssumeCapacity(try item.deepClone(allocator));
+            }
+
+            return list_;
+        }
+
         pub fn clearRetainingCapacity(this: *@This()) void {
             this.len = 0;
         }

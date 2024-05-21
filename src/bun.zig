@@ -1259,7 +1259,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }
@@ -1303,6 +1303,12 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
         return err;
     };
+}
+
+pub fn getFdPathZ(fd_: anytype, buf: *PathBuffer) ![:0]u8 {
+    const path_ = try getFdPath(fd_, buf);
+    buf[path_.len] = 0;
+    return buf[0..path_.len :0];
 }
 
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
@@ -2787,6 +2793,12 @@ pub const Dirname = struct {
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
+}
+
+pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    const ptr = allocator.create(T) catch outOfMemory();
+    ptr.* = t;
+    return ptr;
 }
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;

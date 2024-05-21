@@ -394,7 +394,7 @@ pub const ByteRangeMapping = struct {
             executable_lines = try Bitset.initEmpty(allocator, line_count);
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
             for (blocks, 0..) |block, i| {
-                if (block.endOffset < 0) continue; // does not map to anything
+                if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
 
                 const min: usize = @intCast(@min(block.startOffset, block.endOffset));
                 const max: usize = @intCast(@max(block.startOffset, block.endOffset));
@@ -414,9 +414,9 @@ pub const ByteRangeMapping = struct {
                     min_line = @min(min_line, line);
                     max_line = @max(max_line, line);
 
-                    executable_lines.set(@intCast(new_line_index));
+                    executable_lines.set(line);
                     if (has_executed) {
-                        lines_which_have_executed.set(@intCast(new_line_index));
+                        lines_which_have_executed.set(line);
                     }
                 }
 
@@ -432,6 +432,8 @@ pub const ByteRangeMapping = struct {
             }
 
             for (function_blocks, 0..) |function, i| {
+                if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
+
                 const min: usize = @intCast(@min(function.startOffset, function.endOffset));
                 const max: usize = @intCast(@max(function.startOffset, function.endOffset));
                 var min_line: u32 = std.math.maxInt(u32);
@@ -475,7 +477,7 @@ pub const ByteRangeMapping = struct {
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
 
             for (blocks, 0..) |block, i| {
-                if (block.endOffset < 0) continue; // does not map to anything
+                if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
 
                 const min: usize = @intCast(@min(block.startOffset, block.endOffset));
                 const max: usize = @intCast(@max(block.startOffset, block.endOffset));
@@ -518,6 +520,8 @@ pub const ByteRangeMapping = struct {
             }
 
             for (function_blocks, 0..) |function, i| {
+                if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
+
                 const min: usize = @intCast(@min(function.startOffset, function.endOffset));
                 const max: usize = @intCast(@max(function.startOffset, function.endOffset));
                 var min_line: u32 = std.math.maxInt(u32);

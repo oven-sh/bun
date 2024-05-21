@@ -852,6 +852,26 @@ pub const G = struct {
 
         pub const List = BabyList(Property);
 
+        pub fn deepClone(this: *const Property, allocator: std.mem.Allocator) !Property {
+            var class_static_block: ?*ClassStaticBlock = null;
+            if (this.class_static_block != null) {
+                class_static_block = bun.create(allocator, ClassStaticBlock, .{
+                    .loc = this.class_static_block.?.loc,
+                    .stmts = try this.class_static_block.?.stmts.clone(allocator),
+                });
+            }
+            return .{
+                .initializer = if (this.initializer) |init| try init.deepClone(allocator) else null,
+                .kind = this.kind,
+                .flags = this.flags,
+                .class_static_block = class_static_block,
+                .ts_decorators = try this.ts_decorators.deepClone(allocator),
+                .key = if (this.key) |key| try key.deepClone(allocator) else null,
+                .value = if (this.value) |value| try value.deepClone(allocator) else null,
+                .ts_metadata = this.ts_metadata,
+            };
+        }
+
         pub const Kind = enum(u3) {
             normal,
             get,
@@ -883,6 +903,25 @@ pub const G = struct {
         flags: Flags.Function.Set = Flags.Function.None,
 
         return_ts_metadata: TypeScript.Metadata = .m_none,
+
+        pub fn deepClone(this: *const Fn, allocator: std.mem.Allocator) !Fn {
+            const args = try allocator.alloc(Arg, this.args.len);
+            for (0..args.len) |i| {
+                args[i] = try this.args[i].deepClone(allocator);
+            }
+            return .{
+                .name = this.name,
+                .open_parens_loc = this.open_parens_loc,
+                .args = args,
+                .body = .{
+                    .loc = this.body.loc,
+                    .stmts = this.body.stmts,
+                },
+                .arguments_ref = this.arguments_ref,
+                .flags = this.flags,
+                .return_ts_metadata = this.return_ts_metadata,
+            };
+        }
     };
     pub const Arg = struct {
         ts_decorators: ExprNodeList = ExprNodeList{},
@@ -893,6 +932,16 @@ pub const G = struct {
         is_typescript_ctor_field: bool = false,
 
         ts_metadata: TypeScript.Metadata = .m_none,
+
+        pub fn deepClone(this: *const Arg, allocator: std.mem.Allocator) !Arg {
+            return .{
+                .ts_decorators = try this.ts_decorators.deepClone(allocator),
+                .binding = this.binding,
+                .default = if (this.default) |d| try d.deepClone(allocator) else null,
+                .is_typescript_ctor_field = this.is_typescript_ctor_field,
+                .ts_metadata = this.ts_metadata,
+            };
+        }
     };
 };
 
@@ -2393,6 +2442,14 @@ pub const E = struct {
             }
         }
 
+        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) !bun.stringZ {
+            if (s.isUTF8()) {
+                return allocator.dupeZ(u8, s.data);
+            } else {
+                return strings.toUTF8AllocZ(allocator, s.slice16());
+            }
+        }
+
         pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) !bun.string {
             if (s.isUTF8()) {
                 return try allocator.dupe(u8, s.data);
@@ -3110,6 +3167,13 @@ pub const Expr = struct {
         };
     }
 
+    pub fn deepClone(this: Expr, allocator: std.mem.Allocator) anyerror!Expr {
+        return .{
+            .loc = this.loc,
+            .data = try this.data.deepClone(allocator),
+        };
+    }
+
     pub fn wrapInArrow(this: Expr, allocator: std.mem.Allocator) !Expr {
         var stmts = try allocator.alloc(Stmt, 1);
         stmts[0] = Stmt.alloc(S.Return, S.Return{ .value = this }, this.loc);
@@ -3305,6 +3369,22 @@ pub const Expr = struct {
         switch (expr.data) {
             .e_string => |str| return str.string(allocator) catch null,
             .e_utf8_string => |str| return str.data,
+            else => return null,
+        }
+    }
+
+    pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+        switch (expr.data) {
+            .e_string => |str| return str.stringCloned(allocator) catch null,
+            .e_utf8_string => |str| return allocator.dupe(u8, str.data) catch null,
+            else => return null,
+        }
+    }
+
+    pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) ?stringZ {
+        switch (expr.data) {
+            .e_string => |str| return str.stringZ(allocator) catch null,
+            .e_utf8_string => |str| return allocator.dupeZ(u8, str.data) catch null,
             else => return null,
         }
     }
@@ -5067,6 +5147,217 @@ pub const Expr = struct {
                 .e_string => |el| {
                     const item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
                     item.* = el.*;
+                    return .{ .e_string = item };
+                },
+                else => this,
+            };
+        }
+
+        pub fn deepClone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
+            return switch (this) {
+                .e_array => |el| {
+                    const items = try el.items.deepClone(allocator);
+                    const item = bun.create(allocator, E.Array, .{
+                        .items = items,
+                        .comma_after_spread = el.comma_after_spread,
+                        .was_originally_macro = el.was_originally_macro,
+                        .is_single_line = el.is_single_line,
+                        .is_parenthesized = el.is_parenthesized,
+                        .close_bracket_loc = el.close_bracket_loc,
+                    });
+                    return .{ .e_array = item };
+                },
+                .e_unary => |el| {
+                    const item = bun.create(allocator, E.Unary, .{
+                        .op = el.op,
+                        .value = try el.value.deepClone(allocator),
+                    });
+                    return .{ .e_unary = item };
+                },
+                .e_binary => |el| {
+                    const item = bun.create(allocator, E.Binary, .{
+                        .op = el.op,
+                        .left = try el.left.deepClone(allocator),
+                        .right = try el.right.deepClone(allocator),
+                    });
+                    return .{ .e_binary = item };
+                },
+                .e_class => |el| {
+                    const properties = try allocator.alloc(G.Property, el.properties.len);
+                    for (el.properties, 0..) |prop, i| {
+                        properties[i] = try prop.deepClone(allocator);
+                    }
+
+                    const item = bun.create(allocator, E.Class, .{
+                        .class_keyword = el.class_keyword,
+                        .ts_decorators = try el.ts_decorators.deepClone(allocator),
+                        .class_name = el.class_name,
+                        .extends = if (el.extends) |e| try e.deepClone(allocator) else null,
+                        .body_loc = el.body_loc,
+                        .close_brace_loc = el.close_brace_loc,
+                        .properties = properties,
+                        .has_decorators = el.has_decorators,
+                    });
+                    return .{ .e_class = item };
+                },
+                .e_new => |el| {
+                    const item = bun.create(allocator, E.New, .{
+                        .target = try el.target.deepClone(allocator),
+                        .args = try el.args.deepClone(allocator),
+                        .can_be_unwrapped_if_unused = el.can_be_unwrapped_if_unused,
+                        .close_parens_loc = el.close_parens_loc,
+                    });
+
+                    return .{ .e_new = item };
+                },
+                .e_function => |el| {
+                    const item = bun.create(allocator, E.Function, .{
+                        .func = try el.func.deepClone(allocator),
+                    });
+                    return .{ .e_function = item };
+                },
+                .e_call => |el| {
+                    const item = bun.create(allocator, E.Call, .{
+                        .target = try el.target.deepClone(allocator),
+                        .args = try el.args.deepClone(allocator),
+                        .optional_chain = el.optional_chain,
+                        .is_direct_eval = el.is_direct_eval,
+                        .close_paren_loc = el.close_paren_loc,
+                        .can_be_unwrapped_if_unused = el.can_be_unwrapped_if_unused,
+                        .was_jsx_element = el.was_jsx_element,
+                    });
+                    return .{ .e_call = item };
+                },
+                .e_dot => |el| {
+                    const item = bun.create(allocator, E.Dot, .{
+                        .target = try el.target.deepClone(allocator),
+                        .name = el.name,
+                        .name_loc = el.name_loc,
+                        .optional_chain = el.optional_chain,
+                        .can_be_removed_if_unused = el.can_be_removed_if_unused,
+                        .call_can_be_unwrapped_if_unused = el.call_can_be_unwrapped_if_unused,
+                    });
+                    return .{ .e_dot = item };
+                },
+                .e_index => |el| {
+                    const item = bun.create(allocator, E.Index, .{
+                        .target = try el.target.deepClone(allocator),
+                        .index = try el.index.deepClone(allocator),
+                        .optional_chain = el.optional_chain,
+                    });
+                    return .{ .e_index = item };
+                },
+                .e_arrow => |el| {
+                    const args = try allocator.alloc(G.Arg, el.args.len);
+                    for (0..args.len) |i| {
+                        args[i] = try el.args[i].deepClone(allocator);
+                    }
+                    const item = bun.create(allocator, E.Arrow, .{
+                        .args = args,
+                        .body = el.body,
+                        .is_async = el.is_async,
+                        .has_rest_arg = el.has_rest_arg,
+                        .prefer_expr = el.prefer_expr,
+                    });
+
+                    return .{ .e_arrow = item };
+                },
+                .e_jsx_element => |el| {
+                    const item = bun.create(allocator, E.JSXElement, .{
+                        .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
+                        .properties = try el.properties.deepClone(allocator),
+                        .children = try el.children.deepClone(allocator),
+                        .key_prop_index = el.key_prop_index,
+                        .flags = el.flags,
+                        .close_tag_loc = el.close_tag_loc,
+                    });
+                    return .{ .e_jsx_element = item };
+                },
+                .e_object => |el| {
+                    const item = bun.create(allocator, E.Object, .{
+                        .properties = try el.properties.deepClone(allocator),
+                        .comma_after_spread = el.comma_after_spread,
+                        .is_single_line = el.is_single_line,
+                        .is_parenthesized = el.is_parenthesized,
+                        .was_originally_macro = el.was_originally_macro,
+                        .close_brace_loc = el.close_brace_loc,
+                    });
+                    return .{ .e_object = item };
+                },
+                .e_spread => |el| {
+                    const item = bun.create(allocator, E.Spread, .{
+                        .value = try el.value.deepClone(allocator),
+                    });
+                    return .{ .e_spread = item };
+                },
+                .e_template_part => |el| {
+                    const item = bun.create(allocator, E.TemplatePart, .{
+                        .value = try el.value.deepClone(allocator),
+                        .tail_loc = el.tail_loc,
+                        .tail = el.tail,
+                    });
+                    return .{ .e_template_part = item };
+                },
+                .e_template => |el| {
+                    const item = bun.create(allocator, E.Template, .{
+                        .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
+                        .parts = el.parts,
+                        .head = el.head,
+                    });
+                    return .{ .e_template = item };
+                },
+                .e_reg_exp => |el| {
+                    const item = bun.create(allocator, E.RegExp, .{
+                        .value = el.value,
+                        .flags_offset = el.flags_offset,
+                    });
+                    return .{ .e_reg_exp = item };
+                },
+                .e_await => |el| {
+                    const item = bun.create(allocator, E.Await, .{
+                        .value = try el.value.deepClone(allocator),
+                    });
+                    return .{ .e_await = item };
+                },
+                .e_yield => |el| {
+                    const item = bun.create(allocator, E.Yield, .{
+                        .value = if (el.value) |value| try value.deepClone(allocator) else null,
+                        .is_star = el.is_star,
+                    });
+                    return .{ .e_yield = item };
+                },
+                .e_if => |el| {
+                    const item = bun.create(allocator, E.If, .{
+                        .test_ = try el.test_.deepClone(allocator),
+                        .yes = try el.yes.deepClone(allocator),
+                        .no = try el.no.deepClone(allocator),
+                    });
+                    return .{ .e_if = item };
+                },
+                .e_import => |el| {
+                    const item = bun.create(allocator, E.Import, .{
+                        .expr = try el.expr.deepClone(allocator),
+                        .import_record_index = el.import_record_index,
+                        .type_attribute = el.type_attribute,
+                        .leading_interior_comments = el.leading_interior_comments,
+                    });
+                    return .{ .e_import = item };
+                },
+                .e_big_int => |el| {
+                    const item = bun.create(allocator, E.BigInt, .{
+                        .value = el.value,
+                    });
+                    return .{ .e_big_int = item };
+                },
+                .e_string => |el| {
+                    const item = bun.create(allocator, E.String, .{
+                        .data = el.data,
+                        .prefer_template = el.prefer_template,
+                        .next = el.next,
+                        .end = el.end,
+                        .rope_len = el.rope_len,
+                        .is_utf16 = el.is_utf16,
+                    });
                     return .{ .e_string = item };
                 },
                 else => this,

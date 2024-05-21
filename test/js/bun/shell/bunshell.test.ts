@@ -379,6 +379,14 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual("LMAO\n");
   });
 
+  describe("operators no spaces", async () => {
+    TestBuilder.command`echo LMAO|cat`.stdout("LMAO\n").runAsTest("pipeline");
+    TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");
+    TestBuilder.command`echo foo||echo hi`.stdout("foo\n").runAsTest("||");
+    TestBuilder.command`echo foo>hi.txt`.ensureTempDir().fileEquals("hi.txt", "foo\n").runAsTest("||");
+    TestBuilder.command`echo hifriends#lol`.stdout("hifriends#lol\n").runAsTest("#");
+  });
+
   test("cmd subst", async () => {
     const haha = "noice";
     const { stdout } = await $`echo $(echo noice)`;

@@ -7396,6 +7396,7 @@ pub const PackageManager = struct {
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
         };
+        manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
         manager.lockfile = try ctx.allocator.create(Lockfile);
         JSC.MiniEventLoop.global = &manager.event_loop.mini;
         if (!manager.options.enable.cache) {
@@ -10526,7 +10527,15 @@ pub const PackageManager = struct {
         package_json_contents: string,
         comptime log_level: Options.LogLevel,
     ) !void {
-        // sleep off for maximum network throughput
+
+        // Start resolving DNS for the default registry immediately.
+        if (manager.options.scope.url.hostname.len > 0) {
+            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+            const allocator = hostname_stack.get();
+            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+            defer allocator.free(hostname);
+            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname, manager.options.scope.url.getPortAuto());
+        }
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(

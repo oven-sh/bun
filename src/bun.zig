@@ -3227,3 +3227,38 @@ pub inline fn unsafeAssert(condition: bool) void {
 }
 
 pub const dns = @import("./dns.zig");
+
+/// When you don't need a super accurate timestamp, this is a fast way to get one.
+///
+/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
+///
+/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
+pub fn getRoughTickCountMs() u64 {
+    if (comptime Environment.isMac) {
+        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
+        const mach_continuous_approximate_time = struct {
+            pub extern "C" fn mach_continuous_approximate_time() u64;
+        }.mach_continuous_approximate_time;
+
+        return mach_continuous_approximate_time() / std.time.ns_per_ms;
+    }
+
+    if (comptime Environment.isLinux) {
+        var timespec = std.os.linux.timespec{
+            .tv_nsec = 0,
+            .tv_sec = 0,
+        };
+        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC_COARSE, &timespec);
+        const ns: u64 = @intCast(@max((timespec.tv_sec *| std.time.ns_per_s) +| timespec.tv_nsec, 0));
+        return ns / std.time.ns_per_ms;
+    }
+
+    if (comptime Environment.isWindows) {
+        const GetTickCount64 = struct {
+            pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
+        }.GetTickCount64;
+        return GetTickCount64();
+    }
+
+    return 0;
+}

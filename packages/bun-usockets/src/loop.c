@@ -201,7 +201,10 @@ void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_con
 }
 
 int us_internal_handle_dns_results(struct us_loop_t *loop) {
-    struct us_connecting_socket_t *s = __atomic_exchange_n(&loop->data.dns_ready_head, NULL, __ATOMIC_ACQ_REL);
+    Bun__lock(&loop->data.mutex);
+    struct us_connecting_socket_t *s = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = NULL;
+    Bun__unlock(&loop->data.mutex);
     us_internal_drain_pending_dns_resolve(loop, s);
     return s != NULL;
 }
@@ -281,9 +284,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
 
                 /* It is perfectly possible to come here with an error */
                 if (error) {
+                    struct us_connecting_socket_t *c = s->connect_state; 
+
                     /* Emit error, close without emitting on_close */
-                    s->context->on_connect_error(s->connect_state, error);
-                    us_connecting_socket_close(0, s->connect_state);
+
+                    /* There are two possible states here: 
+                        1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
+                        2. It's a us_socket_t* 
+
+                       We differentiate between these two cases by checking if the connect_state is null.
+                    */
+                    if (c) {
+                        s->context->on_connect_error(s->connect_state, error);
+                        us_connecting_socket_close(c->ssl, c);
+                    } else {
+                        s->context->on_socket_connect_error(s, error);
+                        // It's expected that close is called by the caller
+                    }
+                    
                     s = NULL;
                 } else {
                     /* All sockets poll for readable */

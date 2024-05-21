@@ -81,13 +81,7 @@ test("dependency on workspace without version in package.json", async () => {
     const lockfile = parseLockfile(packageDir);
     expect(lockfile).toMatchNodeModulesAt(packageDir);
     expect(lockfile).toMatchSnapshot(`version: ${version}`);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      " + bar@workspace:packages/bar",
-      " + lodash@workspace:packages/mono",
-      "",
-      " 2 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
   }
@@ -110,13 +104,7 @@ test("dependency on workspace without version in package.json", async () => {
     const lockfile = parseLockfile(packageDir);
     expect(lockfile).toMatchNodeModulesAt(packageDir);
     expect(lockfile).toMatchSnapshot(`version: ${version}`);
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      " + bar@workspace:packages/bar",
-      " + lodash@workspace:packages/mono",
-      "",
-      " 3 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
     rmSync(join(packageDir, "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "packages", "bar", "node_modules"), { recursive: true, force: true });
     rmSync(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -157,11 +145,5 @@ test("dependency on same name as workspace and dist-tag", async () => {
   const lockfile = parseLockfile(packageDir);
   expect(lockfile).toMatchSnapshot("with version");
   expect(lockfile).toMatchNodeModulesAt(packageDir);
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    " + bar@workspace:packages/bar",
-    " + lodash@workspace:packages/mono",
-    "",
-    " 3 packages installed",
-  ]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
 });

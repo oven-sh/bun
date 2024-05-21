@@ -107,7 +107,7 @@ enum {
 
 struct us_internal_ssl_socket_t {
   struct us_socket_t s;
-  SSL *ssl;
+  SSL *ssl; // this _must_ be the first member after s
 #if ALLOW_SERVER_RENEGOTIATION
   unsigned int client_pending_renegotiations;
   uint64_t last_ssl_renegotiation;
@@ -1515,13 +1515,14 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
                                            socket_ext_size);
 }
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
+// TODO does this need more changes?
+struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, const char *source_host, int options, int socket_ext_size) {
-  return (struct us_internal_ssl_socket_t *)us_socket_context_connect(
-      0, &context->sc, host, port, source_host, options,
+    int port, int options, int socket_ext_size, int* is_connected) {
+  return us_socket_context_connect(
+      2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size);
+          socket_ext_size, is_connected);
 }
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
@@ -1612,6 +1613,15 @@ void us_internal_ssl_socket_context_on_connect_error(
         struct us_internal_ssl_socket_t *, int code)) {
   us_socket_context_on_connect_error(
       0, (struct us_socket_context_t *)context,
+      (struct us_connecting_socket_t * (*)(struct us_connecting_socket_t *, int)) on_connect_error);
+}
+
+void us_internal_ssl_socket_context_on_socket_connect_error(
+    struct us_internal_ssl_socket_context_t *context,
+    struct us_internal_ssl_socket_t *(*on_connect_error)(
+        struct us_internal_ssl_socket_t *, int code)) {
+  us_socket_context_on_socket_connect_error(
+      0, (struct us_socket_context_t *)context,
       (struct us_socket_t * (*)(struct us_socket_t *, int)) on_connect_error);
 }
 
@@ -1691,6 +1701,10 @@ void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s) {
   return s + 1;
 }
 
+void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *s) {
+  return (char*)(s + 1) + sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t);
+}
+
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_shut_down(0, &s->s) ||
          SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN;
@@ -1743,10 +1757,13 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     struct us_internal_ssl_socket_context_t *context,
     struct us_internal_ssl_socket_t *s, int ext_size) {
   // todo: this is completely untested
+  int new_ext_size = ext_size;
+  if (ext_size != -1) {
+    new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
+  }
   return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
       0, &context->sc, &s->s,
-      sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          ext_size);
+      new_ext_size);
 }
 
 struct us_internal_ssl_socket_t *
@@ -1873,11 +1890,29 @@ ssl_wrapped_on_connect_error(struct us_internal_ssl_socket_t *s, int code) {
           context);
 
   if (wrapped_context->events.on_connect_error) {
-    wrapped_context->events.on_connect_error((struct us_socket_t *)s, code);
+    wrapped_context->events.on_connect_error((struct us_connecting_socket_t *)s, code);
   }
 
   if (wrapped_context->old_events.on_connect_error) {
-    wrapped_context->old_events.on_connect_error((struct us_socket_t *)s, code);
+    wrapped_context->old_events.on_connect_error((struct us_connecting_socket_t *)s, code);
+  }
+  return s;
+}
+
+struct us_internal_ssl_socket_t *
+ssl_wrapped_on_socket_connect_error(struct us_internal_ssl_socket_t *s, int code) {
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+  struct us_wrapped_socket_context_t *wrapped_context =
+      (struct us_wrapped_socket_context_t *)us_internal_ssl_socket_context_ext(
+          context);
+
+  if (wrapped_context->events.on_connecting_socket_error) {
+    wrapped_context->events.on_connecting_socket_error((struct us_socket_t *)s, code);
+  }
+
+  if (wrapped_context->old_events.on_connecting_socket_error) {
+    wrapped_context->old_events.on_connecting_socket_error((struct us_socket_t *)s, code);
   }
   return s;
 }
@@ -1949,8 +1984,12 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   // as well
   us_socket_context_on_connect_error(
       0, context,
-      (struct us_socket_t * (*)(struct us_socket_t *, int))
+      (struct us_connecting_socket_t * (*)(struct us_connecting_socket_t *, int))
           ssl_wrapped_on_connect_error);
+us_socket_context_on_socket_connect_error(
+      0, context,
+      (struct us_socket_t * (*)(struct us_socket_t *, int))
+          ssl_wrapped_on_socket_connect_error);
   us_socket_context_on_end(0, context,
                            (struct us_socket_t * (*)(struct us_socket_t *))
                                ssl_wrapped_context_on_end);

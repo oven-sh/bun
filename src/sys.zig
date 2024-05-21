@@ -638,9 +638,7 @@ pub fn normalizePathWindows(
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
-        return .{
-            .result = norm,
-        };
+        return .{ .result = norm };
     }
 
     const base_fd = if (dir_fd == bun.invalid_fd)
@@ -1702,7 +1700,6 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
             bun.strings.toNTPath(&w_buf_from, from),
             to_dir,
             bun.strings.toNTPath(&w_buf_to, to),
-            // @paperdave why waas this set to false?
             true,
         );
 
@@ -2096,91 +2093,63 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
-pub const WindowsFileAttributes = enum(windows.DWORD) {
-    invalid = windows.INVALID_FILE_ATTRIBUTES,
-    _,
-
-    pub fn isFile(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_NORMAL != 0;
-    }
-
-    pub fn isArchive(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_ARCHIVE != 0;
-    }
-    pub fn isCompressed(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_COMPRESSED != 0;
-    }
-    pub fn isDevice(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_DEVICE != 0;
-    }
-    pub fn isDirectory(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_DIRECTORY != 0;
-    }
-    pub fn isEncrypted(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_ENCRYPTED != 0;
-    }
-    pub fn isHidden(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_HIDDEN != 0;
-    }
-    pub fn isIntegrityStream(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_INTEGRITY_STREAM != 0;
-    }
-    pub fn isNormal(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_NORMAL != 0;
-    }
-    pub fn isNotContentIndexed(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED != 0;
-    }
-    pub fn isNoScrubData(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_NO_SCRUB_DATA != 0;
-    }
-    pub fn isOffline(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_OFFLINE != 0;
-    }
-    pub fn isReadonly(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_READONLY != 0;
-    }
-    pub fn isRecallOnDataAccess(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS != 0;
-    }
-    pub fn isRecallOnOpen(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_RECALL_ON_OPEN != 0;
-    }
-    pub fn isReparsePoint(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-    }
-    pub fn isSparseFile(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_SPARSE_FILE != 0;
-    }
-    pub fn isSystem(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_SYSTEM != 0;
-    }
-    pub fn isTemporary(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_TEMPORARY != 0;
-    }
-    pub fn isVirtual(this: WindowsFileAttributes) bool {
-        return @intFromEnum(this) & FILE_ATTRIBUTE_VIRTUAL != 0;
-    }
-
-    const FILE_ATTRIBUTE_ARCHIVE = 0x20;
-    const FILE_ATTRIBUTE_COMPRESSED = 0x800;
-    const FILE_ATTRIBUTE_DEVICE = 0x40;
-    const FILE_ATTRIBUTE_DIRECTORY = 0x10;
-    const FILE_ATTRIBUTE_ENCRYPTED = 0x4000;
-    const FILE_ATTRIBUTE_HIDDEN = 0x2;
-    const FILE_ATTRIBUTE_INTEGRITY_STREAM = 0x8000;
-    const FILE_ATTRIBUTE_NORMAL = 0x80;
-    const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED = 0x2000;
-    const FILE_ATTRIBUTE_NO_SCRUB_DATA = 0x20000;
-    const FILE_ATTRIBUTE_OFFLINE = 0x1000;
-    const FILE_ATTRIBUTE_READONLY = 0x1;
-    const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000;
-    const FILE_ATTRIBUTE_RECALL_ON_OPEN = 0x40000;
-    const FILE_ATTRIBUTE_REPARSE_POINT = 0x400;
-    const FILE_ATTRIBUTE_SPARSE_FILE = 0x200;
-    const FILE_ATTRIBUTE_SYSTEM = 0x4;
-    const FILE_ATTRIBUTE_TEMPORARY = 0x100;
-    const FILE_ATTRIBUTE_VIRTUAL = 0x10000;
+pub const WindowsFileAttributes = packed struct(windows.DWORD) {
+    //1 0x00000001 FILE_ATTRIBUTE_READONLY
+    is_readonly: bool,
+    //2 0x00000002 FILE_ATTRIBUTE_HIDDEN
+    is_hidden: bool,
+    //4 0x00000004 FILE_ATTRIBUTE_SYSTEM
+    is_system: bool,
+    //8
+    _03: bool,
+    //1 0x00000010 FILE_ATTRIBUTE_DIRECTORY
+    is_directory: bool,
+    //2 0x00000020 FILE_ATTRIBUTE_ARCHIVE
+    is_archive: bool,
+    //4 0x00000040 FILE_ATTRIBUTE_DEVICE
+    is_device: bool,
+    //8 0x00000080 FILE_ATTRIBUTE_NORMAL
+    is_normal: bool,
+    //1 0x00000100 FILE_ATTRIBUTE_TEMPORARY
+    is_temporary: bool,
+    //2 0x00000200 FILE_ATTRIBUTE_SPARSE_FILE
+    is_sparse_file: bool,
+    //4 0x00000400 FILE_ATTRIBUTE_REPARSE_POINT
+    is_reparse_point: bool,
+    //8 0x00000800 FILE_ATTRIBUTE_COMPRESSED
+    is_compressed: bool,
+    //1 0x00001000 FILE_ATTRIBUTE_OFFLINE
+    is_offline: bool,
+    //2 0x00002000 FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+    is_not_content_indexed: bool,
+    //4 0x00004000 FILE_ATTRIBUTE_ENCRYPTED
+    is_encrypted: bool,
+    //8 0x00008000 FILE_ATTRIBUTE_INTEGRITY_STREAM
+    is_integrity_stream: bool,
+    //1 0x00010000 FILE_ATTRIBUTE_VIRTUAL
+    is_virtual: bool,
+    //2 0x00020000 FILE_ATTRIBUTE_NO_SCRUB_DATA
+    is_no_scrub_data: bool,
+    //4 0x00040000 FILE_ATTRIBUTE_EA
+    is_ea: bool,
+    //8 0x00080000 FILE_ATTRIBUTE_PINNED
+    is_pinned: bool,
+    //1 0x00100000 FILE_ATTRIBUTE_UNPINNED
+    is_unpinned: bool,
+    //2
+    _21: bool,
+    //4 0x00040000 FILE_ATTRIBUTE_RECALL_ON_OPEN
+    is_recall_on_open: bool,
+    //8
+    _23: bool,
+    //1
+    _24: bool,
+    //2
+    _25: bool,
+    //4 0x00400000 FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    is_recall_on_data_access: bool,
+    //
+    __: u5,
 };
 
 pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
@@ -2189,15 +2158,14 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
     const T = std.meta.Child(@TypeOf(path));
     if (T == u16) {
         assertIsValidWindowsPath(bun.OSPathChar, path);
-        const attributes: WindowsFileAttributes = @enumFromInt(kernel32.GetFileAttributesW(path.ptr));
+        const dword = kernel32.GetFileAttributesW(path.ptr);
         if (comptime Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), attributes });
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), dword });
         }
-
-        if (attributes == .invalid) {
+        if (dword == windows.INVALID_FILE_ATTRIBUTES) {
             return null;
         }
-
+        const attributes: WindowsFileAttributes = @bitCast(dword);
         return attributes;
     } else {
         var wbuf: bun.WPathBuffer = undefined;
@@ -2214,7 +2182,7 @@ pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
     if (comptime Environment.isWindows) {
         const attributes = getFileAttributes(path) orelse return false;
 
-        if (file_only and attributes.isDirectory()) {
+        if (file_only and attributes.is_directory) {
             return false;
         }
 

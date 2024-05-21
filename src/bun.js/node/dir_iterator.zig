@@ -124,7 +124,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-
         .linux => struct {
             dir: Dir,
             // The if guard is solely there to prevent compile errors from missing `linux.dirent64`

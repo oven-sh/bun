@@ -1152,6 +1152,10 @@ pub const Behavior = packed struct(u8) {
         return this.workspace;
     }
 
+    pub inline fn isWorkspaceOnly(this: Behavior) bool {
+        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
+    }
+
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
         var b = this;
         b.normal = value;

@@ -1724,7 +1724,7 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
-  test("adding packages in workspaces", async () => {
+  test.only("adding packages in workspaces", async () => {
     await writeFile(
       join(packageDir, "package.json"),
       JSON.stringify({
@@ -1878,6 +1878,11 @@ describe("workspaces", async () => {
       "pkg5",
       "two-range-deps",
     ]);
+    expect(await file(join(packageDir, "node_modules", "boba", "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.7",
+      description: "not a workspace",
+    });
   });
   test("it should detect duplicate workspace dependencies", async () => {
     await writeFile(

@@ -663,7 +663,6 @@ function emitStreamErrorNT(self, streams, streamId, error, destroy) {
     stream.emit("error", error_instance);
     if (destroy) stream.destroy(error_instance);
   }
-  self.emit("streamError", error_instance);
 }
 
 function emitAbortedNT(self, streams, streamId, error) {
@@ -678,7 +677,6 @@ function emitAbortedNT(self, streams, streamId, error) {
     stream.emit("aborted", error);
     stream.emit("error", error_instance);
   }
-  self.emit("streamError", error_instance);
 }
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
@@ -726,7 +724,6 @@ class ClientHttp2Session extends Http2Session {
         }
         stream.rstCode = error;
         stream.emit("error", error_instance);
-        self.emit("streamError", error_instance);
       } else {
         process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
       }
@@ -842,7 +839,6 @@ class ClientHttp2Session extends Http2Session {
         stream.rstCode = constants.NGHTTP2_CANCEL;
         stream.emit("aborted", error);
         stream.emit("error", error_instance);
-        self.emit("streamError", error_instance);
       } else {
         process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }

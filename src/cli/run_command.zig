@@ -883,7 +883,7 @@ pub const RunCommand = struct {
             // the use of npm/? is copying yarn
             // e.g.
             // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            "bun/" ++ Global.package_json_version ++ " npm/? node/v21.6.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
+            "bun/" ++ Global.package_json_version ++ " npm/? node/v22.2.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
         ) catch unreachable;
 
         if (this_bundler.env.get("npm_execpath") == null) {

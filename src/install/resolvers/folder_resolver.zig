@@ -170,31 +170,46 @@ pub const FolderResolution = union(Tag) {
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
 
-        const source = brk: {
-            var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, std.os.O.RDONLY, 0).unwrap());
-            defer file.close();
-
-            {
-                body.data.reset();
-                var man = body.data.list.toManaged(manager.allocator);
-                defer body.data.list = man.moveToUnmanaged();
-                _ = try file.readToEndWithArrayList(&man).unwrap();
-            }
-
-            break :brk logger.Source.initPathString(abs, body.data.list.items);
-        };
-
         var package = Lockfile.Package{};
 
-        try package.parse(
-            manager.lockfile,
-            manager.allocator,
-            manager.log,
-            source,
-            ResolverType,
-            resolver,
-            features,
-        );
+        if (comptime ResolverType == WorkspaceResolver) {
+            const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{});
+
+            try package.parseWithJSON(
+                manager.lockfile,
+                manager.allocator,
+                manager.log,
+                json.source,
+                json.root,
+                ResolverType,
+                resolver,
+                features,
+            );
+        } else {
+            const source = brk: {
+                var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, std.os.O.RDONLY, 0).unwrap());
+                defer file.close();
+
+                {
+                    body.data.reset();
+                    var man = body.data.list.toManaged(manager.allocator);
+                    defer body.data.list = man.moveToUnmanaged();
+                    _ = try file.readToEndWithArrayList(&man).unwrap();
+                }
+
+                break :brk logger.Source.initPathString(abs, body.data.list.items);
+            };
+
+            try package.parse(
+                manager.lockfile,
+                manager.allocator,
+                manager.log,
+                source,
+                ResolverType,
+                resolver,
+                features,
+            );
+        }
 
         const has_scripts = package.scripts.hasAny() or brk: {
             const dir = std.fs.path.dirname(abs) orelse "";

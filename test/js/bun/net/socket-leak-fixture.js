@@ -12,8 +12,12 @@ const server = Bun.listen({
   },
 });
 
+const fd_before = openSync("/dev/null", "w");
+closeSync(fd_before);
+
+// start 100 connections
 let connected = 0;
-async function callback() {
+for (let i = 0; i < 100; i++) {
   await Bun.connect({
     port: server.port,
     hostname: "localhost",
@@ -25,12 +29,6 @@ async function callback() {
     },
   });
 }
-
-const fd_before = openSync("/dev/null", "w");
-closeSync(fd_before);
-
-// start 100 connections
-const connections = await Promise.all(new Array(100).fill(0).map(callback));
 
 expect(connected).toBe(100);
 

@@ -63,13 +63,11 @@ pub const KeepAlive = struct {
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unrefConcurrently(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+    pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        // vm.event_loop_handle.?.unrefConcurrently();
-        event_loop_ctx.platformEventLoop().unrefConcurrently();
+        vm.event_loop.unrefConcurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -106,13 +104,11 @@ pub const KeepAlive = struct {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn refConcurrently(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+    pub fn refConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        // vm.event_loop_handle.?.refConcurrently();
-        event_loop_ctx.platformEventLoop().refConcurrently();
+        vm.event_loop.refConcurrently();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {

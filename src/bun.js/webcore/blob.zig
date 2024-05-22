@@ -2021,7 +2021,7 @@ pub const Blob = struct {
                     });
                     return;
                 }
-                loop.refConcurrently();
+                this.event_loop.refConcurrently();
             }
 
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
@@ -2039,7 +2039,7 @@ pub const Blob = struct {
                 var this: *CopyFileWindows = @fieldParentPtr(CopyFileWindows, "io_request", req);
                 assert(req.data == @as(?*anyopaque, @ptrCast(this)));
                 var event_loop = this.event_loop;
-                event_loop.virtual_machine.event_loop_handle.?.unrefConcurrently();
+                event_loop.unrefConcurrently();
                 const rc = req.result;
 
                 bun.sys.syslog("uv_fs_copyfile() = {}", .{rc});

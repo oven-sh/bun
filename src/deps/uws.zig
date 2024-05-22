@@ -1226,16 +1226,6 @@ pub const PosixLoop = extern struct {
         this.num_polls += 1;
         this.active += 1;
     }
-    pub fn refConcurrently(this: *PosixLoop) void {
-        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .Monotonic);
-        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .Monotonic);
-        log("refConcurrently ({d}, {d})", .{ this.num_polls, this.active });
-    }
-    pub fn unrefConcurrently(this: *PosixLoop) void {
-        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .Monotonic);
-        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .Monotonic);
-        log("unrefConcurrently ({d}, {d})", .{ this.num_polls, this.active });
-    }
 
     pub fn unref(this: *PosixLoop) void {
         log("unref", .{});

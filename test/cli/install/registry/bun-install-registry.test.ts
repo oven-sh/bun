@@ -1724,6 +1724,125 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
+  test("adding packages in a subdirectory of a workspace", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["foo"],
+      }),
+    );
+
+    await mkdir(join(packageDir, "folder1"));
+    await mkdir(join(packageDir, "foo", "folder2"), { recursive: true });
+    await writeFile(
+      join(packageDir, "foo", "package.json"),
+      JSON.stringify({
+        name: "foo",
+      }),
+    );
+
+    // add package to root workspace from `folder1`
+    let { stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: join(packageDir, "folder1"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    });
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "installed no-deps@2.0.0",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "root",
+      workspaces: ["foo"],
+      dependencies: {
+        "no-deps": "^2.0.0",
+      },
+    });
+
+    // add package to foo from `folder2`
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "what-bin"],
+      cwd: join(packageDir, "foo", "folder2"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "installed what-bin@1.5.0 with binaries:",
+      " - what-bin",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "foo", "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "what-bin": "^1.5.0",
+      },
+    });
+
+    // now delete node_modules and bun.lockb and install
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"));
+
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "folder1"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ no-deps@2.0.0",
+      "",
+      "3 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "foo",
+      "no-deps",
+      "what-bin",
+    ]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"));
+
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "foo", "folder2"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ what-bin@1.5.0",
+      "",
+      "3 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "foo",
+      "no-deps",
+      "what-bin",
+    ]);
+  });
   test("adding packages in workspaces", async () => {
     await writeFile(
       join(packageDir, "package.json"),

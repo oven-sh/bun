@@ -234,6 +234,7 @@ bun upgrade --canary
   - [Use Neon's Serverless Postgres with Bun](https://bun.sh/guides/ecosystem/neon-serverless-postgres)
   - [Use Prisma with Bun](https://bun.sh/guides/ecosystem/prisma)
   - [Use React and JSX](https://bun.sh/guides/ecosystem/react)
+  - [Add Sentry to a Bun app](https://bun.sh/guides/ecosystem/sentry)
 
 - HTTP 
   - [Common HTTP server usage](https://bun.sh/guides/http/server)

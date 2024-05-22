@@ -1006,7 +1006,9 @@ describe("Client Basics", () => {
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
         req.on("error", err => {
-          expect(err.errno).toBe(http2.constants.NGHTTP2_CONNECT_ERROR);
+          if (err.errno !== http2.constants.NGHTTP2_CONNECT_ERROR) {
+            reject(err);
+          }
         });
         req.end();
       });
@@ -1037,7 +1039,9 @@ describe("Client Basics", () => {
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
         req.on("error", err => {
-          expect(err.errno).toBe(http2.constants.NGHTTP2_CONNECT_ERROR);
+          if (err.errno !== http2.constants.NGHTTP2_CONNECT_ERROR) {
+            reject(err);
+          }
         });
         req.end();
       });

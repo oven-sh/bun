@@ -531,6 +531,8 @@ pub const Options = struct {
     /// Used for cross-module inlining of import items when bundling
     const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
 
+    jest_expect_ref: Ref = Ref.None,
+
     // TODO: remove this
     // The reason for this is:
     // 1. You're bundling a React component
@@ -2405,6 +2407,36 @@ fn NewPrinter(
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");
                     } else {
+                        // Replace all
+                        //   expect(foo).toMatchInlineSnapshot(...args)
+                        //
+                        //   expect(foo).toMatchInlineSnapshot(...args, location)
+                        if (comptime is_bun_platform) {
+                            if (!p.options.jest_expect_ref.isNull()) {
+                                if (e.target.data == .e_dot and
+                                    e.target.data.e_dot.name.len == "toMatchInlineSnapshot".len)
+                                {
+                                    const dot = e.target.data.e_dot;
+                                    const parent_target = dot.target;
+                                    if (parent_target.data == .e_call) {
+                                        if (switch (parent_target.data.e_call.target.data) {
+                                            .e_identifier => |ident| ident.ref.eql(p.options.jest_expect_ref),
+                                            .e_import_identifier => |ident| ident.ref.eql(p.symbols().follow(p.options.jest_expect_ref)),
+                                            else => false,
+                                        }) {
+                                            if (strings.eqlComptimeIgnoreLen(dot.name, "toMatchInlineSnapshot")) {
+                                                e.args.append(p.options.allocator, &.{
+                                                    js_ast.Expr.init(E.Number, E.Number{
+                                                        .value = @floatFromInt(e.target.loc.start),
+                                                    }, e.target.loc),
+                                                }) catch unreachable;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         p.printExpr(e.target, .postfix, target_flags);
                     }
 

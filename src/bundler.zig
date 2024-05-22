@@ -1144,6 +1144,7 @@ pub const Bundler = struct {
                     .minify_syntax = bundler.options.minify_syntax,
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
+                    .jest_expect_ref = ast.jest.expect,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                 },
                 enable_source_map,
@@ -1167,6 +1168,7 @@ pub const Bundler = struct {
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
+                    .jest_expect_ref = ast.jest.expect,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                 },
                 enable_source_map,
@@ -1189,6 +1191,7 @@ pub const Bundler = struct {
                         .minify_syntax = bundler.options.minify_syntax,
                         .minify_identifiers = bundler.options.minify_identifiers,
                         .transform_only = bundler.options.transform_only,
+                        .jest_expect_ref = ast.jest.expect,
                         .module_type = if (is_bun and bundler.options.transform_only)
                             // this is for when using `bun build --no-bundle`
                             // it should copy what was passed for the cli
@@ -1417,9 +1420,13 @@ pub const Bundler = struct {
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
-                opts.features.minify_syntax = bundler.options.minify_syntax;
-                opts.features.minify_identifiers = bundler.options.minify_identifiers;
-                opts.features.dead_code_elimination = bundler.options.dead_code_elimination;
+
+                // We disable these things only for *.test.* files
+                // The goal is to improve the reliability of sourcemaps in those files.
+                opts.features.minify_syntax = !opts.features.inject_jest_globals and bundler.options.minify_syntax;
+                opts.features.minify_identifiers = !opts.features.inject_jest_globals and bundler.options.minify_identifiers;
+                opts.features.dead_code_elimination = !opts.features.inject_jest_globals and bundler.options.dead_code_elimination;
+
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
 
                 if (bundler.macro_context == null) {

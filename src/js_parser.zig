@@ -1220,6 +1220,16 @@ pub const ImportScanner = struct {
                                 };
                         }
 
+                        if (record.tag == .bun_test) {
+                            for (st.items) |item| {
+                                if (strings.eqlComptime(item.alias, "expect")) {
+                                    var symbol = &p.symbols.items[p.jest.expect.innerIndex()];
+                                    symbol.link = item.name.ref.?;
+                                    break;
+                                }
+                            }
+                        }
+
                         if (record.was_originally_require) {
                             var symbol = &p.symbols.items[namespace_ref.innerIndex()];
                             symbol.namespace_alias = G.NamespaceAlias{
@@ -3939,7 +3949,7 @@ pub const Parser = struct {
         if (p.options.features.inject_jest_globals) outer: {
             var jest: *Jest = &p.jest;
 
-            for (p.import_records.items) |*item| {
+            for (@as([]ImportRecord, p.import_records.items)) |*item| {
                 // skip if they did import it
                 if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
                     if (p.options.features.runtime_transpiler_cache) |cache| {
@@ -3948,7 +3958,7 @@ pub const Parser = struct {
                             cache.input_hash = null;
                         }
                     }
-
+                    item.tag = .bun_test;
                     break :outer;
                 }
             }
@@ -4591,7 +4601,7 @@ pub const MacroState = struct {
     }
 };
 
-const Jest = struct {
+pub const Jest = struct {
     expect: Ref = Ref.None,
     describe: Ref = Ref.None,
     @"test": Ref = Ref.None,
@@ -22939,6 +22949,7 @@ fn NewParser_(
                 .import_keyword = p.esm_import_keyword,
                 .export_keyword = p.esm_export_keyword,
                 .top_level_symbols_to_parts = top_level_symbols_to_parts,
+                .jest = p.jest,
                 .char_freq = p.computeCharacterFrequency(),
 
                 // Assign slots to symbols in nested scopes. This is some precomputation for

@@ -6397,6 +6397,8 @@ pub const Ast = struct {
     commonjs_export_names: []string = &([_]string{}),
     import_meta_ref: Ref = Ref.None,
 
+    jest: @import("./js_parser.zig").Jest = .{},
+
     pub const CommonJSNamedExport = struct {
         loc_ref: LocRef,
         needs_decl: bool = true,

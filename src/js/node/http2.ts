@@ -1267,21 +1267,21 @@ function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Fu
 }
 
 function createServer() {
-  throwNotImplemented("node:http2 createServer", 887);
+  throwNotImplemented("node:http2 createServer", 8823);
 }
 function createSecureServer() {
-  throwNotImplemented("node:http2 createSecureServer", 887);
+  throwNotImplemented("node:http2 createSecureServer", 8823);
 }
 function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
 function Http2ServerRequest() {
-  throwNotImplemented("node:http2 Http2ServerRequest", 887);
+  throwNotImplemented("node:http2 Http2ServerRequest", 8823);
 }
 Http2ServerRequest.prototype = {};
 function Http2ServerResponse() {
-  throwNotImplemented("node:http2 Http2ServerResponse", 887);
+  throwNotImplemented("node:http2 Http2ServerResponse", 8823);
 }
 Http2ServerResponse.prototype = {};
 

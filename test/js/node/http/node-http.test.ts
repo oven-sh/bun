@@ -31,14 +31,16 @@ import * as zlib from "node:zlib";
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
     server.listen({ port: 0 }, (err, hostname, port) => {
+      clearTimeout(timeout);
+
       if (err) {
         reject(err);
       } else {
         resolve(new URL(`${protocol}://${hostname}:${port}`));
       }
     });
-    setTimeout(() => reject("Timed out"), 5000);
   });
 }
 

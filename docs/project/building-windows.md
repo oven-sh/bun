@@ -1,4 +1,4 @@
-This document describes the build process for Windows. If you run into problems, please join the [#windows channel on our Discord](http://bun.sh/discord) for help.
+This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.sh/discord) for help.
 
 It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
 
@@ -44,19 +44,19 @@ By default, running unverified scripts are blocked.
 
 ### System Dependencies
 
-- Bun 1.1 or later. We use Bun to run it's own code generators.
+Bun v1.1 or later. We use Bun to run it's own code generators.
 
 ```ps1
 > irm bun.sh/install.ps1 | iex
 ```
 
-- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
-  - Install Git from this installer, if not already installed.
-  - Everything can be installed with one WinGet command:
+[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, make sure to install Git as well, if Git for Windows is not already installed.
 
-    ```ps1
-    > winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
-    ```
+Visual Studio can be installed graphically using the wizard or through WinGet:
+
+```ps1
+> winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
+```
 
 After Visual Studio, you need the following:
 
@@ -69,7 +69,7 @@ After Visual Studio, you need the following:
 - Node.js
 
 {% callout %}
-The Zig compiler is automatically downloaded, installed, and updated by the building process.
+**Note** – The Zig compiler is automatically downloaded, installed, and updated by the building process.
 {% /callout %}
 
 [WinGet](https://learn.microsoft.com/windows/package-manager/winget) or [Scoop](https://scoop.sh) can be used to install these remaining tools easily:

@@ -12,7 +12,6 @@ import http, {
   IncomingMessage,
   OutgoingMessage,
 } from "node:http";
-
 import https from "node:https";
 import { EventEmitter } from "node:events";
 import { createServer as createHttpsServer } from "node:https";
@@ -24,7 +23,7 @@ import nodefs from "node:fs";
 import * as path from "node:path";
 import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 import { bunExe } from "bun:harness";
 import { bunEnv, tmpdirSync } from "harness";
 import * as stream from "node:stream";
@@ -32,14 +31,16 @@ import * as zlib from "node:zlib";
 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
     server.listen({ port: 0 }, (err, hostname, port) => {
+      clearTimeout(timeout);
+
       if (err) {
         reject(err);
       } else {
         resolve(new URL(`${protocol}://${hostname}:${port}`));
       }
     });
-    setTimeout(() => reject("Timed out"), 5000);
   });
 }
 
@@ -921,22 +922,24 @@ describe("node:http", () => {
   });
 
   describe("ClientRequest.signal", () => {
-    it("should attempt to make a standard GET request and abort", done => {
+    it("should attempt to make a standard GET request and abort", async () => {
       let server_port;
       let server_host;
+      const {
+        resolve: resolveClientAbort,
+        reject: rejectClientAbort,
+        promise: promiseClientAbort,
+      } = Promise.withResolvers();
 
-      const server = createServer((req, res) => {
-        Bun.sleep(10).then(() => {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World");
-          server.close();
-        });
-      });
+      const server = createServer((req, res) => {});
+
       server.listen({ port: 0 }, (_err, host, port) => {
         server_port = port;
         server_host = host;
 
-        get(`http://${server_host}:${server_port}`, { signal: AbortSignal.timeout(5) }, res => {
+        const signal = AbortSignal.timeout(5);
+
+        get(`http://${server_host}:${server_port}`, { signal }, res => {
           let data = "";
           res.setEncoding("utf8");
           res.on("data", chunk => {
@@ -944,18 +947,14 @@ describe("node:http", () => {
           });
           res.on("end", () => {
             server.close();
-            done();
           });
-          res.on("error", _ => {
-            server.close();
-            done();
-          });
-        }).on("error", err => {
-          expect(err?.name).toBe("AbortError");
-          server.close();
-          done();
+        }).once("abort", () => {
+          resolveClientAbort();
         });
       });
+
+      await promiseClientAbort;
+      server.close();
     });
   });
 

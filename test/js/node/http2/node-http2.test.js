@@ -5,7 +5,7 @@ import net from "node:net";
 import { which } from "bun";
 import path from "node:path";
 import fs from "node:fs";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, expectMaxObjectTypeCount } from "harness";
 import { tmpdir } from "node:os";
 import http2utils from "./helpers";
 import { afterAll, describe, beforeAll, it, test, expect } from "vitest";
@@ -636,8 +636,7 @@ describe("Client Basics", () => {
       await promise;
       expect("unreachable").toBe(true);
     } catch (err) {
-      expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-      expect(err.message).toBe("Stream closed with error code 8");
+      expect(err.errno).toBe(http2.constants.NGHTTP2_CANCEL);
     }
   });
   it("aborted event should work with abortController", async () => {
@@ -647,16 +646,18 @@ describe("Client Basics", () => {
     client.on("error", reject);
     const req = client.request({ ":path": "/" }, { signal: abortController.signal });
     req.on("aborted", resolve);
+    req.on("error", err => {
+      if (err.errno !== http2.constants.NGHTTP2_CANCEL) {
+        reject(err);
+      }
+    });
     req.on("end", () => {
-      resolve();
+      reject();
       client.close();
     });
     abortController.abort();
     const result = await promise;
-    expect(result).toBeDefined();
-    expect(result.name).toBe("AbortError");
-    expect(result.message).toBe("The operation was aborted.");
-    expect(result.code).toBe(20);
+    expect(result).toBeUndefined();
     expect(req.aborted).toBeTrue();
     expect(req.rstCode).toBe(8);
   });
@@ -666,15 +667,17 @@ describe("Client Basics", () => {
     client.on("error", reject);
     const req = client.request({ ":path": "/" }, { signal: AbortSignal.abort() });
     req.on("aborted", resolve);
+    req.on("error", err => {
+      if (err.errno !== http2.constants.NGHTTP2_CANCEL) {
+        reject(err);
+      }
+    });
     req.on("end", () => {
-      resolve();
+      reject();
       client.close();
     });
     const result = await promise;
-    expect(result).toBeDefined();
-    expect(result.name).toBe("AbortError");
-    expect(result.message).toBe("The operation was aborted.");
-    expect(result.code).toBe(20);
+    expect(result).toBeUndefined();
     expect(req.rstCode).toBe(8);
     expect(req.aborted).toBeTrue();
   });
@@ -693,9 +696,9 @@ describe("Client Basics", () => {
     req.on("data", chunk => {
       data += chunk;
     });
+    req.on("error", console.error);
     req.on("end", () => {
       resolve();
-      client.close();
     });
     await promise;
     expect(response_headers[":status"]).toBe(200);
@@ -1002,6 +1005,11 @@ describe("Client Basics", () => {
       client.on("error", reject);
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
+        req.on("error", err => {
+          if (err.errno !== http2.constants.NGHTTP2_CONNECT_ERROR) {
+            reject(err);
+          }
+        });
         req.end();
       });
       const result = await promise;
@@ -1030,6 +1038,11 @@ describe("Client Basics", () => {
       client.on("error", reject);
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
+        req.on("error", err => {
+          if (err.errno !== http2.constants.NGHTTP2_CONNECT_ERROR) {
+            reject(err);
+          }
+        });
         req.end();
       });
       const result = await promise;

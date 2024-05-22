@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { beforeEach, expect, test, setTimeout as jestSetTimeout } from "bun:test";
+import { beforeEach, expect, test, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
 import { writeFileSync } from "fs";
 import { bunExe, bunEnv, tmpdirSync } from "harness";
 

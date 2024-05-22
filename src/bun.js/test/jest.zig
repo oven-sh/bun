@@ -545,18 +545,12 @@ pub const Jest = struct {
 
     fn jsSetTimeout(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
-        if (arguments.len < 1) {
-            globalObject.throw("Bun.jest.setTimeout() expects a number (milliseconds)", .{});
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
             return .zero;
         }
 
-        const timeout_value = arguments[0];
-        if (!timeout_value.isNumber()) {
-            globalObject.throwInvalidArgumentType("setTimeout", "timeout", "number");
-            return .zero;
-        }
-
-        const timeout_ms: u32 = @intCast(@max(timeout_value.coerce(i32, globalObject), 0));
+        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
 
         if (Jest.runner) |test_runner| {
             test_runner.default_timeout_override = timeout_ms;

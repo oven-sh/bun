@@ -7144,10 +7144,13 @@ pub const PackageManager = struct {
             @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
         }
 
-        const original_package_json_path = ctx.allocator.allocSentinel(u8, top_level_dir_no_trailing_slash.len + "/package.json".len, 0) catch bun.outOfMemory();
-        @memcpy(original_package_json_path[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
-        @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
-        const original_cwd = strings.withoutSuffixComptime(original_package_json_path, "/package.json");
+        var original_package_json_path_buf = std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1) catch bun.outOfMemory();
+        original_package_json_path_buf.appendSliceAssumeCapacity(top_level_dir_no_trailing_slash);
+        original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
+        original_package_json_path_buf.appendAssumeCapacity(0);
+
+        var original_package_json_path: stringZ = original_package_json_path_buf.items[0 .. top_level_dir_no_trailing_slash.len + "/package.json".len :0];
+        const original_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
 
         var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
         var workspace_package_json_cache: WorkspacePackageJSONCache = .{
@@ -7173,19 +7176,19 @@ pub const PackageManager = struct {
                 const need_write = subcommand != .install or cli.positionals.len > 1;
 
                 while (true) {
-                    const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
-                    var buf2: bun.PathBuffer = undefined;
-                    @memcpy(buf2[0..this_cwd_without_trailing_slash.len], this_cwd_without_trailing_slash);
-                    buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-                    buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
+                    var package_json_path_buf: bun.PathBuffer = undefined;
+                    @memcpy(package_json_path_buf[0..this_cwd.len], this_cwd);
+                    package_json_path_buf[this_cwd.len..package_json_path_buf.len][0.."/package.json".len].* = "/package.json".*;
+                    package_json_path_buf[this_cwd.len + "/package.json".len] = 0;
+                    const package_json_path = package_json_path_buf[0 .. this_cwd.len + "/package.json".len :0];
 
                     break :child std.fs.cwd().openFileZ(
-                        buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr,
+                        package_json_path,
                         .{ .mode = if (need_write) .read_write else .read_only },
                     ) catch |err| switch (err) {
                         error.FileNotFound => {
                             if (std.fs.path.dirname(this_cwd)) |parent| {
-                                this_cwd = parent;
+                                this_cwd = strings.withoutTrailingSlash(parent);
                                 continue;
                             } else {
                                 break;
@@ -7193,7 +7196,7 @@ pub const PackageManager = struct {
                         },
                         error.AccessDenied => {
                             Output.err("EACCES", "Permission denied while opening \"{s}\"", .{
-                                buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len],
+                                package_json_path,
                             });
                             if (need_write) {
                                 Output.note("package.json must be writable to add packages", .{});
@@ -7204,7 +7207,7 @@ pub const PackageManager = struct {
                         },
                         else => {
                             Output.err(err, "could not open \"{s}\"", .{
-                                buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len],
+                                package_json_path,
                             });
                             return err;
                         },
@@ -7227,7 +7230,14 @@ pub const PackageManager = struct {
                 return error.MissingPackageJSON;
             };
 
-            const child_cwd = this_cwd;
+            bun.assert(strings.eqlLong(original_package_json_path_buf.items[0..this_cwd.len], this_cwd, true));
+            original_package_json_path_buf.items.len = this_cwd.len;
+            original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
+            original_package_json_path_buf.appendAssumeCapacity(0);
+
+            original_package_json_path = original_package_json_path_buf.items[0 .. this_cwd.len + "/package.json".len :0];
+            const child_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
+
             // Check if this is a workspace; if so, use root package
             var found = false;
             if (comptime subcommand != .link) {
@@ -7394,7 +7404,7 @@ pub const PackageManager = struct {
             .event_loop = .{
                 .mini = JSC.MiniEventLoop.init(bun.default_allocator),
             },
-            .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
+            .original_package_json_path = original_package_json_path,
             .workspace_package_json_cache = workspace_package_json_cache,
             .workspace_name_hash = workspace_name_hash,
         };

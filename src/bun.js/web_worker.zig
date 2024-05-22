@@ -123,7 +123,7 @@ pub const WebWorker = struct {
             .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
         };
 
-        worker.parent_poll_ref.refConcurrently(parent);
+        worker.parent_poll_ref.ref(parent);
 
         return worker;
     }
@@ -190,7 +190,6 @@ pub const WebWorker = struct {
     fn deinit(this: *WebWorker) void {
         log("[{d}] deinit", .{this.execution_context_id});
         this.parent_poll_ref.unrefConcurrently(this.parent);
-        this.parent.event_loop_handle.?.wakeup();
         bun.default_allocator.free(this.specifier);
         bun.default_allocator.destroy(this);
     }

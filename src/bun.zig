@@ -2232,8 +2232,33 @@ pub const win32 = struct {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
         C.windows_enable_stdio_inheritance();
+        const job = windows.CreateJobObjectA(null, null) orelse Output.panic(
+            "Could not create watcher Job Object: {s}",
+            .{@tagName(std.os.windows.kernel32.GetLastError())},
+        );
+        var jeli = std.mem.zeroes(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+        jeli.BasicLimitInformation.LimitFlags =
+            windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+            windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
+            windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |
+            windows.JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+        if (windows.SetInformationJobObject(
+            job,
+            windows.JobObjectExtendedLimitInformation,
+            &jeli,
+            @sizeOf(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+        ) == 0) {
+            Output.panic(
+                "Could not configure watcher Job Object: {s}",
+                .{@tagName(std.os.windows.kernel32.GetLastError())},
+            );
+        }
+
         while (true) {
-            spawnWatcherChild(allocator, &procinfo) catch |err| {
+            spawnWatcherChild(allocator, &procinfo, job) catch |err| {
+                if (err == error.Win32Error) {
+                    Output.panic("Failed to spawn process: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
+                }
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
             };
             w.WaitForSingleObject(procinfo.hProcess, w.INFINITE) catch |err| {
@@ -2259,8 +2284,31 @@ pub const win32 = struct {
     pub fn spawnWatcherChild(
         allocator: std.mem.Allocator,
         procinfo: *std.os.windows.PROCESS_INFORMATION,
+        job: w.HANDLE,
     ) !void {
-        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
+        // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
+        var attr_size: usize = undefined;
+        if (windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size) != 0) {
+            return error.Win32Error;
+        }
+        const p = try allocator.alloc(u8, attr_size);
+        defer allocator.free(p);
+        if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) != 0) {
+            return error.Win32Error;
+        }
+        if (windows.UpdateProcThreadAttribute(
+            p.ptr,
+            0,
+            windows.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            @ptrCast(&job),
+            @sizeOf(w.HANDLE),
+            null,
+            null,
+        ) != 0) {
+            return error.Win32Error;
+        }
+
+        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT;
 
         const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
@@ -2298,25 +2346,28 @@ pub const win32 = struct {
         envbuf[size + watcherChildEnv.len + 2] = 0;
         envbuf[size + watcherChildEnv.len + 3] = 0;
 
-        var startupinfo = w.STARTUPINFOW{
-            .cb = @sizeOf(w.STARTUPINFOW),
-            .lpReserved = null,
-            .lpDesktop = null,
-            .lpTitle = null,
-            .dwX = 0,
-            .dwY = 0,
-            .dwXSize = 0,
-            .dwYSize = 0,
-            .dwXCountChars = 0,
-            .dwYCountChars = 0,
-            .dwFillAttribute = 0,
-            .dwFlags = w.STARTF_USESTDHANDLES,
-            .wShowWindow = 0,
-            .cbReserved2 = 0,
-            .lpReserved2 = null,
-            .hStdInput = std.io.getStdIn().handle,
-            .hStdOutput = std.io.getStdOut().handle,
-            .hStdError = std.io.getStdErr().handle,
+        var startupinfo = windows.STARTUPINFOEXW{
+            .StartupInfo = .{
+                .cb = @sizeOf(windows.STARTUPINFOEXW),
+                .lpReserved = null,
+                .lpDesktop = null,
+                .lpTitle = null,
+                .dwX = 0,
+                .dwY = 0,
+                .dwXSize = 0,
+                .dwYSize = 0,
+                .dwXCountChars = 0,
+                .dwYCountChars = 0,
+                .dwFillAttribute = 0,
+                .dwFlags = w.STARTF_USESTDHANDLES,
+                .wShowWindow = 0,
+                .cbReserved2 = 0,
+                .lpReserved2 = null,
+                .hStdInput = std.io.getStdIn().handle,
+                .hStdOutput = std.io.getStdOut().handle,
+                .hStdError = std.io.getStdErr().handle,
+            },
+            .lpAttributeList = p.ptr,
         };
         @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
@@ -2328,12 +2379,15 @@ pub const win32 = struct {
             flags,
             envbuf.ptr,
             null,
-            &startupinfo,
+            @ptrCast(&startupinfo),
             procinfo,
         );
         if (rc == 0) {
-            Output.panic("Unexpected error while reloading process\n", .{});
+            return error.Win32Error;
         }
+        var is_in_job: w.BOOL = 0;
+        _ = windows.IsProcessInJob(procinfo.hProcess, job, &is_in_job);
+        assert(is_in_job != 0);
         _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };

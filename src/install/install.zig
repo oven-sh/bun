@@ -2461,12 +2461,25 @@ pub const PackageManager = struct {
             always_decode_escape_sequences: bool = true,
         };
 
+        pub const GetResult = union(enum) {
+            entry: *MapEntry,
+            read_err: anyerror,
+            parse_err: anyerror,
+
+            pub fn unwrap(this: GetResult) !*MapEntry {
+                return switch (this) {
+                    .entry => |entry| entry,
+                    inline else => |err| err,
+                };
+            }
+        };
+
         map: Map = .{},
 
         /// Given an absolute path to a workspace package.json, return the AST
         /// and contents of the file. If the package.json is not present in the
         /// cache, it will be read from disk and parsed, and stored in the cache.
-        pub fn getWithPath(this: *@This(), allocator: std.mem.Allocator, log: *logger.Log, abs_package_json_path: anytype, comptime opts: GetJSONOptions) !*MapEntry {
+        pub fn getWithPath(this: *@This(), allocator: std.mem.Allocator, log: *logger.Log, abs_package_json_path: anytype, comptime opts: GetJSONOptions) GetResult {
             bun.assert(std.fs.path.isAbsolute(abs_package_json_path));
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
@@ -2480,20 +2493,22 @@ pub const PackageManager = struct {
 
             const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
             if (entry.found_existing) {
-                return entry.value_ptr;
+                return .{ .entry = entry.value_ptr };
             }
 
             const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
 
-            const source = try bun.sys.File.toSource(key, allocator).unwrap();
+            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| return .{ .read_err = err };
 
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json = if (comptime opts.always_decode_escape_sequences)
-                try json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
+            const _json = if (comptime opts.always_decode_escape_sequences)
+                json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
             else
-                try json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+                json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+
+            const json = _json catch |err| return .{ .parse_err = err };
 
             entry.value_ptr.* = .{
                 .root = json.deepClone(allocator) catch bun.outOfMemory(),
@@ -2502,7 +2517,7 @@ pub const PackageManager = struct {
 
             entry.key_ptr.* = key;
 
-            return entry.value_ptr;
+            return .{ .entry = entry.value_ptr };
         }
 
         /// source path is used as the key, needs to be absolute
@@ -2512,7 +2527,7 @@ pub const PackageManager = struct {
             log: *logger.Log,
             source: logger.Source,
             comptime opts: GetJSONOptions,
-        ) !*MapEntry {
+        ) GetResult {
             bun.assert(std.fs.path.isAbsolute(source.path.text));
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
@@ -2526,16 +2541,17 @@ pub const PackageManager = struct {
 
             const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
             if (entry.found_existing) {
-                return entry.value_ptr;
+                return .{ .entry = entry.value_ptr };
             }
 
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json = if (comptime opts.always_decode_escape_sequences)
-                try json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
+            const _json = if (comptime opts.always_decode_escape_sequences)
+                json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
             else
-                try json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+                json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+            const json = _json catch |err| return .{ .parse_err = err };
 
             entry.value_ptr.* = .{
                 .root = json.deepClone(allocator) catch bun.outOfMemory(),
@@ -2544,7 +2560,7 @@ pub const PackageManager = struct {
 
             entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
 
-            return entry.value_ptr;
+            return .{ .entry = entry.value_ptr };
         }
     };
 
@@ -8558,28 +8574,34 @@ pub const PackageManager = struct {
             Global.crash();
         }
 
-        var current_package_json = manager.workspace_package_json_cache.getWithPath(
+        var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
             manager.allocator,
             manager.log,
             manager.original_package_json_path,
             .{
                 .always_decode_escape_sequences = false,
             },
-        ) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                },
-            }
-
-            if (err == error.ParserError and manager.log.errors > 0) {
-                Output.prettyErrorln("error: Failed to parse package.json", .{});
+        )) {
+            .parse_err => |err| {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
                 Global.crash();
-            }
-
-            Output.panic("<r><red>{s}<r> parsing package.json<r>", .{
-                @errorName(err),
-            });
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .entry => |entry| entry,
         };
 
         // If there originally was a newline at the end of their package.json, preserve it
@@ -8711,7 +8733,28 @@ pub const PackageManager = struct {
         @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
         const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
 
-        const root_package_json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{});
+        const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
+            .parse_err => |err| {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    root_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        };
 
         try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
 

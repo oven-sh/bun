@@ -1082,7 +1082,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 );
             } else if (Environment.isLinux) {
                 const file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
-                var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 bun.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 const slice: [:0]u8 = buf[0..file_path_to_use_.len :0];

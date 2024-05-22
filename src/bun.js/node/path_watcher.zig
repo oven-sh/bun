@@ -440,7 +440,7 @@ pub const PathWatcherManager = struct {
         fn processWatcher(
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
-            buf: *[bun.MAX_PATH_BYTES + 1]u8,
+            buf: *bun.PathBuffer,
         ) bun.JSC.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
@@ -524,7 +524,7 @@ pub const PathWatcherManager = struct {
                 return bun.todo(@src(), {});
             }
 
-            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
 
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();

@@ -173,7 +173,7 @@ pub const FolderResolution = union(Tag) {
         var package = Lockfile.Package{};
 
         if (comptime ResolverType == WorkspaceResolver) {
-            const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{});
+            const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
 
             try package.parseWithJSON(
                 manager.lockfile,

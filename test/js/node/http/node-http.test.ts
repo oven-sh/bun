@@ -12,7 +12,6 @@ import http, {
   IncomingMessage,
   OutgoingMessage,
 } from "node:http";
-
 import https from "node:https";
 import { EventEmitter } from "node:events";
 import { createServer as createHttpsServer } from "node:https";
@@ -24,7 +23,7 @@ import nodefs from "node:fs";
 import * as path from "node:path";
 import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 import { bunExe } from "bun:harness";
 import { bunEnv, tmpdirSync } from "harness";
 import * as stream from "node:stream";
@@ -936,6 +935,11 @@ describe("node:http", () => {
         server_port = port;
         server_host = host;
 
+        const abort = mock(() => {
+          server.close();
+          done();
+        });
+
         get(`http://${server_host}:${server_port}`, { signal: AbortSignal.timeout(5) }, res => {
           let data = "";
           res.setEncoding("utf8");
@@ -944,17 +948,8 @@ describe("node:http", () => {
           });
           res.on("end", () => {
             server.close();
-            done();
           });
-          res.on("error", _ => {
-            server.close();
-            done();
-          });
-        }).on("error", err => {
-          expect(err?.name).toBe("AbortError");
-          server.close();
-          done();
-        });
+        }).on("abort", abort);
       });
     });
   });

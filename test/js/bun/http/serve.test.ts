@@ -105,9 +105,12 @@ describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () 
               Bun.gc(false);
             }
             {
-              const promises = new Array(count);
+              const promises = new Array(64);
               for (let i = 0; i < count; i++) {
-                promises[i] = callback();
+                if (i % 64) {
+                  await Promise.all(promises);
+                }
+                promises[i % 64] = callback();
               }
 
               await Promise.all(promises);
@@ -1128,8 +1131,8 @@ it("request body and signal life cycle", async () => {
     });
 
     const requests = [];
-    for (let j = 0; j < 10; j++) {
-      for (let i = 0; i < 250; i++) {
+    for (let j = 0; j < 50; j++) {
+      for (let i = 0; i < 50; i++) {
         requests.push(fetch(server.url.origin));
       }
 

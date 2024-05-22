@@ -183,6 +183,7 @@ describe("Server", () => {
   test("abort signal on server", async () => {
     {
       let signalOnServer = false;
+      let fetchAborted = false;
       const abortController = new AbortController();
       using server = Bun.serve({
         async fetch(req) {
@@ -198,8 +199,15 @@ describe("Server", () => {
 
       try {
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+      } catch (err: any) {
+        expect(err).toBeDefined();
+        expect(err?.name).toBe("AbortError");
+        fetchAborted = true;
+      }
+      // wait for the server to process the abort signal, fetch may throw before the server processes the signal
+      await Bun.sleep(15);
       expect(signalOnServer).toBe(true);
+      expect(fetchAborted).toBe(true);
     }
   });
 
@@ -208,6 +216,7 @@ describe("Server", () => {
       const abortController = new AbortController();
 
       let signalOnServer = false;
+      let fetchAborted = false;
       using server = Bun.serve({
         async fetch(req) {
           req.signal.addEventListener("abort", () => {
@@ -220,8 +229,13 @@ describe("Server", () => {
 
       try {
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
-      } catch {}
+      } catch {
+        fetchAborted = true;
+      }
+      // wait for the server to process the abort signal, fetch may throw before the server processes the signal
+      await Bun.sleep(15);
       expect(signalOnServer).toBe(false);
+      expect(fetchAborted).toBe(false);
     }
   });
 

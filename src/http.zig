@@ -781,9 +781,11 @@ pub const HTTPThread = struct {
                     if (http.is_tls) {
                         const socket = uws.SocketTLS.fromAny(socket_ptr.value);
                         socket.shutdown();
+                        socket.shutdownRead();
                     } else {
                         const socket = uws.SocketTCP.fromAny(socket_ptr.value);
                         socket.shutdown();
+                        socket.shutdownRead();
                     }
                 }
             }

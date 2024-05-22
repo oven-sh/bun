@@ -4,13 +4,14 @@ import { chmodSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { gzipSync } from "zlib";
 import { join } from "path";
-import { gc, withoutAggressiveGC, gcTick, isWindows, tmpdirSync } from "harness";
+import { gc, withoutAggressiveGC, isWindows, bunExe, bunEnv, tmpdirSync } from "harness";
 import net from "net";
 
 const tmp_dir = tmpdirSync();
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8").replaceAll("\r\n", "\n");
-
+const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
+const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
 let server: Server;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
@@ -1994,5 +1995,63 @@ describe("http/1.1 response body length", () => {
     const response = await fetch(`http://${getHost()}/text`, { method: "HEAD" });
     expect(response.status).toBe(200);
     expect(response.arrayBuffer()).resolves.toHaveLength(0);
+  });
+});
+describe("fetch Response life cycle", () => {
+  it("should not keep Response alive if not consumed", async () => {
+    const serverProcess = Bun.spawn({
+      cmd: [bunExe(), "--smol", fetchFixture3],
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    async function getServerUrl() {
+      const reader = serverProcess.stdout.getReader();
+      const { done, value } = await reader.read();
+      return new TextDecoder().decode(value);
+    }
+    const serverUrl = await getServerUrl();
+    const clientProcess = Bun.spawn({
+      cmd: [bunExe(), "--smol", fetchFixture4, serverUrl],
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    try {
+      expect(await clientProcess.exited).toBe(0);
+    } finally {
+      serverProcess.kill();
+    }
+  });
+  it("should allow to get promise result after response is GC'd", async () => {
+    const server = Bun.serve({
+      async fetch(request: Request) {
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(100);
+              controller.enqueue(new TextEncoder().encode("Hello, World!"));
+              await Bun.sleep(100);
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    async function fetchResponse() {
+      const response = await fetch(`${server.url.origin}/non-empty`);
+      return response.text();
+    }
+    try {
+      const response_promise = fetchResponse();
+      Bun.gc(true);
+      expect(await response_promise).toBe("Hello, World!");
+    } finally {
+      server.stop(true);
+    }
   });
 });

@@ -2288,9 +2288,7 @@ pub const win32 = struct {
     ) !void {
         // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
         var attr_size: usize = undefined;
-        if (windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size) != 0) {
-            return error.Win32Error;
-        }
+        _ = windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
         const p = try allocator.alloc(u8, attr_size);
         defer allocator.free(p);
         if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) != 0) {

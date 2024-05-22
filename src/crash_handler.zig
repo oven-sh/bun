@@ -1138,10 +1138,13 @@ fn isReportingEnabled() bool {
     if (!bun.analytics.isEnabled())
         return false;
 
-    // TODO: currently we are only testing automatic reporting
-    // in canary. later, this should be set to releases.
     if (bun.Environment.is_canary)
         return true;
+
+    // Change in v1.1.10: enable crash reporter auto upload on macOS and Windows.
+    if (bun.Environment.isMac or bun.Environment.isWindows) {
+        return true;
+    }
 
     return false;
 }

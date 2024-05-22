@@ -174,7 +174,7 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `DO_NOT_TRACK`
-- Telemetry is not sent yet as of November 28th, 2023, but we are planning to add telemetry in the coming months. If `DO_NOT_TRACK=1`, then analytics are [disabled](https://do-not-track.dev/). Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. Equivalent of `telemetry=false` in bunfig.
+- Disable uploading crash reports to `bun.report` on crash. On macOS & Windows, crash report uploads are enabled by default. Otherwise, telemetry is not sent yet as of May 21st, 2024, but we are planning to add telemetry in the coming weeks. If `DO_NOT_TRACK=1`, then auto-uploading crash reports and telemetry are both [disabled](https://do-not-track.dev/).
 
 {% /table %}
 

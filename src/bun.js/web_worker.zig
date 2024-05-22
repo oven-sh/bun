@@ -190,7 +190,6 @@ pub const WebWorker = struct {
     fn deinit(this: *WebWorker) void {
         log("[{d}] deinit", .{this.execution_context_id});
         this.parent_poll_ref.unrefConcurrently(this.parent);
-        this.parent.event_loop_handle.?.wakeup();
         bun.default_allocator.free(this.specifier);
         bun.default_allocator.destroy(this);
     }

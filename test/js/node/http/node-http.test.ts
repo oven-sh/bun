@@ -922,27 +922,24 @@ describe("node:http", () => {
   });
 
   describe("ClientRequest.signal", () => {
-    it("should attempt to make a standard GET request and abort", done => {
+    it("should attempt to make a standard GET request and abort", async () => {
       let server_port;
       let server_host;
+      const {
+        resolve: resolveClientAbort,
+        reject: rejectClientAbort,
+        promise: promiseClientAbort,
+      } = Promise.withResolvers();
 
-      const server = createServer((req, res) => {
-        Bun.sleep(10).then(() => {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World");
-          server.close();
-        });
-      });
+      const server = createServer((req, res) => {});
+
       server.listen({ port: 0 }, (_err, host, port) => {
         server_port = port;
         server_host = host;
 
-        const abort = mock(() => {
-          server.close();
-          done();
-        });
+        const signal = AbortSignal.timeout(5);
 
-        get(`http://${server_host}:${server_port}`, { signal: AbortSignal.timeout(5) }, res => {
+        get(`http://${server_host}:${server_port}`, { signal }, res => {
           let data = "";
           res.setEncoding("utf8");
           res.on("data", chunk => {
@@ -951,8 +948,13 @@ describe("node:http", () => {
           res.on("end", () => {
             server.close();
           });
-        }).on("abort", abort);
+        }).once("abort", () => {
+          resolveClientAbort();
+        });
       });
+
+      await promiseClientAbort;
+      server.close();
     });
   });
 

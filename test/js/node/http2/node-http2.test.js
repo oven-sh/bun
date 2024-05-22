@@ -1002,6 +1002,9 @@ describe("Client Basics", () => {
       client.on("error", reject);
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
+        req.on("error", err => {
+          expect(err.errno).toBe(http2.constants.NGHTTP2_CONNECT_ERROR);
+        });
         req.end();
       });
       const result = await promise;
@@ -1030,6 +1033,9 @@ describe("Client Basics", () => {
       client.on("error", reject);
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
+        req.on("error", err => {
+          expect(err.errno).toBe(http2.constants.NGHTTP2_CONNECT_ERROR);
+        });
         req.end();
       });
       const result = await promise;

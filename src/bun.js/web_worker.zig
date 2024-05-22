@@ -193,7 +193,6 @@ pub const WebWorker = struct {
         this.parent.event_loop_handle.?.wakeup();
         bun.default_allocator.free(this.specifier);
         bun.default_allocator.destroy(this);
-        this.parent.event_loop_handle.?.wakeup();
     }
 
     fn flushLogs(this: *WebWorker) void {

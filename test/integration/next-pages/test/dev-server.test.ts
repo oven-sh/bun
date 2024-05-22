@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, isCI, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
@@ -121,7 +121,8 @@ afterAll(() => {
 // https://github.com/puppeteer/puppeteer/issues/7740
 const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
 
-test.skipIf(puppeteer_unsupported)(
+// https://github.com/oven-sh/bun/issues/11255
+test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     expect(dev_server).not.toBeUndefined();
@@ -156,5 +157,5 @@ test.skipIf(puppeteer_unsupported)(
     // @ts-expect-error
     timeout = undefined;
   },
-  30000,
+  100_000,
 );

@@ -7088,14 +7088,16 @@ pub const PackageManager = struct {
                                     },
                                 }
                             }
-                            break :brk null;
+
+                            break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
                         .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),
-                            else => null,
+                            else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
                         },
-                        else => null,
-                    } orelse try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
+                        .workspace => try allocator.dupe(u8, "workspace:*"),
+                        else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                    };
                 }
             }
         }

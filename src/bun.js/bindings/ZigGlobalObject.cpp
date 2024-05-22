@@ -400,7 +400,7 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
                 sb.append("    at <parse> ("_s);
 
-                sb.append(sourceURLForFrame);
+                sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
                     errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);

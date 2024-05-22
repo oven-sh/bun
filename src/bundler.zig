@@ -395,7 +395,7 @@ pub const Bundler = struct {
 
     pub fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return _resolveEntryPoint(bundler, entry_point) catch |err| {
-            var cache_bust_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cache_bust_buf: bun.PathBuffer = undefined;
 
             // Bust directory cache and try again
             const buster_name = name: {
@@ -1658,9 +1658,9 @@ pub const Bundler = struct {
     }
 
     // This is public so it can be used by the HTTP handler when matching against public dir.
-    pub threadlocal var tmp_buildfile_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tmp_buildfile_buf: bun.PathBuffer = undefined;
+    threadlocal var tmp_buildfile_buf2: bun.PathBuffer = undefined;
+    threadlocal var tmp_buildfile_buf3: bun.PathBuffer = undefined;
 
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup

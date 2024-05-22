@@ -34,7 +34,7 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
 pub const ErrorCSS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: bun.PathBuffer = undefined;
             const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
@@ -57,7 +57,7 @@ pub const ReactRefresh = @embedFile("./react-refresh.js");
 pub const ErrorJS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: bun.PathBuffer = undefined;
             const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(

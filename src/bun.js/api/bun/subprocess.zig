@@ -1714,7 +1714,7 @@ pub const Subprocess = struct {
                     defer arg0.deinit();
 
                     if (argv0 == null) {
-                        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
                             globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                             return .zero;
@@ -1724,7 +1724,7 @@ pub const Subprocess = struct {
                             return .zero;
                         };
                     } else {
-                        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
                             globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                             return .zero;

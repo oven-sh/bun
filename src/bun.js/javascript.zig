@@ -114,13 +114,18 @@ export var has_bun_garbage_collector_flag_enabled = false;
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
+const SourceProviderMap = SourceMap.SourceProviderMap;
 
 const uv = bun.windows.libuv;
 
 pub const SavedSourceMap = struct {
+    /// This is a pointer to the map located on the VirtualMachine struct
+    map: *HashTable,
+    mutex: bun.Lock = bun.Lock.init(),
+
     pub const vlq_offset = 24;
 
-    // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
+    // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
     pub const SavedMappings = struct {
@@ -172,16 +177,58 @@ pub const SavedSourceMap = struct {
         }
     };
 
+    /// ParsedSourceMap is the canonical form for sourcemaps,
+    ///
+    /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
+    /// In `fn get`, this value gets converted to ParsedSourceMap always
     pub const Value = TaggedPointerUnion(.{
         ParsedSourceMap,
         SavedMappings,
+        SourceProviderMap,
     });
+
+    pub const MissingSourceMapNoteInfo = struct {
+        pub var storage: bun.PathBuffer = undefined;
+        pub var path: ?[]const u8 = null;
+
+        pub fn print() void {
+            if (path) |note| {
+                Output.note(
+                    "missing sourcemaps for {s}",
+                    .{note},
+                );
+                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+            }
+        }
+    };
+
+    pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
+        this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    }
+
+    pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        const entry = this.map.getEntry(bun.hash(path)) orelse return;
+        const old_value = Value.from(entry.value_ptr.*);
+        if (old_value.get(SourceProviderMap)) |prov| {
+            if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                // there is nothing to unref or deinit
+                this.map.removeByPtr(entry.key_ptr);
+            }
+        } else if (old_value.get(ParsedSourceMap)) |map| {
+            if (map.underlying_provider.provider()) |prov| {
+                if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                    map.deinit(default_allocator);
+                    this.map.removeByPtr(entry.key_ptr);
+                }
+            }
+        }
+    }
+
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
-
-    /// This is a pointer to the map located on the VirtualMachine struct
-    map: *HashTable,
-
-    mutex: bun.Lock = bun.Lock.init(),
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
@@ -192,6 +239,8 @@ pub const SavedSourceMap = struct {
     pub fn deinit(this: *SavedSourceMap) void {
         {
             this.mutex.lock();
+            defer this.mutex.unlock();
+
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
                 var value = Value.from(val.*);
@@ -201,39 +250,48 @@ pub const SavedSourceMap = struct {
                 } else if (value.get(SavedMappings)) |saved_mappings| {
                     var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                     saved.deinit();
+                } else if (value.get(SourceProviderMap)) |provider| {
+                    _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
                 }
             }
-
-            this.mutex.unlock();
         }
 
         this.map.deinit();
     }
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        const entry = try this.map.getOrPut(bun.hash(source.path.text));
-        if (entry.found_existing) {
-            var value = Value.from(entry.value_ptr.*);
-            if (value.get(ParsedSourceMap)) |source_map_| {
-                var source_map: *ParsedSourceMap = source_map_;
-                source_map.deinit(default_allocator);
-            } else if (value.get(SavedMappings)) |saved_mappings| {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-
-                saved.deinit();
-            }
-        }
-
-        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
+        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
     }
 
-    pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
-        const mapping = this.map.getEntry(bun.hash(path)) orelse return null;
+    fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        const entry = try this.map.getOrPut(bun.hash(path));
+        if (entry.found_existing) {
+            var old_value = Value.from(entry.value_ptr.*);
+            if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
+                var source_map: *ParsedSourceMap = parsed_source_map;
+                source_map.deinit(default_allocator);
+            } else if (old_value.get(SavedMappings)) |saved_mappings| {
+                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+                saved.deinit();
+            } else if (old_value.get(SourceProviderMap)) |provider| {
+                _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+            }
+        }
+        entry.value_ptr.* = value.ptr();
+    }
+
+    pub fn getWithContent(
+        this: *SavedSourceMap,
+        path: string,
+        hint: SourceMap.ParseUrlResultHint,
+    ) SourceMap.ParseUrl {
+        const hash = bun.hash(path);
+        const mapping = this.map.getEntry(hash) orelse return .{};
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
+                return .{ .map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap) };
             },
             Value.Tag.SavedMappings => {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
@@ -241,13 +299,40 @@ pub const SavedSourceMap = struct {
                 const result = default_allocator.create(ParsedSourceMap) catch unreachable;
                 result.* = saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
-                    return null;
+                    return .{};
                 };
                 mapping.value_ptr.* = Value.init(result).ptr();
-                return result.*;
+                return .{ .map = result };
             },
-            else => return null,
+            Value.Tag.SourceProviderMap => {
+                var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+
+                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                    if (parse.map) |map| {
+                        mapping.value_ptr.* = Value.init(map).ptr();
+                        return parse;
+                    };
+
+                // does not have a valid source map. let's not try again
+                _ = this.map.remove(hash);
+
+                // Store path for a user note.
+                const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+                @memcpy(storage, path);
+                MissingSourceMapNoteInfo.path = storage;
+                return .{};
+            },
+            else => {
+                if (Environment.allow_assert) {
+                    @panic("Corrupt pointer tag");
+                }
+                return .{};
+            },
         }
+    }
+
+    pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
+        return this.getWithContent(path, .mappings_only).map;
     }
 
     pub fn resolveMapping(
@@ -255,12 +340,25 @@ pub const SavedSourceMap = struct {
         path: []const u8,
         line: i32,
         column: i32,
-    ) ?SourceMap.Mapping {
+        source_handling: SourceMap.SourceContentHandling,
+    ) ?SourceMap.Mapping.Lookup {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        const parsed_mappings = this.get(path) orelse return null;
-        return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
+        const parse = this.getWithContent(path, switch (source_handling) {
+            .no_source_contents => .mappings_only,
+            .source_contents => .{ .all = .{ .line = line, .column = column } },
+        });
+        const map = parse.map orelse return null;
+        const mapping = parse.mapping orelse
+            SourceMap.Mapping.find(map.mappings, line, column) orelse
+            return null;
+
+        return .{
+            .mapping = mapping,
+            .source_map = map,
+            .prefetched_source_code = parse.source_contents,
+        };
     }
 };
 const uws = bun.uws;
@@ -542,6 +640,7 @@ pub const VirtualMachine = struct {
     /// only use it through
     /// source_mappings
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
+    source_mappings: SavedSourceMap = undefined,
 
     arena: *Arena = undefined,
     has_loaded: bool = false,
@@ -590,8 +689,6 @@ pub const VirtualMachine = struct {
 
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
-
-    source_mappings: SavedSourceMap = undefined,
 
     active_tasks: usize = 0,
 
@@ -1766,7 +1863,7 @@ pub const VirtualMachine = struct {
         return specifier;
     }
 
-    threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
         specifier: string,
@@ -2730,7 +2827,13 @@ pub const VirtualMachine = struct {
                 sourceURL.slice(),
                 @max(frame.position.line, 0),
                 @max(frame.position.column_start, 0),
-            )) |mapping| {
+                .no_source_contents,
+            )) |lookup| {
+                if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
+                    frame.source_url.deref();
+                    frame.source_url = source_url;
+                }
+                const mapping = lookup.mapping;
                 frame.position.line = mapping.original.lines;
                 frame.position.column_start = mapping.original.columns;
                 frame.remapped = true;
@@ -2741,8 +2844,16 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
+    pub fn remapZigException(
+        this: *VirtualMachine,
+        exception: *ZigException,
+        error_instance: JSValue,
+        exception_list: ?*ExceptionList,
+        must_reset_parser_arena_later: *bool,
+        source_code_slice: *?ZigString.Slice,
+    ) void {
         error_instance.toZigException(this.global, exception);
+
         // defer this so that it copies correctly
         defer {
             if (exception_list) |list| {
@@ -2819,28 +2930,51 @@ pub const VirtualMachine = struct {
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
 
-        const mapping_ = if (top.remapped)
-            SourceMap.Mapping{
-                .generated = .{},
-                .original = .{
-                    .lines = @max(top.position.line, 0),
-                    .columns = @max(top.position.column_start, 0),
+        const maybe_lookup = if (top.remapped)
+            SourceMap.Mapping.Lookup{
+                .mapping = .{
+                    .generated = .{},
+                    .original = .{
+                        .lines = @max(top.position.line, 0),
+                        .columns = @max(top.position.column_start, 0),
+                    },
+                    .source_index = 0,
                 },
-                .source_index = 0,
+                // undefined is fine, because these two values are never read if `top.remapped == true`
+                .source_map = undefined,
+                .prefetched_source_code = undefined,
             }
         else
             this.source_mappings.resolveMapping(
                 top_source_url.slice(),
                 @max(top.position.line, 0),
                 @max(top.position.column_start, 0),
+                .source_contents,
             );
 
-        if (mapping_) |mapping| {
-            var log = logger.Log.init(default_allocator);
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
-            must_reset_parser_arena_later.* = true;
-            const code = original_source.source_code.toUTF8(bun.default_allocator);
-            defer code.deinit();
+        if (maybe_lookup) |lookup| {
+            const mapping = lookup.mapping;
+
+            if (!top.remapped) {
+                if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
+                    top.source_url.deref();
+                    top.source_url = src;
+                }
+            }
+
+            const code = code: {
+                if (!top.remapped and lookup.source_map.isExternal()) {
+                    if (lookup.getSourceCode(top_source_url.slice())) |src| {
+                        break :code src;
+                    }
+                }
+
+                var log = logger.Log.init(default_allocator);
+                var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+                must_reset_parser_arena_later.* = true;
+                break :code original_source.source_code.toUTF8(bun.default_allocator);
+            };
+            source_code_slice.* = code;
 
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
@@ -2895,7 +3029,13 @@ pub const VirtualMachine = struct {
                     source_url.slice(),
                     @max(frame.position.line, 0),
                     @max(frame.position.column_start, 0),
-                )) |mapping| {
+                    .no_source_contents,
+                )) |lookup| {
+                    if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
+                        frame.source_url.deref();
+                        frame.source_url = src;
+                    }
+                    const mapping = lookup.mapping;
                     frame.position.line = mapping.original.lines;
                     frame.remapped = true;
                     frame.position.column_start = mapping.original.columns;
@@ -2908,7 +3048,17 @@ pub const VirtualMachine = struct {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
-        this.remapZigException(exception, error_instance, exception_list, &exception_holder.need_to_clear_parser_arena_on_deinit);
+
+        var source_code_slice: ?ZigString.Slice = null;
+        defer if (source_code_slice) |slice| slice.deinit();
+
+        this.remapZigException(
+            exception,
+            error_instance,
+            exception_list,
+            &exception_holder.need_to_clear_parser_arena_on_deinit,
+            &source_code_slice,
+        );
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
@@ -3656,7 +3806,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             var fs: *Fs.FileSystem = bundler.fs;
             var rfs: *Fs.FileSystem.RealFS = &fs.fs;
             var resolver = &bundler.resolver;
-            var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
             var current_task: HotReloadTask = .{
                 .reloader = this,
@@ -3825,6 +3975,20 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
     };
+}
+
+export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
+}
+
+export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 pub export var isBunTest: bool = false;

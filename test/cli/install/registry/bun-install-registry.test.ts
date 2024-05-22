@@ -5044,7 +5044,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
 
-      test(
+      // https://github.com/oven-sh/bun/issues/11252
+      test.todoIf(isWindows)(
         "bun pm trust",
         async () => {
           const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";

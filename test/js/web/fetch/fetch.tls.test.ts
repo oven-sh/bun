@@ -166,6 +166,7 @@ it("fetch should respect rejectUnauthorized env", async () => {
   await createServer(CERT_EXPIRED, async port => {
     const url = `https://localhost:${port}`;
 
+    const promises = [];
     for (let i = 0; i < 2; i++) {
       const proc = Bun.spawn({
         env: {
@@ -175,11 +176,15 @@ it("fetch should respect rejectUnauthorized env", async () => {
         },
         stderr: "inherit",
         stdout: "inherit",
+        stdin: "inherit",
         cmd: [bunExe(), join(import.meta.dir, "fetch-reject-authorized-env-fixture.js")],
       });
 
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(i);
+      promises.push(proc.exited);
     }
+
+    const [exitCode1, exitCode2] = await Promise.all(promises);
+    expect(exitCode1).toBe(0);
+    expect(exitCode2).toBe(1);
   });
 });

@@ -1,7 +1,7 @@
 {
   "include": [".", "../packages/bun-types/index.d.ts", "./testing-internals.d.ts"],
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "target": "ESNext",
     "moduleResolution": "bundler",

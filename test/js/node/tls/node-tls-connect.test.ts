@@ -1,6 +1,9 @@
 import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
 import { join } from "path";
 import { AddressInfo } from "ws";
+import { it, expect } from "bun:test";
+
+const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 it("should work with alpnProtocols", done => {
   try {
@@ -40,7 +43,7 @@ const COMMON_CERT = {
 };
 
 it("Bun.serve() should work with tls and Bun.file()", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch() {
       return new Response(Bun.file(join(import.meta.dir, "fixtures/index.html")));
@@ -52,11 +55,10 @@ it("Bun.serve() should work with tls and Bun.file()", async () => {
   });
   const res = await fetch(`https://${server.hostname}:${server.port}/`, { tls: { rejectUnauthorized: false } });
   expect(await res.text()).toBe("<h1>HELLO</h1>");
-  server.stop();
 });
 
 it("should have peer certificate when using self asign certificate", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     tls: {
       cert: COMMON_CERT.cert,
       key: COMMON_CERT.key,
@@ -119,7 +121,6 @@ it("should have peer certificate when using self asign certificate", async () =>
     expect(cert.serialNumber).toBe("A2DD4153F2F748E3");
     expect(cert.raw).toBeInstanceOf(Buffer);
   } finally {
-    server.stop();
     socket.end();
   }
 });
@@ -209,4 +210,82 @@ it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, e
 it("should have checkServerIdentity", async () => {
   expect(checkServerIdentity).toBeFunction();
   expect(tls.checkServerIdentity).toBeFunction();
+});
+
+// Test using only options
+it("should process options correctly when connect is called with only options", done => {
+  let socket = connect({
+    port: 443,
+    host: "bun.sh",
+    rejectUnauthorized: false,
+  });
+
+  socket.on("secureConnect", () => {
+    expect(socket.remotePort).toBe(443);
+    expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+    socket.end();
+    done();
+  });
+
+  socket.on("error", err => {
+    socket.end();
+    done(err);
+  });
+});
+
+// Test using port and host
+it("should process port and host correctly", done => {
+  let socket = connect(443, "bun.sh", {
+    rejectUnauthorized: false,
+  });
+
+  socket.on("secureConnect", () => {
+    expect(socket.remotePort).toBe(443);
+    expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+    socket.end();
+    done();
+  });
+
+  socket.on("error", err => {
+    socket.end();
+    done(err);
+  });
+});
+
+// Test using port, host, and callback
+it("should process port, host, and callback correctly", done => {
+  let socket = connect(
+    443,
+    "bun.sh",
+    {
+      rejectUnauthorized: false,
+    },
+    () => {
+      expect(socket.remotePort).toBe(443);
+      expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+      socket.end();
+      done();
+    },
+  ).on("error", err => {
+    done(err);
+  });
+});
+
+// Additional tests to ensure the callback is optional and handled correctly
+it("should handle the absence of a callback gracefully", done => {
+  let socket = connect(443, "bun.sh", {
+    rejectUnauthorized: false,
+  });
+
+  socket.on("secureConnect", () => {
+    expect(socket[symbolConnectOptions].serverName).toBe("bun.sh");
+    expect(socket.remotePort).toBe(443);
+    socket.end();
+    done();
+  });
+
+  socket.on("error", err => {
+    socket.end();
+    done(err);
+  });
 });

@@ -359,11 +359,16 @@ const TablePrinter = struct {
                     // find or create the column for the property
                     const column: *Column = brk: {
                         const col_str = String.init(col_key);
+
                         for (columns.items[1..]) |*col| {
                             if (col.name.eql(col_str)) {
                                 break :brk col;
                             }
                         }
+
+                        // Need to ref this string because JSPropertyIterator
+                        // uses `toString` instead of `toStringRef` for property names
+                        col_str.ref();
 
                         try columns.append(.{ .name = col_str });
 
@@ -625,9 +630,18 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
     defer holder.deinit(vm);
     const exception = holder.zigException();
 
+    var source_code_slice: ?ZigString.Slice = null;
+    defer if (source_code_slice) |slice| slice.deinit();
+
     var err = ZigString.init("trace output").toErrorInstance(global);
     err.toZigException(global, exception);
-    vm.remapZigException(exception, err, null, &holder.need_to_clear_parser_arena_on_deinit);
+    vm.remapZigException(
+        exception,
+        err,
+        null,
+        &holder.need_to_clear_parser_arena_on_deinit,
+        &source_code_slice,
+    );
 
     if (Output.enable_ansi_colors_stderr)
         VirtualMachine.printStackTrace(
@@ -1240,7 +1254,6 @@ pub const Formatter = struct {
         var slice = slice_;
         var i: u32 = 0;
         var len: u32 = @as(u32, @truncate(slice.len));
-        var any_non_ascii = false;
         var hit_percent = false;
         while (i < len) : (i += 1) {
             if (hit_percent) {
@@ -1254,6 +1267,9 @@ pub const Formatter = struct {
                     if (i >= len)
                         break;
 
+                    if (this.remaining_values.len == 0)
+                        break;
+
                     const token: PercentTag = switch (slice[i]) {
                         's' => .s,
                         'f' => .f,
@@ -1261,16 +1277,21 @@ pub const Formatter = struct {
                         'O' => .O,
                         'd', 'i' => .i,
                         'c' => .c,
+                        '%' => {
+                            // print up to and including the first %
+                            const end = slice[0..i];
+                            writer.writeAll(end);
+                            // then skip the second % so we dont hit it again
+                            slice = slice[@min(slice.len, i + 1)..];
+                            i = 0;
+                            continue;
+                        },
                         else => continue,
                     };
 
                     // Flush everything up to the %
                     const end = slice[0 .. i - 1];
-                    if (!any_non_ascii)
-                        writer.writeAll(end)
-                    else
-                        writer.writeAll(end);
-                    any_non_ascii = false;
+                    writer.writeAll(end);
                     slice = slice[@min(slice.len, i + 1)..];
                     i = 0;
                     hit_percent = true;
@@ -1416,15 +1437,6 @@ pub const Formatter = struct {
                         },
                     }
                     if (this.remaining_values.len == 0) break;
-                },
-                '\\' => {
-                    i += 1;
-                    if (i >= len)
-                        break;
-                    if (slice[i] == '%') i += 2;
-                },
-                128...255 => {
-                    any_non_ascii = true;
                 },
                 else => {},
             }
@@ -1688,12 +1700,11 @@ pub const Formatter = struct {
             pub fn forEach(
                 globalThis: *JSGlobalObject,
                 ctx_ptr: ?*anyopaque,
-                key_: [*c]ZigString,
+                key: *ZigString,
                 value: JSValue,
                 is_symbol: bool,
                 is_private_symbol: bool,
             ) callconv(.C) void {
-                const key = key_.?[0];
                 if (key.eqlComptime("constructor")) return;
 
                 var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);

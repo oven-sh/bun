@@ -118,7 +118,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         };
     } else {
         var parts = [_]string{ from_path, "src/js/out/" ++ moduleFolder ++ "/" ++ input };
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
         file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
@@ -174,7 +174,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             else => "/tmp/bun-debug-src/",
             .windows => brk: {
                 const temp = bun.fs.FileSystem.RealFS.platformTempDir();
-                var win_temp_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var win_temp_buffer: bun.PathBuffer = undefined;
                 @memcpy(win_temp_buffer[0..temp.len], temp);
                 const suffix = "\\bun-debug-src";
                 @memcpy(win_temp_buffer[temp.len .. temp.len + suffix.len], suffix);
@@ -592,6 +592,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = duped,
                     .source_url = duped.createIfDifferent(path.text),
+                    .already_bundled = true,
                     .hash = 0,
                 };
                 this.resolved_source.source_code.ensureHash();
@@ -731,7 +732,7 @@ pub const ModuleLoader = struct {
         }
 
         // atomically write to a tmpfile and then move it to the final destination
-        var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var tmpname_buf: bun.PathBuffer = undefined;
         const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
 
         const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
@@ -1796,7 +1797,7 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-
+                        .already_bundled = true,
                         .hash = 0,
                     };
                 }

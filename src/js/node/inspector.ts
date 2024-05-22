@@ -4,25 +4,27 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const EventEmitter = require("node:events");
 
 function open() {
-  throwNotImplemented("node:inspector open", 2445);
+  throwNotImplemented("node:inspector", 2445);
 }
 
 function close() {
-  throwNotImplemented("node:inspector close", 2445);
+  throwNotImplemented("node:inspector", 2445);
 }
 
 function url() {
-  throwNotImplemented("node:inspector url", 2445);
+  // Return undefined since that is allowed by the Node.js API
+  // https://nodejs.org/api/inspector.html#inspectorurl
+  return undefined;
 }
 
 function waitForDebugger() {
-  throwNotImplemented("node:inspector waitForDebugger", 2445);
+  throwNotImplemented("node:inspector", 2445);
 }
 
 class Session extends EventEmitter {
   constructor() {
     super();
-    throwNotImplemented("node:inspector Session", 2445);
+    throwNotImplemented("node:inspector", 2445);
   }
 }
 

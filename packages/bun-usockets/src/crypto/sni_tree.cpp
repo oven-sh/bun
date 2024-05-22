@@ -146,7 +146,7 @@ extern "C" {
                 memcpy(labelString, label.data(), label.length());
 
                 it = root->children.emplace(std::string_view((char *) labelString, label.length()),
-                                            std::make_unique<sni_node>()).first;
+                                            std::make_unique<sni_node>()).first; // NOLINT(clang-analyzer-unix.Malloc)
             }
 
             root = it->second.get();

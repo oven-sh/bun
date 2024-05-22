@@ -170,6 +170,7 @@ pub const Arguments = struct {
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
+        clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
@@ -214,9 +215,10 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
+        clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--outfile <STR>                   Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
@@ -231,7 +233,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
-        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
@@ -287,7 +289,7 @@ pub const Arguments = struct {
         try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
-    fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+    fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
         if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
@@ -296,7 +298,7 @@ pub const Arguments = struct {
         return null;
     }
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-        var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
@@ -333,7 +335,7 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         } else {
             if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var secondbuf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
@@ -407,7 +409,7 @@ pub const Arguments = struct {
         var cwd: []u8 = undefined;
         if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var outbuf: bun.PathBuffer = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
                 bun.sys.chdir(out).unwrap() catch |err| {
                     Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
@@ -532,9 +534,15 @@ pub const Arguments = struct {
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
             } else if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
                 bun.auto_reload_on_crash = true;
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
             }
 
             if (args.option("--origin")) |origin| {
@@ -692,6 +700,10 @@ pub const Arguments = struct {
             if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
                 bun.auto_reload_on_crash = true;
+
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
             }
 
             if (args.flag("--compile")) {
@@ -1087,7 +1099,7 @@ pub var pretend_to_be_node = false;
 pub var is_bunx_exe = false;
 
 pub const Command = struct {
-    var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var script_name_buf: bun.PathBuffer = undefined;
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -1919,7 +1931,7 @@ pub const Command = struct {
                     var win_resolver = resolve_path.PosixToWinNormalizer{};
                     var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
                     if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, true, .windows);
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
                     }
                     break :brk bun.openFile(
                         resolved,
@@ -1934,7 +1946,7 @@ pub const Command = struct {
 
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 } else {
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var path_buf: bun.PathBuffer = undefined;
                     const cwd = bun.getcwd(&path_buf) catch return false;
                     path_buf[cwd.len] = std.fs.path.sep;
                     var parts = [_]string{script_name_to_search};
@@ -1966,12 +1978,7 @@ pub const Command = struct {
                 if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
                 var fd_path_buf: bun.PathBuffer = undefined;
-                const path = bun.getFdPath(file, &fd_path_buf) catch return false;
-                break :brk resolve_path.normalizeString(
-                    resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
-                    true,
-                    .windows,
-                );
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
             };
         }
 

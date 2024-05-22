@@ -31,8 +31,8 @@ const Command = @import("../cli.zig").Command;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: bun.PathBuffer = undefined;
+var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const HTTPThread = bun.http.HTTPThread;
@@ -376,8 +376,8 @@ const Scanner = struct {
     dirs_to_scan: Fifo,
     results: *std.ArrayList(bun.PathString),
     fs: *FileSystem,
-    open_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
-    scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    open_dir_buf: bun.PathBuffer = undefined,
+    scan_dir_buf: bun.PathBuffer = undefined,
     options: *options.BundleOptions,
     has_iterated: bool = false,
     search_count: usize = 0,
@@ -1043,7 +1043,7 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.onError(vm.global, promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
@@ -1128,7 +1128,7 @@ pub const TestCommand = struct {
         if (is_last) {
             if (jest.Jest.runner != null) {
                 if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
-                    vm.onError(vm.global, err);
+                    _ = vm.uncaughtException(vm.global, err, true);
                 }
             }
         }

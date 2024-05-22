@@ -1,4 +1,4 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,7 +54,7 @@ describe("bun build", () => {
   });
 
   test("works with utf8 bom", () => {
-    const tmp = fs.mkdtempSync(path.join(tmpdir(), "bun-build-utf8-bom-"));
+    const tmp = tmpdirSync();
     const src = path.join(tmp, "index.js");
     fs.writeFileSync(src, '\ufeffconsole.log("hello world");', { encoding: "utf8" });
     const { exitCode } = Bun.spawnSync({

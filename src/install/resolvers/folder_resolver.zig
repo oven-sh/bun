@@ -117,7 +117,7 @@ pub const FolderResolution = union(Tag) {
             std.mem.trimRight(u8, normalize(non_normalized_path), std.fs.path.sep_str);
 
         if (strings.startsWithChar(normalized, '.')) {
-            var tempcat: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var tempcat: bun.PathBuffer = undefined;
 
             bun.copy(u8, &tempcat, normalized);
             tempcat[normalized.len..][0.."/package.json".len].* = (std.fs.path.sep_str ++ "package.json").*;
@@ -170,31 +170,46 @@ pub const FolderResolution = union(Tag) {
         var body = Npm.Registry.BodyPool.get(manager.allocator);
         defer Npm.Registry.BodyPool.release(body);
 
-        const source = brk: {
-            var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, std.os.O.RDONLY, 0).unwrap());
-            defer file.close();
-
-            {
-                body.data.reset();
-                var man = body.data.list.toManaged(manager.allocator);
-                defer body.data.list = man.moveToUnmanaged();
-                _ = try file.readToEndWithArrayList(&man).unwrap();
-            }
-
-            break :brk logger.Source.initPathString(abs, body.data.list.items);
-        };
-
         var package = Lockfile.Package{};
 
-        try package.parse(
-            manager.lockfile,
-            manager.allocator,
-            manager.log,
-            source,
-            ResolverType,
-            resolver,
-            features,
-        );
+        if (comptime ResolverType == WorkspaceResolver) {
+            const json = try manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, abs, .{}).unwrap();
+
+            try package.parseWithJSON(
+                manager.lockfile,
+                manager.allocator,
+                manager.log,
+                json.source,
+                json.root,
+                ResolverType,
+                resolver,
+                features,
+            );
+        } else {
+            const source = brk: {
+                var file = bun.sys.File.from(try bun.sys.openatA(bun.FD.cwd(), abs, std.os.O.RDONLY, 0).unwrap());
+                defer file.close();
+
+                {
+                    body.data.reset();
+                    var man = body.data.list.toManaged(manager.allocator);
+                    defer body.data.list = man.moveToUnmanaged();
+                    _ = try file.readToEndWithArrayList(&man).unwrap();
+                }
+
+                break :brk logger.Source.initPathString(abs, body.data.list.items);
+            };
+
+            try package.parse(
+                manager.lockfile,
+                manager.allocator,
+                manager.log,
+                source,
+                ResolverType,
+                resolver,
+                features,
+            );
+        }
 
         const has_scripts = package.scripts.hasAny() or brk: {
             const dir = std.fs.path.dirname(abs) orelse "";
@@ -224,7 +239,7 @@ pub const FolderResolution = union(Tag) {
     };
 
     pub fn getOrPut(global_or_relative: GlobalOrRelative, version: Dependency.Version, non_normalized_path: string, manager: *PackageManager) FolderResolution {
-        var joined: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var joined: bun.PathBuffer = undefined;
         const paths = normalizePackageJSONPath(global_or_relative, &joined, non_normalized_path);
         const abs = paths.abs;
         const rel = paths.rel;
@@ -241,7 +256,7 @@ pub const FolderResolution = union(Tag) {
 
         const package: Lockfile.Package = switch (global_or_relative) {
             .global => brk: {
-                var path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path: bun.PathBuffer = undefined;
                 std.mem.copyForwards(u8, &path, non_normalized_path);
                 break :brk readPackageJSONFromDisk(
                     manager,

@@ -190,6 +190,7 @@ pub const WebWorker = struct {
     fn deinit(this: *WebWorker) void {
         log("[{d}] deinit", .{this.execution_context_id});
         this.parent_poll_ref.unrefConcurrently(this.parent);
+        this.parent.event_loop_handle.?.wakeup();
         bun.default_allocator.free(this.specifier);
         bun.default_allocator.destroy(this);
     }
@@ -272,14 +273,16 @@ pub const WebWorker = struct {
         };
 
         if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.onError(vm.global, promise.result(vm.global.vm()));
+            const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
-            vm.exit_handler.exit_code = 1;
-            this.exitAndDeinit();
-            return;
+            if (!handled) {
+                vm.exit_handler.exit_code = 1;
+                this.exitAndDeinit();
+                return;
+            }
+        } else {
+            _ = promise.result(vm.global.vm());
         }
-
-        _ = promise.result(vm.global.vm());
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});

@@ -1,12 +1,10 @@
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
-import { realpathSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
+const socket_domain = tmpdirSync();
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -252,6 +250,36 @@ describe("net.Socket read", () => {
             })
             .on("error", done);
         }, socket_domain),
+      );
+
+      it(
+        "should support onread callback",
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const options = {
+            host: server.hostname,
+            port: server.port,
+            onread: {
+              buffer: Buffer.alloc(4096),
+              callback: (size, buf) => {
+                data += buf.slice(0, size).toString("utf8");
+              },
+            },
+          };
+          const socket = createConnection(options, () => {
+            expect(socket).toBeDefined();
+            expect(socket.connecting).toBe(false);
+          })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                done(e);
+              }
+            })
+            .on("error", done);
+        }),
       );
     });
   }

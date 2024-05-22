@@ -236,14 +236,14 @@ const Handlers = struct {
         const onError = this.onError;
         if (onError == .zero) {
             if (err.len > 0)
-                this.vm.onError(this.globalObject, err[0]);
+                _ = this.vm.uncaughtException(this.globalObject, err[0], false);
 
             return false;
         }
 
         const result = onError.callWithThis(this.globalObject, thisValue, err);
         if (result.isAnyError()) {
-            this.vm.onError(this.globalObject, result);
+            _ = this.vm.uncaughtException(this.globalObject, result, false);
         }
 
         return true;
@@ -810,7 +810,7 @@ pub const Listener = struct {
             const globalObject = listener.handlers.globalObject;
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
         }
-        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, this_socket);
+        socket.ext(**anyopaque).* = bun.cast(**anyopaque, this_socket);
         socket.setTimeout(120000);
     }
 
@@ -1358,6 +1358,8 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
+            // update the internal socket instance to the one that was just connected
+            this.socket = socket;
             JSC.markBinding(@src());
             log("onOpen ssl: {}", .{comptime ssl});
 
@@ -1397,7 +1399,7 @@ fn NewSocket(comptime ssl: bool) type {
             this.socket = socket;
 
             if (this.wrapped == .none) {
-                socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, this);
+                socket.ext(**anyopaque).* = bun.cast(**anyopaque, this);
             }
 
             const handlers = this.handlers;
@@ -3020,7 +3022,7 @@ fn NewSocket(comptime ssl: bool) type {
             tls.poll_ref.ref(this.handlers.vm);
 
             // mark both instances on socket data
-            new_socket.ext(WrappedSocket).?.* = .{ .tcp = raw, .tls = tls };
+            new_socket.ext(WrappedSocket).* = .{ .tcp = raw, .tls = tls };
 
             // start TLS handshake after we set ext
             new_socket.startTLS(!this.handlers.is_server);

@@ -4,6 +4,8 @@
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
 const ProcessNextTick = process.nextTick;
 
 const {
@@ -2270,6 +2272,15 @@ var require_readable = __commonJS({
     function Readable(options) {
       if (!(this instanceof Readable)) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
+
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      // };
+
       this._readableState = new ReadableState(options, this, isDuplex);
       if (options) {
         const { read, destroy, construct, signal } = options;
@@ -3430,6 +3441,7 @@ var require_readable = __commonJS({
     };
   },
 });
+const Readable = require_readable();
 
 // node_modules/readable-stream/lib/internal/streams/writable.js
 var errorOrDestroy;
@@ -3467,6 +3479,15 @@ var require_writable = __commonJS({
     function Writable(options = {}) {
       const isDuplex = this instanceof require_duplex();
       if (!isDuplex && !FunctionPrototypeSymbolHasInstance(Writable, this)) return new Writable(options);
+
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      // };
+
       this._writableState = new WritableState(options, this, isDuplex);
       if (options) {
         if (typeof options.write === "function") this._write = options.write;
@@ -4071,6 +4092,7 @@ var require_writable = __commonJS({
     };
   },
 });
+const Writable = require_writable();
 
 // node_modules/readable-stream/lib/internal/streams/duplexify.js
 var require_duplexify = __commonJS({
@@ -4429,6 +4451,18 @@ var require_duplex = __commonJS({
 
     function Duplex(options) {
       if (!(this instanceof Duplex)) return new Duplex(options);
+
+      // this._events ??= {
+      //   close: undefined,
+      //   error: undefined,
+      //   prefinish: undefined,
+      //   finish: undefined,
+      //   drain: undefined,
+      //   data: undefined,
+      //   end: undefined,
+      //   readable: undefined,
+      // };
+
       Readable.$call(this, options);
       Writable.$call(this, options);
 
@@ -4506,6 +4540,7 @@ var require_duplex = __commonJS({
     };
   },
 });
+const Duplex = require_duplex();
 
 // node_modules/readable-stream/lib/internal/streams/transform.js
 var require_transform = __commonJS({
@@ -4515,6 +4550,7 @@ var require_transform = __commonJS({
     var { ERR_METHOD_NOT_IMPLEMENTED } = require_errors().codes;
     function Transform(options) {
       if (!(this instanceof Transform)) return new Transform(options);
+
       Duplex.$call(this, options);
 
       this._readableState.sync = false;
@@ -4523,6 +4559,8 @@ var require_transform = __commonJS({
       if (options) {
         if (typeof options.transform === "function") this._transform = options.transform;
         if (typeof options.flush === "function") this._flush = options.flush;
+      } else {
+        this.allowHalfOpen = true;
       }
 
       this.on("prefinish", prefinish.bind(this));
@@ -5282,193 +5320,208 @@ function createNativeStreamReadable(Readable) {
   var DYNAMICALLY_ADJUST_CHUNK_SIZE = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
   const MIN_BUFFER_SIZE = 512;
-  var NativeReadable = class NativeReadable extends Readable {
-    #refCount = 0;
-    #constructed = false;
-    #remainingChunk = undefined;
-    #highWaterMark;
-    #pendingRead = false;
-    #hasResized = !DYNAMICALLY_ADJUST_CHUNK_SIZE;
-    constructor(ptr, options = {}) {
-      super(options);
 
-      if (typeof options.highWaterMark === "number") {
-        this.#highWaterMark = options.highWaterMark;
-      } else {
-        this.#highWaterMark = 256 * 1024;
-      }
-      this.$bunNativePtr = ptr;
-      this.#constructed = false;
-      this.#remainingChunk = undefined;
-      this.#pendingRead = false;
-      ptr.onClose = this.#onClose.bind(this);
-      ptr.onDrain = this.#onDrain.bind(this);
+  const refCount = Symbol("refCount");
+  const constructed = Symbol("constructed");
+  const remainingChunk = Symbol("remainingChunk");
+  const highWaterMark = Symbol("highWaterMark");
+  const pendingRead = Symbol("pendingRead");
+  const hasResized = Symbol("hasResized");
+
+  const _onClose = Symbol("_onClose");
+  const _onDrain = Symbol("_onDrain");
+  const _internalConstruct = Symbol("_internalConstruct");
+  const _getRemainingChunk = Symbol("_getRemainingChunk");
+  const _adjustHighWaterMark = Symbol("_adjustHighWaterMark");
+  const _handleResult = Symbol("_handleResult");
+  const _internalRead = Symbol("_internalRead");
+
+  function NativeReadable(this: typeof NativeReadable, ptr, options) {
+    if (!(this instanceof NativeReadable)) {
+      return new NativeReadable(path, options);
     }
 
-    #onClose() {
+    this[refCount] = 0;
+    this[constructed] = false;
+    this[remainingChunk] = undefined;
+    this[pendingRead] = false;
+    this[hasResized] = !DYNAMICALLY_ADJUST_CHUNK_SIZE;
+
+    options ??= {};
+    Readable.$apply(this, [options]);
+
+    if (typeof options.highWaterMark === "number") {
+      this[highWaterMark] = options.highWaterMark;
+    } else {
+      this[highWaterMark] = 256 * 1024;
+    }
+    this.$bunNativePtr = ptr;
+    this[constructed] = false;
+    this[remainingChunk] = undefined;
+    this[pendingRead] = false;
+    ptr.onClose = this[_onClose].bind(this);
+    ptr.onDrain = this[_onDrain].bind(this);
+  }
+  NativeReadable.prototype = {};
+  ObjectSetPrototypeOf(NativeReadable.prototype, Readable.prototype);
+
+  NativeReadable.prototype[_onClose] = function () {
+    this.push(null);
+  };
+
+  NativeReadable.prototype[_onDrain] = function (chunk) {
+    this.push(chunk);
+  };
+
+  // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
+  // However, in the case of an fs.ReadStream, we can pass the number of bytes we want to read
+  // which may be significantly less than the actual highWaterMark
+  NativeReadable.prototype._read = function _read(maxToRead) {
+    $debug("NativeReadable._read", this.__id);
+    if (this[pendingRead]) {
+      $debug("pendingRead is true", this.__id);
+      return;
+    }
+    var ptr = this.$bunNativePtr;
+    $debug("ptr @ NativeReadable._read", ptr, this.__id);
+    if (!ptr) {
       this.push(null);
+      return;
+    }
+    if (!this[constructed]) {
+      $debug("NativeReadable not constructed yet", this.__id);
+      this[_internalConstruct](ptr);
+    }
+    return this[_internalRead](this[_getRemainingChunk](maxToRead), ptr);
+  };
+
+  NativeReadable.prototype[_internalConstruct] = function (ptr) {
+    $assert(this[constructed] === false);
+    this[constructed] = true;
+
+    const result = ptr.start(this[highWaterMark]);
+
+    $debug("NativeReadable internal `start` result", result, this.__id);
+
+    if (typeof result === "number" && result > 1) {
+      this[hasResized] = true;
+      $debug("NativeReadable resized", this.__id);
+
+      this[highWaterMark] = Math.min(this[highWaterMark], result);
     }
 
-    #onDrain(chunk) {
-      this.push(chunk);
+    const drainResult = ptr.drain();
+    $debug("NativeReadable drain result", drainResult, this.__id);
+    if ((drainResult?.byteLength ?? 0) > 0) {
+      this.push(drainResult);
     }
+  };
 
-    // maxToRead is by default the highWaterMark passed from the Readable.read call to this fn
-    // However, in the case of an fs.ReadStream, we can pass the number of bytes we want to read
-    // which may be significantly less than the actual highWaterMark
-    _read(maxToRead) {
-      $debug("NativeReadable._read", this.__id);
-      if (this.#pendingRead) {
-        $debug("pendingRead is true", this.__id);
-        return;
+  // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
+  // This is so the consumer of the stream can terminate the stream early if they know
+  // how many bytes they want to read (ie. when reading only part of a file)
+  // ObjectDefinePrivateProperty(NativeReadable.prototype, "_getRemainingChunk", );
+  NativeReadable.prototype[_getRemainingChunk] = function (maxToRead) {
+    maxToRead ??= this[highWaterMark];
+    var chunk = this[remainingChunk];
+    $debug("chunk @ #getRemainingChunk", chunk, this.__id);
+    if (chunk?.byteLength ?? 0 < MIN_BUFFER_SIZE) {
+      var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
+      this[remainingChunk] = chunk = new Buffer(size);
+    }
+    return chunk;
+  };
+
+  // ObjectDefinePrivateProperty(NativeReadable.prototype, "_adjustHighWaterMark", );
+  NativeReadable.prototype[_adjustHighWaterMark] = function () {
+    this[highWaterMark] = Math.min(this[highWaterMark] * 2, 1024 * 1024 * 2);
+    this[hasResized] = true;
+    $debug("Resized", this.__id);
+  };
+
+  // ObjectDefinePrivateProperty(NativeReadable.prototype, "_handleResult", );
+  NativeReadable.prototype[_handleResult] = function (result, view, isClosed) {
+    $debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
+
+    if (typeof result === "number") {
+      if (result >= this[highWaterMark] && !this[hasResized] && !isClosed) {
+        this[_adjustHighWaterMark]();
       }
-
-      var ptr = this.$bunNativePtr;
-      $debug("ptr @ NativeReadable._read", ptr, this.__id);
-      if (!ptr) {
+      return handleNumberResult(this, result, view, isClosed);
+    } else if (typeof result === "boolean") {
+      ProcessNextTick(() => {
         this.push(null);
-        return;
+      });
+      return view?.byteLength ?? 0 > 0 ? view : undefined;
+    } else if ($isTypedArrayView(result)) {
+      if (result.byteLength >= this[highWaterMark] && !this[hasResized] && !isClosed) {
+        this[_adjustHighWaterMark]();
       }
 
-      if (!this.#constructed) {
-        $debug("NativeReadable not constructed yet", this.__id);
-        this.#internalConstruct(ptr);
-      }
-
-      return this.#internalRead(this.#getRemainingChunk(maxToRead), ptr);
+      return handleArrayBufferViewResult(this, result, view, isClosed);
+    } else {
+      $debug("Unknown result type", result, this.__id);
+      throw new Error("Invalid result from pull");
     }
+  };
 
-    #internalConstruct(ptr) {
-      $assert(this.#constructed === false);
-      this.#constructed = true;
-
-      const result = ptr.start(this.#highWaterMark);
-
-      $debug("NativeReadable internal `start` result", result, this.__id);
-
-      if (typeof result === "number" && result > 1) {
-        this.#hasResized = true;
-        $debug("NativeReadable resized", this.__id);
-
-        this.#highWaterMark = Math.min(this.#highWaterMark, result);
-      }
-
-      const drainResult = ptr.drain();
-      $debug("NativeReadable drain result", drainResult, this.__id);
-      if ((drainResult?.byteLength ?? 0) > 0) {
-        this.push(drainResult);
-      }
+  NativeReadable.prototype[_internalRead] = function (view, ptr) {
+    $debug("#internalRead()", this.__id);
+    closer[0] = false;
+    var result = ptr.pull(view, closer);
+    if ($isPromise(result)) {
+      this[pendingRead] = true;
+      return result.then(
+        result => {
+          this[pendingRead] = false;
+          $debug("pending no longerrrrrrrr (result returned from pull)", this.__id);
+          const isClosed = closer[0];
+          this[remainingChunk] = this[_handleResult](result, view, isClosed);
+        },
+        reason => {
+          $debug("error from pull", reason, this.__id);
+          errorOrDestroy(this, reason);
+        },
+      );
+    } else {
+      this[remainingChunk] = this[_handleResult](result, view, closer[0]);
     }
+  };
 
-    // maxToRead can be the highWaterMark (by default) or the remaining amount of the stream to read
-    // This is so the consumer of the stream can terminate the stream early if they know
-    // how many bytes they want to read (ie. when reading only part of a file)
-    #getRemainingChunk(maxToRead = this.#highWaterMark) {
-      var chunk = this.#remainingChunk;
-      $debug("chunk @ #getRemainingChunk", chunk, this.__id);
-      if (chunk?.byteLength ?? 0 < MIN_BUFFER_SIZE) {
-        var size = maxToRead > MIN_BUFFER_SIZE ? maxToRead : MIN_BUFFER_SIZE;
-        this.#remainingChunk = chunk = new Buffer(size);
-      }
-      return chunk;
-    }
-
-    #adjustHighWaterMark() {
-      this.#highWaterMark = Math.min(this.#highWaterMark * 2, 1024 * 1024 * 2);
-      this.#hasResized = true;
-
-      $debug("Resized", this.__id);
-    }
-
-    // push(result, encoding) {
-    //   debug("NativeReadable push -- result, encoding", result, encoding, this.__id);
-    //   return super.push(...arguments);
-    // }
-
-    #handleResult(result, view, isClosed) {
-      $debug("result, isClosed @ #handleResult", result, isClosed, this.__id);
-
-      if (typeof result === "number") {
-        if (result >= this.#highWaterMark && !this.#hasResized && !isClosed) {
-          this.#adjustHighWaterMark();
-        }
-
-        return handleNumberResult(this, result, view, isClosed);
-      } else if (typeof result === "boolean") {
-        ProcessNextTick(() => {
-          this.push(null);
-        });
-        return view?.byteLength ?? 0 > 0 ? view : undefined;
-      } else if ($isTypedArrayView(result)) {
-        if (result.byteLength >= this.#highWaterMark && !this.#hasResized && !isClosed) {
-          this.#adjustHighWaterMark();
-        }
-
-        return handleArrayBufferViewResult(this, result, view, isClosed);
-      } else {
-        $debug("Unknown result type", result, this.__id);
-        throw new Error("Invalid result from pull");
-      }
-    }
-
-    #internalRead(view, ptr) {
-      $debug("#internalRead()", this.__id);
-      closer[0] = false;
-      var result = ptr.pull(view, closer);
-      if ($isPromise(result)) {
-        this.#pendingRead = true;
-        return result.then(
-          result => {
-            this.#pendingRead = false;
-            $debug("pending no longerrrrrrrr (result returned from pull)", this.__id);
-            const isClosed = closer[0];
-            this.#remainingChunk = this.#handleResult(result, view, isClosed);
-          },
-          reason => {
-            $debug("error from pull", reason, this.__id);
-            errorOrDestroy(this, reason);
-          },
-        );
-      } else {
-        this.#remainingChunk = this.#handleResult(result, view, closer[0]);
-      }
-    }
-
-    _destroy(error, callback) {
-      var ptr = this.$bunNativePtr;
-      if (!ptr) {
-        callback(error);
-        return;
-      }
-
-      this.$bunNativePtr = undefined;
-      ptr.updateRef(false);
-
-      $debug("NativeReadable destroyed", this.__id);
-      ptr.cancel(error);
+  NativeReadable.prototype._destroy = function (error, callback) {
+    var ptr = this.$bunNativePtr;
+    if (!ptr) {
       callback(error);
+      return;
     }
 
-    ref() {
-      var ptr = this.$bunNativePtr;
-      if (ptr === undefined) return;
-      if (this.#refCount++ === 0) {
-        ptr.updateRef(true);
-      }
-    }
+    this.$bunNativePtr = undefined;
+    ptr.updateRef(false);
 
-    unref() {
-      var ptr = this.$bunNativePtr;
-      if (ptr === undefined) return;
-      if (this.#refCount-- === 1) {
-        ptr.updateRef(false);
-      }
-    }
+    $debug("NativeReadable destroyed", this.__id);
+    ptr.cancel(error);
+    callback(error);
+  };
 
-    [kEnsureConstructed]() {
-      if (this.#constructed) return;
-      this.#internalConstruct(this.$bunNativePtr);
+  NativeReadable.prototype.ref = function () {
+    var ptr = this.$bunNativePtr;
+    if (ptr === undefined) return;
+    if (this[refCount]++ === 0) {
+      ptr.updateRef(true);
     }
+  };
+
+  NativeReadable.prototype.unref = function () {
+    var ptr = this.$bunNativePtr;
+    if (ptr === undefined) return;
+    if (this[refCount]-- === 1) {
+      ptr.updateRef(false);
+    }
+  };
+
+  NativeReadable.prototype[kEnsureConstructed] = function () {
+    if (this[constructed]) return;
+    this[_internalConstruct](this.$bunNativePtr);
   };
 
   return NativeReadable;
@@ -5505,9 +5558,6 @@ function getNativeReadableStream(Readable, stream, options) {
 }
 
 /** --- Bun native stream wrapper ---  */
-var Readable = require_readable();
-var Writable = require_writable();
-var Duplex = require_duplex();
 
 const _pathOrFdOrSink = Symbol("pathOrFdOrSink");
 const { fileSinkSymbol: _fileSink } = require("internal/shared");

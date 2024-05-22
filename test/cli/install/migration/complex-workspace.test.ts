@@ -1,11 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { test, expect, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
-import { join } from "path";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-let cwd = join(tmpdir(), "complex-workspace-test" + Math.random().toString(36).slice(2, 8));
+let cwd = tmpdirSync();
 
 function validate(packageName: string, version: string, realPackageName?: string) {
   test(`${packageName} is ${realPackageName ? `${realPackageName}@${version}` : version}`, () => {

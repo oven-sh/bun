@@ -1,8 +1,6 @@
 import { describe, expect, test, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
-import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
-import { bunExe, bunEnv as env } from "harness";
-import { mkdtempSync, realpathSync } from "fs";
-import { tmpdir } from "os";
+import { rm, writeFile, cp } from "fs/promises";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 import { spawn } from "bun";
 
@@ -12,7 +10,7 @@ beforeAll(() => {
 
 describe("esbuild integration test", () => {
   test("install and use esbuild", async () => {
-    const packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-esbuild-test-"));
+    const packageDir = tmpdirSync();
 
     await writeFile(
       join(packageDir, "package.json"),
@@ -54,7 +52,7 @@ describe("esbuild integration test", () => {
   });
 
   test("install and use estrella", async () => {
-    const packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-ebuild-estrella-test-"));
+    const packageDir = tmpdirSync();
 
     await writeFile(
       join(packageDir, "package.json"),

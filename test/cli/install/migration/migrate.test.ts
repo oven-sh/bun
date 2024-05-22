@@ -1,28 +1,14 @@
 import fs from "fs";
-import { test, expect, beforeAll, afterAll, setTimeout as jestSetTimeout } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { join, sep } from "path";
-import { mkdtempSync } from "js/node/fs/export-star-from";
-import { tmpdir } from "os";
-
-const ROOT_TEMP_DIR = join(tmpdir(), "migrate", sep);
+import { test, expect, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { join } from "path";
 
 beforeAll(() => {
   jestSetTimeout(1000 * 60 * 5);
-  // if the test was stopped early
-  fs.rmSync(ROOT_TEMP_DIR, { recursive: true, force: true });
-  fs.mkdirSync(ROOT_TEMP_DIR);
-});
-
-afterAll(() => {
-  fs.rmSync(ROOT_TEMP_DIR, {
-    recursive: true,
-    force: true,
-  });
 });
 
 function testMigration(lockfile: string) {
-  const testDir = mkdtempSync(ROOT_TEMP_DIR);
+  const testDir = tmpdirSync();
 
   fs.writeFileSync(
     join(testDir, "package.json"),
@@ -59,7 +45,7 @@ test("migrate from npm lockfile v2 during `bun add`", () => {
 
 // Currently this upgrades svelte :(
 test.todo("migrate workspace from npm during `bun add`", async () => {
-  const testDir = mkdtempSync(ROOT_TEMP_DIR);
+  const testDir = tmpdirSync();
 
   fs.cpSync(join(import.meta.dir, "add-while-migrate-workspace"), testDir, { recursive: true });
 
@@ -78,7 +64,7 @@ test.todo("migrate workspace from npm during `bun add`", async () => {
 });
 
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {
-  const testDir = mkdtempSync(ROOT_TEMP_DIR);
+  const testDir = tmpdirSync();
 
   fs.cpSync(join(import.meta.dir, "missing-resolved-properties"), testDir, { recursive: true });
 

@@ -9,6 +9,9 @@ const {
   assignHeaders: assignHeadersFast,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
 
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
 const GlobalPromise = globalThis.Promise;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
 /**
@@ -96,6 +99,7 @@ const NODE_HTTP_WARNING =
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
+const kfakeSocket = Symbol("kfakeSocket");
 
 const kEmptyBuffer = Buffer.alloc(0);
 
@@ -243,97 +247,90 @@ function createServer(options, callback) {
   return new Server(options, callback);
 }
 
-class Agent extends EventEmitter {
-  defaultPort = 80;
-  protocol = "http:";
-  options;
-  requests;
-  sockets;
-  freeSockets;
+function Agent(options = kEmptyObject) {
+  if (!(this instanceof Agent)) return new Agent(options);
 
-  keepAliveMsecs;
-  keepAlive;
-  maxSockets;
-  maxFreeSockets;
-  scheduling;
-  maxTotalSockets;
-  totalSocketCount;
+  EventEmitter.$apply(this, []);
 
-  #fakeSocket;
+  this.defaultPort = 80;
+  this.protocol = "http:";
 
-  static get globalAgent() {
-    return globalAgent;
-  }
+  this.options = options = { ...options, path: null };
+  if (options.noDelay === undefined) options.noDelay = true;
 
-  static get defaultMaxSockets() {
-    return Infinity;
-  }
+  // Don't confuse net and make it think that we're connecting to a pipe
+  this.requests = kEmptyObject;
+  this.sockets = kEmptyObject;
+  this.freeSockets = kEmptyObject;
 
-  constructor(options = kEmptyObject) {
-    super();
-    this.options = options = { ...options, path: null };
-    if (options.noDelay === undefined) options.noDelay = true;
-
-    // Don't confuse net and make it think that we're connecting to a pipe
-    this.requests = kEmptyObject;
-    this.sockets = kEmptyObject;
-    this.freeSockets = kEmptyObject;
-
-    this.keepAliveMsecs = options.keepAliveMsecs || 1000;
-    this.keepAlive = options.keepAlive || false;
-    this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
-    this.maxFreeSockets = options.maxFreeSockets || 256;
-    this.scheduling = options.scheduling || "lifo";
-    this.maxTotalSockets = options.maxTotalSockets;
-    this.totalSocketCount = 0;
-    this.defaultPort = options.defaultPort || 80;
-    this.protocol = options.protocol || "http:";
-  }
-
-  createConnection() {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
-    return (this.#fakeSocket ??= new FakeSocket());
-  }
-
-  getName(options = kEmptyObject) {
-    let name = `http:${options.host || "localhost"}:`;
-    if (options.port) name += options.port;
-    name += ":";
-    if (options.localAddress) name += options.localAddress;
-    // Pacify parallel/test-http-agent-getname by only appending
-    // the ':' when options.family is set.
-    if (options.family === 4 || options.family === 6) name += `:${options.family}`;
-    if (options.socketPath) name += `:${options.socketPath}`;
-    return name;
-  }
-
-  addRequest() {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
-  }
-
-  createSocket(req, options, cb) {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
-    cb(null, (this.#fakeSocket ??= new FakeSocket()));
-  }
-
-  removeSocket() {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
-  }
-
-  keepSocketAlive() {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
-
-    return true;
-  }
-
-  reuseSocket() {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
-  }
-
-  destroy() {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
-  }
+  this.keepAliveMsecs = options.keepAliveMsecs || 1000;
+  this.keepAlive = options.keepAlive || false;
+  this.maxSockets = options.maxSockets || Agent.defaultMaxSockets;
+  this.maxFreeSockets = options.maxFreeSockets || 256;
+  this.scheduling = options.scheduling || "lifo";
+  this.maxTotalSockets = options.maxTotalSockets;
+  this.totalSocketCount = 0;
+  this.defaultPort = options.defaultPort || 80;
+  this.protocol = options.protocol || "http:";
 }
+Agent.prototype = {};
+ObjectSetPrototypeOf(Agent.prototype, EventEmitter.prototype);
+
+ObjectDefineProperty(Agent, "globalAgent", {
+  get: function () {
+    return globalAgent;
+  },
+});
+
+ObjectDefineProperty(Agent, "defaultMaxSockets", {
+  get: function () {
+    return Infinity;
+  },
+});
+
+Agent.prototype.createConnection = function () {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
+  return (this[kfakeSocket] ??= new FakeSocket());
+};
+
+Agent.prototype.getName = function (options = kEmptyObject) {
+  let name = `http:${options.host || "localhost"}:`;
+  if (options.port) name += options.port;
+  name += ":";
+  if (options.localAddress) name += options.localAddress;
+  // Pacify parallel/test-http-agent-getname by only appending
+  // the ':' when options.family is set.
+  if (options.family === 4 || options.family === 6) name += `:${options.family}`;
+  if (options.socketPath) name += `:${options.socketPath}`;
+  return name;
+};
+
+Agent.prototype.addRequest = function () {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
+};
+
+Agent.prototype.createSocket = function (req, options, cb) {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
+  cb(null, (this[kfakeSocket] ??= new FakeSocket()));
+};
+
+Agent.prototype.removeSocket = function () {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
+};
+
+Agent.prototype.keepSocketAlive = function () {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
+  return true;
+};
+
+Agent.prototype.reuseSocket = function () {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
+};
+
+Agent.prototype.destroy = function () {
+  $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
+};
+
 function emitListeningNextTick(self, onListen, err, hostname, port) {
   if (typeof onListen === "function") {
     try {
@@ -474,6 +471,15 @@ Server.prototype.close = function (optionalCallback?) {
   if (typeof optionalCallback === "function") this.once("close", optionalCallback);
   server.stop();
   this.emit("close");
+};
+
+Server.prototype[Symbol.asyncDispose] = function () {
+  const { resolve, reject, promise } = Promise.withResolvers();
+  this.close(function (err, ...args) {
+    if (err) reject(err);
+    else resolve(...args);
+  });
+  return promise;
 };
 
 Server.prototype.address = function () {
@@ -809,11 +815,18 @@ Object.defineProperty(IncomingMessage.prototype, "statusCode", {
   get() {
     return this[reqSymbol].status;
   },
+  set(v) {
+    if (!(v in STATUS_CODES)) return;
+    this[reqSymbol].status = v;
+  },
 });
 
 Object.defineProperty(IncomingMessage.prototype, "statusMessage", {
   get() {
     return STATUS_CODES[this[reqSymbol].status];
+  },
+  set(v) {
+    //noop
   },
 });
 
@@ -1410,6 +1423,10 @@ class ClientRequest extends OutgoingMessage {
 
   get protocol() {
     return this.#protocol;
+  }
+
+  get agent() {
+    return this.#agent;
   }
 
   _write(chunk, encoding, callback) {

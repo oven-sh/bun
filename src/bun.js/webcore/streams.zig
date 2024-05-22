@@ -348,6 +348,38 @@ pub const ReadableStream = struct {
         }
     }
 
+    pub fn fromFileBlobWithOffset(
+        globalThis: *JSGlobalObject,
+        blob: *const Blob,
+        offset: usize,
+    ) JSC.JSValue {
+        JSC.markBinding(@src());
+        var store = blob.store orelse {
+            return ReadableStream.empty(globalThis);
+        };
+        switch (store.data) {
+            .file => {
+                var reader = FileReader.Source.new(.{
+                    .globalThis = globalThis,
+                    .context = .{
+                        .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
+                        .start_offset = offset,
+                        .lazy = .{
+                            .blob = store,
+                        },
+                    },
+                });
+                store.ref();
+
+                return reader.toReadableStream(globalThis);
+            },
+            else => {
+                globalThis.throw("Expected FileBlob", .{});
+                return .zero;
+            },
+        }
+    }
+
     pub fn fromPipe(
         globalThis: *JSGlobalObject,
         parent: anytype,
@@ -3415,6 +3447,7 @@ pub const FileReader = struct {
     pending_value: JSC.Strong = .{},
     pending_view: []u8 = &.{},
     fd: bun.FileDescriptor = bun.invalid_fd,
+    start_offset: ?usize = null,
     started: bool = false,
     waiting_for_onReaderDone: bool = false,
     event_loop: JSC.EventLoopHandle,
@@ -3449,7 +3482,7 @@ pub const FileReader = struct {
 
         pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
-            var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var file_buf: bun.PathBuffer = undefined;
             var is_nonblocking_tty = false;
 
             const fd = if (file.pathlike == .fd)
@@ -3606,11 +3639,20 @@ pub const FileReader = struct {
         if (was_lazy) {
             _ = this.parent().incrementCount();
             this.waiting_for_onReaderDone = true;
-            switch (this.reader.start(this.fd, pollable)) {
-                .result => {},
-                .err => |e| {
-                    return .{ .err = e };
-                },
+            if (this.start_offset) |offset| {
+                switch (this.reader.startFileOffset(this.fd, pollable, offset)) {
+                    .result => {},
+                    .err => |e| {
+                        return .{ .err = e };
+                    },
+                }
+            } else {
+                switch (this.reader.start(this.fd, pollable)) {
+                    .result => {},
+                    .err => |e| {
+                        return .{ .err = e };
+                    },
+                }
             }
         } else if (comptime Environment.isPosix) {
             if (this.reader.flags.pollable and !this.reader.isDone()) {

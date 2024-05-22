@@ -1,14 +1,17 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "../../../harness";
-import { copyFileSync, cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, promises as fs } from "fs";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { copyFileSync, cpSync, readFileSync, rmSync, promises as fs } from "fs";
 import { join } from "path";
 import { cp } from "fs/promises";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
+
+expect.extend({ toMatchNodeModulesAt });
 
 const root = join(import.meta.dir, "../");
 
 async function tempDirToBuildIn() {
-  const dir = mkdtempSync(join(tmpdir(), "bun-next-build-"));
+  const dir = tmpdirSync();
   const copy = [
     ".eslintrc.json",
     "bun.lockb",
@@ -84,7 +87,14 @@ test("next build works", async () => {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const bunDir = await tempDirToBuildIn();
+  let lockfile = parseLockfile(bunDir);
+  expect(lockfile).toMatchNodeModulesAt(bunDir);
+  expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
+
   const nodeDir = await tempDirToBuildIn();
+  lockfile = parseLockfile(nodeDir);
+  expect(lockfile).toMatchNodeModulesAt(nodeDir);
+  expect(lockfile).toMatchSnapshot("node");
 
   console.log("Bun Dir: " + bunDir);
   console.log("Node Dir: " + nodeDir);

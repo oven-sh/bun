@@ -1280,8 +1280,13 @@ pub const EventLoop = struct {
                 loop.active_handles -= @intCast(-delta);
             }
         } else {
-            loop.num_polls += delta;
-            loop.active += delta;
+            if (delta > 0) {
+                loop.num_polls += @intCast(delta);
+                loop.active += @intCast(delta);
+            } else {
+                loop.num_polls -= @intCast(-delta);
+                loop.active -= @intCast(-delta);
+            }
         }
 
         var concurrent = this.concurrent_tasks.popBatch();

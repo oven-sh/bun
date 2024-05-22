@@ -72,6 +72,6 @@ In the Render UI, provide the following values during web service creation:
 
 ---
 
-That's it! Your web service will be live at its `onrender.com` URL as soon as the build finishes.
+That's it! Your web service will be live at its assigned `onrender.com` URL as soon as the build finishes.
 
-Visit the URL to see the "Hello world!" message.
+You can view the [deploy logs](https://docs.render.com/logging#logs-for-an-individual-deploy-or-job) for details. Refer to [Render's documentation](https://docs.render.com/deploys) for a complete overview of deploying on Render.

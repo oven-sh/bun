@@ -39,7 +39,7 @@ pub const FileSystem = struct {
     top_level_dir: string = if (Environment.isWindows) "C:\\" else "/",
 
     // used on subsequent updates
-    top_level_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    top_level_dir_buf: bun.PathBuffer = undefined,
 
     fs: Implementation,
 
@@ -67,7 +67,7 @@ pub const FileSystem = struct {
     }
 
     pub fn getFdPath(this: *const FileSystem, fd: FileDescriptor) ![]const u8 {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
     }
@@ -257,7 +257,7 @@ pub const FileSystem = struct {
 
         pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
             if (_query.len == 0 or _query.len > bun.MAX_PATH_BYTES) return null;
-            var scratch_lookup_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var scratch_lookup_buffer: bun.PathBuffer = undefined;
 
             const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;
@@ -554,7 +554,7 @@ pub const FileSystem = struct {
                         }
 
                         if (bun.getenvZ("USERPROFILE")) |profile| {
-                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
                             break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
@@ -720,7 +720,7 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
                 this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
             }
@@ -1262,7 +1262,7 @@ pub const FileSystem = struct {
             existing_fd: StoredFileDescriptorType,
             store_fd: bool,
         ) !Entry.Cache {
-            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var outpath: bun.PathBuffer = undefined;
 
             const stat = try C.lstat_absolute(absolute_path);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
@@ -1581,8 +1581,7 @@ pub const PathName = struct {
             path = path[2..];
         }
 
-        var _i = bun.path.lastIndexOfSep(path);
-        while (_i) |i| {
+        while (bun.path.lastIndexOfSep(path)) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len > i + 1) {
                 base = path[i + 1 ..];
@@ -1593,8 +1592,6 @@ pub const PathName = struct {
 
             // Ignore trailing slashes
             path = path[0..i];
-
-            _i = bun.path.lastIndexOfSep(path);
         }
 
         // Strip off the extension

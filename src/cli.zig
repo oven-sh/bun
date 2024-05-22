@@ -289,7 +289,7 @@ pub const Arguments = struct {
         try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
-    fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+    fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
         if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
@@ -298,7 +298,7 @@ pub const Arguments = struct {
         return null;
     }
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-        var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
@@ -335,7 +335,7 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         } else {
             if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var secondbuf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
@@ -409,7 +409,7 @@ pub const Arguments = struct {
         var cwd: []u8 = undefined;
         if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var outbuf: bun.PathBuffer = undefined;
                 const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
                 bun.sys.chdir(out).unwrap() catch |err| {
                     Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
@@ -1099,7 +1099,7 @@ pub var pretend_to_be_node = false;
 pub var is_bunx_exe = false;
 
 pub const Command = struct {
-    var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var script_name_buf: bun.PathBuffer = undefined;
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -1931,7 +1931,7 @@ pub const Command = struct {
                     var win_resolver = resolve_path.PosixToWinNormalizer{};
                     var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
                     if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, true, .windows);
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
                     }
                     break :brk bun.openFile(
                         resolved,
@@ -1946,7 +1946,7 @@ pub const Command = struct {
 
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 } else {
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var path_buf: bun.PathBuffer = undefined;
                     const cwd = bun.getcwd(&path_buf) catch return false;
                     path_buf[cwd.len] = std.fs.path.sep;
                     var parts = [_]string{script_name_to_search};
@@ -1978,12 +1978,7 @@ pub const Command = struct {
                 if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
                 var fd_path_buf: bun.PathBuffer = undefined;
-                const path = bun.getFdPath(file, &fd_path_buf) catch return false;
-                break :brk resolve_path.normalizeString(
-                    resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
-                    true,
-                    .windows,
-                );
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
             };
         }
 

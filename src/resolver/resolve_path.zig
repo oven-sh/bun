@@ -9,7 +9,7 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
-pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+pub fn z(input: []const u8, output: *bun.PathBuffer) [:0]const u8 {
     if (input.len > bun.MAX_PATH_BYTES) {
         if (comptime bun.Environment.allow_assert) @panic("path too long");
         return "";
@@ -637,8 +637,10 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         path[2] != '.')
     {
         if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
-            // TODO: handle input "//abc//def" should be picked up as a unc path
-            return path[0 .. idx + 4];
+            if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
+                return path[0 .. idx + idx_second + 4];
+            }
+            return path[0..];
         }
     }
     if (isSepAnyT(T, path[0])) return path[0..1];
@@ -736,7 +738,12 @@ pub fn normalizeStringGenericTZ(
             }
             if (path_[1] != ':') {
                 // UNC paths
-                @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                if (options.add_nt_prefix) {
+                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "UNC" ++ sep_str));
+                    buf_i += 2;
+                } else {
+                    @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                }
                 @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                 buf[buf_i + indexOfThirdUNCSlash] = options.separator;
                 @memcpy(
@@ -1533,8 +1540,7 @@ pub fn isSepPosix(char: u8) bool {
     return isSepPosixT(u8, char);
 }
 
-pub fn isSepPosixT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepPosixT");
+pub fn isSepPosixT(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_posix;
 }
 
@@ -1542,8 +1548,7 @@ pub fn isSepWin32(char: u8) bool {
     return isSepWin32T(u8, char);
 }
 
-pub fn isSepWin32T(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepWin32T");
+pub fn isSepWin32T(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_windows;
 }
 
@@ -1551,8 +1556,7 @@ pub fn isSepAny(char: u8) bool {
     return isSepAnyT(u8, char);
 }
 
-pub fn isSepAnyT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepAnyT");
+pub fn isSepAnyT(comptime T: type, char: T) bool {
     return @call(bun.callmod_inline, isSepPosixT, .{ T, char }) or @call(bun.callmod_inline, isSepWin32T, .{ T, char });
 }
 
@@ -1560,8 +1564,7 @@ pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
     return lastIndexOfSeparatorWindowsT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorWindowsT");
+pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfAny(T, slice, comptime strings.literal(T, "\\/"));
 }
 
@@ -1569,8 +1572,7 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
     return lastIndexOfSeparatorPosixT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorPosixT");
+pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfScalar(T, slice, std.fs.path.sep_posix);
 }
 
@@ -1589,8 +1591,7 @@ pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return lastIndexOfSeparatorLooseT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorLooseT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorLooseT");
+pub fn lastIndexOfSeparatorLooseT(comptime T: type, slice: []const T) ?usize {
     return lastIndexOfSepT(T, slice);
 }
 

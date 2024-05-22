@@ -369,9 +369,7 @@ pub const ByteRangeMapping = struct {
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
-        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(
-            source_url.slice(),
-        );
+        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
 
         var functions = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
         try functions.ensureTotalCapacityPrecise(allocator, function_blocks.len);

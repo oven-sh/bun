@@ -1085,8 +1085,8 @@ pub const Printer = struct {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
 
-        var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf1: bun.PathBuffer = undefined;
+        var lockfile_path_buf2: bun.PathBuffer = undefined;
 
         var lockfile_path: stringZ = "";
 
@@ -3614,7 +3614,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = try PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{});
+                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -4070,7 +4070,7 @@ pub const Package = extern struct {
     ) !WorkspaceEntry {
         const workspace_json = try json_cache.getWithPath(allocator, log, abs_package_json_path, .{
             .init_reset_store = false,
-        });
+        }).unwrap();
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
         const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;

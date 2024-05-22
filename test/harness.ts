@@ -13,6 +13,8 @@ export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
+export const isDebug = Bun.version.includes("debug");
+export const isCI = process.env.CI !== undefined;
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,

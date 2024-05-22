@@ -438,3 +438,42 @@ it("should not call open if the connection had an error", async () => {
   server.stop();
   expect(hadError).toBe(true);
 });
+
+it("should connect directly when using an ip address", async () => {
+  const server = Bun.listen({
+    port: 0,
+    hostname: "127.0.0.1",
+    socket: {
+      open(socket) {
+        socket.end("Hello");
+      },
+      data(socket, data) {},
+    },
+  });
+
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  let client: Socket<undefined> | null = null;
+  let opened = false;
+  client = await Bun.connect({
+    port: server.port,
+    hostname: "127.0.0.1",
+    socket: {
+      open(socket) {
+        expect(opened).toBe(false);
+        opened = true;
+      },
+      connectError(socket, error) {
+        expect().fail("connectError should not be called");
+      },
+      close(socket) {
+        server.stop();
+        resolve();
+      },
+      data(socket, data) {},
+    },
+  });
+
+  await promise;
+  expect(opened).toBe(true);
+});

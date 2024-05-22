@@ -20,8 +20,8 @@ export function createTestBuilder(path: string) {
   class TestBuilder {
     _testName: string | undefined = undefined;
 
-    expected_stdout: string | ((stdout: string, tempdir: string) => void) = "";
-    expected_stderr: string | ((stderr: string, tempdir: string) => void) | { contains: string } = "";
+    expected_stdout: string | ((stdout: string, tempdir: string) => void) | undefined = "";
+    expected_stderr: string | ((stderr: string, tempdir: string) => void) | { contains: string } | undefined = "";
     expected_exit_code: number | ((code: number) => void) = 0;
     expected_error: ShellError | string | boolean | undefined = undefined;
     file_equals: { [filename: string]: string | (() => string | Promise<string>) } = {};
@@ -135,12 +135,12 @@ export function createTestBuilder(path: string) {
      *
      * @param expected - can either be a string or a function which itself calls `expect()`
      */
-    stdout(expected: string | ((stdout: string, tempDir: string) => void)): this {
+    stdout(expected?: string | ((stdout: string, tempDir: string) => void)): this {
       this.expected_stdout = expected;
       return this;
     }
 
-    stderr(expected: string | ((stderr: string, tempDir: string) => void)): this {
+    stderr(expected?: string | ((stderr: string, tempDir: string) => void)): this {
       this.expected_stderr = expected;
       return this;
     }

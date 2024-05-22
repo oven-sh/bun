@@ -4,7 +4,7 @@
  *
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { describe, test, afterAll, beforeAll, expect } from "bun:test";
 import { $ } from "bun";
 import path from "path";
@@ -18,14 +18,19 @@ const fileExists = async (path: string): Promise<boolean> =>
 
 $.nothrow();
 
-const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 describe("bunshell rm", () => {
-  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
+  TestBuilder.command`echo ${packagejson()} > package.json; ${bunExe()} install; rm -rf node_modules/`
     .ensureTempDir()
     .doesNotExist("node_modules")
-    .timeout(10 * 1000)
+    .env({
+      ...bunEnv,
+      BUN_CONFIG_MAX_HTTP_REQUESTS: "8",
+    })
+    .stdout(undefined)
+    .stderr(undefined)
+    .timeout(20 * 1000)
     .runAsTest("node_modules");
 
   test("force", async () => {

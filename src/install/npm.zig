@@ -657,13 +657,50 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
-                .truncate = true,
-            });
-            defer tmpfile.close();
-            const writer = tmpfile.writer();
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir, outpath: [:0]const u8) !void {
+            var realpath_buf: bun.PathBuffer = undefined;
+            var realpath2_buf: bun.PathBuffer = undefined;
+            const tmp_path_partial = try bun.getFdPath(tmpdir, &realpath_buf);
+            const tmp_path_abs = bun.path.joinAbsStringBufZ(tmp_path_partial, &realpath2_buf, &.{ tmp_path_partial, tmp_path }, .auto);
+            const cache_dir_abs = try bun.getFdPath(cache_dir, &realpath_buf);
+            const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
+            const fields = .{
+                "string_buf",
+                "versions",
+                "external_strings",
+                "external_strings_for_versions",
+                "package_versions",
+                "extern_strings_bin_entries",
+            };
+            var estimated_byte_length: usize = 0;
+            inline for (fields) |field| {
+                estimated_byte_length += std.mem.sliceAsBytes(@field(this, field)).len;
+            }
+            var buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, estimated_byte_length);
+            defer buffer.deinit();
+            const writer = &buffer.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
+            // Do not forget to buffer writes!
+            // PS C:\bun> hyperfine "bun-debug install --ignore-scripts" "bun install --ignore-scripts" --prepare="del /s /q bun.lockb && del /s /q C:\Users\window\.bun\install\cache"
+            // Benchmark 1: bun-debug install --ignore-scripts
+            //   Time (mean ± σ):      1.266 s ±  0.284 s    [User: 1.631 s, System: 0.205 s]
+            //   Range (min … max):    1.071 s …  1.804 s    10 runs
+
+            //   Warning: Statistical outliers were detected. Consider re-running this benchmark on a quiet system without any interferences from other programs. It might help to use the '--warmup' or '--prepare' options.
+
+            // Benchmark 2: bun install --ignore-scripts
+            //   Time (mean ± σ):      3.202 s ±  0.095 s    [User: 0.255 s, System: 0.172 s]
+            //   Range (min … max):    3.058 s …  3.371 s    10 runs
+
+            // Summary
+            //   bun-debug install --ignore-scripts ran
+            //     2.53 ± 0.57 times faster than bun install --ignore-scripts
+            const file = try bun.sys.File.openat(tmpdir, tmp_path, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap();
+            {
+                errdefer file.close();
+                try file.writeAll(buffer.items).unwrap();
+            }
+            try file.closeAndMoveTo(tmp_path_abs, cache_path_abs);
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -678,9 +715,8 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-            try writeFile(this, tmp_path, tmpdir);
             const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            try writeFile(this, tmp_path, tmpdir, cache_dir, out_path);
         }
 
         pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {

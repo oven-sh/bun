@@ -310,7 +310,7 @@ pub const JSBundler = struct {
                 };
                 defer dir.close();
 
-                var rootdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var rootdir_buf: bun.PathBuffer = undefined;
                 this.rootdir.appendSliceExact(try bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf)) catch unreachable;
             }
 

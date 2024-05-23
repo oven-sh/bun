@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.8")
-set(WEBKIT_TAG 413f6fc119cfca98d5063049ce444cc4eb56f0a4)
+set(Bun_VERSION "1.1.10")
+set(WEBKIT_TAG 2c4f31e10974404bc8316a70d491ec0f400c880d)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -307,6 +307,7 @@ option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
+option(USE_SYSTEM_ICU "Use the system-provided libicu. May fix startup crashes when building WebKit yourself." OFF)
 
 option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
 
@@ -316,6 +317,9 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
+option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
 
 if(NOT ZIG_LIB_DIR)
     cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
@@ -413,7 +417,7 @@ if(ZIG_COMPILER)
     find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
     set(ZIG_COMPILER "${ZIG_COMPILER_}")
     message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
-elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_ONLY_EXTRA)
     execute_process(
         COMMAND "${SHELL}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
@@ -915,7 +919,9 @@ if(WIN32)
 endif()
 
 # -- The Buntime™️ ---
-if(NOT BUN_CPP_ONLY)
+if(BUN_TIDY_ONLY OR BUN_TIDY_ONLY_EXTRA)
+    add_library(${bun} OBJECT "${BUN_SOURCES}")
+elseif(NOT BUN_CPP_ONLY)
     add_executable(${bun} "${BUN_SOURCES}" "${BUN_ZIG_OBJ}")
 else()
     add_executable(${bun} "${BUN_SOURCES}")
@@ -1173,9 +1179,15 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(${bun} PRIVATE "libatomic.a")
     endif()
 
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+    if(USE_SYSTEM_ICU)
+        target_link_libraries(${bun} PRIVATE "libicudata.a")
+        target_link_libraries(${bun} PRIVATE "libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "libicuuc.a")
+    else()
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+    endif()
 
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/linker.lds")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
@@ -1432,4 +1444,16 @@ endif()
 
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
+endif()
+
+if(BUN_TIDY_ONLY)
+    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
+endif()
+
+if(BUN_TIDY_ONLY_EXTRA)
+    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

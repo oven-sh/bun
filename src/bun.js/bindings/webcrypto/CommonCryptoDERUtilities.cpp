@@ -42,7 +42,7 @@ size_t extraBytesNeededForEncodedLength(size_t length)
     if (!length)
         return 0;
     size_t result = 1;
-    while (result < sizeof(length) && length >= (1 << (result * 8)))
+    while (result < sizeof(length) && length >= (1ull << (result * 8ull)))
         result += 1;
     return result;
 }
@@ -60,7 +60,7 @@ void addEncodedASN1Length(Vector<uint8_t>& in, size_t length)
     size_t lastPosition = in.size() + extraBytes - 1;
     in.grow(in.size() + extraBytes);
     for (size_t i = 0; i < extraBytes; i++) {
-        in[lastPosition - i] = length & 0xff;
+        in[lastPosition - i] = length & 0xffull;
         length = length >> 8;
     }
 }

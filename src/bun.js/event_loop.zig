@@ -310,9 +310,9 @@ pub const JSCScheduler = struct {
         JSC.markBinding(@src());
 
         if (delta > 0) {
-            jsc_vm.event_loop_handle.?.refConcurrently();
+            jsc_vm.event_loop.refConcurrently();
         } else {
-            jsc_vm.event_loop_handle.?.unrefConcurrently();
+            jsc_vm.event_loop.unrefConcurrently();
         }
     }
 
@@ -775,6 +775,7 @@ pub const EventLoop = struct {
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
+    concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
@@ -1270,6 +1271,24 @@ pub const EventLoop = struct {
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         JSC.markBinding(@src());
+        const delta = this.concurrent_ref.swap(0, .Monotonic);
+        const loop = this.virtual_machine.event_loop_handle.?;
+        if (comptime Environment.isWindows) {
+            if (delta > 0) {
+                loop.active_handles += @intCast(delta);
+            } else {
+                loop.active_handles -= @intCast(-delta);
+            }
+        } else {
+            if (delta > 0) {
+                loop.num_polls += @intCast(delta);
+                loop.active += @intCast(delta);
+            } else {
+                loop.num_polls -= @intCast(-delta);
+                loop.active -= @intCast(-delta);
+            }
+        }
+
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -1598,6 +1617,7 @@ pub const EventLoop = struct {
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
         }
+        bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -1636,6 +1656,18 @@ pub const EventLoop = struct {
         }
 
         this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
+        this.wakeup();
+    }
+
+    pub fn refConcurrently(this: *EventLoop) void {
+        // TODO maybe this should be AcquireRelease
+        _ = this.concurrent_ref.fetchAdd(1, .Monotonic);
+        this.wakeup();
+    }
+
+    pub fn unrefConcurrently(this: *EventLoop) void {
+        // TODO maybe this should be AcquireRelease
+        _ = this.concurrent_ref.fetchSub(1, .Monotonic);
         this.wakeup();
     }
 };
@@ -1772,6 +1804,7 @@ pub const MiniEventLoop = struct {
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
+        global.loop.internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(global));
         global.env = env orelse bun.DotEnv.instance orelse env_loader: {
             const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
             map.* = bun.DotEnv.Map.init(bun.default_allocator);

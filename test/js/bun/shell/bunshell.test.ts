@@ -6,9 +6,8 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
-import { tmpdir } from "os";
+import { mkdir, rm, stat } from "fs/promises";
+import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -21,7 +20,7 @@ let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   $.nothrow();
-  temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  temp_dir = tmpdirSync();
   await mkdir(temp_dir, { recursive: true });
 
   for (const file of temp_files) {
@@ -38,6 +37,40 @@ afterAll(async () => {
 const BUN = bunExe();
 
 describe("bunshell", () => {
+  describe("exit codes", async () => {
+    const failing_cmds = [
+      process.platform === "win32" ? "cat ldkfjsldf" : null,
+      "touch -alskdjfakjfhasjfh",
+      "mkdir",
+      "export",
+      "cd lskfjlsdkjf",
+      process.platform !== "win32" ? "echo hi > /dev/full" : null,
+      "pwd sldfkj sfks jdflks flksd f",
+      "which",
+      "rm lskdjfskldjfksdjflkjsldfj",
+      "mv lskdjflskdjf lskdjflskjdlf",
+      "ls lksdjflksdjf",
+      "exit sldkfj sdjf ls f",
+      // "true",
+      // "false",
+      // "yes",
+      // "seq",
+      "dirname",
+      "basename",
+      "cp ksdjflksjdfks lkjsdflksjdfl",
+    ];
+
+    failing_cmds.forEach(cmdstr =>
+      !!cmdstr
+        ? TestBuilder.command`${{ raw: cmdstr }}`
+            .exitCode(c => c !== 0)
+            .stdout(() => {})
+            .stderr(() => {})
+            .runAsTest(cmdstr)
+        : "",
+    );
+  });
+
   describe("concurrency", () => {
     test("writing to stdout", async () => {
       await Promise.all([
@@ -344,6 +377,14 @@ describe("bunshell", () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 
     expect(stdout.toString()).toEqual("LMAO\n");
+  });
+
+  describe("operators no spaces", async () => {
+    TestBuilder.command`echo LMAO|cat`.stdout("LMAO\n").runAsTest("pipeline");
+    TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");
+    TestBuilder.command`echo foo||echo hi`.stdout("foo\n").runAsTest("||");
+    TestBuilder.command`echo foo>hi.txt`.ensureTempDir().fileEquals("hi.txt", "foo\n").runAsTest("||");
+    TestBuilder.command`echo hifriends#lol`.stdout("hifriends#lol\n").runAsTest("#");
   });
 
   test("cmd subst", async () => {
@@ -742,7 +783,56 @@ ${temp_dir}`
   /**
    *
    */
-  describe("escaping", () => {});
+  describe("escaping", () => {
+    // Testing characters that need special handling when not quoted or in different contexts
+    TestBuilder.command`echo ${"$"}`.stdout("$\n").runAsTest("dollar");
+    TestBuilder.command`echo ${">"}`.stdout(">\n").runAsTest("right_arrow");
+    TestBuilder.command`echo ${"&"}`.stdout("&\n").runAsTest("ampersand");
+    TestBuilder.command`echo ${"|"}`.stdout("|\n").runAsTest("pipe");
+    TestBuilder.command`echo ${"="}`.stdout("=\n").runAsTest("equals");
+    TestBuilder.command`echo ${";"}`.stdout(";\n").runAsTest("semicolon");
+    TestBuilder.command`echo ${"\n"}`.stdout("\n\n").runAsTest("newline");
+    TestBuilder.command`echo ${"{"}`.stdout("{\n").runAsTest("left_brace");
+    TestBuilder.command`echo ${"}"}`.stdout("}\n").runAsTest("right_brace");
+    TestBuilder.command`echo ${","}`.stdout(",\n").runAsTest("comma");
+    TestBuilder.command`echo ${"("}`.stdout("(\n").runAsTest("left_parenthesis");
+    TestBuilder.command`echo ${")"}`.stdout(")\n").runAsTest("right_parenthesis");
+    TestBuilder.command`echo ${"\\"}`.stdout("\\\n").runAsTest("backslash");
+    TestBuilder.command`echo ${" "}`.stdout(" \n").runAsTest("space");
+    TestBuilder.command`echo ${"'hello'"}`.stdout("'hello'\n").runAsTest("single_quote");
+    TestBuilder.command`echo ${'"hello"'}`.stdout('"hello"\n').runAsTest("double_quote");
+    TestBuilder.command`echo ${"`hello`"}`.stdout("`hello`\n").runAsTest("backtick");
+
+    // Testing characters that need to be escaped within double quotes
+    TestBuilder.command`echo "${"$"}"`.stdout("$\n").runAsTest("dollar_in_dquotes");
+    TestBuilder.command`echo "${"`"}"`.stdout("`\n").runAsTest("backtick_in_dquotes");
+    TestBuilder.command`echo "${'"'}"`.stdout('"\n').runAsTest("double_quote_in_dquotes");
+    TestBuilder.command`echo "${"\\"}"`.stdout("\\\n").runAsTest("backslash_in_dquotes");
+
+    // Testing characters that need to be escaped within single quotes
+    TestBuilder.command`echo '${"$"}'`.stdout("$\n").runAsTest("dollar_in_squotes");
+    TestBuilder.command`echo '${'"'}'`.stdout('"\n').runAsTest("double_quote_in_squotes");
+    TestBuilder.command`echo '${"`"}'`.stdout("`\n").runAsTest("backtick_in_squotes");
+    TestBuilder.command`echo '${"\\\\"}'`.stdout("\\\\\n").runAsTest("backslash_in_squotes");
+
+    // Ensure that backslash escapes within single quotes are treated literally
+    TestBuilder.command`echo '${"\\"}'`.stdout("\\\n").runAsTest("literal_backslash_single_quote");
+    TestBuilder.command`echo '${"\\\\"}'`.stdout("\\\\\n").runAsTest("double_backslash_single_quote");
+
+    // Edge cases with mixed quotes
+    TestBuilder.command`echo "'\${"$"}'"`.stdout("'${$}'\n").runAsTest("mixed_quotes_dollar");
+    TestBuilder.command`echo '"${"`"}"'`.stdout('"`"\n').runAsTest("mixed_quotes_backtick");
+
+    // Compound command with special characters
+    TestBuilder.command`echo ${"hello; echo world"}`.stdout("hello; echo world\n").runAsTest("compound_command");
+    TestBuilder.command`echo ${"hello > world"}`.stdout("hello > world\n").runAsTest("redirect_in_echo");
+    TestBuilder.command`echo ${"$(echo nested)"}`.stdout("$(echo nested)\n").runAsTest("nested_command_substitution");
+
+    // Pathological cases involving multiple special characters
+    TestBuilder.command`echo ${"complex > command; $(execute)"}`
+      .stdout("complex > command; $(execute)\n")
+      .runAsTest("complex_mixed_special_chars");
+  });
 });
 
 describe("deno_task", () => {
@@ -1129,17 +1219,17 @@ fi
   "private": true,
   "name": "bun",
   "dependencies": {
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
+    "@vscode/debugadapter": "1.61.0",
+    "esbuild": "0.17.15",
+    "eslint": "8.20.0",
+    "eslint-config-prettier": "8.5.0",
+    "mitata": "0.1.3",
     "peechy": "0.4.34",
-    "prettier": "^3.2.5",
+    "prettier": "3.2.5",
     "react": "next",
     "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
+    "source-map-js": "1.0.2",
+    "typescript": "5.0.2"
   },
   "devDependencies": {
   },
@@ -1950,7 +2040,7 @@ describe("subshell", () => {
     "module": "index.ts",
     "type": "module",
     "dependencies": {
-      "sharp": "^0.33.3"
+      "sharp": "0.33.3"
     }
   }`;
 

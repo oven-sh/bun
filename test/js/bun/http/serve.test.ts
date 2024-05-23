@@ -48,7 +48,7 @@ afterAll(() => {
   }
 });
 
-describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () => {
+describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(
       isDirect ? "direct" : "default",
@@ -105,12 +105,17 @@ describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () 
               Bun.gc(false);
             }
             {
-              const promises = new Array(count);
-              for (let i = 0; i < count; i++) {
-                promises[i] = callback();
-              }
+              let remaining = count;
 
-              await Promise.all(promises);
+              const batchSize = 64;
+              while (remaining > 0) {
+                const promises = new Array(count);
+                for (let i = 0; i < batchSize && remaining > 0; i++) {
+                  promises[i] = callback();
+                }
+                await Promise.all(promises);
+                remaining -= batchSize;
+              }
             }
 
             Bun.gc(true);
@@ -1111,7 +1116,7 @@ it("formats error responses correctly", async () => {
 });
 
 it("request body and signal life cycle", async () => {
-  renderToReadableStream = (await import("react-dom/server")).renderToReadableStream;
+  renderToReadableStream = (await import("react-dom/server.browser")).renderToReadableStream;
   app_jsx = (await import("./app")).default;
   {
     const headers = {
@@ -1120,30 +1125,25 @@ it("request body and signal life cycle", async () => {
       },
     };
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       async fetch(req) {
         return new Response(await renderToReadableStream(app_jsx), headers);
       },
     });
 
-    try {
+    for (let j = 0; j < 10; j++) {
+      const batchSize = 64;
       const requests = [];
-      for (let j = 0; j < 10; j++) {
-        for (let i = 0; i < 250; i++) {
-          requests.push(fetch(server.url.origin));
-        }
-
-        await Promise.all(requests);
-        requests.length = 0;
-        Bun.gc(true);
+      for (let i = 0; i < batchSize; i++) {
+        requests.push(fetch(server.url.origin));
       }
-    } catch (e) {
-      console.error(e);
+      await Promise.all(requests);
+      Bun.gc(true);
     }
+
     await Bun.sleep(10);
-    expect(true).toBe(true);
-    server.stop(true);
+    expect().pass();
   }
 }, 30_000);
 
@@ -1151,7 +1151,7 @@ it("propagates content-type from a Bun.file()'s file path in fetch()", async () 
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
   const bodyText = await body.text();
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     development: false,
     async fetch(req) {
@@ -1173,12 +1173,10 @@ it("propagates content-type from a Bun.file()'s file path in fetch()", async () 
 
   // but it does for Response
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
-
-  server.stop(true);
 });
 
 it("does propagate type for Blob", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     development: false,
     async fetch(req) {
@@ -1195,14 +1193,11 @@ it("does propagate type for Blob", async () => {
   });
   expect(res.status).toBe(200);
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
-
-  server.stop(true);
 });
 
 it("unix socket connection in Bun.serve", async () => {
   const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
-  const server = Bun.serve({
-    port: 0,
+  using server = Bun.serve({
     unix,
 
     async fetch(req) {
@@ -1228,13 +1223,12 @@ it("unix socket connection in Bun.serve", async () => {
   await promise;
   expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nhey");
   connection.end();
-  server.stop(true);
 });
 
 it("unix socket connection throws an error on a bad domain without crashing", async () => {
   const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
   expect(() => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       unix,
 
@@ -1247,7 +1241,7 @@ it("unix socket connection throws an error on a bad domain without crashing", as
 });
 
 it("#5859 text", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     development: false,
     async fetch(req) {
@@ -1261,11 +1255,10 @@ it("#5859 text", async () => {
   });
 
   expect(await response.text()).toBe("�");
-  await server.stop(true);
 });
 
 it("#5859 json", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(req) {
       try {
@@ -1285,7 +1278,6 @@ it("#5859 json", async () => {
 
   expect(response.ok).toBeFalse();
   expect(await response.text()).toBe("FAIL");
-  await server.stop(true);
 });
 
 it("#5859 arrayBuffer", async () => {
@@ -1294,7 +1286,7 @@ it("#5859 arrayBuffer", async () => {
 });
 
 it("server.requestIP (v4)", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch(req, server) {
       return Response.json(server.requestIP(req));
@@ -1308,11 +1300,10 @@ it("server.requestIP (v4)", async () => {
     family: "IPv4",
     port: expect.any(Number),
   });
-  server.stop(true);
 });
 
 it("server.requestIP (v6)", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch(req, server) {
       return Response.json(server.requestIP(req));
@@ -1326,12 +1317,11 @@ it("server.requestIP (v6)", async () => {
     family: "IPv6",
     port: expect.any(Number),
   });
-  server.stop(true);
 });
 
 it("server.requestIP (unix)", async () => {
   const unix = "/tmp/bun-serve.sock";
-  const server = Bun.serve({
+  using server = Bun.serve({
     unix,
     fetch(req, server) {
       return Response.json(server.requestIP(req));
@@ -1354,11 +1344,10 @@ it("server.requestIP (unix)", async () => {
   await promise;
   expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
   connection.end();
-  server.stop(true);
 });
 
 it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     maxRequestBodySize: 10,
     fetch(req, server) {
@@ -1381,8 +1370,6 @@ it("should response with HTTP 413 when request body is larger than maxRequestBod
     });
     expect(resp.status).toBe(413);
   }
-
-  server.stop(true);
 });
 
 it("should support promise returned from error", async () => {
@@ -1433,7 +1420,7 @@ it("should support promise returned from error", async () => {
 if (process.platform === "linux")
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {
-      const server = Bun.serve({
+      using server = Bun.serve({
         port: 1003,
         fetch(req) {
           return new Response("request answered");

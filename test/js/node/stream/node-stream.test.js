@@ -1,4 +1,4 @@
-import { expect, describe, it } from "bun:test";
+import { expect, describe, it, jest } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
@@ -533,7 +533,7 @@ it("#9242.10 PassThrough has constructor", () => {
 });
 
 it("should send Readable events in the right order", async () => {
-  const package_dir = tmpdirSync("bun-test-node-stream");
+  const package_dir = tmpdirSync();
   const fixture_path = join(package_dir, "fixture.js");
 
   await Bun.write(
@@ -587,4 +587,30 @@ it("should send Readable events in the right order", async () => {
     `[ 1, "Hello World!\\n" ]`,
     ``,
   ]);
+});
+
+it("emits newListener event _before_ adding the listener", () => {
+  const cb = jest.fn(event => {
+    expect(stream.listenerCount(event)).toBe(0);
+  });
+  const stream = new Stream();
+  stream.on("newListener", cb);
+  stream.on("foo", () => {});
+  expect(cb).toHaveBeenCalled();
+});
+
+it("reports error", () => {
+  expect(() => {
+    const dup = new Duplex({
+      read() {
+        this.push("Hello World!\n");
+        this.push(null);
+      },
+      write(chunk, encoding, callback) {
+        callback(new Error("test"));
+      },
+    });
+
+    dup.emit("error", new Error("test"));
+  }).toThrow("test");
 });

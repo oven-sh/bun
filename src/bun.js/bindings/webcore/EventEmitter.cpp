@@ -183,8 +183,18 @@ void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
         return;
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (UNLIKELY(!listenersVector))
+    if (UNLIKELY(!listenersVector)) {
+        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
+            Ref<EventEmitter> protectedThis(*this);
+            auto* thisObject = protectedThis->m_thisObject.get();
+            if (!thisObject)
+                return;
+
+            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
+            return;
+        }
         return;
+    }
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;

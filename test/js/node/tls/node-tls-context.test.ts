@@ -6,9 +6,6 @@ import { expect, it, describe } from "bun:test";
 import tls from "node:tls";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { reject, set } from "lodash";
-import { resolve } from "bun";
-import { ca } from "js/third_party/grpc-js/common";
 import { AddressInfo } from "node:net";
 
 function loadPEM(filename: string) {
@@ -118,6 +115,7 @@ describe("tls.Server", () => {
             {
               ...clientOptionsBase,
               port: (server.address() as AddressInfo).port,
+              host: "127.0.0.1",
               servername,
             },
             () => {
@@ -177,6 +175,7 @@ describe("tls.Server", () => {
       server.listen(0, () => {
         const options = {
           port: (server?.address() as AddressInfo).port,
+          host: "127.0.0.1",
           key: agent1Key,
           cert: agent1Cert,
           ca: [ca1],
@@ -251,11 +250,14 @@ describe("tls.Server", () => {
     });
     return promise;
   }
-  it("should allow multiple in CA", async () => {
+  it("should allow multiple CA", async () => {
     // Verify that multiple CA certificates can be provided, and that for
     // convenience that can also be in newline-separated strings.
-    expect(await testCA([ca1, ca2])).toBe(true);
-    expect(await testCA([ca2 + "\n" + ca1])).toBe(true);
+    expect(await testCA([ca1, ca2])).toBeTrue();
+  });
+
+  it("should allow multiple CA in newline-separated strings", async () => {
+    expect(await testCA([ca2 + "\n" + ca1])).toBeTrue();
   });
 
   function testClient(options: any, clientResult: boolean, serverResult: string) {
@@ -281,6 +283,7 @@ describe("tls.Server", () => {
         {
           ...options,
           port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
         },
         () => {
@@ -366,9 +369,8 @@ describe("Bun.serve SNI", () => {
     });
   }
   it("single SNI", async () => {
-    let server: ReturnType<typeof Bun.serve> | null = null;
-    try {
-      server = Bun.serve({
+    {
+      using server = Bun.serve({
         port: 0,
         tls: {
           ...SNIContexts["asterisk.test.com"],
@@ -395,11 +397,9 @@ describe("Bun.serve SNI", () => {
         });
         expect(client).toBe(false);
       }
-    } finally {
-      server?.stop(true);
     }
-    try {
-      server = Bun.serve({
+    {
+      using server = Bun.serve({
         port: 0,
         tls: {
           ...goodSecureContext,
@@ -426,14 +426,11 @@ describe("Bun.serve SNI", () => {
         });
         expect(client).toBe(true);
       }
-    } finally {
-      server.stop(true);
     }
   });
   it("multiple SNI", async () => {
-    let server: ReturnType<typeof Bun.serve> | null = null;
-    try {
-      server = Bun.serve({
+    {
+      using server = Bun.serve({
         port: 0,
         tls: [
           serverOptions,
@@ -491,8 +488,6 @@ describe("Bun.serve SNI", () => {
           port: server.port,
         }),
       ).toBe(true);
-    } finally {
-      server?.stop(true);
     }
   });
 });

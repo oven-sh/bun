@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "fs";
 import path from "path";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
@@ -1247,6 +1247,27 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
+    // Check that all source maps are valid JSON
+    if (opts.sourceMap === "external" && outdir) {
+      for (const file of readdirSync(outdir)) {
+        if (file.endsWith(".js.map")) {
+          const parsed = JSON.parse(readFileSync(path.join(outdir, file)).toString());
+          try {
+            expect(parsed).toBeDefined();
+            expect(parsed.mappings).toBeString();
+            expect(parsed.sources).toBeArray();
+            expect(parsed.sourcesContent).toBeArray();
+            expect(parsed.names).toBeArray();
+            expect(parsed.version).toBe(3);
+          } catch (error) {
+            console.log("Expected source map " + file + " to be valid JSON");
+            console.log(parsed);
+            throw error;
+          }
+        }
+      }
+    }
+
     // Runtime checks!
     if (run) {
       const runs = Array.isArray(run) ? run : [run];
@@ -1411,23 +1432,12 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      // it.todo(id, () => {
-      //   throw error;
-      // });
       return ref;
     }
   }
 
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
-    // it(id, async () => {
-    //   try {
-    //     await expectBundled(id, opts as any);
-    //   } catch (error) {
-    //     return;
-    //   }
-    //   throw new Error(`Expected test to fail but it passed.`);
-    // });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }

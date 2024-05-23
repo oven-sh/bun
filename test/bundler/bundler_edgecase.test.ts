@@ -381,13 +381,13 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
       `,
       "/x.aaaa": `x`,
     },
+    outdir: "/out",
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
@@ -1056,6 +1056,26 @@ describe("bundler", () => {
     },
     target: "bun",
   });
+  itBundled("edgecase/EmitInvalidSourceMap1", {
+    files: {
+      "/index.ts": /* ts */ `
+        const y = await import("./second.mts");
+        import * as z from "./third.mts";
+        const v = await import("./third.mts");
+        console.log(z, v, y);
+      `,
+      "/second.mts": /* ts */ `
+        export const x = 1;
+      `,
+      "/third.mts": /* ts */ `
+        export const y = 2;
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "external",
+  });
+
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node

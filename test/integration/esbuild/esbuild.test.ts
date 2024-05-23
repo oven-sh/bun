@@ -7,6 +7,7 @@ import { spawn } from "bun";
 describe("esbuild integration test", () => {
   test("install and use esbuild", async () => {
     const packageDir = tmpdirSync();
+    console.log(1);
 
     await writeFile(
       join(packageDir, "package.json"),
@@ -30,6 +31,7 @@ describe("esbuild integration test", () => {
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("esbuild@0.19.8");
     expect(await exited).toBe(0);
+    console.log(2);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "esbuild", "--version"],
@@ -45,10 +47,12 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toContain("0.19.8");
     expect(await exited).toBe(0);
+    console.log(3);
   });
 
   test("install and use estrella", async () => {
     const packageDir = tmpdirSync();
+    console.log(1);
 
     await writeFile(
       join(packageDir, "package.json"),
@@ -72,6 +76,7 @@ describe("esbuild integration test", () => {
     expect(err).toContain("Saved lockfile");
     expect(out).toContain("estrella@1.4.1");
     expect(await exited).toBe(0);
+    console.log(2);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "estrella", "--estrella-version"],
@@ -87,6 +92,7 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toContain("1.4.1");
     expect(await exited).toBe(0);
+    console.log(3);
 
     await cp(join(import.meta.dir, "build-file.js"), join(packageDir, "build-file.js"));
 
@@ -104,6 +110,7 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);
+    console.log(4);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "bun.lockb"), { force: true });
@@ -136,6 +143,7 @@ describe("esbuild integration test", () => {
     expect(out).toContain("estrella@1.4.1");
     expect(out).toContain("esbuild@0.19.8");
     expect(await exited).toBe(0);
+    console.log(5);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "estrella", "--estrella-version"],
@@ -151,6 +159,7 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toContain("1.4.1");
     expect(await exited).toBe(0);
+    console.log(6);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "esbuild", "--version"],
@@ -166,6 +175,7 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toContain("0.19.8");
     expect(await exited).toBe(0);
+    console.log(7);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "esbuild", "--version"],
@@ -180,6 +190,8 @@ describe("esbuild integration test", () => {
     out = await new Response(stdout).text();
     expect(err).toBe("");
     expect(out).toContain("0.11.23");
+    expect(await exited).toBe(0);
+    console.log(8);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "estrella", "build-file.js"],
@@ -195,5 +207,6 @@ describe("esbuild integration test", () => {
     expect(err).toBe("");
     expect(out).toBe('console.log("hello"),console.log("estrella");\n');
     expect(await exited).toBe(0);
+    console.log(9);
   });
 });

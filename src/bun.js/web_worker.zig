@@ -123,7 +123,7 @@ pub const WebWorker = struct {
             .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
         };
 
-        worker.parent_poll_ref.refConcurrently(parent);
+        worker.parent_poll_ref.ref(parent);
 
         return worker;
     }

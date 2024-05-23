@@ -1462,7 +1462,9 @@ class ClientRequest extends OutgoingMessage {
     this.#finished = true;
     this[kAbortController] = new AbortController();
     this[kAbortController].signal.addEventListener("abort", () => {
+      this.emit("abort");
       this[kClearTimeout]();
+      this.destroy();
     });
     if (this.#signal?.aborted) {
       this[kAbortController].abort();
@@ -1522,7 +1524,14 @@ class ClientRequest extends OutgoingMessage {
           this.emit("response", res);
         })
         .catch(err => {
+          // Node treats AbortError separately.
+          // The "abort" listener on the abort controller should have called this
+          if (err?.name === "AbortError") {
+            return;
+          }
+
           if (!!$debug) globalReportError(err);
+
           this.emit("error", err);
         })
         .finally(() => {

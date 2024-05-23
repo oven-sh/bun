@@ -158,6 +158,9 @@ threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
+    return this.extractN(tgz_bytes, 0);
+}
+fn extractN(this: *const ExtractTarball, tgz_bytes: []const u8, n: u32) !Install.ExtractData {
     const tmpdir = this.temp_dir;
     var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
     const name = this.name.slice();
@@ -184,6 +187,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
     var resolved: string = "";
     const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
+
     {
         var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
             this.package_manager.log.addErrorFmt(
@@ -278,6 +282,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             Output.flush();
         }
     }
+
     const folder_name = switch (this.resolution.tag) {
         .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
         .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
@@ -305,7 +310,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         const path_to_use = path2;
 
         while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(bun.toFD(this.temp_dir.fd), bun.span(tmpname), .{
+            const cache_dir_fd = bun.toFD(this.temp_dir.fd);
+            const dir_to_move = bun.sys.openDirAtWindowsA(cache_dir_fd, bun.span(tmpname), .{
                 .can_rename_or_delete = true,
                 .create = false,
                 .iterable = false,
@@ -356,6 +362,19 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                                 tmpname_bytes[tmpname_len] = 0;
                                 did_retry = true;
                                 continue;
+                            },
+                            else => {},
+                        }
+                    } else {
+                        switch (err.getErrno()) {
+                            .NOTEMPTY => {
+                                _ = bun.sys.close(dir_to_move);
+
+                                // another bun install is writing this same package.
+                                // try again in just a bit.
+                                std.time.sleep(std.time.ns_per_s);
+                                if (n > 5) break;
+                                return this.extractN(tgz_bytes, n + 1);
                             },
                             else => {},
                         }

@@ -76,11 +76,7 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
       stdout: "pipe",
       stdin: "ignore",
       stderr: "inherit",
-      env: {
-        ...env,
-        // BUN_DEBUG_QUIET_LOGS: undefined,
-        // BUN_DEBUG: "/tmp/bun-debug.txt." + i,
-      },
+      env,
     });
   });
 
@@ -90,7 +86,7 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
     a.substring(0, a.indexOf("\n")),
   );
   expect(outputs).toEqual(semverVersions.map(v => "SemVer " + v));
-});
+}, 35_000);
 
 it("should install and run default (latest) version", async () => {
   const { stdout, stderr, exited } = spawn({
@@ -106,7 +102,7 @@ it("should install and run default (latest) version", async () => {
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(await exited).toBe(0);
-});
+}, 15_000);
 
 it("should install and run specified version", async () => {
   const { stdout, stderr, exited } = spawn({
@@ -122,7 +118,7 @@ it("should install and run specified version", async () => {
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
   expect(await exited).toBe(0);
-});
+}, 15_000);
 
 it("should output usage if no arguments are passed", async () => {
   const { stdout, stderr, exited } = spawn({
@@ -181,7 +177,7 @@ it("should work for @scoped packages", async () => {
   expect(err).not.toContain("error:");
 
   expect(out.trim()).toContain("Usage: babel [options]");
-});
+}, 15_000);
 
 it("should execute from current working directory", async () => {
   await writeFile(
@@ -206,7 +202,7 @@ console.log(
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(exitCode).toBe(0);
-});
+}, 15_000);
 
 it("should work for github repository", async () => {
   // without cache
@@ -248,7 +244,7 @@ it("should work for github repository", async () => {
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(exited).toBe(0);
-});
+}, 15_000);
 
 it("should work for github repository with committish", async () => {
   const withoutCache = spawn({
@@ -289,7 +285,7 @@ it("should work for github repository with committish", async () => {
   expect(err).not.toContain("error:");
   expect(out.trim()).toContain("hello bun!");
   expect(exited).toBe(0);
-});
+}, 15_000);
 
 it.each(["--version", "-v"])("should print the version using %s and exit", async flag => {
   const subprocess = spawn({
@@ -353,4 +349,4 @@ it("should pass --version to the package if specified", async () => {
   expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
-});
+}, 15_000);

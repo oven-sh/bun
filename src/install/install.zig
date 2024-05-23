@@ -2350,10 +2350,25 @@ const PackageManifestMap = struct {
     }
 
     pub fn byNameHash(this: *PackageManifestMap, name_hash: PackageNameHash) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, name_hash, null);
+    }
+
+    pub fn byNameAllowExpired(this: *PackageManifestMap, name: string, is_expired: ?*bool) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, String.Builder.stringHash(name), is_expired);
+    }
+
+    pub fn byNameHashAllowExpired(this: *PackageManifestMap, name_hash: PackageNameHash, is_expired: ?*bool) ?*Npm.PackageManifest {
         const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch bun.outOfMemory();
         if (entry.found_existing) {
             if (entry.value_ptr.* == .manifest) {
                 return &entry.value_ptr.manifest;
+            }
+
+            if (is_expired) |expiry| {
+                if (entry.value_ptr.* == .expired) {
+                    expiry.* = true;
+                    return &entry.value_ptr.expired;
+                }
             }
 
             return null;
@@ -2366,6 +2381,12 @@ const PackageManifestMap = struct {
                     return &entry.value_ptr.manifest;
                 } else {
                     entry.value_ptr.* = .{ .expired = manifest };
+
+                    if (is_expired) |expiry| {
+                        expiry.* = true;
+                        return &entry.value_ptr.expired;
+                    }
+
                     return null;
                 }
             }
@@ -4543,7 +4564,8 @@ pub const PackageManager = struct {
                             if (!dependency.behavior.isPeer() or install_peer) {
                                 if (!this.hasCreatedNetworkTask(task_id)) {
                                     if (this.options.enable.manifest_cache) {
-                                        if (this.manifests.byName(name_str)) |manifest| {
+                                        var expired = false;
+                                        if (this.manifests.byNameAllowExpired(name_str, &expired)) |manifest| {
                                             loaded_manifest = manifest.*;
 
                                             // If it's an exact package version already living in the cache
@@ -4569,7 +4591,7 @@ pub const PackageManager = struct {
                                             }
 
                                             // Was it recent enough to just load it without the network call?
-                                            if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
+                                            if (this.options.enable.manifest_cache_control and !expired) {
                                                 _ = this.network_dedupe_map.remove(task_id);
                                                 continue :retry_from_manifests_ptr;
                                             }

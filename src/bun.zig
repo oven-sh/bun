@@ -1466,7 +1466,7 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 
-pub const Joiner = @import("./string_joiner.zig");
+pub const StringJoiner = @import("./StringJoiner.zig");
 pub const renamer = @import("./renamer.zig");
 pub const sourcemap = struct {
     pub usingnamespace @import("./sourcemap/sourcemap.zig");

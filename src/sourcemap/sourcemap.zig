@@ -11,7 +11,7 @@ const BabyList = JSAst.BabyList;
 const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const Joiner = @import("../string_joiner.zig");
+const Joiner = bun.StringJoiner;
 const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
@@ -886,7 +886,15 @@ pub const SourceMapPieces = struct {
         var current: usize = 0;
         var generated = LineColumnOffset{};
         var prev_shift_column_delta: i32 = 0;
-        var j = Joiner{};
+
+        // the joiner's node allocator contains string join nodes as well as some vlq encodings
+        // it doesnt contain json payloads or source code, so 16kb is probably going to cover
+        // most applications.
+        var sfb = std.heap.stackFallback(16384, bun.default_allocator);
+        var j = Joiner{
+            .use_pool = false,
+            .node_allocator = sfb.get(),
+        };
 
         j.push(this.prefix.items);
         const mappings = this.mappings.items;
@@ -945,7 +953,7 @@ pub const SourceMapPieces = struct {
             const shift_column_delta = shift.after.columns - shift.before.columns;
             const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
             const encode = encodeVLQ(vlq_value);
-            j.push(encode.bytes[0..encode.len]);
+            j.pushCloned(encode.bytes[0..encode.len]);
             prev_shift_column_delta = shift_column_delta;
 
             start_of_run = potential_start_of_run;
@@ -954,7 +962,9 @@ pub const SourceMapPieces = struct {
         j.push(mappings[start_of_run..]);
         j.push(this.suffix.items);
 
-        return try j.done(allocator);
+        const str = try j.done(allocator);
+        bun.assert(str[0] == '{'); // invalid json
+        return str;
     }
 };
 
@@ -1455,9 +1465,8 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         buffer.appendCharAssumeCapacity(',');
     }
 
-    comptime var i: usize = 0;
-    inline while (i < vlq.len) : (i += 1) {
-        buffer.appendAssumeCapacity(vlq[i].bytes[0..vlq[i].len]);
+    inline for (vlq) |item| {
+        buffer.appendAssumeCapacity(item.bytes[0..item.len]);
     }
 
     return buffer;

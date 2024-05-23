@@ -5,7 +5,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 const Allocator = std.mem.Allocator;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-const Joiner = @This();
+const StringJoiner = @This();
 
 const Joinable = struct {
     offset: u31 = 0,
@@ -32,23 +32,24 @@ pub const Watcher = struct {
     needs_newline: bool = false,
 };
 
-pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
+pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
     if (this.head == null) {
-        const out: []u8 = &[_]u8{};
-        return out;
+        return &.{};
     }
 
+    std.debug.print("StringJoiner.done({d})\n", .{this.len});
     var slice = try allocator.alloc(u8, this.len);
     var remaining = slice;
-    var el_ = this.head;
-    while (el_) |join| {
+    var current = this.head;
+    while (current) |join| {
         const to_join = join.data.slice[join.data.offset..];
+        std.debug.print("StringJoiner.done({d}) join: {s}\n", .{ to_join.len, to_join });
         @memcpy(remaining[0..to_join.len], to_join);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
         var prev = join;
-        el_ = join.next;
+        current = join.next;
         if (prev.data.needs_deinit) {
             prev.data.allocator.free(prev.data.slice);
             prev.data = Joinable{};
@@ -57,10 +58,12 @@ pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
         if (this.use_pool) prev.release();
     }
 
+    std.debug.print("StringJoiner.done() remaining: {d}\n", .{remaining.len});
+
     return slice[0 .. slice.len - remaining.len];
 }
 
-pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
+pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) ![]u8 {
     if (this.head == null and end.len == 0) {
         return &[_]u8{};
     }
@@ -74,15 +77,15 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
 
     var slice = try allocator.alloc(u8, this.len + end.len);
     var remaining = slice;
-    var el_ = this.head;
-    while (el_) |join| {
+    var current = this.head;
+    while (current) |join| {
         const to_join = join.data.slice[join.data.offset..];
         @memcpy(remaining[0..to_join.len], to_join);
 
         remaining = remaining[@min(remaining.len, to_join.len)..];
 
         var prev = join;
-        el_ = join.next;
+        current = join.next;
         if (prev.data.needs_deinit) {
             prev.data.allocator.free(prev.data.slice);
             prev.data = Joinable{};
@@ -98,7 +101,7 @@ pub fn doneWithEnd(this: *Joiner, allocator: Allocator, end: []const u8) ![]u8 {
     return slice[0 .. slice.len - remaining.len];
 }
 
-pub fn lastByte(this: *const Joiner) u8 {
+pub fn lastByte(this: *const StringJoiner) u8 {
     if (this.tail) |tail| {
         const slice = tail.data.slice[tail.data.offset..];
         return if (slice.len > 0) slice[slice.len - 1] else 0;
@@ -107,20 +110,21 @@ pub fn lastByte(this: *const Joiner) u8 {
     return 0;
 }
 
-pub fn push(this: *Joiner, slice: string) void {
+pub fn push(this: *StringJoiner, slice: string) void {
     this.append(slice, 0, null);
 }
 
-pub fn ensureNewlineAtEnd(this: *Joiner) void {
+pub fn ensureNewlineAtEnd(this: *StringJoiner) void {
     if (this.watcher.needs_newline) {
         this.watcher.needs_newline = false;
         this.push("\n");
     }
 }
 
-pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) void {
+pub fn append(this: *StringJoiner, slice: string, offset: u32, allocator: ?Allocator) void {
+    std.debug.print("append: {s}\n", .{slice});
     const data = slice[offset..];
-    this.len += @as(u32, @truncate(data.len));
+    this.len += data.len;
 
     const new_tail = if (this.use_pool)
         Joinable.Pool.get(default_allocator)
@@ -137,8 +141,8 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
 
     new_tail.* = .{
         .allocator = default_allocator,
-        .data = Joinable{
-            .offset = @as(u31, @truncate(offset)),
+        .data = .{
+            .offset = @truncate(offset),
             .allocator = allocator orelse undefined,
             .needs_deinit = allocator != null,
             .slice = slice,
@@ -154,7 +158,7 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) 
     this.tail = new_tail;
 }
 
-pub fn contains(this: *const Joiner, slice: string) bool {
+pub fn contains(this: *const StringJoiner, slice: string) bool {
     var el = this.head;
     while (el) |node| {
         el = node.next;
@@ -162,4 +166,9 @@ pub fn contains(this: *const Joiner, slice: string) bool {
     }
 
     return false;
+}
+
+pub fn pushCloned(this: *StringJoiner, slice: []const u8) void {
+    const alloc = if (!this.use_pool) this.node_allocator else bun.default_allocator;
+    this.append(alloc.dupe(u8, slice) catch bun.outOfMemory(), 0, alloc);
 }

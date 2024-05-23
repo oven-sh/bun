@@ -675,7 +675,7 @@ pub const PackageManifest = struct {
             inline for (fields) |field| {
                 estimated_byte_length += std.mem.sliceAsBytes(@field(this, field)).len;
             }
-            var buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, estimated_byte_length);
+            var buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, estimated_byte_length + 512);
             defer buffer.deinit();
             const writer = &buffer.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
@@ -706,7 +706,7 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY, 0).unwrap();
+            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY, if (Environment.isPosix) 0o664 else 0).unwrap();
             {
                 errdefer file.close();
                 try file.writeAll(buffer.items).unwrap();

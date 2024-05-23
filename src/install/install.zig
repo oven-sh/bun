@@ -2344,8 +2344,9 @@ pub const PackageManager = struct {
     cache_directory_: ?std.fs.Dir = null,
 
     // TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
-    cache_directory_path: string = "",
+    cache_directory_path: stringZ = "",
     temp_dir_: ?std.fs.Dir = null,
+    temp_dir_path: stringZ = "",
     temp_dir_name: string = "",
     root_dir: *Fs.FileSystem.DirEntry,
     allocator: std.mem.Allocator,
@@ -3063,6 +3064,9 @@ pub const PackageManager = struct {
     pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
         return this.temp_dir_ orelse brk: {
             this.temp_dir_ = this.ensureTemporaryDirectory();
+            var pathbuf: bun.PathBuffer = undefined;
+            const temp_dir_path = bun.getFdPathZ(bun.toFD(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
+            this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch bun.outOfMemory();
             break :brk this.temp_dir_.?;
         };
     }
@@ -3071,7 +3075,7 @@ pub const PackageManager = struct {
         loop: while (true) {
             if (this.options.enable.cache) {
                 const cache_dir = fetchCacheDirectoryPath(this.env);
-                this.cache_directory_path = this.allocator.dupe(u8, cache_dir.path) catch bun.outOfMemory();
+                this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
                 return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
@@ -3080,7 +3084,7 @@ pub const PackageManager = struct {
                 };
             }
 
-            this.cache_directory_path = this.allocator.dupe(u8, Path.joinAbsString(
+            this.cache_directory_path = this.allocator.dupeZ(u8, Path.joinAbsString(
                 Fs.FileSystem.instance.top_level_dir,
                 &.{
                     "node_modules",

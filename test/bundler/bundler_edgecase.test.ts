@@ -1058,22 +1058,26 @@ describe("bundler", () => {
   });
   itBundled("edgecase/EmitInvalidSourceMap1", {
     files: {
-      "/index.ts": /* ts */ `
+      "/src/index.ts": /* ts */ `
         const y = await import("./second.mts");
         import * as z from "./third.mts";
         const v = await import("./third.mts");
         console.log(z, v, y);
       `,
-      "/second.mts": /* ts */ `
-        export const x = 1;
+      "/src/second.mts": /* ts */ `
+        export default "swag";
       `,
-      "/third.mts": /* ts */ `
-        export const y = 2;
+      "/src/third.mts": /* ts */ `
+        export default "bun";
       `,
     },
     outdir: "/out",
     target: "bun",
     sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    splitting: true,
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

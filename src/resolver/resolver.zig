@@ -1934,7 +1934,7 @@ pub const Resolver = struct {
 
                 const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
-                    if (err == error.FileNotFound) {
+                    if (err == error.FileNotFound or err == error.ENOENT) {
                         switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
                                 var path = Fs.Path.init(import_path);
@@ -4092,7 +4092,7 @@ pub const Resolver = struct {
                 ) catch |err| brk: {
                     const pretty = r.prettyPath(Path.init(tsconfigpath));
 
-                    if (err == error.ENOENT or err == error.FileNotFound) {
+                    if (err == error.FileNotFound or err == error.ENOENT) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};

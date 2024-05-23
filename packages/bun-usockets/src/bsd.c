@@ -300,15 +300,14 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
-    // returns INVALID_SOCKET on error
-    int flags = 0;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
-#endif
-
+    int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
     LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type | flags, protocol);
-
+    return apple_no_sigpipe(created_fd);
+#else
+    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type, protocol);
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
+#endif
 }
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -892,13 +891,28 @@ static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRI
 {
     int namelen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 #ifdef _WIN32
-    do {
-        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
+    while (1) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
             return 0;
         }
-    } while (WSAGetLastError() == WSAEINTR);
 
-    return WSAGetLastError();
+        int err = WSAGetLastError();
+        switch (err) {
+            case WSAEINPROGRESS:
+            case WSAEWOULDBLOCK:
+            case WSAEALREADY: {
+                return 0;
+            }
+            case WSAEINTR: {
+                continue;
+            }
+            default: {
+                return err;
+            }
+        }
+    }
+
+    
 #else
      do {
         if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS) {

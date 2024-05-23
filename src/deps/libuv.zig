@@ -682,16 +682,6 @@ pub const Loop = extern struct {
         this.wq_async.send();
     }
 
-    pub fn refConcurrently(this: *Loop) void {
-        log("refConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
-    }
-
-    pub fn unrefConcurrently(this: *Loop) void {
-        log("unrefConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
-    }
-
     pub fn unrefCount(this: *Loop, count: i32) void {
         log("unrefCount({d})", .{count});
         this.active_handles -= @intCast(count);

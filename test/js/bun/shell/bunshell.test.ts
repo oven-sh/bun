@@ -1097,7 +1097,8 @@ describe("deno_task", () => {
     }
   });
 
-  test("stacktrace", async () => {
+  // https://github.com/oven-sh/bun/issues/11305
+  test.todoIf(isWindows)("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
     const code = /* ts */ `import { $ } from 'bun'
 

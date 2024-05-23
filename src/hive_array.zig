@@ -92,6 +92,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
                     return value;
                 }
 
+                new.* = true;
                 return self.allocator.create(T) catch unreachable;
             }
 

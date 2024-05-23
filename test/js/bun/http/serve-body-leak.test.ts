@@ -5,6 +5,8 @@ import type { Subprocess } from "bun";
 
 const ACCEPTABLE_MEMORY_LEAK = 2; //MB for acceptable memory leak variance
 const payload = "1".repeat(32 * 1024); // decent size payload to test memory leak
+const batchSize = 40;
+const totalCount = 10_000;
 
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
@@ -29,9 +31,11 @@ async function getMemoryUsage(): Promise<number> {
 }
 
 async function warmup() {
-  const batch = new Array(100);
-  for (let i = 0; i < 100; i++) {
-    for (let j = 0; j < 100; j++) {
+  var remaining = totalCount;
+
+  while (remaining > 0) {
+    const batch = new Array(batchSize);
+    for (let j = 0; j < batchSize; j++) {
       // warmup the server with streaming requests, because is the most memory intensive
       batch[j] = fetch(`${url.origin}/streaming`, {
         method: "POST",
@@ -39,6 +43,7 @@ async function warmup() {
       });
     }
     await Promise.all(batch);
+    remaining -= batchSize;
   }
   // clean up memory before first test
   await getMemoryUsage();
@@ -84,14 +89,18 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   const start_memory = await getMemoryUsage();
   const memory_examples: Array<number> = [];
   let peak_memory = start_memory;
-  const batch = new Array(100);
-  for (let i = 0; i < 100; i++) {
-    for (let j = 0; j < 100; j++) {
+
+  var remaining = totalCount;
+  while (remaining > 0) {
+    const batch = new Array(batchSize);
+    for (let j = 0; j < batchSize; j++) {
       batch[j] = fn();
     }
     await Promise.all(batch);
+    remaining -= batchSize;
+
     // garbage collect and check memory usage every 1000 requests
-    if (i > 0 && i % 10 === 0) {
+    if (remaining > 0 && remaining % 1000 === 0) {
       const report = await getMemoryUsage();
       if (report > peak_memory) {
         peak_memory = report;

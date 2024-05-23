@@ -722,6 +722,12 @@ pub const PackageManifest = struct {
             }
         }
 
+        /// We save into a temporary directory and then move the file to the cache directory.
+        /// Saving the files to the manifest cache doesn't need to prevent application exit.
+        /// It's an optional cache.
+        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
+        ///
+        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
         pub fn saveAsync(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
             const SaveTask = struct {
                 manifest: PackageManifest,
@@ -734,8 +740,6 @@ pub const PackageManifest = struct {
                 pub fn run(task: *bun.ThreadPool.Task) void {
                     const save_task: *@This() = @fieldParentPtr(@This(), "task", task);
                     defer {
-                        _ = PackageManager.instance.decrementPendingTasks();
-                        _ = PackageManager.instance.event_loop.wakeup();
                         save_task.destroy();
                     }
 
@@ -755,7 +759,6 @@ pub const PackageManifest = struct {
             });
 
             const batch = bun.ThreadPool.Batch.from(&task.task);
-            _ = PackageManager.instance.incrementPendingTasks(1);
             PackageManager.instance.thread_pool.schedule(batch);
         }
 

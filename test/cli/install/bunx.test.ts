@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it, beforeAll, setTimeout as jestSetTimeout } from "bun:test";
+import { beforeEach, expect, it, beforeAll, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
 import { writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -13,7 +13,7 @@ let install_cache_dir: string;
 let env = { ...bunEnv };
 
 beforeAll(() => {
-  jestSetTimeout(1000 * 60 * 5);
+  setDefaultTimeout(1000 * 60 * 5);
 });
 
 beforeEach(async () => {

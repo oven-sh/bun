@@ -5,7 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { tempDirWithFiles } from "harness";
-import { describe, test, afterAll, beforeAll, expect, setTimeout as jestSetTimeout } from "bun:test";
+import { describe, test, afterAll, beforeAll, expect, setDefaultTimeout } from "bun:test";
 import { $ } from "bun";
 import path from "path";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -19,7 +19,7 @@ const fileExists = async (path: string): Promise<boolean> =>
 $.nothrow();
 
 beforeAll(() => {
-  jestSetTimeout(1000 * 60 * 5);
+  setDefaultTimeout(1000 * 60 * 5);
 });
 
 const BUN = process.argv0;

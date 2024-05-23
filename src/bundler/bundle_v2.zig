@@ -7094,10 +7094,8 @@ const LinkerContext = struct {
         }
 
         const done = try j.done(worker.allocator);
-        std.debug.print("Awa {s}\n", .{done});
         bun.assert(done[0] == '{');
 
-        // TODO: this is cloning the string?
         var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
         if (can_have_shifts) {
             try pieces.prefix.appendSlice(done[0..mapping_start]);

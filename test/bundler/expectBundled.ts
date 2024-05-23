@@ -10,6 +10,7 @@ import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
 import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -1252,18 +1253,15 @@ for (const [key, blob] of build.outputs) {
       for (const file of readdirSync(outdir)) {
         if (file.endsWith(".map")) {
           const parsed = JSON.parse(readFileSync(path.join(outdir, file)).toString());
-          try {
-            expect(parsed).toBeDefined();
-            expect(parsed.mappings).toBeString();
-            expect(parsed.sources).toBeArray();
-            expect(parsed.sourcesContent).toBeArray();
-            expect(parsed.names).toBeArray();
-            expect(parsed.version).toBe(3);
-          } catch (error) {
-            console.log("Expected source map " + file + " to be valid JSON");
-            console.log(parsed);
-            throw error;
-          }
+          await SourceMapConsumer.with(parsed, null, async map => {
+            map.eachMapping(m => {
+              expect(m.source).toBeDefined();
+              expect(m.generatedLine).toBeGreaterThanOrEqual(0);
+              expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
+              expect(m.originalLine).toBeGreaterThanOrEqual(0);
+              expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+            });
+          });
         }
       }
     }

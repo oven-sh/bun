@@ -250,11 +250,14 @@ describe("tls.Server", () => {
     });
     return promise;
   }
-  it("should allow multiple in CA", async () => {
+  it("should allow multiple CA", async () => {
     // Verify that multiple CA certificates can be provided, and that for
     // convenience that can also be in newline-separated strings.
-    expect(await testCA([ca1, ca2])).toBe(true);
-    expect(await testCA([ca2 + "\n" + ca1])).toBe(true);
+    expect(await testCA([ca1, ca2])).toBeTrue();
+  });
+
+  it("should allow multiple CA in newline-separated strings", async () => {
+    expect(await testCA([ca2 + "\n" + ca1])).toBeTrue();
   });
 
   function testClient(options: any, clientResult: boolean, serverResult: string) {

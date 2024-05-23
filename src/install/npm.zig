@@ -272,12 +272,7 @@ pub const Registry = struct {
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch |err| {
-                    if (PackageManager.verbose_install) {
-                        Output.warn("Error caching manifest for {s}: {s}", .{ package_name, @errorName(err) });
-                        Output.flush();
-                    }
-                };
+                PackageManifest.Serializer.saveAsync(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory());
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -727,6 +722,43 @@ pub const PackageManifest = struct {
             }
         }
 
+        pub fn saveAsync(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+            const SaveTask = struct {
+                manifest: PackageManifest,
+                tmpdir: std.fs.Dir,
+                cache_dir: std.fs.Dir,
+
+                task: bun.ThreadPool.Task = .{ .callback = &run },
+                pub usingnamespace bun.New(@This());
+
+                pub fn run(task: *bun.ThreadPool.Task) void {
+                    const save_task: *@This() = @fieldParentPtr(@This(), "task", task);
+                    defer {
+                        _ = PackageManager.instance.decrementPendingTasks();
+                        _ = PackageManager.instance.event_loop.wakeup();
+                        save_task.destroy();
+                    }
+
+                    Serializer.save(&save_task.manifest, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                        if (PackageManager.verbose_install) {
+                            Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
+                            Output.flush();
+                        }
+                    };
+                }
+            };
+
+            const task = SaveTask.new(.{
+                .manifest = this.*,
+                .tmpdir = tmpdir,
+                .cache_dir = cache_dir,
+            });
+
+            const batch = bun.ThreadPool.Batch.from(&task.task);
+            _ = PackageManager.instance.incrementPendingTasks(1);
+            PackageManager.instance.thread_pool.schedule(batch);
+        }
+
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
@@ -743,8 +775,7 @@ pub const PackageManifest = struct {
             try writeFile(this, tmp_path, tmpdir, cache_dir, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash11.hash(0, package_name);
+        pub fn loadByFileID(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -752,10 +783,6 @@ pub const PackageManifest = struct {
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
-            var timer: std.time.Timer = undefined;
-            if (PackageManager.verbose_install) {
-                timer = std.time.Timer.start() catch @panic("timer fail");
-            }
             defer cache_file.close();
             const bytes = try cache_file.readToEndAllocOptions(
                 allocator,
@@ -767,7 +794,17 @@ pub const PackageManifest = struct {
 
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
-            const result = try readAll(bytes);
+            return try readAll(bytes);
+        }
+
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+            var timer: std.time.Timer = undefined;
+            if (PackageManager.verbose_install) {
+                timer = std.time.Timer.start() catch @panic("timer fail");
+            }
+
+            const result = try loadByFileID(allocator, cache_dir, bun.Wyhash11.hash(0, package_name)) orelse return null;
+
             if (PackageManager.verbose_install) {
                 Output.prettyError("\n ", .{});
                 Output.printTimer(&timer);

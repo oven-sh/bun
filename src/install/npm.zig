@@ -674,38 +674,48 @@ pub const PackageManifest = struct {
             defer buffer.deinit();
             const writer = &buffer.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
+            // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
+            //
             // PS C:\bun> hyperfine "bun-debug install --ignore-scripts" "bun install --ignore-scripts" --prepare="del /s /q bun.lockb && del /s /q C:\Users\window\.bun\install\cache"
             // Benchmark 1: bun-debug install --ignore-scripts
             //   Time (mean ± σ):      1.266 s ±  0.284 s    [User: 1.631 s, System: 0.205 s]
             //   Range (min … max):    1.071 s …  1.804 s    10 runs
-
+            //
             //   Warning: Statistical outliers were detected. Consider re-running this benchmark on a quiet system without any interferences from other programs. It might help to use the '--warmup' or '--prepare' options.
-
+            //
             // Benchmark 2: bun install --ignore-scripts
             //   Time (mean ± σ):      3.202 s ±  0.095 s    [User: 0.255 s, System: 0.172 s]
             //   Range (min … max):    3.058 s …  3.371 s    10 runs
-
+            //
             // Summary
             //   bun-debug install --ignore-scripts ran
             //     2.53 ± 0.57 times faster than bun install --ignore-scripts
-            const file = try bun.sys.File.openat(tmpdir, tmp_path, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap();
+            // --- Perf Improvement #2 ----
+            // GetFinalPathnameByHandle is very expensive if called many times
+            // We skip calling it when we are giving an absolute file path.
+            // This needs many more call sites, doesn't have much impact on this location.
+            var realpath_buf: bun.PathBuffer = undefined;
+            const path_to_use_for_opening_file = if (Environment.isWindows)
+                bun.path.joinAbsStringBufZ(PackageManager.instance.temp_dir_path, &realpath_buf, &.{ PackageManager.instance.temp_dir_path, tmp_path }, .auto)
+            else
+                tmp_path;
+
+            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap();
             {
                 errdefer file.close();
                 try file.writeAll(buffer.items).unwrap();
             }
             if (comptime Environment.isWindows) {
-                var realpath_buf: bun.PathBuffer = undefined;
                 var realpath2_buf: bun.PathBuffer = undefined;
                 var did_close = false;
                 errdefer if (!did_close) file.close();
-                const tmp_path_partial = try bun.getFdPath(tmpdir, &realpath_buf);
-                const tmp_path_abs = bun.path.joinAbsStringBufZ(tmp_path_partial, &realpath2_buf, &.{ tmp_path_partial, tmp_path }, .auto);
-                const cache_dir_abs = try bun.getFdPath(cache_dir, &realpath_buf);
+
+                const cache_dir_abs = PackageManager.instance.cache_directory_path;
                 const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
                 file.close();
                 did_close = true;
-                try bun.sys.renameat(bun.FD.cwd(), tmp_path_abs, bun.FD.cwd(), cache_path_abs).unwrap();
+                try bun.sys.renameat(bun.FD.cwd(), path_to_use_for_opening_file, bun.FD.cwd(), cache_path_abs).unwrap();
             } else {
                 defer file.close();
                 try bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath).unwrap();

@@ -571,6 +571,14 @@ pub const PackageManifest = struct {
         return this.pkg.name.slice(this.string_buf);
     }
 
+    pub fn byteLength(this: *const PackageManifest) usize {
+        var counter = std.io.countingWriter(std.io.null_writer);
+        const writer = counter.writer();
+
+        Serializer.write(this, @TypeOf(writer), writer) catch return 0;
+        return counter.bytes_written;
+    }
+
     pub const Serializer = struct {
         pub const version = "bun-npm-manifest-cache-v0.0.2\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
@@ -663,19 +671,11 @@ pub const PackageManifest = struct {
         }
 
         fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir, outpath: [:0]const u8) !void {
-            const fields = .{
-                "string_buf",
-                "versions",
-                "external_strings",
-                "external_strings_for_versions",
-                "package_versions",
-                "extern_strings_bin_entries",
-            };
-            var estimated_byte_length: usize = 0;
-            inline for (fields) |field| {
-                estimated_byte_length += std.mem.sliceAsBytes(@field(this, field)).len;
-            }
-            var buffer = try std.ArrayList(u8).initCapacity(bun.default_allocator, estimated_byte_length + 512);
+            // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
+            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
+
+            const allocator = stack_fallback.get();
+            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength() + 64);
             defer buffer.deinit();
             const writer = &buffer.writer();
             try Serializer.write(this, @TypeOf(writer), writer);

@@ -4126,6 +4126,9 @@ pub const Package = extern struct {
                 continue;
             }
 
+            const rel_input_path = Path.relativePlatform(source.path.name.dir, input_path, .auto, true);
+            Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel_input_path));
+
             var abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
                 source.path.name.dir,
                 filepath_buf,
@@ -4186,7 +4189,7 @@ pub const Package = extern struct {
                 }
             }
 
-            try workspace_names.insert(input_path, .{
+            try workspace_names.insert(allocator.dupe(u8, rel_input_path) catch bun.outOfMemory(), .{
                 .name = workspace_entry.name,
                 .name_loc = workspace_entry.name_loc,
                 .version = workspace_entry.version,

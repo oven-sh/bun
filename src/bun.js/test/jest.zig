@@ -81,7 +81,9 @@ pub const TestRunner = struct {
     snapshots: Snapshots,
 
     default_timeout_ms: u32,
-    default_timeout_override: ?u32 = null,
+
+    // from `setDefaultTimeout() or jest.setTimeout()`
+    default_timeout_override: u32 = std.math.maxInt(u32),
 
     test_timeout_timer: ?*bun.uws.Timer = null,
     last_test_timeout_timer_duration: u32 = 0,
@@ -427,8 +429,8 @@ pub const Jest = struct {
 
         module.put(
             globalObject,
-            ZigString.static("setTimeout"),
-            JSC.NewFunction(globalObject, ZigString.static("setTimeout"), 1, jsSetTimeout, false),
+            ZigString.static("setDefaultTimeout"),
+            JSC.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false),
         );
 
         module.put(
@@ -461,7 +463,7 @@ pub const Jest = struct {
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 7);
+        const jest = JSValue.createEmptyObject(globalObject, 8);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
@@ -482,6 +484,7 @@ pub const Jest = struct {
             useRealTimers,
         );
         jest.put(globalObject, ZigString.static("now"), JSC.NewFunction(globalObject, ZigString.static("now"), 0, JSMock__jsNow, false));
+        jest.put(globalObject, ZigString.static("setTimeout"), JSC.NewFunction(globalObject, ZigString.static("setTimeout"), 1, jsSetDefaultTimeout, false));
 
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
@@ -543,7 +546,7 @@ pub const Jest = struct {
         return Bun__Jest__testModuleObject(globalObject);
     }
 
-    fn jsSetTimeout(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    fn jsSetDefaultTimeout(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len < 1 or !arguments[0].isNumber()) {
             globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
@@ -583,11 +586,7 @@ pub const TestScope = struct {
     snapshot_count: usize = 0,
 
     // null if the test does not set a timeout
-    timeout_millis: ?u32 = null,
-
-    // Need this because the default timeout used for the test might
-    // be different from the default when it times out.
-    actual_timeout_millis: u32 = 0,
+    timeout_millis: u32 = std.math.maxInt(u32),
 
     retry_count: u32 = 0, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
@@ -706,12 +705,16 @@ pub const TestScope = struct {
             task.started_at = timer.started;
         }
 
-        this.actual_timeout_millis = this.timeout_millis orelse
-            Jest.runner.?.default_timeout_override orelse
-            Jest.runner.?.default_timeout_ms;
+        if (this.timeout_millis == std.math.maxInt(u32)) {
+            if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
+                this.timeout_millis = Jest.runner.?.default_timeout_override;
+            } else {
+                this.timeout_millis = Jest.runner.?.default_timeout_ms;
+            }
+        }
 
         Jest.runner.?.setTimeout(
-            this.actual_timeout_millis,
+            this.timeout_millis,
             task.test_id,
         );
 
@@ -1374,7 +1377,7 @@ pub const TestRunnerTask = struct {
         var result = TestScope.run(&test_, this);
 
         if (this.describe.tests.items.len > test_id) {
-            this.describe.tests.items[test_id].actual_timeout_millis = test_.actual_timeout_millis;
+            this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
         }
 
         // rejected promises should fail the test
@@ -1468,7 +1471,7 @@ pub const TestRunnerTask = struct {
         describe.tests.items[test_id] = test_;
 
         if (comptime from == .timeout) {
-            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.actual_timeout_millis });
+            const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
         }
 
@@ -1605,7 +1608,7 @@ inline fn createScope(
         }
     }
 
-    var timeout_ms: ?u32 = null;
+    var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
@@ -1861,7 +1864,7 @@ fn eachBind(
         return .zero;
     }
 
-    var timeout_ms: ?u32 = null;
+    var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {

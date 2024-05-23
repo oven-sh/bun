@@ -658,12 +658,6 @@ pub const PackageManifest = struct {
         }
 
         fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir, outpath: [:0]const u8) !void {
-            var realpath_buf: bun.PathBuffer = undefined;
-            var realpath2_buf: bun.PathBuffer = undefined;
-            const tmp_path_partial = try bun.getFdPath(tmpdir, &realpath_buf);
-            const tmp_path_abs = bun.path.joinAbsStringBufZ(tmp_path_partial, &realpath2_buf, &.{ tmp_path_partial, tmp_path }, .auto);
-            const cache_dir_abs = try bun.getFdPath(cache_dir, &realpath_buf);
-            const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
             const fields = .{
                 "string_buf",
                 "versions",
@@ -700,7 +694,22 @@ pub const PackageManifest = struct {
                 errdefer file.close();
                 try file.writeAll(buffer.items).unwrap();
             }
-            try file.closeAndMoveTo(tmp_path_abs, cache_path_abs);
+            if (comptime Environment.isWindows) {
+                var realpath_buf: bun.PathBuffer = undefined;
+                var realpath2_buf: bun.PathBuffer = undefined;
+                var did_close = false;
+                errdefer if (!did_close) file.close();
+                const tmp_path_partial = try bun.getFdPath(tmpdir, &realpath_buf);
+                const tmp_path_abs = bun.path.joinAbsStringBufZ(tmp_path_partial, &realpath2_buf, &.{ tmp_path_partial, tmp_path }, .auto);
+                const cache_dir_abs = try bun.getFdPath(cache_dir, &realpath_buf);
+                const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
+                file.close();
+                did_close = true;
+                try bun.sys.renameat(bun.FD.cwd(), tmp_path_abs, bun.FD.cwd(), cache_path_abs).unwrap();
+            } else {
+                defer file.close();
+                try bun.sys.renameat(tmpdir, tmp_path, cache_dir, outpath).unwrap();
+            }
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {

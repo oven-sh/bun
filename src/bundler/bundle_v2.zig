@@ -65,7 +65,7 @@ const js_printer = @import("../js_printer.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 const sourcemap = bun.sourcemap;
-const Joiner = bun.StringJoiner;
+const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
 const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
@@ -6786,7 +6786,7 @@ const LinkerContext = struct {
             break :brk CompileResult.empty;
         };
 
-        var j = Joiner{
+        var j = StringJoiner{
             .allocator = worker.allocator,
             .watcher = .{
                 .input = chunk.unique_key,
@@ -6991,7 +6991,7 @@ const LinkerContext = struct {
         const trace = tracer(@src(), "generateSourceMapForChunk");
         defer trace.end();
 
-        var j = Joiner{
+        var j = StringJoiner{
             .allocator = worker.allocator,
         };
 
@@ -8934,7 +8934,7 @@ const LinkerContext = struct {
     }
 
     const SubstituteChunkFinalPathResult = struct {
-        j: Joiner,
+        j: StringJoiner,
         shifts: []sourcemap.SourceMapShifts,
     };
 
@@ -10815,7 +10815,7 @@ const LinkerContext = struct {
     pub fn breakOutputIntoPieces(
         c: *LinkerContext,
         allocator: std.mem.Allocator,
-        j: *Joiner,
+        j: *StringJoiner,
         count: u32,
     ) !Chunk.IntermediateOutput {
         const trace = tracer(@src(), "breakOutputIntoPieces");
@@ -11125,7 +11125,7 @@ pub const Chunk = struct {
         /// If the chunk doesn't have any references to other chunks, then
         /// `joiner` contains the contents of the chunk. This is more efficient
         /// because it avoids doing a join operation twice.
-        joiner: Joiner,
+        joiner: StringJoiner,
 
         empty: void,
 

@@ -706,7 +706,7 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY, if (Environment.isPosix) 0o664 else 0).unwrap();
+            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY | std.os.O.APPEND, if (Environment.isPosix) 0o664 else 0).unwrap();
             {
                 errdefer file.close();
                 try file.writeAll(buffer.items).unwrap();

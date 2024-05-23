@@ -161,6 +161,7 @@ test("dns.resolveNs (bun.sh) ", done => {
 test("dns.resolveNs (empty string) ", done => {
   dns.resolveNs("", (err, results) => {
     expect(err).toBeNull();
+    console.log("resolveNs:", results);
 
     expect(results instanceof Array).toBe(true);
     // root servers
@@ -188,6 +189,7 @@ test("dns.resolveNs (empty string) ", done => {
 test("dns.resolvePtr (ptr.socketify.dev)", done => {
   dns.resolvePtr("ptr.socketify.dev", (err, results) => {
     expect(err).toBeNull();
+    console.log("resolvePtr:", results);
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe("bun.sh");
     done(err);
@@ -197,6 +199,7 @@ test("dns.resolvePtr (ptr.socketify.dev)", done => {
 test("dns.resolveCname (cname.socketify.dev)", done => {
   dns.resolveCname("cname.socketify.dev", (err, results) => {
     expect(err).toBeNull();
+    console.log("resolveCname:", results);
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe("bun.sh");
     done(err);
@@ -232,18 +235,12 @@ test("dns.lookup (localhost)", done => {
   });
 });
 
-test.skipIf(isWindows)("dns.getServers", done => {
+test("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];
     if (isWindows) {
-      // TODO: fix this, is not working on CI
-      const { stdout } = Bun.spawnSync(["ipconfig"], { stdout: "pipe" });
-      for (const line of stdout.toString("utf8").split(os.EOL)) {
-        if (line.indexOf("Default Gateway") !== -1) {
-          servers.push(line.split(":")[1].trim());
-        }
-      }
-      return servers;
+      const { stdout } = Bun.spawnSync(["node", "-e", "dns.getServers().forEach(x => console.log(x))"], { stdout: "pipe" });
+      return stdout.toString("utf8").trim().split("\n");
     }
 
     try {
@@ -264,14 +261,9 @@ test.skipIf(isWindows)("dns.getServers", done => {
 
   const expectServers = parseResolvConf();
   const actualServers = dns.getServers();
-  try {
-    for (const server of expectServers) {
-      expect(actualServers).toContain(server);
-    }
-  } catch (err) {
-    return done(err);
+  for (const server of expectServers) {
+    expect(actualServers).toContain(server);
   }
-  done();
 });
 
 test("dns.reverse", done => {

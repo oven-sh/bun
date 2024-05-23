@@ -598,3 +598,19 @@ it("emits newListener event _before_ adding the listener", () => {
   stream.on("foo", () => {});
   expect(cb).toHaveBeenCalled();
 });
+
+it("reports error", () => {
+  expect(() => {
+    const dup = new Duplex({
+      read() {
+        this.push("Hello World!\n");
+        this.push(null);
+      },
+      write(chunk, encoding, callback) {
+        callback(new Error("test"));
+      },
+    });
+
+    dup.emit("error", new Error("test"));
+  }).toThrow("test");
+});

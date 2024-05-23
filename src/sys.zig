@@ -681,7 +681,7 @@ fn openDirAtWindowsNtPath(
         w.SYNCHRONIZE | w.FILE_TRAVERSE;
     const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
     const rename_flag: u32 = if (can_rename_or_delete) w.DELETE else 0;
-    const read_only_flag: u32 = if (read_only) 0 else w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY;
+    const read_only_flag: u32 = if (read_only) 0 else (w.FILE_ADD_FILE | w.FILE_ADD_SUBDIRECTORY);
     const flags: u32 = iterable_flag | base_flags | rename_flag | read_only_flag;
 
     const path_len_bytes: u16 = @truncate(path.len * 2);

@@ -829,6 +829,16 @@ const Platform = enum(u8) {
         (if (bun.Environment.baseline) "_baseline" else ""));
 };
 
+/// Note to the decoder on how to process this string. This ensures backwards
+/// compatibility with older versions of the tracestring.
+///
+/// '1' - original. uses 7 char hash with VLQ encoded stack-frames
+/// '2' - same as '1' but this build is known to be a canary build
+const version_char = if (bun.Environment.is_canary)
+    "1"
+else
+    "2";
+
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
 const StackLine = struct {
@@ -1025,7 +1035,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     );
     try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
 
-    try writer.writeAll("1" ++ git_sha);
+    try writer.writeAll(version_char ++ git_sha);
 
     const packed_features = bun.analytics.packedFeatures();
     try writeU64AsTwoVLQs(writer, @bitCast(packed_features));

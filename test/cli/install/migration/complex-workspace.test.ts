@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+import { test, expect, beforeAll, setDefaultTestTimeout } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 let cwd = tmpdirSync();
@@ -35,7 +35,7 @@ function mustNotExist(filePath: string) {
 }
 
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
+  setDefaultTestTimeout(1000 * 60 * 5);
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 });
 

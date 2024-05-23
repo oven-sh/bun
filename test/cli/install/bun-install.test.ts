@@ -1,5 +1,15 @@
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  it,
+  describe,
+  test,
+  setDefaultTestTimeout,
+} from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
@@ -40,7 +50,7 @@ expect.extend({
 });
 
 beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
+  setDefaultTestTimeout(1000 * 60 * 5);
   dummyBeforeAll();
 });
 

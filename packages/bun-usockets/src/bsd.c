@@ -952,6 +952,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     }
 
 #ifdef _WIN32
+    // libuv will set non-blocking, but only on poll init!
+    // we need it to be set on connect as well
+    DWORD yes = 1;
+    ioctlsocket(fd, FIONBIO, &yes);
 
     // On windows we can't connect to the null address directly. 
     // To match POSIX behavior, we need to connect to localhost instead.

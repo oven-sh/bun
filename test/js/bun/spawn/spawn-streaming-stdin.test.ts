@@ -1,8 +1,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { closeSync, openSync } from "fs";
-import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount } from "harness";
-import { devNull } from "node:os";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD } from "harness";
 import { join } from "path";
 
 const N = 100;
@@ -12,7 +10,7 @@ const delay = 8 * 12;
 test("spawn can write to stdin multiple chunks", async () => {
   const interval = setInterval(dumpStats, 1000).unref();
 
-  const maxFD = openSync(devNull, "w");
+  const maxFD = getMaxFD();
 
   var remaining = N;
   while (remaining > 0) {
@@ -65,9 +63,7 @@ test("spawn can write to stdin multiple chunks", async () => {
     remaining -= concurrency;
   }
 
-  closeSync(maxFD);
-  const newMaxFD = openSync(devNull, "w");
-  closeSync(newMaxFD);
+  const newMaxFD = getMaxFD();
 
   // assert we didn't leak any file descriptors
   expect(newMaxFD).toBe(maxFD);

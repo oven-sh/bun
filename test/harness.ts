@@ -445,6 +445,21 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
+  if (isMacOS || isLinux) {
+    let max = -1;
+    // https://github.com/python/cpython/commit/e21a7a976a7e3368dc1eba0895e15c47cb06c810
+    for (let entry of fs.readdirSync(isMacOS ? "/dev/fd" : "/proc/self/fd")) {
+      const fd = parseInt(entry.trim(), 10);
+      if (Number.isSafeInteger(fd) && fd >= 0) {
+        max = Math.max(max, fd);
+      }
+    }
+
+    if (max >= 0) {
+      return max;
+    }
+  }
+
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;

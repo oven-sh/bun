@@ -1,12 +1,12 @@
 import { join } from "path";
 import { it, expect, beforeAll, afterAll } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, isDebug } from "harness";
 import type { Subprocess } from "bun";
 
-const ACCEPTABLE_MEMORY_LEAK = 2; //MB for acceptable memory leak variance
-const payload = "1".repeat(32 * 1024); // decent size payload to test memory leak
+const payload = Buffer.alloc(256 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
 const batchSize = 40;
 const totalCount = 10_000;
+const zeroCopyPayload = new Blob([payload]);
 
 let url: URL;
 let process: Subprocess<"ignore", "pipe", "inherit"> | null = null;
@@ -19,6 +19,7 @@ beforeAll(async () => {
   });
   const { value } = await process.stdout.getReader().read();
   url = new URL(new TextDecoder().decode(value));
+  process.unref();
 
   await warmup();
 });
@@ -39,7 +40,7 @@ async function warmup() {
       // warmup the server with streaming requests, because is the most memory intensive
       batch[j] = fetch(`${url.origin}/streaming`, {
         method: "POST",
-        body: payload,
+        body: zeroCopyPayload,
       });
     }
     await Promise.all(batch);
@@ -52,35 +53,35 @@ async function warmup() {
 async function callBuffering() {
   const result = await fetch(`${url.origin}/buffering`, {
     method: "POST",
-    body: payload,
+    body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
 async function callStreaming() {
   const result = await fetch(`${url.origin}/streaming`, {
     method: "POST",
-    body: payload,
+    body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
 async function callIncompleteStreaming() {
   const result = await fetch(`${url.origin}/incomplete-streaming`, {
     method: "POST",
-    body: payload,
+    body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
 async function callStreamingEcho() {
   const result = await fetch(`${url.origin}/streaming-echo`, {
     method: "POST",
-    body: payload,
+    body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe(payload);
 }
 async function callIgnore() {
   const result = await fetch(url, {
     method: "POST",
-    body: payload,
+    body: zeroCopyPayload,
   }).then(res => res.text());
   expect(result).toBe("Ok");
 }
@@ -122,13 +123,13 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 }
 
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false],
-  ["should not leak memory when buffering the body", callBuffering, false],
-  ["should not leak memory when streaming the body", callStreaming, false],
-  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, true],
-  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, true],
-]) {
-  const [testName, fn, skip] = test_info as [string, () => Promise<void>, boolean];
+  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 2],
+  ["should not leak memory when buffering the body", callBuffering, false, 2],
+  ["should not leak memory when streaming the body", callStreaming, false, 2],
+  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 8],
+  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 8],
+] as const) {
+  const [testName, fn, skip, maxMemoryGrowth] = test_info;
   it.todoIf(skip)(
     testName,
     async () => {
@@ -136,8 +137,8 @@ for (const test_info of [
       // peak memory is too high
       expect(report.peak_memory > report.start_memory * 2).toBe(false);
       // acceptable memory leak
-      expect(report.leak).toBeLessThanOrEqual(ACCEPTABLE_MEMORY_LEAK);
+      expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
     },
-    30_000,
+    isDebug ? 60_000 : 30_000,
   );
 }

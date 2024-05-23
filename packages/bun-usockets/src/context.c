@@ -25,6 +25,8 @@
 #include <arpa/inet.h>
 #endif
 
+#define CONCURRENT_CONNECTIONS 2
+
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
 }
@@ -443,9 +445,9 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
         }
 
         // if there is only one result we can immediately connect
-        if (result->info && result->info->ai_next == NULL) {
+        if (result->entries && result->entries->info.ai_next == NULL) {
             struct sockaddr_storage addr;
-            init_addr_with_port(result->info, port, &addr);
+            init_addr_with_port(&result->entries->info, port, &addr);
             *is_connecting = 1;
             struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
             Bun__addrinfo_freeRequest(ai_req, s == NULL);
@@ -474,37 +476,16 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     return c;
 }
 
-void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
-    // make sure to decrement the active_handles counter, no matter what
-#ifdef _WIN32
-    c->context->loop->uv_loop->active_handles--;
-#else
-    c->context->loop->num_polls--;
-#endif
-
-    c->pending_resolve_callback = 0;
-    // if the socket was closed while we were resolving the address, free it
-    if (c->closed) {
-        us_connecting_socket_free(c);
-        return;
-    }
-    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
-    if (result->error) {
-        c->error = result->error;
-        c->context->on_connect_error(c, result->error);
-        Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-        us_connecting_socket_close(0, c);
-        return;
-    }
-
-    int error = 0;
-    for (struct addrinfo *info = result->info; info; info = info->ai_next) {
+int start_connections(struct us_connecting_socket_t *c, int count) {
+    int opened = 0;
+    for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
         struct sockaddr_storage addr;
-        init_addr_with_port(info, c->port, &addr);
+        init_addr_with_port(c->addrinfo_head, c->port, &addr);
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }
+        ++opened;
         bsd_socket_nodelay(connect_socket_fd, 1);
 
         struct us_socket_t *s = (struct us_socket_t *)us_create_poll(c->context->loop, 0, sizeof(struct us_socket_t) + c->socket_ext_size);
@@ -530,20 +511,72 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         us_poll_init(&s->p, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         us_poll_start(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
     }
+    return opened;
+}
 
-    if (!c->connecting_head) {
-        c->error = error;
-        c->context->on_connect_error(c, error);
-        Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
+    // make sure to decrement the active_handles counter, no matter what
+#ifdef _WIN32
+    c->context->loop->uv_loop->active_handles--;
+#else
+    c->context->loop->num_polls--;
+#endif
+
+    c->pending_resolve_callback = 0;
+    // if the socket was closed while we were resolving the address, free it
+    if (c->closed) {
+        us_connecting_socket_free(c);
+        return;
+    }
+    struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
+    if (result->error) {
+        c->error = result->error;
+        c->context->on_connect_error(c, result->error);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
         us_connecting_socket_close(0, c);
         return;
     }
 
-    Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
+    c->addrinfo_head = &result->entries->info;
+
+    int opened = start_connections(c, CONCURRENT_CONNECTIONS);
+    if (opened == 0) {
+        c->error = ECONNREFUSED;
+        c->context->on_connect_error(c, ECONNREFUSED);
+        Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
+        us_connecting_socket_close(0, c);
+        return;
+    }
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
-    struct us_connecting_socket_t *c = s->connect_state; 
+    struct us_connecting_socket_t *c = s->connect_state;
+    #if _WIN32
+    // libuv doesn't give us a way to know if a non-blockingly connected socket failed to connect
+    // It shows up as writable.
+    //
+    // TODO: Submit PR to libuv to allow uv_poll to poll for connect and connect_fail
+    //
+    // AFD_POLL_CONNECT
+    // AFD_POLL_CONNECT_FAIL
+    //
+    if (error == 0) {
+        if (recv( us_poll_fd((struct us_poll_t*)s), NULL, 0, MSG_PUSH_IMMEDIATE ) == SOCKET_ERROR) {
+            // When a socket is not connected, this function returns WSAENOTCONN.
+            error = WSAGetLastError();
+            switch (error) {
+                case WSAEWOULDBLOCK:
+                case WSAEINTR: {
+                    error = 0;
+                    break;
+                }
+                default: {
+                    break;
+                }
+            }
+        }
+    }
+    #endif
     /* It is perfectly possible to come here with an error */
     if (error) {
 
@@ -565,9 +598,17 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
             us_socket_close(0, s, 0, 0);
+            // there are no further attempting to connect
             if (!c->connecting_head) {
-                c->context->on_connect_error(c, error);
-                us_connecting_socket_close(0, c);
+                // start opening the next batch of connections
+                int opened = start_connections(c, CONCURRENT_CONNECTIONS);
+                // we have run out of addresses to attempt, signal the connection error
+                if (opened == 0) {
+                    c->error = ECONNREFUSED;
+                    c->context->on_connect_error(c, error);
+                    Bun__addrinfo_freeRequest(c->addrinfo_req, ECONNREFUSED);
+                    us_connecting_socket_close(0, c);
+                }
             }
         } else {
             s->context->on_socket_connect_error(s, error);
@@ -594,6 +635,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
             // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
+            Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             us_connecting_socket_free(c);
             s->connect_state = NULL;
         }

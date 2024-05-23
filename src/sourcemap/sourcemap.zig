@@ -11,7 +11,7 @@ const BabyList = JSAst.BabyList;
 const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const Joiner = bun.StringJoiner;
+const StringJoiner = bun.StringJoiner;
 const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
@@ -891,12 +891,9 @@ pub const SourceMapPieces = struct {
         // it doesnt contain json payloads or source code, so 16kb is probably going to cover
         // most applications.
         var sfb = std.heap.stackFallback(16384, bun.default_allocator);
-        var j = Joiner{
-            .use_pool = false,
-            .node_allocator = sfb.get(),
-        };
+        var j = StringJoiner{ .allocator = sfb.get() };
 
-        j.push(this.prefix.items);
+        j.pushStatic(this.prefix.items);
         const mappings = this.mappings.items;
 
         while (current < mappings.len) {
@@ -946,7 +943,7 @@ pub const SourceMapPieces = struct {
                 continue;
             }
 
-            j.push(mappings[start_of_run..potential_end_of_run]);
+            j.pushStatic(mappings[start_of_run..potential_end_of_run]);
 
             assert(shift.before.lines == shift.after.lines);
 
@@ -959,10 +956,9 @@ pub const SourceMapPieces = struct {
             start_of_run = potential_start_of_run;
         }
 
-        j.push(mappings[start_of_run..]);
-        j.push(this.suffix.items);
+        j.pushStatic(mappings[start_of_run..]);
 
-        const str = try j.done(allocator);
+        const str = try j.doneWithEnd(allocator, this.suffix.items);
         bun.assert(str[0] == '{'); // invalid json
         return str;
     }
@@ -977,18 +973,18 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
+pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
     if (start_state.generated_line > 0) {
-        j.append(try strings.repeatingAlloc(allocator, @as(usize, @intCast(start_state.generated_line)), ';'), 0, allocator);
+        j.push(try strings.repeatingAlloc(allocator, @intCast(start_state.generated_line), ';'), allocator);
         prev_end_state.generated_column = 0;
     }
 
     var source_map = source_map_;
     if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
-        j.push(source_map[0..semicolons]);
+        j.pushStatic(source_map[0..semicolons]);
         source_map = source_map[semicolons..];
         prev_end_state.generated_column = 0;
         start_state.generated_column = 0;
@@ -1019,19 +1015,18 @@ pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_s
     start_state.original_line += original_line_.value;
     start_state.original_column += original_column_.value;
 
-    j.append(
+    j.push(
         appendMappingToBuffer(
             MutableString.initEmpty(allocator),
             j.lastByte(),
             prev_end_state,
             start_state,
         ).list.items,
-        0,
         allocator,
     );
 
     // Then append everything after that without modification.
-    j.push(source_map);
+    j.pushStatic(source_map);
 }
 
 const vlq_lookup_table: [256]VLQ = brk: {

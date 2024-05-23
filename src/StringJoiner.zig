@@ -1,30 +1,47 @@
-/// Rope-like data structure for joining many small strings into one big string.
+//! Rope-like data structure for joining many small strings into one big string.
+//! Implemented as a linked list of potentially-owned slices and a length.
 const std = @import("std");
 const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const string = bun.string;
 const Allocator = std.mem.Allocator;
-const ObjectPool = @import("./pool.zig").ObjectPool;
+const NullableAllocator = bun.NullableAllocator;
 const StringJoiner = @This();
+const assert = bun.assert;
 
-const Joinable = struct {
-    offset: u31 = 0,
-    needs_deinit: bool = false,
-    allocator: Allocator = undefined,
-    slice: []const u8 = "",
+/// Temporary allocator used for nodes and duplicated strings.
+/// It is recommended to use a stack-fallback allocator for this.
+allocator: Allocator,
 
-    pub const Pool = ObjectPool(Joinable, null, true, 4);
-};
-
+/// Total length of all nodes
 len: usize = 0,
-use_pool: bool = true,
-node_allocator: Allocator = undefined,
 
-head: ?*Joinable.Pool.Node = null,
-tail: ?*Joinable.Pool.Node = null,
+head: ?*Node = null,
+tail: ?*Node = null,
 
 /// Avoid an extra pass over the list when joining
 watcher: Watcher = .{},
+
+const Node = struct {
+    allocator: NullableAllocator = .{},
+    slice: []const u8 = "",
+    next: ?*Node = null,
+
+    pub fn init(joiner_alloc: Allocator, slice: []const u8, slice_alloc: ?Allocator) *Node {
+        const node = joiner_alloc.create(Node) catch bun.outOfMemory();
+        node.* = .{
+            .slice = slice,
+            .allocator = NullableAllocator.init(slice_alloc),
+        };
+        return node;
+    }
+
+    pub fn deinit(node: *Node, joiner_alloc: Allocator) void {
+        if (node.allocator.get()) |alloc|
+            alloc.free(node.slice);
+        joiner_alloc.destroy(node);
+    }
+};
 
 pub const Watcher = struct {
     input: []const u8 = "",
@@ -32,143 +49,115 @@ pub const Watcher = struct {
     needs_newline: bool = false,
 };
 
-pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
-    if (this.head == null) {
-        return &.{};
-    }
-
-    std.debug.print("StringJoiner.done({d})\n", .{this.len});
-    var slice = try allocator.alloc(u8, this.len);
-    var remaining = slice;
-    var current = this.head;
-    while (current) |join| {
-        const to_join = join.data.slice[join.data.offset..];
-        std.debug.print("StringJoiner.done({d}) join: {s}\n", .{ to_join.len, to_join });
-        @memcpy(remaining[0..to_join.len], to_join);
-
-        remaining = remaining[@min(remaining.len, to_join.len)..];
-
-        var prev = join;
-        current = join.next;
-        if (prev.data.needs_deinit) {
-            prev.data.allocator.free(prev.data.slice);
-            prev.data = Joinable{};
-        }
-
-        if (this.use_pool) prev.release();
-    }
-
-    std.debug.print("StringJoiner.done() remaining: {d}\n", .{remaining.len});
-
-    return slice[0 .. slice.len - remaining.len];
+/// `data` is expected to live until `.done` is called
+pub fn pushStatic(this: *StringJoiner, data: []const u8) void {
+    this.push(data, null);
 }
 
-pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) ![]u8 {
-    if (this.head == null and end.len == 0) {
-        return &[_]u8{};
+/// `data` is cloned
+pub fn pushCloned(this: *StringJoiner, data: []const u8) void {
+    this.push(
+        this.allocator.dupe(u8, data) catch bun.outOfMemory(),
+        this.allocator,
+    );
+}
+
+pub fn push(this: *StringJoiner, data: []const u8, allocator: ?Allocator) void {
+    this.len += data.len;
+
+    const new_tail = Node.init(this.allocator, data, allocator);
+
+    if (data.len > 0) {
+        this.watcher.estimated_count += @intFromBool(
+            this.watcher.input.len > 0 and
+                bun.strings.contains(data, this.watcher.input),
+        );
+        this.watcher.needs_newline = data[data.len - 1] != '\n';
     }
 
-    if (this.head == null) {
-        var slice = try allocator.alloc(u8, end.len);
-        @memcpy(slice[0..end.len], end);
-
-        return slice;
+    if (this.tail) |current_tail| {
+        current_tail.next = new_tail;
+    } else {
+        assert(this.head == null);
+        this.head = new_tail;
     }
+    this.tail = new_tail;
+}
 
-    var slice = try allocator.alloc(u8, this.len + end.len);
+/// This deinits the string joiner on success, the new string is owned by `allocator`
+pub fn done(this: *StringJoiner, allocator: Allocator) ![]u8 {
+    var current: ?*Node = this.head orelse {
+        assert(this.tail == null);
+        assert(this.len == 0);
+        return &.{};
+    };
+
+    const slice = try allocator.alloc(u8, this.len);
+
     var remaining = slice;
-    var current = this.head;
-    while (current) |join| {
-        const to_join = join.data.slice[join.data.offset..];
-        @memcpy(remaining[0..to_join.len], to_join);
+    while (current) |node| {
+        @memcpy(remaining[0..node.slice.len], node.slice);
+        remaining = remaining[node.slice.len..];
 
-        remaining = remaining[@min(remaining.len, to_join.len)..];
+        const prev = node;
+        current = node.next;
+        prev.deinit(this.allocator);
+    }
 
-        var prev = join;
-        current = join.next;
-        if (prev.data.needs_deinit) {
-            prev.data.allocator.free(prev.data.slice);
-            prev.data = Joinable{};
+    bun.assert(remaining.len == 0);
+
+    return slice;
+}
+
+/// Same as `.done`, but appends extra slice `end`
+pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) ![]u8 {
+    var current: ?*Node = this.head orelse {
+        assert(this.tail == null);
+        assert(this.len == 0);
+
+        if (end.len > 0) {
+            return allocator.dupe(u8, end);
         }
 
-        if (this.use_pool) prev.release();
+        return &.{};
+    };
+
+    const slice = try allocator.alloc(u8, this.len + end.len);
+
+    var remaining = slice;
+    while (current) |node| {
+        @memcpy(remaining[0..node.slice.len], node.slice);
+        remaining = remaining[node.slice.len..];
+
+        const prev = node;
+        current = node.next;
+        prev.deinit(this.allocator);
     }
 
-    @memcpy(remaining[0..end.len], end);
+    bun.assert(remaining.len == end.len);
+    @memcpy(remaining, end);
 
-    remaining = remaining[@min(remaining.len, end.len)..];
-
-    return slice[0 .. slice.len - remaining.len];
+    return slice;
 }
 
 pub fn lastByte(this: *const StringJoiner) u8 {
-    if (this.tail) |tail| {
-        const slice = tail.data.slice[tail.data.offset..];
-        return if (slice.len > 0) slice[slice.len - 1] else 0;
-    }
-
-    return 0;
-}
-
-pub fn push(this: *StringJoiner, slice: string) void {
-    this.append(slice, 0, null);
+    const slice = (this.tail orelse return 0).slice;
+    return if (slice.len > 0) slice[slice.len - 1] else 0;
 }
 
 pub fn ensureNewlineAtEnd(this: *StringJoiner) void {
     if (this.watcher.needs_newline) {
         this.watcher.needs_newline = false;
-        this.push("\n");
+        this.pushStatic("\n");
     }
-}
-
-pub fn append(this: *StringJoiner, slice: string, offset: u32, allocator: ?Allocator) void {
-    std.debug.print("append: {s}\n", .{slice});
-    const data = slice[offset..];
-    this.len += data.len;
-
-    const new_tail = if (this.use_pool)
-        Joinable.Pool.get(default_allocator)
-    else
-        (this.node_allocator.create(Joinable.Pool.Node) catch unreachable);
-
-    this.watcher.estimated_count += @intFromBool(
-        this.watcher.input.len > 0 and
-            bun.strings.contains(data, this.watcher.input),
-    );
-
-    this.watcher.needs_newline = this.watcher.input.len > 0 and data.len > 0 and
-        data[data.len - 1] != '\n';
-
-    new_tail.* = .{
-        .allocator = default_allocator,
-        .data = .{
-            .offset = @truncate(offset),
-            .allocator = allocator orelse undefined,
-            .needs_deinit = allocator != null,
-            .slice = slice,
-        },
-    };
-
-    var tail = this.tail orelse {
-        this.tail = new_tail;
-        this.head = new_tail;
-        return;
-    };
-    tail.next = new_tail;
-    this.tail = new_tail;
 }
 
 pub fn contains(this: *const StringJoiner, slice: string) bool {
     var el = this.head;
     while (el) |node| {
         el = node.next;
-        if (bun.strings.contains(node.data.slice[node.data.offset..], slice)) return true;
+        if (bun.strings.contains(node.slice, slice)) return true;
     }
 
     return false;
-}
-
-pub fn pushCloned(this: *StringJoiner, slice: []const u8) void {
-    const alloc = if (!this.use_pool) this.node_allocator else bun.default_allocator;
-    this.append(alloc.dupe(u8, slice) catch bun.outOfMemory(), 0, alloc);
 }

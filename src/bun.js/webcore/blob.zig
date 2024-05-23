@@ -29,7 +29,7 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const NullableAllocator = bun.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
@@ -225,33 +225,31 @@ pub const Blob = struct {
             const joiner = &this.joiner;
             const boundary = this.boundary;
 
-            joiner.append("--", 0, null);
-            joiner.append(boundary, 0, null);
-            joiner.append("\r\n", 0, null);
+            joiner.pushStatic("--");
+            joiner.pushStatic(boundary); // note: "static" here means "outlives the joiner"
+            joiner.pushStatic("\r\n");
 
-            joiner.append("Content-Disposition: form-data; name=\"", 0, null);
+            joiner.pushStatic("Content-Disposition: form-data; name=\"");
             const name_slice = name.toSlice(allocator);
-            joiner.append(name_slice.slice(), 0, name_slice.allocator.get());
-            name_slice.deinit();
+            joiner.push(name_slice.slice(), name_slice.allocator.get());
 
             switch (entry) {
                 .string => |value| {
-                    joiner.append("\"\r\n\r\n", 0, null);
+                    joiner.pushStatic("\"\r\n\r\n");
                     const value_slice = value.toSlice(allocator);
-                    joiner.append(value_slice.slice(), 0, value_slice.allocator.get());
+                    joiner.push(value_slice.slice(), value_slice.allocator.get());
                 },
                 .file => |value| {
-                    joiner.append("\"; filename=\"", 0, null);
+                    joiner.pushStatic("\"; filename=\"");
                     const filename_slice = value.filename.toSlice(allocator);
-                    joiner.append(filename_slice.slice(), 0, filename_slice.allocator.get());
-                    filename_slice.deinit();
-                    joiner.append("\"\r\n", 0, null);
+                    joiner.push(filename_slice.slice(), filename_slice.allocator.get());
+                    joiner.pushStatic("\"\r\n");
 
                     const blob = value.blob;
                     const content_type = if (blob.content_type.len > 0) blob.content_type else "application/octet-stream";
-                    joiner.append("Content-Type: ", 0, null);
-                    joiner.append(content_type, 0, null);
-                    joiner.append("\r\n\r\n", 0, null);
+                    joiner.pushStatic("Content-Type: ");
+                    joiner.pushStatic(content_type);
+                    joiner.pushStatic("\r\n\r\n");
 
                     if (blob.store) |store| {
                         blob.resolveSize();
@@ -277,19 +275,19 @@ pub const Blob = struct {
                                         this.failed = true;
                                     },
                                     .result => |result| {
-                                        joiner.append(result.slice(), 0, result.buffer.allocator);
+                                        joiner.push(result.slice(), result.buffer.allocator);
                                     },
                                 }
                             },
                             .bytes => |_| {
-                                joiner.append(blob.sharedView(), 0, null);
+                                joiner.pushStatic(blob.sharedView());
                             },
                         }
                     }
                 },
             }
 
-            joiner.append("\r\n", 0, null);
+            joiner.pushStatic("\r\n");
         }
     };
 
@@ -532,7 +530,7 @@ pub const Blob = struct {
 
         var context = FormDataContext{
             .allocator = allocator,
-            .joiner = StringJoiner{ .use_pool = false, .node_allocator = stack_mem_all },
+            .joiner = .{ .allocator = stack_mem_all },
             .boundary = boundary,
             .globalThis = globalThis,
         };
@@ -542,9 +540,9 @@ pub const Blob = struct {
             return Blob.initEmpty(globalThis);
         }
 
-        context.joiner.append("--", 0, null);
-        context.joiner.append(boundary, 0, null);
-        context.joiner.append("--\r\n", 0, null);
+        context.joiner.pushStatic("--");
+        context.joiner.pushStatic(boundary);
+        context.joiner.pushStatic("--\r\n");
 
         const store = Blob.Store.init(context.joiner.done(allocator) catch unreachable, allocator) catch unreachable;
         var blob = Blob.initWithStore(store, globalThis);
@@ -4066,7 +4064,7 @@ pub const Blob = struct {
         var stack_allocator = std.heap.stackFallback(1024, bun.default_allocator);
         const stack_mem_all = stack_allocator.get();
         var stack: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(stack_mem_all);
-        var joiner = StringJoiner{ .use_pool = false, .node_allocator = stack_mem_all };
+        var joiner = StringJoiner{ .allocator = stack_mem_all };
         var could_have_non_ascii = false;
 
         defer if (stack_allocator.fixed_buffer_allocator.end_index >= 1024) stack.deinit();
@@ -4081,11 +4079,7 @@ pub const Blob = struct {
                     var sliced = current.toSlice(global, bun.default_allocator);
                     const allocator = sliced.allocator.get();
                     could_have_non_ascii = could_have_non_ascii or allocator != null;
-                    joiner.append(
-                        sliced.slice(),
-                        0,
-                        allocator,
-                    );
+                    joiner.push(sliced.slice(), allocator);
                 },
 
                 .Array, .DerivedArray => {
@@ -4111,11 +4105,7 @@ pub const Blob = struct {
                                     var sliced = item.toSlice(global, bun.default_allocator);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or allocator != null;
-                                    joiner.append(
-                                        sliced.slice(),
-                                        0,
-                                        allocator,
-                                    );
+                                    joiner.push(sliced.slice(), allocator);
                                     continue;
                                 },
                                 JSC.JSValue.JSType.ArrayBuffer,
@@ -4134,7 +4124,7 @@ pub const Blob = struct {
                                 => {
                                     could_have_non_ascii = true;
                                     var buf = item.asArrayBuffer(global).?;
-                                    joiner.append(buf.byteSlice(), 0, null);
+                                    joiner.pushStatic(buf.byteSlice());
                                     continue;
                                 },
                                 .Array, .DerivedArray => {
@@ -4146,16 +4136,12 @@ pub const Blob = struct {
                                 .DOMWrapper => {
                                     if (item.as(Blob)) |blob| {
                                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
-                                        joiner.append(blob.sharedView(), 0, null);
+                                        joiner.pushStatic(blob.sharedView());
                                         continue;
                                     } else if (current.toSliceClone(global)) |sliced| {
                                         const allocator = sliced.allocator.get();
                                         could_have_non_ascii = could_have_non_ascii or allocator != null;
-                                        joiner.append(
-                                            sliced.slice(),
-                                            0,
-                                            allocator,
-                                        );
+                                        joiner.push(sliced.slice(), allocator);
                                     }
                                 },
                                 else => {},
@@ -4169,15 +4155,11 @@ pub const Blob = struct {
                 .DOMWrapper => {
                     if (current.as(Blob)) |blob| {
                         could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
-                        joiner.append(blob.sharedView(), 0, null);
+                        joiner.pushStatic(blob.sharedView());
                     } else if (current.toSliceClone(global)) |sliced| {
                         const allocator = sliced.allocator.get();
                         could_have_non_ascii = could_have_non_ascii or allocator != null;
-                        joiner.append(
-                            sliced.slice(),
-                            0,
-                            allocator,
-                        );
+                        joiner.push(sliced.slice(), allocator);
                     }
                 },
 
@@ -4196,7 +4178,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DataView,
                 => {
                     var buf = current.asArrayBuffer(global).?;
-                    joiner.append(buf.slice(), 0, null);
+                    joiner.pushStatic(buf.slice());
                     could_have_non_ascii = true;
                 },
 
@@ -4204,11 +4186,7 @@ pub const Blob = struct {
                     var sliced = current.toSlice(global, bun.default_allocator);
                     const allocator = sliced.allocator.get();
                     could_have_non_ascii = could_have_non_ascii or allocator != null;
-                    joiner.append(
-                        sliced.slice(),
-                        0,
-                        allocator,
-                    );
+                    joiner.push(sliced.slice(), allocator);
                 },
             }
             current = stack.popOrNull() orelse break;

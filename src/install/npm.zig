@@ -272,7 +272,12 @@ pub const Registry = struct {
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
+                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch |err| {
+                    if (PackageManager.verbose_install) {
+                        Output.warn("Error caching manifest for {s}: {s}", .{ package_name, @errorName(err) });
+                        Output.flush();
+                    }
+                };
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -701,7 +706,7 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC, 0).unwrap();
+            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY, 0).unwrap();
             {
                 errdefer file.close();
                 try file.writeAll(buffer.items).unwrap();

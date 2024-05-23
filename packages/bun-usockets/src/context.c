@@ -550,7 +550,33 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
-    struct us_connecting_socket_t *c = s->connect_state; 
+    struct us_connecting_socket_t *c = s->connect_state;
+    #if _WIN32
+    // libuv doesn't give us a way to know if a non-blockingly connected socket failed to connect
+    // It shows up as writable.
+    //
+    // TODO: Submit PR to libuv to allow uv_poll to poll for connect and connect_fail
+    //
+    // AFD_POLL_CONNECT
+    // AFD_POLL_CONNECT_FAIL
+    //
+    if (error == 0) {
+        if (recv( us_poll_fd((struct us_poll_t*)s), NULL, 0, MSG_PUSH_IMMEDIATE ) == SOCKET_ERROR) {
+            // When a socket is not connected, this function returns WSAENOTCONN.
+            error = WSAGetLastError();
+            switch (error) {
+                case WSAEWOULDBLOCK:
+                case WSAEINTR: {
+                    error = 0;
+                    break;
+                }
+                default: {
+                    break;
+                }
+            }
+        }
+    }
+    #endif
     /* It is perfectly possible to come here with an error */
     if (error) {
 

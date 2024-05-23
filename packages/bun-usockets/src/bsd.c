@@ -276,6 +276,20 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
     return fd;
 }
 
+static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
+#if _WIN32
+    if (fd != LIBUS_SOCKET_ERROR) {
+        // libuv will set non-blocking, but only on poll init!
+        // we need it to be set on connect as well
+        DWORD yes = 1;
+        ioctlsocket(fd, FIONBIO, &yes);
+    }
+    return fd;
+#else
+    return fd;
+#endif
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
     /* Libuv will set windows sockets as non-blocking */
@@ -887,9 +901,8 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 //     return 0; // no ecn defaults to 0
 // }
 
-static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRIPTOR fd)
+static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {
-    int namelen = addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 #ifdef _WIN32
     while (1) {
         if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
@@ -915,7 +928,7 @@ static int bsd_do_connect_raw(struct sockaddr_storage *addr, LIBUS_SOCKET_DESCRI
     
 #else
      do {
-        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS || errno == EAGAIN) {
             return 0;
         }
     } while (errno == EINTR);
@@ -966,10 +979,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     }
 
 #ifdef _WIN32
-    // libuv will set non-blocking, but only on poll init!
-    // we need it to be set on connect as well
-    DWORD yes = 1;
-    ioctlsocket(fd, FIONBIO, &yes);
+    win32_set_nonblocking(fd);
 
     // On windows we can't connect to the null address directly. 
     // To match POSIX behavior, we need to connect to localhost instead.
@@ -1000,8 +1010,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
     }
 
 #endif
+    int rc = bsd_do_connect_raw(fd, (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
 
-    if (bsd_do_connect_raw(addr, fd) != 0) {
+    if (rc != 0) {
         bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
@@ -1015,16 +1026,10 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (connect(fd, (struct sockaddr *)server_address, addrlen) != 0 && errno != EINPROGRESS) {
-        #if defined(_WIN32)
-          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
-        #endif
+    win32_set_nonblocking(fd);
+
+    if (bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen) != 0) {
         bsd_close_socket(fd);
-        #if defined(_WIN32)
-            if (shouldSimulateENOENT) {
-                SetLastError(ERROR_PATH_NOT_FOUND);
-            }
-        #endif
         return LIBUS_SOCKET_ERROR;
     }
 

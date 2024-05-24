@@ -578,10 +578,10 @@ it("should send Readable events in the right order", async () => {
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual([
     `[ "readable", "pause" ]`,
-    // `[ "readable", "resume" ]`,
+    `[ "readable", "resume" ]`,
     `[ "readable", "data" ]`,
     `[ "readable", "data" ]`,
-    // `[ "readable", "readable" ]`,
+    `[ "readable", "readable" ]`,
     `[ "readable", "end" ]`,
     `[ "readable", "close" ]`,
     `[ 1, "Hello World!\\n" ]`,

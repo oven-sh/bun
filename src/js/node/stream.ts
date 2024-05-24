@@ -2464,45 +2464,22 @@ var require_readable = __commonJS({
       Promise: Promise2,
       SafeSet,
       SymbolAsyncIterator,
-    } = require_primordials();
-
-    var { Stream, prependListener } = require_legacy();
-
-
-    const {
       Promise,
       SymbolAsyncDispose,
       Symbol
     } = require_primordials();
-    // module.exports = Readable
-    // const { EventEmitter: EE } = require('events');
-    // const { Stream, prependListener } = require('./legacy')
-    // const { Buffer } = require('buffer')
-    // const { addAbortSignal } = require('./add-abort-signal')
-    // const eos = require('./end-of-stream')
-    // let debug = require('../../ours/util').debuglog('stream', (fn) => {
-    //   debug = fn
-    // })
+
+    var { Stream, prependListener } = require_legacy();
+
     const BufferList = require_buffer_list();
-    // const destroyImpl = require('./destroy')
+
     const { getHighWaterMark, getDefaultHighWaterMark } = require_state();
+
     const {
-      // aggregateTwoErrors,
-      // codes: {
-      //   ERR_INVALID_ARG_TYPE,
-      //   ERR_METHOD_NOT_IMPLEMENTED,
-      //   ERR_OUT_OF_RANGE,
-      //   ERR_STREAM_PUSH_AFTER_EOF,
-      //   ERR_STREAM_UNSHIFT_AFTER_END_EVENT
-      // },
       AbortError
     } = require_errors();
-    // const { validateObject } = require('../validators')
+
     const kPaused = Symbol('kPaused')
-    // const { StringDecoder } = require('string_decoder')
-    // const from = require('./from')
-    // const nop = () => {}
-    // const { errorOrDestroy } = destroyImpl
     const kObjectMode = 1 << 0
     const kEnded = 1 << 1
     const kEndEmitted = 1 << 2
@@ -2923,7 +2900,6 @@ var require_readable = __commonJS({
         (state.length < state.highWaterMark || (state.flowing && state.length === 0))
       ) {
         const len = state.length
-        debug('maybeReadMore read 0')
         stream.read(0)
         if (len === state.length)
           // Didn't get any data, stop spinning.

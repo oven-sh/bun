@@ -53,10 +53,11 @@ registry = "http://localhost:${port}/"
   expect(err).not.toContain("not found");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + bunx-bins@1.0.0",
+    "+ bunx-bins@1.0.0",
     "",
     expect.stringContaining("1 package installed"),
   ]);
+  expect(await exited).toBe(0);
 
   const temp_bin_dir = join(packageDir, "temp");
   mkdirSync(temp_bin_dir);

@@ -738,7 +738,7 @@ pub const PackageManifest = struct {
                 try bun.sys.renameat(bun.FD.cwd(), path_to_use_for_opening_file, bun.FD.cwd(), cache_path_abs).unwrap();
             } else if (Environment.isLinux and is_using_o_tmpfile) {
                 defer file.close();
-                try bun.sys.linkatTmpfile(file.handle, cache_dir, outpath).unwrap();
+                try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
             } else {
                 defer file.close();
                 try bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath).unwrap();

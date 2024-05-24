@@ -703,15 +703,29 @@ pub const PackageManifest = struct {
 
             var is_using_o_tmpfile = if (Environment.isLinux) false else {};
             const file = brk: {
-                const flags = std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY | std.os.O.APPEND;
+                const flags = std.os.O.WRONLY;
                 const mask = if (Environment.isPosix) 0o664 else 0;
 
                 // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
                 // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
                 if (Environment.isLinux) {
-                    switch (bun.sys.File.openat(cache_dir, ".", flags | std.os.O.TMPFILE, mask)) {
-                        .err => {},
+                    switch (bun.sys.File.openat(cache_dir, ".", flags | std.os.linux.O.TMPFILE, mask)) {
+                        .err => {
+                            const warner = struct {
+                                var did_warn = std.atomic.Value(bool).init(false);
+
+                                pub fn warnOnce() void {
+                                    if (!did_warn.swap(true, .Monotonic)) {
+                                        // This is not an error. Nor is it really a warning.
+                                        Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});
+                                        Output.flush();
+                                    }
+                                }
+                            };
+                            if (PackageManager.verbose_install)
+                                warner.warnOnce();
+                        },
                         .result => |f| {
                             is_using_o_tmpfile = true;
                             break :brk f;
@@ -719,7 +733,7 @@ pub const PackageManifest = struct {
                     }
                 }
 
-                break :brk try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, flags, if (Environment.isPosix) 0o664 else 0).unwrap();
+                break :brk try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, flags | std.os.O.CREAT | std.os.O.TRUNC, if (Environment.isPosix) 0o664 else 0).unwrap();
             };
 
             {

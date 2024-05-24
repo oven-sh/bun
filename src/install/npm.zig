@@ -752,10 +752,45 @@ pub const PackageManifest = struct {
                 try bun.sys.renameat(bun.FD.cwd(), path_to_use_for_opening_file, bun.FD.cwd(), cache_path_abs).unwrap();
             } else if (Environment.isLinux and is_using_o_tmpfile) {
                 defer file.close();
-                try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
+                // Attempt #1.
+                bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap() catch {
+                    // Attempt #2: the file may already exist. Let's unlink and try again.
+                    bun.sys.unlinkat(bun.toFD(cache_dir), outpath).unwrap() catch {};
+                    try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
+
+                    // There is no attempt #3. This is a cache, so it's not essential.
+                };
             } else {
                 defer file.close();
-                try bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath).unwrap();
+                // Attempt #1. Rename the file.
+                const rc = bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath);
+
+                switch (rc) {
+                    .err => |err| {
+                        // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
+                        defer {
+                            // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
+                            bun.sys.unlinkat(bun.toFD(tmpdir), tmp_path).unwrap() catch {};
+                        }
+
+                        if (switch (err.getErrno()) {
+                            .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                            else => false,
+                        }) {
+
+                            // Atomically swap the old file with the new file.
+                            try bun.sys.renameat2(bun.toFD(tmpdir.fd), tmp_path, bun.toFD(cache_dir.fd), outpath, .{
+                                .exchange = true,
+                            }).unwrap();
+
+                            // Success.
+                            return;
+                        }
+                    },
+                    .result => {},
+                }
+
+                try rc.unwrap();
             }
         }
 

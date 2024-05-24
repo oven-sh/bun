@@ -82,7 +82,7 @@ pub const TestRunner = struct {
 
     default_timeout_ms: u32,
 
-    // from `setDefaultTestTimeout() or jest.setTimeout()`
+    // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
 
     test_timeout_timer: ?*bun.uws.Timer = null,
@@ -429,8 +429,8 @@ pub const Jest = struct {
 
         module.put(
             globalObject,
-            ZigString.static("setDefaultTestTimeout"),
-            JSC.NewFunction(globalObject, ZigString.static("setDefaultTestTimeout"), 1, jsSetDefaultTimeout, false),
+            ZigString.static("setDefaultTimeout"),
+            JSC.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false),
         );
 
         module.put(

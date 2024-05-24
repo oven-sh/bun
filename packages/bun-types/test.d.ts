@@ -299,7 +299,7 @@ declare module "bun:test" {
    *
    * @param milliseconds the number of milliseconds for the default timeout
    */
-  export function setTimeout(milliseconds: number): void;
+  export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.

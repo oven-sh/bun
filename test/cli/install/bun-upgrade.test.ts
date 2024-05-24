@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, expect, it, setDefaultTestTimeout, beforeAll } from "bun:test";
+import { beforeEach, expect, it, setDefaultTimeout, beforeAll } from "bun:test";
 import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
 import { join } from "path";
 import { copyFileSync } from "js/node/fs/export-star-from";
@@ -10,7 +10,7 @@ let run_dir: string;
 let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
 
 beforeAll(() => {
-  setDefaultTestTimeout(1000 * 60 * 5);
+  setDefaultTimeout(1000 * 60 * 5);
 });
 
 beforeEach(async () => {

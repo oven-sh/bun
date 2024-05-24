@@ -14,7 +14,7 @@ import { join, sep } from "path";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTestTimeout } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
@@ -29,7 +29,7 @@ var port: number = 4873;
 var packageDir: string;
 
 beforeAll(async () => {
-  setDefaultTestTimeout(1000 * 60 * 5);
+  setDefaultTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],

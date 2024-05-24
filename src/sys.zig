@@ -2526,9 +2526,9 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
 
     return Maybe(void).errnoSysP(
         std.os.linux.linkat(
-            bun.fdcast(tmpfd),
+            tmpfd.cast(),
             "",
-            dirfd,
+            dirfd.cast(),
             name,
             os.AT.EMPTY_PATH,
         ),

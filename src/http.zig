@@ -395,7 +395,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
-            var socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts);
+            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts);
             if (socket == null) {
                 return error.FailedToOpenSocket;
             }

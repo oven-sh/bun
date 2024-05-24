@@ -2365,9 +2365,6 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
-    // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
-    workspaces: std.StringArrayHashMap(Semver.Version),
-
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
 
@@ -7388,18 +7385,6 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
-        var workspaces = std.StringArrayHashMap(Semver.Version).init(ctx.allocator);
-        for (workspace_names.values()) |entry| {
-            if (entry.version) |version_string| {
-                const sliced_version = SlicedString.init(version_string, version_string);
-                const result = Semver.Version.parse(sliced_version);
-                if (result.valid and result.wildcard == .none) {
-                    try workspaces.put(entry.name, result.version.min());
-                    continue;
-                }
-            }
-        }
-
         workspace_names.map.deinit();
 
         var manager = &instance;
@@ -7419,7 +7404,6 @@ pub const PackageManager = struct {
             .resolve_tasks = .{},
             .lockfile = undefined,
             .root_package_json_file = root_package_json_file,
-            .workspaces = workspaces,
             // .progress
             .event_loop = .{
                 .mini = JSC.MiniEventLoop.init(bun.default_allocator),
@@ -7523,7 +7507,6 @@ pub const PackageManager = struct {
             .event_loop = .{
                 .js = JSC.VirtualMachine.get().eventLoop(),
             },
-            .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
             .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         };
         manager.lockfile = try allocator.create(Lockfile);

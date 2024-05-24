@@ -3429,7 +3429,6 @@ pub const Package = extern struct {
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
-            var skipped_workspaces: usize = 0;
 
             if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
                 summary.overrides_changed = true;
@@ -3572,11 +3571,6 @@ pub const Package = extern struct {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
-                    if (PackageManager.instance.workspaces.contains(from_lockfile.str(&from_dep.name))) {
-                        skipped_workspaces += 1;
-                        continue;
-                    }
-
                     // We found a removed dependency!
                     // We don't need to remove it
                     // It will be cleaned up later
@@ -3671,7 +3665,7 @@ pub const Package = extern struct {
             // Use saturating arithmetic here because a migrated
             // package-lock.json could be out of sync with the package.json, so the
             // number of from_deps could be greater than to_deps.
-            summary.add = @truncate((to_deps.len + skipped_workspaces) -| (from_deps.len -| summary.remove));
+            summary.add = @truncate((to_deps.len) -| (from_deps.len -| summary.remove));
 
             inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(
@@ -3803,13 +3797,6 @@ pub const Package = extern struct {
         if (comptime tag == null) {
             workspace_path = lockfile.workspace_paths.get(name_hash);
             workspace_version = lockfile.workspace_versions.get(name_hash);
-
-            if (workspace_path == null or workspace_version == null) {
-                if (PackageManager.instance.workspaces.get(lockfile.str(&external_alias.value))) |_workspace_version| {
-                    workspace_path = external_alias.value;
-                    workspace_version = _workspace_version;
-                }
-            }
         }
 
         if (comptime tag != null) {
@@ -3907,7 +3894,7 @@ pub const Package = extern struct {
                     dependency_version.value.workspace = path;
 
                     const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                    const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
+                    const found_matching_workspace = workspace_entry.found_existing;
 
                     if (workspace_version) |ver| {
                         try lockfile.workspace_versions.put(allocator, name_hash, ver);
@@ -4126,19 +4113,12 @@ pub const Package = extern struct {
                 continue;
             }
 
-            const rel_input_path = Path.relativePlatform(source.path.name.dir, input_path, .auto, true);
-            Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel_input_path));
-
-            var abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
+            const abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
                 source.path.name.dir,
                 filepath_buf,
                 &.{ input_path, "package.json" },
                 .auto,
             );
-
-            if (comptime Environment.isWindows) {
-                abs_package_json_path = Path.normalizeStringZ(abs_package_json_path, true, .posix);
-            }
 
             const workspace_entry = processWorkspaceName(
                 allocator,
@@ -4180,9 +4160,19 @@ pub const Package = extern struct {
 
             if (workspace_entry.name.len == 0) continue;
 
+            const rel_input_path = Path.relativePlatform(
+                source.path.name.dir,
+                strings.withoutSuffixComptime(abs_package_json_path, std.fs.path.sep_str ++ "package.json"),
+                .auto,
+                true,
+            );
+            if (comptime Environment.isWindows) {
+                Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel_input_path));
+            }
+
             if (string_builder) |builder| {
                 builder.count(workspace_entry.name);
-                builder.count(input_path);
+                builder.count(rel_input_path);
                 builder.cap += bun.MAX_PATH_BYTES;
                 if (workspace_entry.version) |version_string| {
                     builder.count(version_string);
@@ -4298,19 +4288,23 @@ pub const Package = extern struct {
                     const workspace_path: string = Path.relativePlatform(
                         source.path.name.dir,
                         abs_workspace_dir_path,
-                        .posix,
+                        .auto,
                         true,
                     );
-
-                    Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(workspace_path));
+                    if (comptime Environment.isWindows) {
+                        Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(workspace_path));
+                    }
 
                     if (string_builder) |builder| {
                         builder.count(workspace_entry.name);
                         builder.count(workspace_path);
                         builder.cap += bun.MAX_PATH_BYTES;
+                        if (workspace_entry.version) |version| {
+                            builder.count(version);
+                        }
                     }
 
-                    try workspace_names.insert(workspace_path, .{
+                    try workspace_names.insert(allocator.dupe(u8, workspace_path) catch bun.outOfMemory(), .{
                         .name = workspace_entry.name,
                         .version = workspace_entry.version,
                         .name_loc = workspace_entry.name_loc,

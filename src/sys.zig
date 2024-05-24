@@ -592,10 +592,11 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     };
 }
 
-pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
+const fnctl_int = if (Environment.isLinux) usize else c_int;
+pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
     const result = fcntl_symbol(fd.cast(), cmd, arg);
-    if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
-    return .{ .result = @as(usize, @intCast(result)) };
+    if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| return err;
+    return .{ .result = @intCast(result) };
 }
 
 pub fn getErrno(rc: anytype) bun.C.E {
@@ -2277,6 +2278,26 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     return faccessat(dir_fd, subpath);
 }
 
+pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
+    const flags = switch (bun.sys.fcntl(
+        fd,
+        std.os.F.GETFL,
+        0,
+    )) {
+        .result => |f| f,
+        .err => |err| return .{ .err = err },
+    };
+
+    const new_flags = flags | std.os.O.NONBLOCK;
+
+    switch (bun.sys.fcntl(fd, std.os.F.SETFL, new_flags)) {
+        .err => |err| return .{ .err = err },
+        .result => {},
+    }
+
+    return Maybe(void).success;
+}
+
 pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
     if (comptime Environment.isPosix) {
         return faccessat(fd, subpath).result;
@@ -2556,7 +2577,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         if (Maybe(void).errnoSysFd(rc, .link, tmpfd)) |err| {
             switch (err.getErrno()) {
                 .INTR => continue,
-                .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
+                .ISDIR, .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
                     // CAP_DAC_READ_SEARCH is required to linkat with an empty path.
                     if (current_status == 0) {
                         CAP_DAC_READ_SEARCH.status.store(-1, .Monotonic);

@@ -152,9 +152,9 @@ function getMaxFileDescriptor(path) {
 
   hasInitialMaxFD = true;
 
-  if (process.platform === "linux") {
+  if (process.platform === "linux" || process.platform === "darwin") {
     try {
-      readdirSync("/proc/self/fd").forEach(name => {
+      readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").forEach(name => {
         const fd = parseInt(name.trim(), 10);
         if (Number.isSafeInteger(fd) && fd >= 0) {
           maxFd = Math.max(maxFd, fd);

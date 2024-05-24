@@ -82,7 +82,7 @@ test("npm lockfile with relative workspaces", async () => {
     cwd: testDir,
   });
   const err = stderr.toString();
-  expect(err).toContain("package-lock.json");
+  expect(err).toContain("migrated lockfile from package-lock.json");
 
   expect(err).not.toContain("InvalidNPMLockfile");
   for (let i = 0; i < 4; i++) {

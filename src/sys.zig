@@ -1175,9 +1175,9 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     var debug_timer = bun.Output.DebugTimer.start();
 
     defer {
-        if (comptime Environment.isDebug) {
+        if (Environment.isDebug) {
             if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                bun.Output.debugWarn("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
+                log("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
             }
         }
     }
@@ -2521,20 +2521,60 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         @compileError("Linux only.");
     }
 
-    if (comptime Environment.allow_assert)
-        bun.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+    const CAP_DAC_READ_SEARCH = struct {
+        pub var status = std.atomic.Value(i32).init(0);
+    };
 
-    return Maybe(void).errnoSysP(
-        std.os.linux.linkat(
-            bun.fdcast(tmpfd),
+    while (true) {
+        // This is racy but it's fine if we call linkat() with an empty path multiple times.
+        const current_status = CAP_DAC_READ_SEARCH.status.load(.Monotonic);
+
+        const rc = if (current_status != -1) std.os.linux.linkat(
+            tmpfd.cast(),
             "",
-            dirfd,
+            dirfd.cast(),
             name,
             os.AT.EMPTY_PATH,
-        ),
-        .link,
-        name,
-    ) orelse Maybe(void).success;
+        ) else brk: {
+            //
+            // snprintf(path, PATH_MAX,  "/proc/self/fd/%d", fd);
+            // linkat(AT_FDCWD, path, AT_FDCWD, "/path/for/file",
+            //        AT_SYMLINK_FOLLOW);
+            //
+            var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
+            const path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{tmpfd.cast()}) catch unreachable;
+
+            break :brk std.os.linux.linkat(
+                os.AT.FDCWD,
+                path,
+                dirfd.cast(),
+                name,
+                os.AT.SYMLINK_FOLLOW,
+            );
+        };
+
+        if (Maybe(void).errnoSysFd(rc, .link, tmpfd)) |err| {
+            switch (err.getErrno()) {
+                .INTR => continue,
+                .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
+                    // CAP_DAC_READ_SEARCH is required to linkat with an empty path.
+                    if (current_status == 0) {
+                        CAP_DAC_READ_SEARCH.status.store(-1, .Monotonic);
+                        continue;
+                    }
+                },
+                else => {},
+            }
+
+            return err;
+        }
+
+        if (current_status == 0) {
+            CAP_DAC_READ_SEARCH.status.store(1, .Monotonic);
+        }
+
+        return Maybe(void).success;
+    }
 }
 
 /// On Linux, this `preadv2(2)` to attempt to read a blocking file descriptor without blocking.

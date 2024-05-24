@@ -30,9 +30,10 @@ bun add express
 ```
 
 ---
+
 Define a simple server with Express:
 
-```app.ts
+```ts#app.ts
 import express from "express";
 
 const app = express();
@@ -48,6 +49,7 @@ app.listen(port, () => {
 ```
 
 ---
+
 Commit your changes and push to GitHub.
 
 ```bash
@@ -64,11 +66,11 @@ In your [Render Dashboard](https://dashboard.render.com/), click `New` > `Web Se
 
 In the Render UI, provide the following values during web service creation:
 
-|             |           |
-| ----------- | --------- |
-| **Runtime** | `Node` |
+|                   |               |
+| ----------------- | ------------- |
+| **Runtime**       | `Node`        |
 | **Build Command** | `bun install` |
-| **Start Command** | `bun app.js` |
+| **Start Command** | `bun app.js`  |
 
 ---
 

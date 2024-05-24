@@ -76,8 +76,12 @@ void Bun__lock(uint32_t *lock);
 void Bun__unlock(uint32_t *lock);
 
 struct addrinfo_request;
+struct addrinfo_result_entry {
+    struct addrinfo info;
+    struct sockaddr_storage _storage;
+};
 struct addrinfo_result {
-    struct addrinfo *info;
+    struct addrinfo_result_entry* entries;
     int error;
 };
 
@@ -158,6 +162,7 @@ struct us_connecting_socket_t {
     unsigned char long_timeout;
     uint16_t port;
     int error;
+    struct addrinfo *addrinfo_head;
 };
 
 struct us_wrapped_socket_context_t {

@@ -2092,7 +2092,11 @@ pub const StringBuilder = struct {
     }
 
     pub fn clamp(this: *StringBuilder) void {
-        if (comptime Environment.allow_assert) assert(this.cap >= this.len);
+        if (comptime Environment.allow_assert) {
+            assert(this.cap >= this.len);
+            // assert that no other builder was allocated while this builder was being used
+            assert(this.lockfile.buffers.string_bytes.items.len == this.off + this.cap);
+        }
 
         const excess = this.cap - this.len;
 
@@ -3614,7 +3618,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = try PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{});
+                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -4070,7 +4074,7 @@ pub const Package = extern struct {
     ) !WorkspaceEntry {
         const workspace_json = try json_cache.getWithPath(allocator, log, abs_package_json_path, .{
             .init_reset_store = false,
-        });
+        }).unwrap();
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
         const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;

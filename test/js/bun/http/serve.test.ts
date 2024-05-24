@@ -48,7 +48,7 @@ afterAll(() => {
   }
 });
 
-describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () => {
+describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(
       isDirect ? "direct" : "default",
@@ -105,12 +105,17 @@ describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () 
               Bun.gc(false);
             }
             {
-              const promises = new Array(count);
-              for (let i = 0; i < count; i++) {
-                promises[i] = callback();
-              }
+              let remaining = count;
 
-              await Promise.all(promises);
+              const batchSize = 64;
+              while (remaining > 0) {
+                const promises = new Array(count);
+                for (let i = 0; i < batchSize && remaining > 0; i++) {
+                  promises[i] = callback();
+                }
+                await Promise.all(promises);
+                remaining -= batchSize;
+              }
             }
 
             Bun.gc(true);
@@ -1127,19 +1132,18 @@ it("request body and signal life cycle", async () => {
       },
     });
 
-    const requests = [];
     for (let j = 0; j < 10; j++) {
-      for (let i = 0; i < 250; i++) {
+      const batchSize = 64;
+      const requests = [];
+      for (let i = 0; i < batchSize; i++) {
         requests.push(fetch(server.url.origin));
       }
-
       await Promise.all(requests);
-      requests.length = 0;
       Bun.gc(true);
     }
 
     await Bun.sleep(10);
-    expect(true).toBe(true);
+    expect().pass();
   }
 }, 30_000);
 

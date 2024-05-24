@@ -65,7 +65,7 @@ const js_printer = @import("../js_printer.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 const sourcemap = bun.sourcemap;
-const Joiner = bun.Joiner;
+const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
 const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
@@ -6786,9 +6786,8 @@ const LinkerContext = struct {
             break :brk CompileResult.empty;
         };
 
-        var j = bun.Joiner{
-            .use_pool = false,
-            .node_allocator = worker.allocator,
+        var j = StringJoiner{
+            .allocator = worker.allocator,
             .watcher = .{
                 .input = chunk.unique_key,
             },
@@ -6808,8 +6807,8 @@ const LinkerContext = struct {
             const hashbang = c.graph.ast.items(.hashbang)[chunk.entry_point.source_index];
 
             if (hashbang.len > 0) {
-                j.push(hashbang);
-                j.push("\n");
+                j.pushStatic(hashbang);
+                j.pushStatic("\n");
                 line_offset.advance(hashbang);
                 line_offset.advance("\n");
                 newline_before_comment = true;
@@ -6817,7 +6816,7 @@ const LinkerContext = struct {
             }
 
             if (is_bun) {
-                j.push("// @bun\n");
+                j.pushStatic("// @bun\n");
                 line_offset.advance("// @bun\n");
             }
         }
@@ -6831,7 +6830,7 @@ const LinkerContext = struct {
         if (cross_chunk_prefix.len > 0) {
             newline_before_comment = true;
             line_offset.advance(cross_chunk_prefix);
-            j.append(cross_chunk_prefix, 0, bun.default_allocator);
+            j.push(cross_chunk_prefix, bun.default_allocator);
         }
 
         // Concatenate the generated JavaScript chunks together
@@ -6853,7 +6852,7 @@ const LinkerContext = struct {
             if (c.options.mode == .bundle and !c.options.minify_whitespace and source_index != prev_filename_comment and compile_result.code().len > 0) {
                 prev_filename_comment = source_index;
                 if (newline_before_comment) {
-                    j.push("\n");
+                    j.pushStatic("\n");
                     line_offset.advance("\n");
                 }
 
@@ -6875,25 +6874,25 @@ const LinkerContext = struct {
 
                 switch (comment_type) {
                     .multiline => {
-                        j.push("/* ");
+                        j.pushStatic("/* ");
                         line_offset.advance("/* ");
                     },
                     .single => {
-                        j.push("// ");
+                        j.pushStatic("// ");
                         line_offset.advance("// ");
                     },
                 }
 
-                j.push(pretty);
+                j.pushStatic(pretty);
                 line_offset.advance(pretty);
 
                 switch (comment_type) {
                     .multiline => {
-                        j.push(" */\n");
+                        j.pushStatic(" */\n");
                         line_offset.advance(" */\n");
                     },
                     .single => {
-                        j.push("\n");
+                        j.pushStatic("\n");
                         line_offset.advance("\n");
                     },
                 }
@@ -6902,10 +6901,10 @@ const LinkerContext = struct {
 
             if (is_runtime) {
                 line_offset.advance(compile_result.code());
-                j.append(compile_result.code(), 0, bun.default_allocator);
+                j.push(compile_result.code(), bun.default_allocator);
             } else {
                 const generated_offset = line_offset;
-                j.append(compile_result.code(), 0, bun.default_allocator);
+                j.push(compile_result.code(), bun.default_allocator);
 
                 if (compile_result.source_map_chunk()) |source_map_chunk| {
                     line_offset.reset();
@@ -6930,16 +6929,16 @@ const LinkerContext = struct {
             // Stick the entry point tail at the end of the file. Deliberately don't
             // include any source mapping information for this because it's automatically
             // generated and doesn't correspond to a location in the input file.
-            j.append(tail_code, 0, bun.default_allocator);
+            j.push(tail_code, bun.default_allocator);
         }
 
         // Put the cross-chunk suffix inside the IIFE
         if (cross_chunk_suffix.len > 0) {
             if (newline_before_comment) {
-                j.push("\n");
+                j.pushStatic("\n");
             }
 
-            j.append(cross_chunk_suffix, 0, bun.default_allocator);
+            j.push(cross_chunk_suffix, bun.default_allocator);
         }
 
         if (c.options.output_format == .iife) {
@@ -6950,7 +6949,7 @@ const LinkerContext = struct {
             else
                 without_newline;
 
-            j.push(with_newline);
+            j.pushStatic(with_newline);
         }
 
         j.ensureNewlineAtEnd();
@@ -6992,9 +6991,8 @@ const LinkerContext = struct {
         const trace = tracer(@src(), "generateSourceMapForChunk");
         defer trace.end();
 
-        var j = Joiner{
-            .node_allocator = worker.allocator,
-            .use_pool = false,
+        var j = StringJoiner{
+            .allocator = worker.allocator,
         };
 
         const sources = c.parse_graph.input_files.items(.source);
@@ -7005,7 +7003,7 @@ const LinkerContext = struct {
         var next_source_index: u32 = 0;
         const source_indices = results.items(.source_index);
 
-        j.push("{\n  \"version\": 3,\n  \"sources\": [");
+        j.pushStatic("{\n  \"version\": 3,\n  \"sources\": [");
         if (source_indices.len > 0) {
             {
                 var path = sources[source_indices[0]].path;
@@ -7017,7 +7015,7 @@ const LinkerContext = struct {
 
                 var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + 2);
                 quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                j.push(quote_buf.list.items);
+                j.pushStatic(quote_buf.list.items); // freed by arena
             }
             if (source_indices.len > 1) {
                 for (source_indices[1..]) |index| {
@@ -7031,24 +7029,24 @@ const LinkerContext = struct {
                     var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
                     quote_buf.appendAssumeCapacity(", ");
                     quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                    j.push(quote_buf.list.items);
+                    j.pushStatic(quote_buf.list.items); // freed by arena
                 }
             }
         }
 
-        j.push("],\n  \"sourcesContent\": [");
+        j.pushStatic("],\n  \"sourcesContent\": [");
         if (source_indices.len > 0) {
-            j.push("\n    ");
-            j.push(quoted_source_map_contents[source_indices[0]]);
+            j.pushStatic("\n    ");
+            j.pushStatic(quoted_source_map_contents[source_indices[0]]);
 
             if (source_indices.len > 1) {
                 for (source_indices[1..]) |index| {
-                    j.push(",\n  ");
-                    j.push(quoted_source_map_contents[index]);
+                    j.pushStatic(",\n  ");
+                    j.pushStatic(quoted_source_map_contents[index]);
                 }
             }
         }
-        j.push("\n  ],\n  \"mappings\": \"");
+        j.pushStatic("\n  ],\n  \"mappings\": \"");
 
         const mapping_start = j.len;
         var prev_end_state = sourcemap.SourceMapState{};
@@ -7086,14 +7084,18 @@ const LinkerContext = struct {
         const mapping_end = j.len;
 
         if (comptime FeatureFlags.source_map_debug_id) {
-            j.push("\",\n  \"debugId\": \"");
-            j.push(try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}));
-            j.push("\",\n  \"names\": []\n}");
+            j.pushStatic("\",\n  \"debugId\": \"");
+            j.push(
+                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}),
+                worker.allocator,
+            );
+            j.pushStatic("\",\n  \"names\": []\n}");
         } else {
-            j.push("\",\n  \"names\": []\n}");
+            j.pushStatic("\",\n  \"names\": []\n}");
         }
 
         const done = try j.done(worker.allocator);
+        bun.assert(done[0] == '{');
 
         var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
         if (can_have_shifts) {
@@ -7174,7 +7176,7 @@ const LinkerContext = struct {
         } else {
             var el = chunk.intermediate_output.joiner.head;
             while (el) |e| : (el = e.next) {
-                hasher.write(e.data.slice);
+                hasher.write(e.slice);
             }
         }
 
@@ -8932,7 +8934,7 @@ const LinkerContext = struct {
     }
 
     const SubstituteChunkFinalPathResult = struct {
-        j: Joiner,
+        j: StringJoiner,
         shifts: []sourcemap.SourceMapShifts,
     };
 
@@ -10813,7 +10815,7 @@ const LinkerContext = struct {
     pub fn breakOutputIntoPieces(
         c: *LinkerContext,
         allocator: std.mem.Allocator,
-        j: *bun.Joiner,
+        j: *StringJoiner,
         count: u32,
     ) !Chunk.IntermediateOutput {
         const trace = tracer(@src(), "breakOutputIntoPieces");
@@ -11123,7 +11125,7 @@ pub const Chunk = struct {
         /// If the chunk doesn't have any references to other chunks, then
         /// `joiner` contains the contents of the chunk. This is more efficient
         /// because it avoids doing a join operation twice.
-        joiner: bun.Joiner,
+        joiner: StringJoiner,
 
         empty: void,
 

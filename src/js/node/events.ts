@@ -88,7 +88,6 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
 }
 
 const emitWithoutRejectionCapture = function emit(type, ...args) {
-  // console.log(`emit ${type}`, args);
   if (type === "error") {
     return emitError(this, args);
   }

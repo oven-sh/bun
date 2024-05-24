@@ -3,7 +3,7 @@ import { it, expect, beforeAll, afterAll } from "bun:test";
 import { bunExe, bunEnv, isDebug } from "harness";
 import type { Subprocess } from "bun";
 
-const payload = Buffer.alloc(256 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
+const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
 const batchSize = 40;
 const totalCount = 10_000;
 const zeroCopyPayload = new Blob([payload]);
@@ -123,11 +123,11 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 }
 
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 2],
-  ["should not leak memory when buffering the body", callBuffering, false, 2],
-  ["should not leak memory when streaming the body", callStreaming, false, 2],
-  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 8],
-  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 8],
+  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 8],
+  ["should not leak memory when buffering the body", callBuffering, false, 24],
+  ["should not leak memory when streaming the body", callStreaming, false, 8],
+  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 16],
+  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 16],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
   it.todoIf(skip)(

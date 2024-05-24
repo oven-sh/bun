@@ -835,9 +835,9 @@ const Platform = enum(u8) {
 /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
 /// '2' - same as '1' but this build is known to be a canary build
 const version_char = if (bun.Environment.is_canary)
-    "1"
+    "2"
 else
-    "2";
+    "1";
 
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 

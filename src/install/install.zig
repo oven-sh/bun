@@ -6797,12 +6797,14 @@ pub const PackageManager = struct {
         /// edits dependencies and trusted dependencies
         /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
         pub fn edit(
-            allocator: std.mem.Allocator,
+            manager: *PackageManager,
             updates: []UpdateRequest,
             current_package_json: *JSAst.Expr,
             dependency_list: string,
+            op: Lockfile.Package.Diff.Op,
             options: EditOptions,
         ) !void {
+            const allocator = manager.allocator;
             var remaining = updates.len;
             var replacing: usize = 0;
 
@@ -6810,62 +6812,60 @@ pub const PackageManager = struct {
             // 1. There is no "dependencies" (or equivalent list) or it is empty
             // 2. There is a "dependencies" (or equivalent list), but the package name already exists in a separate list
             // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
-            ast_modifier: {
-                // Try to use the existing spot in the dependencies list if possible
-                {
-                    var original_trusted_dependencies = brk: {
-                        if (!options.add_trusted_dependencies) break :brk E.Array{};
-                        if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
-                            if (query.expr.data == .e_array) {
-                                // not modifying
-                                break :brk query.expr.data.e_array.*;
-                            }
+            // Try to use the existing spot in the dependencies list if possible
+            {
+                var original_trusted_dependencies = brk: {
+                    if (!options.add_trusted_dependencies) break :brk E.Array{};
+                    if (current_package_json.asProperty(trusted_dependencies_string)) |query| {
+                        if (query.expr.data == .e_array) {
+                            // not modifying
+                            break :brk query.expr.data.e_array.*;
                         }
-                        break :brk E.Array{};
-                    };
+                    }
+                    break :brk E.Array{};
+                };
 
-                    if (options.add_trusted_dependencies) {
-                        for (PackageManager.instance.trusted_deps_to_add_to_package_json.items, 0..) |trusted_package_name, i| {
-                            for (original_trusted_dependencies.items.slice()) |item| {
-                                if (item.data == .e_string) {
-                                    if (item.data.e_string.eql(string, trusted_package_name)) {
-                                        allocator.free(PackageManager.instance.trusted_deps_to_add_to_package_json.swapRemove(i));
-                                        break;
-                                    }
+                if (options.add_trusted_dependencies) {
+                    for (manager.trusted_deps_to_add_to_package_json.items, 0..) |trusted_package_name, i| {
+                        for (original_trusted_dependencies.items.slice()) |item| {
+                            if (item.data == .e_string) {
+                                if (item.data.e_string.eql(string, trusted_package_name)) {
+                                    allocator.free(manager.trusted_deps_to_add_to_package_json.swapRemove(i));
+                                    break;
                                 }
                             }
                         }
                     }
+                }
 
-                    for (updates) |*request| {
-                        inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
-                            if (current_package_json.asProperty(list)) |query| {
-                                if (query.expr.data == .e_object) {
-                                    if (query.expr.asProperty(
-                                        if (request.is_aliased)
-                                            request.name
-                                        else
-                                            request.version.literal.slice(request.version_buf),
-                                    )) |value| {
-                                        if (value.expr.data == .e_string) {
-                                            if (!request.resolved_name.isEmpty() and strings.eqlLong(list, dependency_list, true)) {
-                                                replacing += 1;
-                                            } else {
-                                                request.e_string = value.expr.data.e_string;
-                                                remaining -= 1;
-                                            }
+                for (updates) |*request| {
+                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
+                        if (current_package_json.asProperty(list)) |query| {
+                            if (query.expr.data == .e_object) {
+                                if (query.expr.asProperty(
+                                    if (request.is_aliased)
+                                        request.name
+                                    else
+                                        request.version.literal.slice(request.version_buf),
+                                )) |value| {
+                                    if (value.expr.data == .e_string) {
+                                        if (!request.resolved_name.isEmpty() and strings.eqlLong(list, dependency_list, true)) {
+                                            replacing += 1;
+                                        } else {
+                                            request.e_string = value.expr.data.e_string;
+                                            remaining -= 1;
                                         }
-                                        break;
-                                    } else {
-                                        if (request.version.tag == .github or request.version.tag == .git) {
-                                            for (query.expr.data.e_object.properties.slice()) |item| {
-                                                if (item.value) |v| {
-                                                    const url = request.version.literal.slice(request.version_buf);
-                                                    if (v.data == .e_string and v.data.e_string.eql(string, url)) {
-                                                        request.e_string = v.data.e_string;
-                                                        remaining -= 1;
-                                                        break;
-                                                    }
+                                    }
+                                    break;
+                                } else {
+                                    if (request.version.tag == .github or request.version.tag == .git) {
+                                        for (query.expr.data.e_object.properties.slice()) |item| {
+                                            if (item.value) |v| {
+                                                const url = request.version.literal.slice(request.version_buf);
+                                                if (v.data == .e_string and v.data.e_string.eql(string, url)) {
+                                                    request.e_string = v.data.e_string;
+                                                    remaining -= 1;
+                                                    break;
                                                 }
                                             }
                                         }
@@ -6875,10 +6875,9 @@ pub const PackageManager = struct {
                         }
                     }
                 }
+            }
 
-                if (remaining == 0)
-                    break :ast_modifier;
-
+            if (remaining != 0) {
                 var dependencies: []G.Property = &[_]G.Property{};
                 if (current_package_json.asProperty(dependency_list)) |query| {
                     if (query.expr.data == .e_object) {
@@ -6899,7 +6898,7 @@ pub const PackageManager = struct {
                     }
                 }
 
-                const trusted_dependencies_to_add = PackageManager.instance.trusted_deps_to_add_to_package_json.items.len;
+                const trusted_dependencies_to_add = manager.trusted_deps_to_add_to_package_json.items.len;
                 const new_trusted_deps = brk: {
                     if (!options.add_trusted_dependencies or trusted_dependencies_to_add == 0) break :brk &[_]Expr{};
 
@@ -6907,7 +6906,7 @@ pub const PackageManager = struct {
                     @memcpy(deps[0..trusted_dependencies.len], trusted_dependencies);
                     @memset(deps[trusted_dependencies.len..], Expr.empty);
 
-                    for (PackageManager.instance.trusted_deps_to_add_to_package_json.items) |package_name| {
+                    for (manager.trusted_deps_to_add_to_package_json.items) |package_name| {
                         if (comptime Environment.allow_assert) {
                             var has_missing = false;
                             for (deps) |dep| {
@@ -7146,11 +7145,57 @@ pub const PackageManager = struct {
                 }
             }
 
+            if (op == .update and updates.len == 0) {
+                if (current_package_json.asProperty(dependency_list)) |query| {
+                    if (query.expr.data == .e_object) {
+                        const string_buf = manager.lockfile.buffers.string_bytes.items;
+                        const workspace_package_id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
+                        const packages = manager.lockfile.packages.slice();
+                        const resolutions = packages.items(.resolution);
+                        const deps = packages.items(.dependencies)[workspace_package_id];
+                        const resolution_ids = packages.items(.resolutions)[workspace_package_id];
+                        const workspace_deps = deps.get(manager.lockfile.buffers.dependencies.items);
+                        const workspace_resolution_ids = resolution_ids.get(manager.lockfile.buffers.resolutions.items);
+                        for (query.expr.data.e_object.properties.slice()) |*dep| {
+                            for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
+                                if (dep.key != null and
+                                    dep.key.?.data == .e_string and
+                                    workspace_dep.version.tag == .npm and
+                                    dep.key.?.data.e_string.eql(string, workspace_dep.name.slice(string_buf)))
+                                {
+                                    const resolution = resolutions[package_id];
+                                    if (resolution.tag == .npm) {
+                                        const new_version = try switch (options.exact_versions) {
+                                            inline else => |exact_versions| std.fmt.allocPrint(
+                                                allocator,
+                                                if (comptime exact_versions) "{}" else "^{}",
+                                                .{
+                                                    resolution.value.npm.version.fmt(string_buf),
+                                                },
+                                            ),
+                                        };
+                                        dep.value = try JSAst.Expr.init(
+                                            JSAst.E.String,
+                                            JSAst.E.String{
+                                                .data = new_version,
+                                            },
+                                            logger.Loc.Empty,
+                                        ).clone(allocator);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             for (updates) |*request| {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
-                            if (request.version.tag == .dist_tag) {
+                            if (request.version.tag == .dist_tag or
+                                (op == .update and request.version.tag == .npm and request.version.value.npm.version.isExact()))
+                            {
                                 switch (options.exact_versions) {
                                     inline else => |exact_versions| {
                                         const fmt = if (exact_versions) "{}" else "^{}";
@@ -8652,19 +8697,19 @@ pub const PackageManager = struct {
         const preserve_trailing_newline_at_eof_for_package_json = current_package_json.source.contents.len > 0 and
             current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
 
-        if (op == .remove) {
+        if (op == .remove or op == .update) {
             if (current_package_json.root.data != .e_object) {
-                Output.prettyErrorln("<red>error<r><d>:<r> package.json is not an Object {{}}, so there's nothing to remove!", .{});
+                Output.errGeneric("package.json is not an Object {{}}, so there's nothing to " ++ @tagName(op) ++ "!", .{});
                 Global.crash();
             } else if (current_package_json.root.data.e_object.properties.len == 0) {
-                Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
+                Output.errGeneric("package.json is empty {{}}, so there's nothing to " ++ @tagName(op) ++ "!", .{});
                 Global.crash();
             } else if (current_package_json.root.asProperty("devDependencies") == null and
                 current_package_json.root.asProperty("dependencies") == null and
                 current_package_json.root.asProperty("optionalDependencies") == null and
                 current_package_json.root.asProperty("peerDependencies") == null)
             {
-                Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to remove!", .{});
+                Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to " ++ @tagName(op) ++ "!", .{});
                 Global.exit(0);
             }
         }
@@ -8728,10 +8773,11 @@ pub const PackageManager = struct {
             },
             .link, .add => {
                 try PackageJSONEditor.edit(
-                    manager.allocator,
+                    manager,
                     updates,
                     &current_package_json.root,
                     dependency_list,
+                    op,
                     .{
                         .exact_versions = manager.options.enable.exact_versions,
                     },
@@ -8818,10 +8864,11 @@ pub const PackageManager = struct {
             };
 
             try PackageJSONEditor.edit(
-                manager.allocator,
+                manager,
                 updates,
                 &new_package_json,
                 dependency_list,
+                op,
                 .{
                     .exact_versions = manager.options.enable.exact_versions,
                     .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,

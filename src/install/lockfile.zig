@@ -900,26 +900,11 @@ pub fn cleanWithLogger(
         const string_buf = new.buffers.string_bytes.items;
         const slice = new.packages.slice();
         const names = slice.items(.name);
-        const name_hashes = slice.items(.name_hash);
         const resolutions = slice.items(.resolution);
-        const metas = slice.items(.meta);
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
-        const package_id_to_update = if (PackageManager.instance.workspace_name_hash) |workspace_name_hash| brk: {
-            for (resolutions, name_hashes, metas) |*res, name_hash, meta| {
-                if (res.tag == .workspace and name_hash == workspace_name_hash) {
-                    break :brk meta.id;
-                }
-            }
-
-            if (comptime Environment.allow_assert) {
-                @panic("failed to find workspace package for `bun add/remove`");
-            }
-
-            // should not hit this, default to root just in case
-            break :brk 0;
-        } else 0; // root
+        const package_id_to_update = new.getWorkspacePackageID(PackageManager.instance.workspace_name_hash);
 
         const dep_list = slice.items(.dependencies)[package_id_to_update];
         const res_list = slice.items(.resolutions)[package_id_to_update];
@@ -950,6 +935,23 @@ pub fn cleanWithLogger(
     }
 
     return new;
+}
+
+pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
+    return if (workspace_name_hash) |workspace_name_hash_| brk: {
+        const packages = this.packages.slice();
+        const name_hashes = packages.items(.name_hash);
+        const resolutions = packages.items(.resolution);
+        const metas = packages.items(.meta);
+        for (resolutions, name_hashes, metas) |res, name_hash, meta| {
+            if (res.tag == .workspace and name_hash == workspace_name_hash_) {
+                break :brk meta.id;
+            }
+        }
+
+        // should not hit this, default to root just in case
+        break :brk 0;
+    } else 0;
 }
 
 pub const MetaHashFormatter = struct {

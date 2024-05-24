@@ -272,12 +272,7 @@ pub const Registry = struct {
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch |err| {
-                    if (PackageManager.verbose_install) {
-                        Output.warn("Error caching manifest for {s}: {s}", .{ package_name, @errorName(err) });
-                        Output.flush();
-                    }
-                };
+                PackageManifest.Serializer.saveAsync(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory());
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -706,7 +701,41 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            const file = try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, std.os.O.CREAT | std.os.O.TRUNC | std.os.O.WRONLY | std.os.O.APPEND, if (Environment.isPosix) 0o664 else 0).unwrap();
+            var is_using_o_tmpfile = if (Environment.isLinux) false else {};
+            const file = brk: {
+                const flags = std.os.O.WRONLY;
+                const mask = if (Environment.isPosix) 0o664 else 0;
+
+                // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
+                // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
+                // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
+                if (Environment.isLinux) {
+                    switch (bun.sys.File.openat(cache_dir, ".", flags | std.os.linux.O.TMPFILE, mask)) {
+                        .err => {
+                            const warner = struct {
+                                var did_warn = std.atomic.Value(bool).init(false);
+
+                                pub fn warnOnce() void {
+                                    if (!did_warn.swap(true, .Monotonic)) {
+                                        // This is not an error. Nor is it really a warning.
+                                        Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});
+                                        Output.flush();
+                                    }
+                                }
+                            };
+                            if (PackageManager.verbose_install)
+                                warner.warnOnce();
+                        },
+                        .result => |f| {
+                            is_using_o_tmpfile = true;
+                            break :brk f;
+                        },
+                    }
+                }
+
+                break :brk try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, flags | std.os.O.CREAT | std.os.O.TRUNC, if (Environment.isPosix) 0o664 else 0).unwrap();
+            };
+
             {
                 errdefer file.close();
                 try file.writeAll(buffer.items).unwrap();
@@ -721,10 +750,88 @@ pub const PackageManifest = struct {
                 file.close();
                 did_close = true;
                 try bun.sys.renameat(bun.FD.cwd(), path_to_use_for_opening_file, bun.FD.cwd(), cache_path_abs).unwrap();
+            } else if (Environment.isLinux and is_using_o_tmpfile) {
+                defer file.close();
+                // Attempt #1.
+                bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap() catch {
+                    // Attempt #2: the file may already exist. Let's unlink and try again.
+                    bun.sys.unlinkat(bun.toFD(cache_dir), outpath).unwrap() catch {};
+                    try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
+
+                    // There is no attempt #3. This is a cache, so it's not essential.
+                };
             } else {
                 defer file.close();
-                try bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath).unwrap();
+                // Attempt #1. Rename the file.
+                const rc = bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath);
+
+                switch (rc) {
+                    .err => |err| {
+                        // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
+                        defer {
+                            // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
+                            bun.sys.unlinkat(bun.toFD(tmpdir), tmp_path).unwrap() catch {};
+                        }
+
+                        if (switch (err.getErrno()) {
+                            .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                            else => false,
+                        }) {
+
+                            // Atomically swap the old file with the new file.
+                            try bun.sys.renameat2(bun.toFD(tmpdir.fd), tmp_path, bun.toFD(cache_dir.fd), outpath, .{
+                                .exchange = true,
+                            }).unwrap();
+
+                            // Success.
+                            return;
+                        }
+                    },
+                    .result => {},
+                }
+
+                try rc.unwrap();
             }
+        }
+
+        /// We save into a temporary directory and then move the file to the cache directory.
+        /// Saving the files to the manifest cache doesn't need to prevent application exit.
+        /// It's an optional cache.
+        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
+        ///
+        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
+        pub fn saveAsync(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+            const SaveTask = struct {
+                manifest: PackageManifest,
+                tmpdir: std.fs.Dir,
+                cache_dir: std.fs.Dir,
+
+                task: bun.ThreadPool.Task = .{ .callback = &run },
+                pub usingnamespace bun.New(@This());
+
+                pub fn run(task: *bun.ThreadPool.Task) void {
+                    const save_task: *@This() = @fieldParentPtr(@This(), "task", task);
+                    defer {
+                        save_task.destroy();
+                    }
+
+                    Serializer.save(&save_task.manifest, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                        if (PackageManager.verbose_install) {
+                            Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
+                            Output.flush();
+                        }
+                    };
+                }
+            };
+
+            const task = SaveTask.new(.{
+                .manifest = this.*,
+                .tmpdir = tmpdir,
+                .cache_dir = cache_dir,
+            });
+
+            const batch = bun.ThreadPool.Batch.from(&task.task);
+            PackageManager.instance.thread_pool.schedule(batch);
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -743,8 +850,7 @@ pub const PackageManifest = struct {
             try writeFile(this, tmp_path, tmpdir, cache_dir, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash11.hash(0, package_name);
+        pub fn loadByFileID(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -752,10 +858,6 @@ pub const PackageManifest = struct {
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
-            var timer: std.time.Timer = undefined;
-            if (PackageManager.verbose_install) {
-                timer = std.time.Timer.start() catch @panic("timer fail");
-            }
             defer cache_file.close();
             const bytes = try cache_file.readToEndAllocOptions(
                 allocator,
@@ -767,7 +869,17 @@ pub const PackageManifest = struct {
 
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
-            const result = try readAll(bytes);
+            return try readAll(bytes);
+        }
+
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+            var timer: std.time.Timer = undefined;
+            if (PackageManager.verbose_install) {
+                timer = std.time.Timer.start() catch @panic("timer fail");
+            }
+
+            const result = try loadByFileID(allocator, cache_dir, bun.Wyhash11.hash(0, package_name)) orelse return null;
+
             if (PackageManager.verbose_install) {
                 Output.prettyError("\n ", .{});
                 Output.printTimer(&timer);

@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -1097,7 +1097,8 @@ describe("deno_task", () => {
     }
   });
 
-  test("stacktrace", async () => {
+  // https://github.com/oven-sh/bun/issues/11305
+  test.todoIf(isWindows)("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
     const code = /* ts */ `import { $ } from 'bun'
 

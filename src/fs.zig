@@ -1720,10 +1720,15 @@ pub const Path = struct {
     /// This assertion might be a bit too forceful though.
     pub fn assertPrettyIsValid(path: *const Path) void {
         if (Environment.isWindows and Environment.allow_assert) {
-            if (std.mem.indexOfScalar(u8, path.pretty, '\\') != null) {
+            if (bun.strings.indexOfChar(path.pretty, '\\') != null) {
                 std.debug.panic("Expected pretty file path to have only forward slashes, got '{s}'", .{path.pretty});
             }
         }
+    }
+
+    pub inline fn isPrettyPathPosix(path: *const Path) bool {
+        if (!Environment.isWindows) return true;
+        return bun.strings.indexOfChar(path.pretty, '\\') == null;
     }
 
     // This duplicates but only when strictly necessary
@@ -1788,6 +1793,19 @@ pub const Path = struct {
                 return new_path;
             }
         }
+    }
+
+    pub fn dupeAllocFixPretty(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
+        if (this.isPrettyPathPosix()) return this.dupeAlloc(allocator);
+        comptime bun.assert(bun.Environment.isWindows);
+        var new = this;
+        new.pretty = "";
+        new = new.dupeAlloc(allocator);
+        const pretty = allocator.dupe(u8, this.pretty);
+        bun.path.platformToPosixInPlace(u8, pretty);
+        new.pretty = pretty;
+        new.assertPrettyIsValid();
+        return pretty;
     }
 
     pub const empty = Fs.Path.init("");

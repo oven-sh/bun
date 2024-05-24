@@ -569,6 +569,10 @@ pub const BundleV2 = struct {
             // TODO: outbase
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
+        } else if (!path.isPrettyPathPosix()) {
+            const dup = this.graph.allocator.dupe(u8, path.pretty) catch bun.outOfMemory();
+            bun.path.platformToPosixInPlace(u8, dup);
+            path.pretty = dup;
         }
         path.assertPrettyIsValid();
 
@@ -670,7 +674,12 @@ pub const BundleV2 = struct {
             // TODO: outbase
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
+        } else if (path.isPrettyPathPosix()) {
+            const dup = this.graph.allocator.dupe(u8, path.pretty) catch bun.outOfMemory();
+            bun.path.platformToPosixInPlace(u8, dup);
+            path.pretty = dup;
         }
+        path.assertPrettyIsValid();
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
@@ -2010,6 +2019,10 @@ pub const BundleV2 = struct {
                 // TODO: outbase
                 const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                 path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
+            } else if (!path.isPrettyPathPosix()) {
+                const dup = this.graph.allocator.dupe(u8, path.pretty) catch bun.outOfMemory();
+                bun.path.platformToPosixInPlace(u8, dup);
+                path.pretty = dup;
             }
             path.assertPrettyIsValid();
             path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");

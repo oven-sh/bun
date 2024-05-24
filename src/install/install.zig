@@ -6794,12 +6794,66 @@ pub const PackageManager = struct {
             }
         }
 
+        /// When `bun update` is called without package names, all dependencies are updated.
+        /// This function will identifier the current workspace and update all changed package
+        /// versions.
+        pub fn editUpdateNoArgs(
+            manager: *PackageManager,
+            current_package_json: *Expr,
+            dependency_list: string,
+            options: EditOptions,
+        ) !void {
+            const allocator = manager.allocator;
+
+            if (current_package_json.asProperty(dependency_list)) |query| {
+                if (query.expr.data == .e_object) {
+                    const string_buf = manager.lockfile.buffers.string_bytes.items;
+                    const workspace_package_id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
+                    const packages = manager.lockfile.packages.slice();
+                    const resolutions = packages.items(.resolution);
+                    const deps = packages.items(.dependencies)[workspace_package_id];
+                    const resolution_ids = packages.items(.resolutions)[workspace_package_id];
+                    const workspace_deps = deps.get(manager.lockfile.buffers.dependencies.items);
+                    const workspace_resolution_ids = resolution_ids.get(manager.lockfile.buffers.resolutions.items);
+                    for (query.expr.data.e_object.properties.slice()) |*dep| {
+                        for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
+                            if (dep.key != null and
+                                dep.key.?.data == .e_string and
+                                workspace_dep.version.tag == .npm and
+                                dep.key.?.data.e_string.eql(string, workspace_dep.name.slice(string_buf)))
+                            {
+                                const resolution = resolutions[package_id];
+                                if (resolution.tag == .npm) {
+                                    const new_version = try switch (options.exact_versions) {
+                                        inline else => |exact_versions| std.fmt.allocPrint(
+                                            allocator,
+                                            if (comptime exact_versions) "{}" else "^{}",
+                                            .{
+                                                resolution.value.npm.version.fmt(string_buf),
+                                            },
+                                        ),
+                                    };
+                                    dep.value = try JSAst.Expr.init(
+                                        JSAst.E.String,
+                                        JSAst.E.String{
+                                            .data = new_version,
+                                        },
+                                        logger.Loc.Empty,
+                                    ).clone(allocator);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         /// edits dependencies and trusted dependencies
         /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
         pub fn edit(
             manager: *PackageManager,
             updates: []UpdateRequest,
-            current_package_json: *JSAst.Expr,
+            current_package_json: *Expr,
             dependency_list: string,
             op: Lockfile.Package.Diff.Op,
             options: EditOptions,
@@ -7141,50 +7195,6 @@ pub const PackageManager = struct {
                             },
                             logger.Loc.Empty,
                         );
-                    }
-                }
-            }
-
-            if (op == .update and updates.len == 0) {
-                if (current_package_json.asProperty(dependency_list)) |query| {
-                    if (query.expr.data == .e_object) {
-                        const string_buf = manager.lockfile.buffers.string_bytes.items;
-                        const workspace_package_id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
-                        const packages = manager.lockfile.packages.slice();
-                        const resolutions = packages.items(.resolution);
-                        const deps = packages.items(.dependencies)[workspace_package_id];
-                        const resolution_ids = packages.items(.resolutions)[workspace_package_id];
-                        const workspace_deps = deps.get(manager.lockfile.buffers.dependencies.items);
-                        const workspace_resolution_ids = resolution_ids.get(manager.lockfile.buffers.resolutions.items);
-                        for (query.expr.data.e_object.properties.slice()) |*dep| {
-                            for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
-                                if (dep.key != null and
-                                    dep.key.?.data == .e_string and
-                                    workspace_dep.version.tag == .npm and
-                                    dep.key.?.data.e_string.eql(string, workspace_dep.name.slice(string_buf)))
-                                {
-                                    const resolution = resolutions[package_id];
-                                    if (resolution.tag == .npm) {
-                                        const new_version = try switch (options.exact_versions) {
-                                            inline else => |exact_versions| std.fmt.allocPrint(
-                                                allocator,
-                                                if (comptime exact_versions) "{}" else "^{}",
-                                                .{
-                                                    resolution.value.npm.version.fmt(string_buf),
-                                                },
-                                            ),
-                                        };
-                                        dep.value = try JSAst.Expr.init(
-                                            JSAst.E.String,
-                                            JSAst.E.String{
-                                                .data = new_version,
-                                            },
-                                            logger.Loc.Empty,
-                                        ).clone(allocator);
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -8697,7 +8707,7 @@ pub const PackageManager = struct {
         const preserve_trailing_newline_at_eof_for_package_json = current_package_json.source.contents.len > 0 and
             current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
 
-        if (op == .remove or op == .update) {
+        if (op == .remove) {
             if (current_package_json.root.data != .e_object) {
                 Output.errGeneric("package.json is not an Object {{}}, so there's nothing to " ++ @tagName(op) ++ "!", .{});
                 Global.crash();
@@ -8771,7 +8781,8 @@ pub const PackageManager = struct {
 
                 manager.to_remove = updates;
             },
-            .link, .add => {
+            .link, .add, .update => {
+                // `bun update <package>` is basically the same as `bun add <package>`
                 try PackageJSONEditor.edit(
                     manager,
                     updates,
@@ -8783,10 +8794,7 @@ pub const PackageManager = struct {
                     },
                 );
                 manager.package_json_updates = updates;
-            },
-            .update => {
-                manager.package_json_updates = updates;
-                manager.to_update = true;
+                manager.to_update = op == .update;
             },
             else => {},
         }
@@ -8863,17 +8871,28 @@ pub const PackageManager = struct {
                 Global.crash();
             };
 
-            try PackageJSONEditor.edit(
-                manager,
-                updates,
-                &new_package_json,
-                dependency_list,
-                op,
-                .{
-                    .exact_versions = manager.options.enable.exact_versions,
-                    .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
-                },
-            );
+            if (updates.len == 0) {
+                try PackageJSONEditor.editUpdateNoArgs(
+                    manager,
+                    &new_package_json,
+                    dependency_list,
+                    .{
+                        .exact_versions = manager.options.enable.exact_versions,
+                    },
+                );
+            } else {
+                try PackageJSONEditor.edit(
+                    manager,
+                    updates,
+                    &new_package_json,
+                    dependency_list,
+                    op,
+                    .{
+                        .exact_versions = manager.options.enable.exact_versions,
+                        .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
+                    },
+                );
+            }
             var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
             try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =

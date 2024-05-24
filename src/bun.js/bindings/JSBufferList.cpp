@@ -452,26 +452,6 @@ const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_inf
 JSValue getBufferList(Zig::GlobalObject* globalObject)
 {
     return reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
-    // VM& vm = globalObject->vm();
-    // auto* obj = constructEmptyObject(globalObject);
-    // obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
-    // obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
-    // obj->putDirect(
-    //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "maybeReadMore"_s)),
-    //     JSC::JSFunction::create(vm, globalObject, 0, "maybeReadMore"_s, jsReadable_maybeReadMore, ImplementationVisibility::Public), 0);
-    // obj->putDirect(
-    //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "resume"_s)),
-    //     JSC::JSFunction::create(vm, globalObject, 0, "resume"_s, jsReadable_resume, ImplementationVisibility::Public), 0);
-    // obj->putDirect(
-    //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable"_s)),
-    //     JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable, ImplementationVisibility::Public), 0);
-    // // obj->putDirect(
-    // //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
-    // //     JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
-    // obj->putDirect(
-    //     vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "EE"_s)),
-    //     WebCore::JSEventEmitter::getConstructor(vm, globalObject), 0);
-    // return obj;
 }
 
 } // namespace Zig

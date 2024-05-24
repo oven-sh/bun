@@ -2,6 +2,30 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
+// BEGIN moved from require_readable
+// when we split this stuff up again, we can move this back
+const kObjectMode = 1 << 0
+const kEnded = 1 << 1
+const kEndEmitted = 1 << 2
+const kReading = 1 << 3
+const kConstructed = 1 << 4
+const kSync = 1 << 5
+const kNeedReadable = 1 << 6
+const kEmittedReadable = 1 << 7
+const kReadableListening = 1 << 8
+const kResumeScheduled = 1 << 9
+const kErrorEmitted = 1 << 10
+const kEmitClose = 1 << 11
+const kAutoDestroy = 1 << 12
+const kDestroyed = 1 << 13
+const kClosed = 1 << 14
+const kCloseEmitted = 1 << 15
+const kMultiAwaitDrain = 1 << 16
+const kReadingMore = 1 << 17
+const kDataEmitted = 1 << 18
+const kPaused = Symbol('kPaused')
+// END moved from require_readable
+
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -2315,27 +2339,6 @@ var require_readable = __commonJS({
     const {
       AbortError
     } = require_errors();
-
-    const kPaused = Symbol('kPaused')
-    const kObjectMode = 1 << 0
-    const kEnded = 1 << 1
-    const kEndEmitted = 1 << 2
-    const kReading = 1 << 3
-    const kConstructed = 1 << 4
-    const kSync = 1 << 5
-    const kNeedReadable = 1 << 6
-    const kEmittedReadable = 1 << 7
-    const kReadableListening = 1 << 8
-    const kResumeScheduled = 1 << 9
-    const kErrorEmitted = 1 << 10
-    const kEmitClose = 1 << 11
-    const kAutoDestroy = 1 << 12
-    const kDestroyed = 1 << 13
-    const kClosed = 1 << 14
-    const kCloseEmitted = 1 << 15
-    const kMultiAwaitDrain = 1 << 16
-    const kReadingMore = 1 << 17
-    const kDataEmitted = 1 << 18
     
     // TODO(benjamingr) it is likely slower to do it this way than with free functions
     function makeBitMapDescriptor(bit) {

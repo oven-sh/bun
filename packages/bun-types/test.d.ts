@@ -94,6 +94,7 @@ declare module "bun:test" {
     clearAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
+    setTimeout(milliseconds: number): void;
   }
   export const jest: Jest;
   export namespace jest {

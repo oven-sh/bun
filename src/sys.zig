@@ -2281,16 +2281,16 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
     const flags = switch (bun.sys.fcntl(
         fd,
-        bun.C.F_GETFL,
+        std.os.F.GETFL,
         0,
     )) {
         .result => |f| f,
         .err => |err| return .{ .err = err },
     };
 
-    const new_flags = flags | bun.C.O_NONBLOCK;
+    const new_flags = flags | std.os.O.NONBLOCK;
 
-    switch (bun.sys.fcntl(fd, bun.C.F_SETFL, new_flags)) {
+    switch (bun.sys.fcntl(fd, std.os.F.SETFL, new_flags)) {
         .err => |err| return .{ .err = err },
         .result => {},
     }
@@ -2577,7 +2577,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         if (Maybe(void).errnoSysFd(rc, .link, tmpfd)) |err| {
             switch (err.getErrno()) {
                 .INTR => continue,
-                .EISDIR, .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
+                .ISDIR, .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
                     // CAP_DAC_READ_SEARCH is required to linkat with an empty path.
                     if (current_status == 0) {
                         CAP_DAC_READ_SEARCH.status.store(-1, .Monotonic);

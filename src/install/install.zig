@@ -6655,6 +6655,7 @@ pub const PackageManager = struct {
         pub const EditOptions = struct {
             exact_versions: bool = false,
             add_trusted_dependencies: bool = false,
+            before_install: bool = false,
         };
 
         pub fn editTrustedDependencies(allocator: std.mem.Allocator, package_json: *Expr, names_to_add: []string) !void {
@@ -6820,6 +6821,7 @@ pub const PackageManager = struct {
                             if (dep.key != null and
                                 dep.key.?.data == .e_string and
                                 workspace_dep.version.tag == .npm and
+                                !workspace_dep.version.value.npm.version.isExact() and
                                 dep.key.?.data.e_string.eql(string, workspace_dep.name.slice(string_buf)))
                             {
                                 const resolution = resolutions[package_id];
@@ -6998,6 +7000,7 @@ pub const PackageManager = struct {
 
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
+                        var new_dep = true;
                         if (new_dependencies[k].key) |key| {
                             if (!request.is_aliased and !request.resolved_name.isEmpty() and key.data.e_string.eql(
                                 string,
@@ -7033,6 +7036,8 @@ pub const PackageManager = struct {
                                     }
                                     continue;
                                 }
+
+                                new_dep = false;
                                 new_dependencies[k].key = null;
                             }
                         }
@@ -7051,15 +7056,30 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                             ).clone(allocator);
 
-                            new_dependencies[k].value = try JSAst.Expr.init(
-                                JSAst.E.String,
-                                JSAst.E.String{
-                                    // we set it later
-                                    .data = "",
-                                },
-                                logger.Loc.Empty,
-                            ).clone(allocator);
-                            request.e_string = new_dependencies[k].value.?.data.e_string;
+                            const rewrite_dep_version =
+                                // if this is a new dependency, add it
+                                new_dep or
+                                // if the version doesn't exist, add one
+                                new_dependencies[k].value == null or
+                                // if a version is provided from the update request, add it
+                                request.version.tag == .npm or
+                                // if this is `bun install/add`, change it
+                                op != .update or
+                                // after install for `bun update`, update it
+                                !options.before_install and request.resolution.tag == .npm;
+
+                            if (rewrite_dep_version) {
+                                new_dependencies[k].value = try JSAst.Expr.init(
+                                    JSAst.E.String,
+                                    JSAst.E.String{
+                                        // we set it later
+                                        .data = "",
+                                    },
+                                    logger.Loc.Empty,
+                                ).clone(allocator);
+                                request.e_string = new_dependencies[k].value.?.data.e_string;
+                            }
+
                             if (request.is_aliased) continue :outer;
                         }
                     }
@@ -7204,12 +7224,11 @@ pub const PackageManager = struct {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
                             if (request.version.tag == .dist_tag or
-                                (op == .update and request.version.tag == .npm and request.version.value.npm.version.isExact()))
+                                (op == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
                             {
                                 switch (options.exact_versions) {
                                     inline else => |exact_versions| {
-                                        const fmt = if (exact_versions) "{}" else "^{}";
-                                        break :brk try std.fmt.allocPrint(allocator, fmt, .{
+                                        break :brk try std.fmt.allocPrint(allocator, if (comptime exact_versions) "{}" else "^{}", .{
                                             request.resolution.value.npm.version.fmt(request.version_buf),
                                         });
                                     },
@@ -7218,10 +7237,14 @@ pub const PackageManager = struct {
 
                             break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
-                        .uninitialized => switch (request.version.tag) {
-                            .uninitialized => try allocator.dupe(u8, latest),
-                            else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
-                        },
+                        .uninitialized => if (op != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm)
+                            switch (request.version.tag) {
+                                .uninitialized => try allocator.dupe(u8, "latest"),
+                                else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                            }
+                        else
+                            e_string.data,
+
                         .workspace => try allocator.dupe(u8, "workspace:*"),
                         else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
                     };
@@ -8782,17 +8805,23 @@ pub const PackageManager = struct {
                 manager.to_remove = updates;
             },
             .link, .add, .update => {
-                // `bun update <package>` is basically the same as `bun add <package>`
-                try PackageJSONEditor.edit(
-                    manager,
-                    updates,
-                    &current_package_json.root,
-                    dependency_list,
-                    op,
-                    .{
-                        .exact_versions = manager.options.enable.exact_versions,
-                    },
-                );
+                // `bun update <package>` is basically the same as `bun add <package>`, except
+                // update will not exceed the current dependency range if it exists
+
+                // if updates are 0 and `bun update`, editing will happen after install
+                if (updates.len != 0) {
+                    try PackageJSONEditor.edit(
+                        manager,
+                        updates,
+                        &current_package_json.root,
+                        dependency_list,
+                        op,
+                        .{
+                            .exact_versions = manager.options.enable.exact_versions,
+                            .before_install = true,
+                        },
+                    );
+                }
                 manager.package_json_updates = updates;
                 manager.to_update = op == .update;
             },

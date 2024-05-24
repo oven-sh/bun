@@ -10775,20 +10775,6 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
-                            for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
-                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
-                                    manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
-                                    try manager.enqueueDependencyWithMain(
-                                        @truncate(dependency_i),
-                                        dependency,
-                                        manager.lockfile.buffers.resolutions.items[dependency_i],
-                                        false,
-                                    );
-                                }
-                            }
-                        }
-
                         manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
                             lockfile.buffers.string_bytes.items,
                             *Lockfile.StringBuilder,
@@ -10821,6 +10807,20 @@ pub const PackageManager = struct {
                         }
 
                         builder.clamp();
+
+                        if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
+                            for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
+                                if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
+                                    manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
+                                    try manager.enqueueDependencyWithMain(
+                                        @truncate(dependency_i),
+                                        dependency,
+                                        manager.lockfile.buffers.resolutions.items[dependency_i],
+                                        false,
+                                    );
+                                }
+                            }
+                        }
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers
                         if (manager.summary.add > 0 or manager.summary.update > 0) {

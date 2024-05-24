@@ -4565,7 +4565,7 @@ pub const PackageManager = struct {
                                 if (!this.hasCreatedNetworkTask(task_id)) {
                                     if (this.options.enable.manifest_cache) {
                                         var expired = false;
-                                        if (this.manifests.byNameAllowExpired(name_str, &expired)) |manifest| {
+                                        if (this.manifests.byNameHashAllowExpired(name_hash, &expired)) |manifest| {
                                             loaded_manifest = manifest.*;
 
                                             // If it's an exact package version already living in the cache

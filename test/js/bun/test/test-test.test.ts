@@ -526,7 +526,7 @@ it("test.todo doesnt cause exit code 1", () => {
 it("test timeouts when expected", () => {
   const path = join(tmp, "test-timeout.test.js");
   copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
-  const { stdout, stderr, exited } = spawnSync({
+  const { stderr } = spawnSync({
     cmd: [bunExe(), "test", path],
     stdout: "pipe",
     stderr: "pipe",
@@ -537,6 +537,22 @@ it("test timeouts when expected", () => {
   const err = stderr!.toString();
   expect(err).toContain("timed out after 10ms");
   expect(err).not.toContain("unreachable code");
+});
+
+test("jest.setTimeout will change default timeout", () => {
+  const path = join(tmp, "jest-setTimeout-test.test.js");
+  copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);
+  const { stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: dirname(path),
+  });
+
+  const err = stderr!.toString();
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
 });
 
 it("expect().toEqual() on objects with property indices doesn't print undefined", () => {

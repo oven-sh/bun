@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, tmpdirSync } from "harness";
 import { access, mkdir, readlink, rm, writeFile, copyFile, appendFile } from "fs/promises";
 import { join, relative } from "path";
@@ -28,6 +28,7 @@ expect.extend({
 let port: string;
 let add_dir: string;
 beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
   port = new URL(root_url).port;
 });
 

@@ -953,7 +953,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     }
 }
 
-const ScopedDebugWriter = struct {
+pub const ScopedDebugWriter = struct {
     pub var scoped_file_writer: File.QuietWriter = undefined;
     pub threadlocal var disable_inside_log: isize = 0;
 };

@@ -443,6 +443,13 @@ pub const Subprocess = struct {
                     .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
                 };
             }
+
+            if (comptime Environment.isPosix) {
+                if (stdio == .pipe) {
+                    _ = bun.sys.setNonblocking(result.?);
+                }
+            }
+
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
@@ -1262,6 +1269,13 @@ pub const Subprocess = struct {
                     },
                 }
             }
+
+            if (comptime Environment.isPosix) {
+                if (stdio == .pipe) {
+                    _ = bun.sys.setNonblocking(result.?);
+                }
+            }
+
             switch (stdio) {
                 .dup2 => @panic("TODO dup2 stdio"),
                 .pipe => {

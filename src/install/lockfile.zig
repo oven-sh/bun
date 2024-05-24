@@ -598,7 +598,7 @@ pub const Tree = struct {
             if (comptime as_defined) {
                 if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                        return hoisted; // 2
+                        return hoisted; // 1
                     }
 
                     return dependency_loop; // 3

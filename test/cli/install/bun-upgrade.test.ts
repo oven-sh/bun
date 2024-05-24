@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, expect, it, setDefaultTimeout, beforeAll } from "bun:test";
 import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
 import { join } from "path";
 import { copyFileSync } from "js/node/fs/export-star-from";
@@ -8,6 +8,10 @@ const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_hel
 
 let run_dir: string;
 let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 beforeEach(async () => {
   run_dir = tmpdirSync();

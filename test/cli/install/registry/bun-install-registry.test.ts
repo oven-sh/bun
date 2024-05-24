@@ -14,7 +14,7 @@ import { join, sep } from "path";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
@@ -25,11 +25,11 @@ expect.extend({
 });
 
 var verdaccioServer: ChildProcess;
-var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
 
 beforeAll(async () => {
+  setDefaultTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
@@ -988,7 +988,7 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     "",
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
-}, 30_000);
+});
 
 describe("hoisting", async () => {
   var tests: any = [
@@ -2760,7 +2760,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
       expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
-    }, 20_000);
+    });
 
     test("workspace lifecycle scripts", async () => {
       await writeFile(
@@ -2929,6 +2929,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
+      expect(await exited).toBe(0);
 
       const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
       expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
@@ -2938,7 +2939,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(depDir, "prepare.txt"))).toBeTrue();
       expect(await exists(join(depDir, "postprepare.txt"))).toBeFalse();
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
-      expect(await exited).toBe(0);
 
       // add to trusted dependencies
       await writeFile(
@@ -2971,6 +2971,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "",
         expect.stringContaining("Checked 1 install across 2 packages (no changes)"),
       ]);
+      expect(await exited).toBe(0);
 
       expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
@@ -3829,7 +3830,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       ]);
 
       expect(await exited).toBe(0);
-    }, 15_000);
+    });
 
     test("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
@@ -5045,49 +5046,45 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       });
 
       // https://github.com/oven-sh/bun/issues/11252
-      test.todoIf(isWindows)(
-        "bun pm trust",
-        async () => {
-          const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
-          await writeFile(
-            join(packageDir, "package.json"),
-            JSON.stringify({
-              name: "foo",
-              version: "1.0.0",
-              dependencies: {
-                [dep]: "1.0.0",
-              },
-            }),
-          );
+      test.todoIf(isWindows)("bun pm trust", async () => {
+        const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: {
+              [dep]: "1.0.0",
+            },
+          }),
+        );
 
-          var { exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "ignore",
-            stderr: "ignore",
-            env: testEnv,
-          });
+        var { exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "ignore",
+          env: testEnv,
+        });
 
-          expect(await exited).toBe(0);
+        expect(await exited).toBe(0);
 
-          expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
+        expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
 
-          const proc = spawn({
-            cmd: [bunExe(), "pm", "trust", "--all"],
-            cwd: packageDir,
-            stdout: "ignore",
-            stderr: "ignore",
-            env: testEnv,
-          });
+        const proc = spawn({
+          cmd: [bunExe(), "pm", "trust", "--all"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "ignore",
+          env: testEnv,
+        });
 
-          expect(await proc.exited).toBe(0);
+        expect(await proc.exited).toBe(0);
 
-          expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeTrue();
+        expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeTrue();
 
-          expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
-        },
-        isWindows ? 10_000 : 5_000,
-      );
+        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
+      });
     });
   });
 

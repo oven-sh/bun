@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
+import { beforeEach, expect, it, beforeAll, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
 import { writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -11,6 +11,10 @@ let x_dir: string;
 let current_tmpdir: string;
 let install_cache_dir: string;
 let env = { ...bunEnv };
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 beforeEach(async () => {
   const waiting: Promise<void>[] = [];

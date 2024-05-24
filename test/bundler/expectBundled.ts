@@ -1250,9 +1250,9 @@ for (const [key, blob] of build.outputs) {
 
     // Check that all source maps are valid JSON
     if (opts.sourceMap === "external" && outdir) {
-      for (const file of readdirSync(outdir)) {
+      for (const file of readdirSync(outdir, { recursive: true })) {
         if (file.endsWith(".map")) {
-          const parsed = JSON.parse(readFileSync(path.join(outdir, file)).toString());
+          const parsed = await Bun.file(path.join(outdir, file)).json();
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {
               expect(m.source).toBeDefined();

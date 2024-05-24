@@ -4179,7 +4179,7 @@ pub const Package = extern struct {
                 }
             }
 
-            try workspace_names.insert(allocator.dupe(u8, rel_input_path) catch bun.outOfMemory(), .{
+            try workspace_names.insert(rel_input_path, .{
                 .name = workspace_entry.name,
                 .name_loc = workspace_entry.name_loc,
                 .version = workspace_entry.version,
@@ -4304,7 +4304,7 @@ pub const Package = extern struct {
                         }
                     }
 
-                    try workspace_names.insert(allocator.dupe(u8, workspace_path) catch bun.outOfMemory(), .{
+                    try workspace_names.insert(workspace_path, .{
                         .name = workspace_entry.name,
                         .version = workspace_entry.version,
                         .name_loc = workspace_entry.name_loc,

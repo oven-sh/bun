@@ -73,3 +73,22 @@ test("migrate from npm lockfile that is missing `resolved` properties", async ()
   expect(await Bun.file(join(testDir, "node_modules/lodash/package.json")).json()).toHaveProperty("version", "4.17.21");
   expect(exitCode).toBe(0);
 });
+
+test("npm lockfile with relative workspaces", async () => {
+  const testDir = tmpdirSync();
+  fs.cpSync(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+  const err = stderr.toString();
+
+  expect(err).not.toContain("InvalidNPMLockfile");
+  for (let i = 0; i < 4; i++) {
+    expect(JSON.parse(fs.readFileSync(join(testDir, "node_modules", "pkg" + i, "package.json"), "utf8"))).toEqual({
+      "name": "pkg" + i,
+    });
+  }
+
+  expect(exitCode).toBe(0);
+});

@@ -770,7 +770,7 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   for (const env of envs) {
     for (const key in env) {
       if (!env[key]) continue;
-      const normalized = keys[key.toUpperCase()] ?? key;
+      const normalized = (keys[key.toUpperCase()] ??= key);
       flat[normalized] = env[key];
     }
   }

@@ -1,7 +1,7 @@
-import { setTimeout, test, expect, beforeAll } from "bun:test";
+import { setDefaultTimeout, test, expect, beforeAll } from "bun:test";
 
 beforeAll(() => {
-  setTimeout(100);
+  setDefaultTimeout(100);
 });
 
 test("test 1", async () => {

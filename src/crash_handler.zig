@@ -1415,10 +1415,8 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
 
     var name_bytes: [1024]u8 = undefined;
     for (trace.instruction_addresses[0..trace.index]) |addr| {
-        const line = StackLine.fromAddress(addr, &name_bytes) orelse {
-            // argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{addr}) catch return) catch return;
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse
             continue;
-        };
         argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
     }
 

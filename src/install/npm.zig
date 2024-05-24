@@ -952,22 +952,6 @@ pub const PackageManifest = struct {
         package: *const PackageVersion,
     };
 
-    pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {
-        switch (Dependency.Version.Tag.infer(version)) {
-            .npm => {
-                const group = Semver.Query.parse(default_allocator, version, SlicedString.init(
-                    version,
-                    version,
-                )) catch return null;
-                return this.findBestVersion(group, version);
-            },
-            .dist_tag => {
-                return this.findByDistTag(version);
-            },
-            else => return null,
-        }
-    }
-
     pub fn findByVersion(this: *const PackageManifest, version: Semver.Version) ?FindResult {
         const list = if (!version.tag.hasPre()) this.pkg.releases else this.pkg.prereleases;
         const values = list.values.get(this.package_versions);
@@ -1095,7 +1079,29 @@ pub const PackageManifest = struct {
         if (json.asProperty("name")) |name_q| {
             const field = name_q.expr.asString(allocator) orelse return null;
 
-            if (!strings.eql(field, expected_name)) {
+            const equal = brk: {
+                if (field.len != expected_name.len) break :brk false;
+
+                const received_index = if (field.len > 0 and field[0] == '@') strings.indexOfChar(field, '/') else null;
+                const expected_index = if (expected_name.len > 0 and expected_name[0] == '@') strings.indexOfChar(expected_name, '/') else null;
+
+                if (received_index == null and expected_index == null) {
+                    break :brk strings.eqlLong(field, expected_name, false);
+                }
+
+                if (received_index != null and expected_index != null) {
+                    if (received_index.? != expected_index.?) break :brk false;
+
+                    // caseinsensitive compare package scope because it might come from user input in bunfig.toml
+                    if (!strings.eqlCaseInsensitiveASCII(field[0..received_index.?], expected_name[0..expected_index.?], false)) break :brk false;
+
+                    break :brk strings.eqlLong(field[received_index.?..], expected_name[expected_index.?..], false);
+                }
+
+                break :brk false;
+            };
+
+            if (!equal) {
                 Output.panic("<r>internal: <red>package name mismatch<r> expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, field });
                 return null;
             }

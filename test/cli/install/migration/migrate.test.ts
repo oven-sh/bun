@@ -85,7 +85,7 @@ test("npm lockfile with relative workspaces", async () => {
 
   expect(err).not.toContain("InvalidNPMLockfile");
   for (let i = 0; i < 4; i++) {
-    expect(JSON.parse(fs.readFileSync(join(testDir, "node_modules", "pkg" + i, "package.json"), "utf8"))).toEqual({
+    expect(await Bun.file(join(testDir, "node_modules", "pkg" + i, "package.json")).json()).toEqual({
       "name": "pkg" + i,
     });
   }

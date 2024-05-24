@@ -218,8 +218,10 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     JSC::JSValue thisValue = thisObject ? JSC::JSValue(thisObject) : JSC::jsUndefined();
 
     for (auto& registeredListener : listeners) {
-        if (UNLIKELY(registeredListener->wasRemoved()))
-            continue;
+        // The below code used to be in here, but it's WRONG. Even if a listener is removed,
+        // if we're in the middle of firing listeners, we still need to call it.
+        // if (UNLIKELY(registeredListener->wasRemoved()))
+        //     continue;
 
         auto& callback = registeredListener->callback();
 

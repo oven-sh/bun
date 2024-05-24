@@ -2471,7 +2471,7 @@ var require_readable = __commonJS({
 
     var { Stream, prependListener } = require_legacy();
 
-    const BufferList = require_buffer_list();
+    const BufferList = $cpp("JSBufferList.cpp", "getBufferList");
 
     const { getHighWaterMark, getDefaultHighWaterMark } = require_state();
 

@@ -973,6 +973,7 @@ pub const TestCommand = struct {
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
                         TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
+                        reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }

@@ -539,7 +539,12 @@ pub const Arguments = struct {
                 }
             } else if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
-                bun.auto_reload_on_crash = true;
+
+                // Windows applies this to the watcher child process.
+                // The parent process is unable to re-launch itself
+                if (!bun.Environment.isWindows)
+                    bun.auto_reload_on_crash = true;
+
                 if (args.flag("--no-clear-screen")) {
                     bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
                 }
@@ -1222,9 +1227,13 @@ pub const Command = struct {
             }
 
             if (comptime Environment.isWindows) {
-                if (global_cli_ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
-                    // this is noreturn
-                    bun.becomeWatcherManager(allocator);
+                if (global_cli_ctx.debug.hot_reload == .watch) {
+                    if (!bun.isWatcherChild()) {
+                        // this is noreturn
+                        bun.becomeWatcherManager(allocator);
+                    } else {
+                        bun.auto_reload_on_crash = true;
+                    }
                 }
             }
 

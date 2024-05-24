@@ -1175,7 +1175,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     var debug_timer = bun.Output.DebugTimer.start();
 
     defer {
-        if (comptime Environment.isDebug) {
+        if (Environment.isDebug and bun.Output.ScopedDebugWriter.disable_inside_log == 0) {
             if (debug_timer.timer.read() > std.time.ns_per_ms) {
                 bun.Output.debugWarn("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
             }

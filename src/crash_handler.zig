@@ -741,9 +741,9 @@ pub fn printMetadata(writer: anytype) !void {
     try writer.writeAll(metadata_version_line);
     {
         try writer.print("Args: ", .{});
-        var arg_chars_left: usize = 196;
+        var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {
-            if (i != 0) try writer.writeAll(", ");
+            if (i != 0) try writer.writeAll(" ");
             try bun.fmt.quotedWriter(writer, arg[0..@min(arg.len, arg_chars_left)]);
             arg_chars_left -|= arg.len;
             if (arg_chars_left == 0) {
@@ -999,7 +999,7 @@ const StackLine = struct {
 };
 
 const TraceString = struct {
-    trace: *std.builtin.StackTrace,
+    trace: *const std.builtin.StackTrace,
     reason: CrashReason,
     action: Action,
 
@@ -1351,6 +1351,16 @@ const stdDumpStackTrace = debug.dumpStackTrace;
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     const stderr = std.io.getStdErr().writer();
+    if (!bun.Environment.isDebug) {
+        // debug symbols aren't available, lets print a tracestring
+        stderr.print("View Debug Trace: {}\n", .{TraceString{
+            .action = .view_trace,
+            .reason = .{ .zig_error = error.DumpStackTrace },
+            .trace = &trace,
+        }});
+        return;
+    }
+
     switch (bun.Environment.os) {
         .windows => attempt_dump: {
             // Windows has issues with opening the PDB file sometimes.
@@ -1361,7 +1371,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             var arena = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
-                stderr.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch return;
+                stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
             return;
@@ -1375,21 +1385,59 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             return;
         },
     }
-    // TODO: It would be reasonable, but hacky, to spawn LLVM-symbolizer here in
-    // order to get the demangled stack traces.
-    var name_bytes: [1024]u8 = undefined;
-    for (trace.instruction_addresses[0..trace.index]) |addr| {
-        const line = StackLine.fromAddress(addr, &name_bytes) orelse {
-            stderr.print("- ??? at 0x{X}\n", .{addr}) catch break;
-            continue;
-        };
-        stderr.print("- {}\n", .{line}) catch break;
-    }
+
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    var sfa = std.heap.stackFallback(16384, arena.allocator());
+    const alloc = sfa.get();
+
+    var argv = std.ArrayList([]const u8).init(alloc);
+
     const program = switch (bun.Environment.os) {
         .windows => "pdb-addr2line",
         else => "llvm-symbolizer",
     };
-    stderr.print("note: Use " ++ program ++ " to demangle the above trace.\n", .{}) catch return;
+    argv.append(program) catch return;
+
+    argv.append("--exe") catch return;
+    argv.append(
+        switch (bun.Environment.os) {
+            .windows => brk: {
+                const image_path = bun.strings.toUTF8Alloc(alloc, bun.windows.exePathW()) catch return;
+                break :brk std.mem.concat(alloc, u8, &.{
+                    image_path[0 .. image_path.len - 3],
+                    "pdb",
+                }) catch return;
+            },
+            else => bun.selfExePath() catch return,
+        },
+    ) catch return;
+
+    var name_bytes: [1024]u8 = undefined;
+    for (trace.instruction_addresses[0..trace.index]) |addr| {
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse {
+            // argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{addr}) catch return) catch return;
+            continue;
+        };
+        argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
+    }
+
+    // std.process is used here because bun.spawnSync with libuv does not work within
+    // the crash handler.
+    const proc = std.process.Child.run(.{
+        .allocator = alloc,
+        .argv = argv.items,
+    }) catch {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
+    };
+    if (proc.term != .Exited or proc.term.Exited != 0) {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+    }
+    defer alloc.free(proc.stderr);
+    defer alloc.free(proc.stdout);
+    stderr.writeAll(proc.stdout) catch return;
+    stderr.writeAll(proc.stderr) catch return;
 }
 
 pub const js_bindings = struct {

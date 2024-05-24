@@ -1759,24 +1759,28 @@ pub const sync = struct {
         cwd: []const u8 = "",
         detached: bool = false,
 
-        argv: []const []const u8 = &.{},
+        argv: []const []const u8,
+        /// null = inherit parent env
         envp: ?[*:null]?[*:0]const u8,
 
         use_execve_on_macos: bool = false,
         argv0: ?[*:0]const u8 = null,
 
-        windows: if (Environment.isWindows) WindowsSpawnOptions.WindowsOptions else void = if (Environment.isWindows) .{} else undefined,
+        windows: if (Environment.isWindows) WindowsSpawnOptions.WindowsOptions else void = if (Environment.isWindows) .{},
 
-        pub const Stdio = union(enum) {
-            inherit: void,
-            ignore: void,
-            buffer: if (Environment.isWindows) *uv.Pipe else void,
+        pub const Stdio = enum {
+            inherit,
+            ignore,
+            buffer,
 
             pub fn toStdio(this: *const Stdio) SpawnOptions.Stdio {
                 return switch (this.*) {
-                    .inherit => .{ .inherit = this.inherit },
-                    .ignore => .{ .ignore = this.ignore },
-                    .buffer => .{ .buffer = this.buffer },
+                    .inherit => .inherit,
+                    .ignore => .ignore,
+                    .buffer => .{
+                        .buffer = if (Environment.isWindows)
+                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
+                    },
                 };
             }
         };
@@ -1805,6 +1809,11 @@ pub const sync = struct {
 
         pub fn isOK(this: *const Result) bool {
             return this.status.isOK();
+        }
+
+        pub fn deinit(this: *const Result) void {
+            this.stderr.deinit();
+            this.stdout.deinit();
         }
     };
 

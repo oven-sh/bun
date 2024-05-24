@@ -2256,6 +2256,7 @@ pub const win32 = struct {
 
         while (true) {
             spawnWatcherChild(allocator, &procinfo, job) catch |err| {
+                handleErrorReturnTrace(err, @errorReturnTrace());
                 if (err == error.Win32Error) {
                     Output.panic("Failed to spawn process: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
                 }
@@ -2291,7 +2292,7 @@ pub const win32 = struct {
         _ = windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
         const p = try allocator.alloc(u8, attr_size);
         defer allocator.free(p);
-        if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) != 0) {
+        if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) == 0) {
             return error.Win32Error;
         }
         if (windows.UpdateProcThreadAttribute(
@@ -2302,7 +2303,7 @@ pub const win32 = struct {
             @sizeOf(w.HANDLE),
             null,
             null,
-        ) != 0) {
+        ) == 0) {
             return error.Win32Error;
         }
 

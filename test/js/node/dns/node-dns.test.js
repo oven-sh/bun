@@ -239,7 +239,9 @@ test("dns.getServers", () => {
   function parseResolvConf() {
     const servers = [];
     if (isWindows) {
-      const { stdout } = Bun.spawnSync(["node", "-e", "dns.getServers().forEach(x => console.log(x))"], { stdout: "pipe" });
+      const { stdout } = Bun.spawnSync(["node", "-e", "dns.getServers().forEach(x => console.log(x))"], {
+        stdout: "pipe",
+      });
       return stdout.toString("utf8").trim().split("\n");
     }
 

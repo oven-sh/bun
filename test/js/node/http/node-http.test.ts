@@ -827,112 +827,59 @@ describe("node:http", () => {
         req.end();
       });
     });
-    it("support custom tls args", done => {
-      const requestData = { endUserIp: "123.123.123.123" };
+  });
 
-      const cert = `Bag Attributes
-    localKeyID: A9 F3 0C D7 04 B6 7D 23 86 84 71 C3 E9 42 62 8B 1B D7 75 C3
-subject=C = SE, O = Testbank A AB (publ), serialNumber = 5566304928, name = Test av BankID, CN = FP Testcert 4
-issuer=C = SE, O = Testbank A AB (publ), serialNumber = 111111111111, CN = Testbank A RP CA v1 for BankID Test
------BEGIN CERTIFICATE-----
-MIIEyjCCArKgAwIBAgIIMLbIMaRHjMMwDQYJKoZIhvcNAQELBQAwcTELMAkGA1UE
-BhMCU0UxHTAbBgNVBAoMFFRlc3RiYW5rIEEgQUIgKHB1YmwpMRUwEwYDVQQFEwwx
-MTExMTExMTExMTExLDAqBgNVBAMMI1Rlc3RiYW5rIEEgUlAgQ0EgdjEgZm9yIEJh
-bmtJRCBUZXN0MB4XDTIyMDgxNzIyMDAwMFoXDTI0MDgxODIxNTk1OVowcjELMAkG
-A1UEBhMCU0UxHTAbBgNVBAoMFFRlc3RiYW5rIEEgQUIgKHB1YmwpMRMwEQYDVQQF
-Ewo1NTY2MzA0OTI4MRcwFQYDVQQpDA5UZXN0IGF2IEJhbmtJRDEWMBQGA1UEAwwN
-RlAgVGVzdGNlcnQgNDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAL4L
-8ERHNSi7Jph9gj4ah7Ieok5lZHZbNyW1AiJJ1OfeD1lbAzxSidtTu6NfC83zxCjL
-q091lHY5G7dpNDt1rN5Y+jQvrtcLc8nUpgqLfEUnbGKzZaHlO97jh6pqO8nj/mal
-TrWI70Fr6SO3SxbsgxuwJXlRUAQxI0mPvD1gOd+uymA+EqdYS39ijC2eICHSf7bU
-wvmscy8TAyEcT4GYmcjai1vbIjlhemmAv+NKJiSpD+zqvuHGIzBm71/Fd6cTAXqk
-HkqTlJsxF2m6eojKCfcm5uAvSTXhVbGM155wmpzLskzkQ0dx6LbRNtA+BDe1MsAA
-v8aE2FQ0j31ALgZePY0CAwEAAaNlMGMwEQYDVR0gBAowCDAGBgQqAwQFMA4GA1Ud
-DwEB/wQEAwIHgDAfBgNVHSMEGDAWgBTiuVUIvGKgRjldgAxQSpIBy0zvizAdBgNV
-HQ4EFgQUoiM2SwR2MdMVjaZz04J9LbOEau8wDQYJKoZIhvcNAQELBQADggIBAGBA
-X1IC7mg1blaeqrTW+TtPkF7GvsbsWIh0RgG9DYRtXXofad3bn6kbDrfFXKZzv4JH
-ERmJSyLXzMLoiwJB16V8Vz/kHT7AK94ZpLPjedPr2O4U2DGQXu1TwP5nkfgQxTeP
-K/XnDVHNsMKqTnc+YNX6mj/UyLnbs8eq/a9uHOBJR30e0OPAdlc2fTbBT2Cui29E
-ctcNH4LrcH4au9vO+RpEUm1hqZy3mHrx1p8Six6+qJSERNYIWTID8gklyp8MSyG5
-q7dk0WcyvytM1dmVf/q+KriljaZ8x2zLhQRz9vpgnfwJ6Qh3cLVoPItVdQ03WpKW
-WAB1NCMMyNcszkLZ9OO3IRz8iyWV/KWGI07ngVuGa7dHuTje6ZjcObBCr2e4uuU+
-CLENcretUAv0BtCsOBhQLXZ0qzqrgsVebTRQzm2zTM0yfBpcTtPd3MOMFeMQTHJJ
-8QH6twAKeJfY1lUCTXJYy1ZcrKnrNehksST8tk98Km9t5M2X59QZk7mJzzsUbnWr
-t+izid7xF7FAgDYj9XJgQHz04a4RjRSw5/6dgexAgvGoeOkG7uUhYd5DEYQCyQyR
-Zy69pJN32L0nM2dC2e3NFU5BOBwocoKza3hdtSqqvIkj2kzyeU38uaJUco/Vk3OU
-s+sQNZbk5C1pxkLLwzu815tKg77Om4Nwbi+bgDvI
------END CERTIFICATE-----
-`;
-      const key = `Bag Attributes
-    localKeyID: A9 F3 0C D7 04 B6 7D 23 86 84 71 C3 E9 42 62 8B 1B D7 75 C3
-Key Attributes: <No Attributes>
------BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+C/BERzUouyaY
-fYI+GoeyHqJOZWR2WzcltQIiSdTn3g9ZWwM8UonbU7ujXwvN88Qoy6tPdZR2ORu3
-aTQ7dazeWPo0L67XC3PJ1KYKi3xFJ2xis2Wh5Tve44eqajvJ4/5mpU61iO9Ba+kj
-t0sW7IMbsCV5UVAEMSNJj7w9YDnfrspgPhKnWEt/YowtniAh0n+21ML5rHMvEwMh
-HE+BmJnI2otb2yI5YXppgL/jSiYkqQ/s6r7hxiMwZu9fxXenEwF6pB5Kk5SbMRdp
-unqIygn3JubgL0k14VWxjNeecJqcy7JM5ENHcei20TbQPgQ3tTLAAL/GhNhUNI99
-QC4GXj2NAgMBAAECggEBAKiJH9b9Kxhm9/BNhZ4bmvEMF7XcVv5bIAnRfwX3YdcK
-Z6Q/gRwSumyF0iYsmORY5EGldNOvmyxIstqxcn+0eMxqLeDv1Gaioll/uowpbNhL
-AOR64Yt0Jecg8mPfeAwvo6FVwfpdaIgk8YkZ+H5o2lBIosL2qDY/eWK4FCB94HUL
-Hq7za/7J7t5WOYjiOLmb48Fpe7cA1C6ezU/MEwVmDBwZARccCyeQFp96tdzUxb7N
-ifSaDpUFyxHbb/GNy+hF2ApqFrJ69OBUsHqtYdd36lD/tPF0Lexsvtj/l21D/Nh6
-80mEnpegpJBzO9z7wJkhz/5etO3bnaVSUyGGgJl8KkUCgYEA5SnGKyWg3dDtNeEi
-5qilYsTOERvulUJ49zzzva0ioD8sJHNlG1q7Dp9sb9rZW6VOL1W8FUZH63/2sgte
-NE9njByK2fz9PXXUODu6yREAfDxcv9qkGTLWwZ0LFEQg68G+J1hIz6PQEuhAJqk8
-rYHXnTQ0qUw7R6gez2KoXp8wnFMCgYEA1E13E5NKs/VKctUQqXcKpy7VL017yBH8
-J2RTjDLVGh6BFcR9wGm5ipE659TpNKdqPN17bGPGj5MOdZL1+sGVTRkg4vSZeZuE
-kpw192KgwNoDznjeVH5qY7VM8Zy2DI91mg2NQTQiMF0mRLaenMOfzFBjHwQZ2J/J
-ecT3Vwepgp8CgYAsocIyzRVTnklU4RBHFDmBzwrDUklZUKT2oixmmL3Rr/wM7VyX
-w0gDRRF9h4Ylz0A2/9+t1Q5U04tcidJDJePo6fYxFpDL05MNkLSETIdnqun1g8PK
-FJi3BLsPq2UuBYHfb9Zeem0gAZPc88EZmdxAhdZr0qkI/7lgcrqQEzkIeQKBgGri
-kVfOqSaPEStdL+VR5JAlGPmWtgIVY/DlJtcH5Jgg0XaHFZSg5ePomFKNs9dpjigU
-jgYU+avhKr9w/NyBR8yoIRGCeh5qeMVjVhw1kJ9nY9E4sx6xApkudw2Ri2opc9ja
-h8pTF/9ndlPT6WkdaD9yHWVJKEYStFnVG326gtIbAoGAetLNOSZBSW03SJlI7dhY
-4hycNElfSd0t89Bf4YcYbWrpySeKCG0oTO7Y56ZS9RmgNEyz4HNXZcQ56inMNY6Z
-M+o1wGEKJKLBtCJHZp7Sh8zy/RMI3naF4vc4r4BpK9k5ZAEL8gHVm9M5C2ZG8whc
-r+Uu/g0P3m8w7INgsjxQy/U=
------END PRIVATE KEY-----
-`;
+  describe("https.request with custom tls options", () => {
+    const createServer = () =>
+      new Promise(resolve => {
+        const server = createHttpsServer(
+          {
+            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+            rejectUnauthorized: true,
+          },
+          (req, res) => {
+            res.writeHead(200);
+            res.end("hello world");
+          },
+        );
 
-      // Read the CA certificate file
-      const ca = `-----BEGIN CERTIFICATE-----
-MIIF0DCCA7igAwIBAgIIIhYaxu4khgAwDQYJKoZIhvcNAQENBQAwbDEkMCIGA1UE CgwbRmluYW5zaWVsbCBJRC1UZWtuaWsgQklEIEFCMRowGAYDVQQLDBFJbmZyYXN0 cnVjdHVyZSBDQTEoMCYGA1UEAwwfVGVzdCBCYW5rSUQgU1NMIFJvb3QgQ0EgdjEg VGVzdDAeFw0xNDExMjExMjM5MzFaFw0zNDEyMzExMjM5MzFaMGwxJDAiBgNVBAoM G0ZpbmFuc2llbGwgSUQtVGVrbmlrIEJJRCBBQjEaMBgGA1UECwwRSW5mcmFzdHJ1 Y3R1cmUgQ0ExKDAmBgNVBAMMH1Rlc3QgQmFua0lEIFNTTCBSb290IENBIHYxIFRl c3QwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCAKWsJc/kV/0434d+S qn19mIr85RZ/PgRFaUplSrnhuzAmaXihPLCEsd3Mh/YErygcxhQ/MAzi5OZ/anfu WSCwceRlQINtvlRPdMoeZtu29FsntK1Z5r2SYNdFwbRFb8WN9FsU0KvC5zVnuDMg s5dUZwTmdzX5ZdLP7pdgB3zhTnra5ORtkiWiUxJVev9keRgAo00ZHIRJ+xTfiSPd Jc314maigVRQZdGKSyQcQMTWi1YLwd2zwOacNxleYf8xqKgkZsmkrc4Dp2mR5Pkr nnKB6A7sAOSNatua7M86EgcGi9AaEyaRMkYJImbBfzaNlaBPyMSvwmBZzp2xKc9O D3U06ogV6CJjJL7hSuVc5x/2H04d+2I+DKwep6YBoVL9L81gRYRycqg+w+cTZ1TF /s6NC5YRKSeOCrLw3ombhjyyuPl8T/h9cpXt6m3y2xIVLYVzeDhaql3hdi6IpRh6 rwkMhJ/XmOpbDinXb1fWdFOyQwqsXQWOEwKBYIkM6cPnuid7qwaxfP22hDgAolGM LY7TPKUPRwV+a5Y3VPl7h0YSK7lDyckTJdtBqI6d4PWQLnHakUgRQy69nZhGRtUt PMSJ7I4Qtt3B6AwDq+SJTggwtJQHeid0jPki6pouenhPQ6dZT532x16XD+WIcD2f //XzzOueS29KB7lt/wH5K6EuxwIDAQABo3YwdDAdBgNVHQ4EFgQUDY6XJ/FIRFX3 dB4Wep3RVM84RXowDwYDVR0TAQH/BAUwAwEB/zAfBgNVHSMEGDAWgBQNjpcn8UhE Vfd0HhZ6ndFUzzhFejARBgNVHSAECjAIMAYGBCoDBAUwDgYDVR0PAQH/BAQDAgEG MA0GCSqGSIb3DQEBDQUAA4ICAQA5s59/Olio4svHXiKu7sPQRvrf4GfGB7hUjBGk YW2YOHTYnHavSqlBASHc8gGGwuc7v7+H+vmOfSLZfGDqxnBqeJx1H5E0YqEXtNqW G1JusIFa9xWypcONjg9v7IMnxxQzLYws4YwgPychpMzWY6B5hZsjUyKgB+1igxnf uaBueLPw3ZaJhcCL8gz6SdCKmQpX4VaAadS0vdMrBOmd826H+aDGZek1vMjuH11F fJoXY2jyDnlol7Z4BfHc011toWNMxojI7w+U4KKCbSxpWFVYITZ8WlYHcj+b2A1+ dFQZFzQN+Y1Wx3VIUqSks6P7F5aF/l4RBngy08zkP7iLA/C7rm61xWxTmpj3p6SG fUBsrsBvBgfJQHD/Mx8U3iQCa0Vj1XPogE/PXQQq2vyWiAP662hD6og1/om3l1PJ TBUyYXxqJO75ux8IWblUwAjsmTlF/Pcj8QbcMPXLMTgNQAgarV6guchjivYqb6Zr hq+Nh3JrF0HYQuMgExQ6VX8T56saOEtmlp6LSQi4HvKatCNfWUJGoYeT5SrcJ6sn By7XLMhQUCOXcBwKbNvX6aP79VA3yeJHZO7XParX7V9BB+jtf4tz/usmAT/+qXtH CCv9Xf4lv8jgdOnFfXbXuT8I4gz8uq8ElBlpbJntO6p/NY5a08E6C7FWVR+WJ5vZOP2HsA==
------END CERTIFICATE-----`;
-
-      const options = {
-        method: "POST",
-        port: 443,
-        hostname: "appapi2.test.bankid.com",
-        path: "/rp/v6.0/auth",
-        cert,
-        key,
-        ca,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      };
-      const req = https.request(options, res => {
-        let data = "";
-
-        res.on("data", chunk => {
-          data += chunk;
-        });
-
-        res.on("end", () => {
-          expect(res.statusCode).toBe(200);
-          done();
+        listen(server, "https").then(url => {
+          resolve({
+            server,
+            close: () => server.close(),
+            url,
+          });
         });
       });
 
-      req.on("error", error => {
-        done(error);
-      });
+    it("supports custom tls args", async done => {
+      const { url, close } = await createServer();
+      try {
+        const options: https.RequestOptions = {
+          method: "GET",
+          url,
+          port: url.port,
+          ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
+        };
+        const req = https.request(options, res => {
+          res.on("data", () => null);
+          res.on("end", () => {
+            close();
+            done();
+          });
+        });
 
-      req.write(JSON.stringify(requestData));
+        req.on("error", error => {
+          close();
+          done(error);
+        });
 
-      req.end();
+        req.end();
+      } catch (e) {
+        close();
+        throw e;
+      }
     });
   });
 
@@ -2146,61 +2093,62 @@ it("ServerResponse ClientRequest field exposes agent getter", async () => {
     server.close();
   }
 
-it("should accept custom certs when provided", async () => {
-  const server = https.createServer(
-    {
-      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.key")),
-      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
-      passphrase: "123123123",
-    },
-    (req, res) => {
-      res.write("Hello from https server");
-      res.end();
-    },
-  );
-  server.listen(0, "localhost");
-  const address = server.address();
+  it("should accept custom certs when provided", async () => {
+    const server = https.createServer(
+      {
+        key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.key")),
+        cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+        passphrase: "123123123",
+      },
+      (req, res) => {
+        res.write("Hello from https server");
+        res.end();
+      },
+    );
+    server.listen(0, "localhost");
+    const address = server.address();
 
-  let url_address = address.address;
-  const res = await fetch(`https://localhost:${address.port}`, {
-    tls: {
-      rejectUnauthorized: true,
-      ca: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
-    },
-  });
-  const t = await res.text();
-  expect(t).toEqual("Hello from https server");
-
-  server.close();
-});
-it("should error with faulty args", async () => {
-  const server = https.createServer(
-    {
-      key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.key")),
-      cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
-      passphrase: "123123123",
-    },
-    (req, res) => {
-      res.write("Hello from https server");
-      res.end();
-    },
-  );
-  server.listen(0, "localhost");
-  const address = server.address();
-
-  try {
     let url_address = address.address;
     const res = await fetch(`https://localhost:${address.port}`, {
       tls: {
         rejectUnauthorized: true,
-        ca: "some invalid value for a ca",
+        ca: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
       },
     });
-    await res.text();
-    expect(true).toBe("unreacheable");
-  } catch (err) {
-    expect(err.code).toBe("FailedToOpenSocket");
-    expect(err.message).toBe("Was there a typo in the url or port?");
-  }
-  server.close();
+    const t = await res.text();
+    expect(t).toEqual("Hello from https server");
+
+    server.close();
+  });
+  it("should error with faulty args", async () => {
+    const server = https.createServer(
+      {
+        key: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.key")),
+        cert: nodefs.readFileSync(joinPath(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+        passphrase: "123123123",
+      },
+      (req, res) => {
+        res.write("Hello from https server");
+        res.end();
+      },
+    );
+    server.listen(0, "localhost");
+    const address = server.address();
+
+    try {
+      let url_address = address.address;
+      const res = await fetch(`https://localhost:${address.port}`, {
+        tls: {
+          rejectUnauthorized: true,
+          ca: "some invalid value for a ca",
+        },
+      });
+      await res.text();
+      expect(true).toBe("unreacheable");
+    } catch (err) {
+      expect(err.code).toBe("FailedToOpenSocket");
+      expect(err.message).toBe("Was there a typo in the url or port?");
+    }
+    server.close();
+  });
 });

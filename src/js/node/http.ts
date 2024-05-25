@@ -1770,7 +1770,6 @@ class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
-    this.#tls = options.tls;
 
     const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {

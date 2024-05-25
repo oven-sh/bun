@@ -1583,7 +1583,6 @@ pub fn deinit(this: *HTTPClient) void {
     }
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
-
 }
 
 pub fn isKeepAlivePossible(this: *HTTPClient) bool {

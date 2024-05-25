@@ -1789,7 +1789,7 @@ pub const Chunk = struct {
                     loc.start == Logger.Loc.Empty.start)
                     return;
 
-            b.prev_loc = loc;
+                b.prev_loc = loc;
                 const list = b.line_offset_tables;
 
                 // We have no sourcemappings.

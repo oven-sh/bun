@@ -2206,9 +2206,11 @@ pub const VirtualMachine = struct {
             else => {
                 var errors_stack: [256]*anyopaque = undefined;
 
-                const errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
+                const len = @min(log.msgs.items.len, errors_stack.len);
+                const errors = errors_stack[0..len];
+                const logs = log.msgs.items[0..len];
 
-                for (log.msgs.items, errors) |msg, *current| {
+                for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
                         .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                         .resolve => ResolveMessage.create(

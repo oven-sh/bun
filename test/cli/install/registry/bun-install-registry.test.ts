@@ -2315,7 +2315,7 @@ describe("workspaces", async () => {
 
 describe("update", () => {
   test("--no-save will update packages in node_modules and not save to package.json", async () => {
-    await writeFile(
+    await write(
       join(packageDir, "package.json"),
       JSON.stringify({
         name: "foo",
@@ -2363,8 +2363,53 @@ describe("update", () => {
       },
     });
   });
+  test("update won't update beyond version range unless the specified version allows it", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "dep-with-tags": "^1.0.0",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "dep-with-tags": "^1.0.1",
+      },
+    });
+    expect(await file(join(packageDir, "node_modules", "dep-with-tags", "package.json")).json()).toMatchObject({
+      version: "1.0.1",
+    });
+    // update with package name does not update beyond version range
+    await runBunUpdate(env, packageDir, ["dep-with-tags"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "dep-with-tags": "^1.0.1",
+      },
+    });
+    expect(await file(join(packageDir, "node_modules", "dep-with-tags", "package.json")).json()).toMatchObject({
+      version: "1.0.1",
+    });
+
+    // now update with a higher version range
+    await runBunUpdate(env, packageDir, ["dep-with-tags@^2.0.0"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "dep-with-tags": "^2.0.1",
+      },
+    });
+    expect(await file(join(packageDir, "node_modules", "dep-with-tags", "package.json")).json()).toMatchObject({
+      version: "2.0.1",
+    });
+  });
   test("update should update all packages in the current workspace", async () => {
-    await writeFile(
+    await write(
       join(packageDir, "package.json"),
       JSON.stringify({
         name: "foo",

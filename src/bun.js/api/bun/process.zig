@@ -1508,14 +1508,28 @@ pub fn spawnProcessWindows(
     bun.markWindowsOnly();
     bun.Analytics.Features.spawn += 1;
 
-    var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
-
-    uv_process_options.args = argv;
-    uv_process_options.env = envp;
-    uv_process_options.file = options.argv0 orelse argv[0].?;
-    uv_process_options.exit_cb = &Process.onExitUV;
     var stack_allocator = std.heap.stackFallback(8192, bun.default_allocator);
     const allocator = stack_allocator.get();
+
+    var file = options.argv0 orelse argv[0].?;
+    var args = argv;
+    var force_verbatim_arguments = false;
+    const extension = std.fs.path.extension(std.mem.sliceTo(file, 0));
+    if (bun.strings.eqlComptime(extension, ".cmd") or bun.strings.eqlComptime(extension, ".bat")) {
+        force_verbatim_arguments = true;
+        file = "cmd.exe";
+        const args_slice = std.mem.span(args);
+        args = try allocator.allocSentinel(?[*:0]const u8, args_slice.len + 2, null);
+        args[0..2].* = .{ file, "/c" };
+        args[2] = std.fmt.allocPrintZ(allocator, "\"{?s}\"", .{args_slice[0]});
+        @memcpy(args[3..], args_slice[1..]);
+    }
+
+    var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
+    uv_process_options.file = file;
+    uv_process_options.args = args;
+    uv_process_options.env = envp;
+    uv_process_options.exit_cb = &Process.onExitUV;
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
     const cwd = try allocator.dupeZ(u8, options.cwd);
@@ -1540,7 +1554,7 @@ pub fn spawnProcessWindows(
         uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_HIDE;
     }
 
-    if (options.windows.verbatim_arguments) {
+    if (options.windows.verbatim_arguments or force_verbatim_arguments) {
         uv_process_options.flags |= uv.UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS;
     }
 

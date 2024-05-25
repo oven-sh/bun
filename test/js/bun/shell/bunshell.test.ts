@@ -833,6 +833,11 @@ ${temp_dir}`
       .stdout("complex > command; $(execute)\n")
       .runAsTest("complex_mixed_special_chars");
   });
+
+  test("spaces in path and args", async () => {
+    const fields = "name scripts";
+    expect(async () => { await $`npm pkg get ${fields}` }).not.toThrow();
+  });
 });
 
 describe("deno_task", () => {

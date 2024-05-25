@@ -1310,9 +1310,6 @@ for (const [key, blob] of build.outputs) {
         }
       }
     }
-    // if (snapshotSourceMap && snapshottedSourceMaps === 0) {
-    //   throw new Error("snapshotSourceMap=true but no source maps detected.");
-    // }
 
     // Runtime checks!
     if (run) {

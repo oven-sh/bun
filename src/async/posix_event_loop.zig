@@ -63,13 +63,11 @@ pub const KeepAlive = struct {
     }
 
     /// From another thread, Prevent a poll from keeping the process alive.
-    pub fn unrefConcurrently(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+    pub fn unrefConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
         if (this.status != .active)
             return;
         this.status = .inactive;
-        // vm.event_loop_handle.?.unrefConcurrently();
-        event_loop_ctx.platformEventLoop().unrefConcurrently();
+        vm.event_loop.unrefConcurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -106,13 +104,11 @@ pub const KeepAlive = struct {
     }
 
     /// Allow a poll to keep the process alive.
-    pub fn refConcurrently(this: *KeepAlive, event_loop_ctx_: anytype) void {
-        const event_loop_ctx = JSC.AbstractVM(event_loop_ctx_);
+    pub fn refConcurrently(this: *KeepAlive, vm: *JSC.VirtualMachine) void {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        // vm.event_loop_handle.?.refConcurrently();
-        event_loop_ctx.platformEventLoop().refConcurrently();
+        vm.event_loop.refConcurrently();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
@@ -163,6 +159,7 @@ pub const FilePoll = struct {
     const FileSink = JSC.WebCore.FileSink.Poll;
     const DNSResolver = JSC.DNS.DNSResolver;
     const GetAddrInfoRequest = JSC.DNS.GetAddrInfoRequest;
+    const Request = JSC.DNS.InternalDNS.Request;
     const LifecycleScriptSubprocessOutputReader = bun.install.LifecycleScriptSubprocess.OutputReader;
     const BufferedReader = bun.io.BufferedReader;
     pub const Owner = bun.TaggedPointerUnion(.{
@@ -186,6 +183,7 @@ pub const FilePoll = struct {
 
         DNSResolver,
         GetAddrInfoRequest,
+        Request,
         // LifecycleScriptSubprocessOutputReader,
         Process,
         ShellBufferedWriter, // i do not know why, but this has to be here otherwise compiler will complain about dependency loop
@@ -232,7 +230,7 @@ pub const FilePoll = struct {
         log("onKQueueEvent: {}", .{poll});
 
         if (KQueueGenerationNumber != u0)
-            std.debug.assert(poll.generation_number == kqueue_event.ext[0]);
+            bun.assert(poll.generation_number == kqueue_event.ext[0]);
 
         poll.onUpdate(kqueue_event.data);
     }
@@ -335,7 +333,7 @@ pub const FilePoll = struct {
         }
 
         const ptr = poll.owner;
-        std.debug.assert(!ptr.isNull());
+        bun.assert(!ptr.isNull());
 
         switch (ptr.tag()) {
             // @field(Owner.Tag, bun.meta.typeBaseName(@typeName(FIFO))) => {
@@ -409,6 +407,16 @@ pub const FilePoll = struct {
                 log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
+            },
+
+            @field(Owner.Tag, "Request") => {
+                if (comptime !Environment.isMac) {
+                    unreachable;
+                }
+
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) InternalDNSRequest", .{poll.fd});
+                const loader: *Request = ptr.as(Request);
+                Request.MacAsyncDNS.onMachportChange(loader);
             },
 
             else => {
@@ -567,22 +575,22 @@ pub const FilePoll = struct {
                 return;
             }
 
-            std.debug.assert(poll.next_to_free == null);
+            bun.assert(poll.next_to_free == null);
 
             if (this.pending_free_tail) |tail| {
-                std.debug.assert(this.pending_free_head != null);
-                std.debug.assert(tail.next_to_free == null);
+                bun.assert(this.pending_free_head != null);
+                bun.assert(tail.next_to_free == null);
                 tail.next_to_free = poll;
             }
 
             if (this.pending_free_head == null) {
                 this.pending_free_head = poll;
-                std.debug.assert(this.pending_free_tail == null);
+                bun.assert(this.pending_free_tail == null);
             }
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            std.debug.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
             vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
             vm.after_event_loop_callback_ctx = this;
         }
@@ -790,7 +798,7 @@ pub const FilePoll = struct {
 
         log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
 
-        std.debug.assert(fd != invalid_fd);
+        bun.assert(fd != invalid_fd);
 
         if (one_shot != .none) {
             this.flags.insert(.one_shot);
@@ -945,7 +953,7 @@ pub const FilePoll = struct {
 
     pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (Environment.allow_assert) {
-            std.debug.assert(fd.int() >= 0 and fd != bun.invalid_fd);
+            bun.assert(fd.int() >= 0 and fd != bun.invalid_fd);
         }
         defer this.deactivate(loop);
 
@@ -955,7 +963,7 @@ pub const FilePoll = struct {
             return JSC.Maybe(void).success;
         }
 
-        std.debug.assert(fd != invalid_fd);
+        bun.assert(fd != invalid_fd);
         const watcher_fd = loop.fd;
         const flag: Flags = brk: {
             if (this.flags.contains(.poll_readable))
@@ -1073,7 +1081,7 @@ pub const FilePoll = struct {
         this.flags.remove(.needs_rearm);
         this.flags.remove(.one_shot);
         // we don't support both right now
-        std.debug.assert(!(this.flags.contains(.poll_readable) and this.flags.contains(.poll_writable)));
+        bun.assert(!(this.flags.contains(.poll_readable) and this.flags.contains(.poll_writable)));
         this.flags.remove(.poll_readable);
         this.flags.remove(.poll_writable);
         this.flags.remove(.poll_process);
@@ -1096,7 +1104,7 @@ pub const Closer = struct {
         /// for compatibiltiy with windows version
         _: anytype,
     ) void {
-        std.debug.assert(fd != bun.invalid_fd);
+        bun.assert(fd != bun.invalid_fd);
         JSC.WorkPool.schedule(&Closer.new(.{ .fd = fd }).task);
     }
 

@@ -7,6 +7,7 @@ var port = 0;
 {
   const BodyMixin = [
     Request.prototype.arrayBuffer,
+    Request.prototype.bytes,
     Request.prototype.blob,
     Request.prototype.text,
     Request.prototype.json,
@@ -284,9 +285,7 @@ describe("reader", function () {
               gc();
 
               const expectedHash =
-                huge instanceof Blob
-                  ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
-                  : Bun.SHA1.hash(huge, "base64");
+                huge instanceof Blob ? Bun.SHA1.hash(await huge.bytes(), "base64") : Bun.SHA1.hash(huge, "base64");
               const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
 
               const out = await runInServer(
@@ -347,7 +346,7 @@ describe("reader", function () {
                   const response = await pendingResponse;
                   huge = undefined;
                   expect(response.status).toBe(200);
-                  const response_body = new Uint8Array(await response.arrayBuffer());
+                  const response_body = await response.bytes();
 
                   expect(response_body.byteLength).toBe(expectedSize);
                   expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
@@ -375,9 +374,7 @@ describe("reader", function () {
                   gc();
 
                   const expectedHash =
-                    huge instanceof Blob
-                      ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
-                      : Bun.SHA1.hash(huge, "base64");
+                    huge instanceof Blob ? Bun.SHA1.hash(await huge.bytes(), "base64") : Bun.SHA1.hash(huge, "base64");
                   const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
 
                   const out = await runInServer(
@@ -463,7 +460,7 @@ describe("reader", function () {
                       });
                       huge = undefined;
                       expect(response.status).toBe(200);
-                      const response_body = new Uint8Array(await response.arrayBuffer());
+                      const response_body = await response.bytes();
 
                       expect(response_body.byteLength).toBe(expectedSize);
                       expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);

@@ -117,29 +117,64 @@ static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsi
 }
 
 template<typename UWSResponse>
+static void writeResponseHeader(UWSResponse* res, const WTF::StringView& name, const WTF::StringView& value)
+{
+    WTF::CString nameStr;
+    WTF::CString valueStr;
+
+    std::string_view nameView;
+    std::string_view valueView;
+
+    if (name.is8Bit()) {
+        const auto nameSpan = name.span8();
+        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
+    } else {
+        nameStr = name.utf8();
+        nameView = std::string_view(nameStr.data(), nameStr.length());
+    }
+
+    if (value.is8Bit()) {
+        const auto valueSpan = value.span8();
+        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
+    } else {
+        valueStr = value.utf8();
+        valueView = std::string_view(valueStr.data(), valueStr.length());
+    }
+
+    res->writeHeader(nameView, valueView);
+}
+
+template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
     auto& internalHeaders = headers->internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+
+        if (value.is8Bit()) {
+            const auto valueSpan = value.span8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
+        } else {
+            WTF::CString valueStr = value.utf8();
+            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
+        }
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
 
-        res->writeHeader(
-            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+        writeResponseHeader<UWSResponse>(res, name, value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         const auto& name = header.key;
         const auto& value = header.value;
-        res->writeHeader(
-            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
+
+        WTF::CString nameStr;
+        WTF::CString valueStr;
+
+        writeResponseHeader<UWSResponse>(res, name, value);
     }
 }
 
@@ -1437,18 +1472,21 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
         auto value = pair->value;
         names[count] = { i, name.length() };
 
-        if (name.is8Bit())
-            memcpy(&buf[i], name.characters8(), name.length());
-        else {
-            StringImpl::copyCharacters(&buf[i], name.characters16(), name.length());
+        if (name.is8Bit()) {
+            const auto nameSpan = name.span8();
+            memcpy(&buf[i], nameSpan.data(), nameSpan.size());
+        } else {
+            StringImpl::copyCharacters(&buf[i], name.span16());
         }
 
         i += name.length();
         values[count++] = { i, value.length() };
-        if (value.is8Bit())
-            memcpy(&buf[i], value.characters8(), value.length());
-        else
-            StringImpl::copyCharacters(&buf[i], value.characters16(), value.length());
+        if (value.is8Bit()) {
+            const auto nameSpan = value.span8();
+            memcpy(&buf[i], nameSpan.data(), nameSpan.size());
+        } else {
+            StringImpl::copyCharacters(&buf[i], value.span16());
+        }
 
         i += value.length();
     }
@@ -1500,7 +1538,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             if (header.value.len == 0 || header.name.len == 0)
                 continue;
 
-            StringView nameView = StringView(reinterpret_cast<const char*>(header.name.ptr), header.name.len);
+            StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
             LChar* data = nullptr;
             auto value = String::createUninitialized(header.value.len, data);
@@ -1535,7 +1573,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     HTTPHeaderMap map = HTTPHeaderMap();
 
     for (const auto& header : req) {
-        StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
+        StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(header.first.data()), header.first.length() });
         LChar* data = nullptr;
         auto value = String::createUninitialized(header.second.length(), data);
         memcpy(data, header.second.data(), header.second.length());
@@ -1571,7 +1609,7 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
     WebCore::propagateException(*arg0, throwScope,
         headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
-    pairs.releaseBuffer();
+
     JSValue value = WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers));
 
     JSFetchHeaders* fetchHeaders = jsCast<JSFetchHeaders*>(value);
@@ -1806,7 +1844,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
         return 0;
     }
 
-    case static_cast<JSC::JSType>(WebCore::JSDOMWrapperType): {
+    case WebCore::JSDOMWrapperType: {
         if (auto* headers = jsDynamicCast<WebCore::JSFetchHeaders*>(cell))
             return static_cast<double>(jsCast<WebCore::JSFetchHeaders*>(cell)->wrapped().size());
 
@@ -2175,6 +2213,11 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
+
     if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -2224,6 +2267,11 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSLockHolder lock(vm);
+
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
 
     if (!object)
         return JSC::JSValue::encode(JSC::JSValue());
@@ -2344,9 +2392,9 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
 {
-    WTF::String src = WTF::String::fromUTF8(arg1, arg2).isolatedCopy();
-    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(originUrlPtr, originURLLen)).isolatedCopy();
-    WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(referrerUrlPtr, referrerUrlLen)).isolatedCopy();
+    WTF::String src = WTF::String::fromUTF8(std::span { arg1, arg2 }).isolatedCopy();
+    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { originUrlPtr, originURLLen })).isolatedCopy();
+    WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
 
     JSC::VM& vm = globalObject->vm();
 
@@ -2423,7 +2471,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
     rangeError->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 10)))),
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying({ range_error_name, 10 })))),
         0);
 
     if (code.len > 0) {
@@ -2446,7 +2494,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
     typeError->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying(range_error_name, 9)))),
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying({ range_error_name, 9 })))),
         0);
 
     if (code.len > 0) {
@@ -2699,11 +2747,11 @@ JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject
     }
 
     if (isTaggedUTF16Ptr(arg0->ptr)) {
-        if (auto impl = WTF::AtomStringImpl::lookUp(reinterpret_cast<const UChar*>(untag(arg0->ptr)), arg0->len)) {
+        if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const UChar*>(untag(arg0->ptr)), arg0->len })) {
             return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
         }
     } else {
-        if (auto impl = WTF::AtomStringImpl::lookUp(untag(arg0->ptr), arg0->len)) {
+        if (auto impl = WTF::AtomStringImpl::lookUp(std::span { untag(arg0->ptr), arg0->len })) {
             return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
         }
     }
@@ -2713,7 +2761,7 @@ JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject
 
 JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
-    auto str = WTF::String::fromUTF8(arg0->ptr, arg0->len);
+    auto str = WTF::String::fromUTF8(std::span { arg0->ptr, arg0->len });
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), str)));
 }
 
@@ -2723,7 +2771,7 @@ JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSG
         return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
     }
 
-    auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
+    auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(arg0), len }, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
         global->vm(), WTFMove(ref))));
@@ -2738,12 +2786,12 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
     }
 
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
 
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(), WTFMove(ref))));
     } else {
-        auto ref = String(ExternalStringImpl::create(Zig::untag(str.ptr), str.len, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTFMove(ref))));
@@ -2781,9 +2829,9 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
     auto str = strValue->value(arg2);
 
     if (str.is8Bit()) {
-        arg1->ptr = str.characters8();
+        arg1->ptr = str.span8().data();
     } else {
-        arg1->ptr = Zig::taggedUTF16Ptr(str.characters16());
+        arg1->ptr = Zig::taggedUTF16Ptr(str.span16().data());
     }
 
     arg1->len = str.length();
@@ -2796,11 +2844,11 @@ JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
+            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
+            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3)))));
     }
 }
 
@@ -2812,11 +2860,11 @@ JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* arg0, JSC__
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
     } else {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
             arg1->vm(),
-            WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, nullptr, ArgFn2)))));
+            WTF::String(ExternalStringImpl::create({ reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2)))));
     }
 }
 
@@ -2913,19 +2961,17 @@ JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
 }
 
-void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
-    bJSC__ThrowScope arg2)
-{
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
-
-    arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
-}
 void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
+    JSValue target = JSValue::decode(JSValue2);
+
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(arg0->vm()) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
-    ASSERT_WITH_MESSAGE(!JSValue::decode(JSValue2).inherits<JSC::JSPromise>(), "Called .resolve() with another Promise. Did you mean to do that?");
+    ASSERT(!target.isEmpty());
+    ASSERT_WITH_MESSAGE(arg0 != target, "Promise cannot be resoled to itself");
+
+    // Note: the Promise can be another promise. Since we go through the generic promise resolve codepath.
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
 
@@ -3070,14 +3116,6 @@ JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObj
         JSC::JSInternalPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
 
-void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0,
-    JSC__JSGlobalObject* arg1,
-    bJSC__ThrowScope arg2)
-{
-    Wrap<JSC::ThrowScope, bJSC__ThrowScope> wrapped = Wrap<JSC::ThrowScope, bJSC__ThrowScope>(arg2);
-
-    arg0->rejectWithCaughtException(arg1, *wrapped.cpp);
-}
 void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
@@ -3160,12 +3198,7 @@ double JSC__JSValue__asNumber(JSC__JSValue JSValue0)
     auto value = JSC::JSValue::decode(JSValue0);
     return value.asNumber();
 };
-bJSC__JSObject JSC__JSValue__asObject(JSC__JSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    auto obj = JSC::asObject(value);
-    return cast<bJSC__JSObject>(&obj);
-};
+
 JSC__JSString* JSC__JSValue__asString(JSC__JSValue JSValue0)
 {
     auto value = JSC::JSValue::decode(JSValue0);
@@ -3219,7 +3252,7 @@ extern "C" void JSC__JSValue__putMayBeIndex(JSC__JSValue target, JSC__JSGlobalOb
     JSC::VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
-    WTF::String keyStr = key->toWTFString();
+    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::String(""_s) : key->toWTFString();
     JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
 
     JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
@@ -3534,7 +3567,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
 
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* object = value.getObject();
-    auto identifier = JSC::Identifier::fromString(vm, String(StringImpl::createWithoutCopying(arg1, arg2)));
+    auto identifier = JSC::Identifier::fromString(vm, String(StringImpl::createWithoutCopying({ arg1, arg2 })));
     auto property = JSC::PropertyName(identifier);
 
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
@@ -3548,7 +3581,8 @@ extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue
 
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* object = value.getObject();
-    auto identifier = JSC::Identifier::fromString(vm, propertyName->toWTFString(BunString::ZeroCopy));
+    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::String(""_s) : propertyName->toWTFString(BunString::ZeroCopy);
+    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
 
     return JSC::JSValue::encode(object->getIfPropertyExists(globalObject, property));
@@ -3558,7 +3592,8 @@ extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGloba
 {
     VM& vm = globalObject->vm();
     JSValue value = JSC::JSValue::decode(JSValue0);
-    auto identifier = JSC::Identifier::fromString(vm, propertyName->toWTFString(BunString::ZeroCopy));
+    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::String(""_s) : propertyName->toWTFString(BunString::ZeroCopy);
+    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     if (value.getOwnPropertySlot(globalObject, property, slot)) {
@@ -3901,14 +3936,8 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
      * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
      * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
      * ourselves). */
-    unsigned startOffset = 0;
-    unsigned endOffset = 0;
-    unsigned divotPoint = 0;
-    unsigned line = 0;
-    unsigned unusedColumn = 0;
-    m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(
-        bytecodeOffset, divotPoint, startOffset, endOffset, line, unusedColumn);
-    divotPoint += m_codeBlock->sourceOffset();
+    ExpressionInfo::Entry info = m_codeBlock->unlinkedCodeBlock()->expressionInfoForBytecodeIndex(bytecodeOffset);
+    info.divot += m_codeBlock->sourceOffset();
 
     // TODO: evaluate if using the API from UnlinkedCodeBlock can be used instead of iterating
     // through source text.
@@ -3919,19 +3948,19 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
      * simpler (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because
      * firstLineColumnOffset values seems different from what we expect (according to v8's tests)
      * and I haven't dove into the relevant parts in JSC (yet) to figure out why. */
-    unsigned columnOffset = line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
+    unsigned columnOffset = info.lineColumn.line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
 
     // "Fix" the line number
     JSC::ScriptExecutable* executable = m_codeBlock->ownerExecutable();
     if (std::optional<int> overrideLine = executable->overrideLineNumber(m_codeBlock->vm())) {
-        line = overrideLine.value();
+        info.lineColumn.line = overrideLine.value();
     } else {
-        line += executable->firstLine();
+        info.lineColumn.line += executable->firstLine();
     }
 
     // Calculate the staring\ending offsets of the entire expression
-    int expressionStart = divotPoint - startOffset;
-    int expressionStop = divotPoint + endOffset;
+    int expressionStart = info.divot - info.startOffset;
+    int expressionStop = info.divot + info.endOffset;
     if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
         return;
     }
@@ -3947,13 +3976,13 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     while ((lineStop < sourceLength) && ('\n' != sourceString[lineStop])) {
         lineStop++;
     }
-    if (source_lines_count > 1 && source_lines != nullptr) {
-        auto chars = sourceString.characters8();
+    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
+        auto chars = sourceString.span8().data();
 
         // Most of the time, when you look at a stack trace, you want a couple lines above
 
         source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineStop - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = line - 1;
+        source_line_numbers[0] = info.lineColumn.line - 1;
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
@@ -3979,7 +4008,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 // We are at the beginning of the line
                 source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = line - source_line_i - 1;
+                source_line_numbers[source_line_i] = info.lineColumn.line - source_line_i - 1;
                 source_line_i++;
 
                 remaining_lines_to_grab--;
@@ -4001,7 +4030,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
      */
     position->expression_start = expressionStart;
     position->expression_stop = expressionStop;
-    position->line = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int>(line)).zeroBasedInt();
+    position->line = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int>(info.lineColumn.line)).zeroBasedInt();
     position->column_start = (expressionStart - lineStart) + columnOffset;
     position->column_stop = position->column_start + (expressionStop - expressionStart);
     position->line_start = lineStart;
@@ -4287,6 +4316,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                     ASSERT(except->stack.frames_len < frame_count);
                     auto& current = except->stack.frames_ptr[except->stack.frames_len];
+                    current = {};
 
                     String functionName = frame.functionName.toString();
                     String sourceURL = frame.sourceURL.toString();
@@ -4433,7 +4463,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     }
 
     const char* ptr = cell->className();
-    auto view = WTF::StringView(ptr, strlen(ptr));
+    auto view = WTF::StringView(std::span { ptr, strlen(ptr) });
 
     // Fallback to .name if className is empty
     if (view.length() == 0 || StringView(String(function_string_view)) == view) {
@@ -4805,42 +4835,6 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
 }
 
-extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
-    JSC::JSGlobalObject* lexicalGlobalObject,
-    JSC__JSValue encodedFunctionValue,
-    JSC__JSValue encodedThisValue,
-    unsigned depth,
-    unsigned max_depth,
-    bool colors)
-{
-    auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSValue functionToCall = JSValue::decode(encodedFunctionValue);
-    JSValue thisValue = JSValue::decode(encodedThisValue);
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSFunction* inspectFn = globalObject->utilInspectFunction();
-    JSFunction* stylizeFn = colors ? globalObject->utilInspectStylizeColorFunction() : globalObject->utilInspectStylizeNoColorFunction();
-
-    JSObject* options = JSC::constructEmptyObject(globalObject);
-    options->putDirect(vm, Identifier::fromString(vm, "stylize"_s), stylizeFn);
-    options->putDirect(vm, Identifier::fromString(vm, "depth"_s), jsNumber(max_depth));
-    options->putDirect(vm, Identifier::fromString(vm, "colors"_s), jsBoolean(colors));
-
-    auto callData = JSC::getCallData(functionToCall);
-    MarkedArgumentBuffer arguments;
-    arguments.append(jsNumber(depth));
-    arguments.append(options);
-    arguments.append(inspectFn);
-
-    auto inspectRet = JSC::call(globalObject, functionToCall, callData, thisValue, arguments);
-    if (auto exe = scope.exception()) {
-        scope.clearException();
-        return JSValue::encode(exe);
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
-}
-
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -4959,10 +4953,7 @@ restart:
             scope.clearException();
         }
 
-        fast = false;
-
         if (anyHits) {
-
             if (prototypeCount++ < 5) {
                 if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
                     if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(proto)->target() != globalObject))) {
@@ -5267,7 +5258,7 @@ extern "C" bool WebCore__AbortSignal__aborted(WebCore__AbortSignal* arg0)
 extern "C" JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    return JSC::JSValue::encode(abortSignal->reason());
+    return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
 extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0)
@@ -5294,7 +5285,7 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__Abor
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
 
     if (abortSignal->aborted()) {
-        callback(ctx, JSC::JSValue::encode(abortSignal->reason()));
+        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue(jsNull())));
         return arg0;
     }
 

@@ -12,7 +12,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -35,17 +35,43 @@ const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 var estimated_input_lines_of_code_: usize = undefined;
 
 pub const BuildCommand = struct {
+    const compile_define_keys = &.{
+        "process.platform",
+        "process.arch",
+    };
+
     pub fn exec(
-        ctx_: Command.Context,
+        ctx: Command.Context,
     ) !void {
         Global.configureAllocator(.{ .long_running = true });
-        var ctx = ctx_;
         const allocator = ctx.allocator;
         var log = ctx.log;
         estimated_input_lines_of_code_ = 0;
         if (ctx.bundler_options.compile) {
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = .bun;
+        }
+
+        const compile_target = &ctx.bundler_options.compile_target;
+
+        if (ctx.bundler_options.compile) {
+            const compile_define_values = compile_target.defineValues();
+            if (ctx.args.define == null) {
+                ctx.args.define = .{
+                    .keys = compile_define_keys,
+                    .values = compile_define_values,
+                };
+            } else if (ctx.args.define) |*define| {
+                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                keys.appendSliceAssumeCapacity(compile_define_keys);
+                keys.appendSliceAssumeCapacity(define.keys);
+                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                values.appendSliceAssumeCapacity(compile_define_values);
+                values.appendSliceAssumeCapacity(define.values);
+
+                define.keys = keys.items;
+                define.values = values.items;
+            }
         }
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null);
@@ -63,8 +89,8 @@ pub const BuildCommand = struct {
         }
         var outfile = ctx.bundler_options.outfile;
 
-        this_bundler.options.public_path = ctx_.bundler_options.public_path;
-        this_bundler.resolver.opts.public_path = ctx_.bundler_options.public_path;
+        this_bundler.options.public_path = ctx.bundler_options.public_path;
+        this_bundler.resolver.opts.public_path = ctx.bundler_options.public_path;
 
         this_bundler.options.entry_naming = ctx.bundler_options.entry_naming;
         this_bundler.options.chunk_naming = ctx.bundler_options.chunk_naming;
@@ -107,8 +133,10 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            this_bundler.options.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
-            this_bundler.resolver.opts.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
+            const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+            this_bundler.options.public_path = base_public_path;
+            this_bundler.resolver.opts.public_path = base_public_path;
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -156,7 +184,7 @@ pub const BuildCommand = struct {
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
 
-        var src_root_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src_root_dir_buf: bun.PathBuffer = undefined;
         const src_root_dir: string = brk1: {
             const path = brk2: {
                 if (ctx.bundler_options.root_dir.len > 0) {
@@ -290,7 +318,16 @@ pub const BuildCommand = struct {
                     defer Output.flush();
                     var writer = Output.writer();
                     var output_dir = this_bundler.options.output_dir;
-                    if (outfile.len > 0 and output_files.len == 1 and output_files[0].value == .buffer) {
+
+                    const will_be_one_file =
+                        // --outdir is not supported with --compile
+                        // but you can still use --outfile
+                        // in which case, we should set the output dir to the dirname of the outfile
+                        // https://github.com/oven-sh/bun/issues/8697
+                        ctx.bundler_options.compile or
+                        (output_files.len == 1 and output_files[0].value == .buffer);
+
+                    if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
                         output_dir = std.fs.path.dirname(outfile) orelse ".";
                         output_files[0].dest_path = std.fs.path.basename(outfile);
                     }
@@ -344,12 +381,24 @@ pub const BuildCommand = struct {
 
                         Output.flush();
 
+                        const is_cross_compile = !compile_target.isDefault();
+
+                        if (outfile.len == 0 or strings.eqlComptime(outfile, ".") or strings.eqlComptime(outfile, "..") or strings.eqlComptime(outfile, "../")) {
+                            outfile = "index";
+                        }
+
+                        if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
+                            outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
+                        }
+
                         try bun.StandaloneModuleGraph.toExecutable(
+                            compile_target,
                             allocator,
                             output_files,
                             root_dir,
                             this_bundler.options.public_path,
                             outfile,
+                            this_bundler.env,
                         );
                         const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
                         const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
@@ -360,15 +409,21 @@ pub const BuildCommand = struct {
                             else => 0,
                         };
                         const padding_buf = [_]u8{' '} ** 16;
-
-                        Output.pretty("{s}", .{padding_buf[0..@as(usize, @intCast(compiled_elapsed_digit_count))]});
+                        const padding_ = padding_buf[0..@as(usize, @intCast(compiled_elapsed_digit_count))];
+                        Output.pretty("{s}", .{padding_});
 
                         Output.printElapsedStdoutTrim(@as(f64, @floatFromInt(compiled_elapsed)));
 
-                        Output.prettyln(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
+                        Output.pretty(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
                             outfile,
-                            if (Environment.isWindows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
+                            if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                         });
+
+                        if (is_cross_compile) {
+                            Output.pretty(" <r><d>{s}<r>\n", .{compile_target});
+                        } else {
+                            Output.pretty("\n", .{});
+                        }
 
                         break :dump;
                     }
@@ -378,7 +433,7 @@ pub const BuildCommand = struct {
                     // So don't do that unless we actually need to.
                     // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
-                    var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var filepath_buf: bun.PathBuffer = undefined;
                     filepath_buf[0] = '.';
                     filepath_buf[1] = '/';
 
@@ -405,7 +460,7 @@ pub const BuildCommand = struct {
                                     }
                                 }
                                 const JSC = bun.JSC;
-                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var path_buf: bun.PathBuffer = undefined;
                                 switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                                     &path_buf,
                                     JSC.Node.Arguments.WriteFile{

@@ -1,4 +1,6 @@
 const env = @import("env.zig");
+const bun = @import("root").bun;
+
 pub const strong_etags_for_built_files = true;
 pub const keep_alive = false;
 
@@ -89,13 +91,12 @@ pub const disable_lolhtml = false;
 /// "localhost" fails to connect.
 pub const hardcode_localhost_to_127_0_0_1 = false;
 
-/// React doesn't do anything with jsxs
-/// If the "jsxs" import is development, "jsxs" isn't supported
-/// But it's very easy to end up importing it accidentally, causing an error at runtime
-/// so we just disable it
-pub const support_jsxs_in_jsx_transform = false;
+/// React will issue warnings in development if there are multiple children
+/// without keys and "jsxs" is not used.
+/// https://github.com/oven-sh/bun/issues/10733
+pub const support_jsxs_in_jsx_transform = true;
 
-pub const use_simdutf = @import("root").bun.Environment.isNative and !@import("root").bun.JSC.is_bindgen;
+pub const use_simdutf = bun.Environment.isNative and !bun.JSC.is_bindgen;
 
 pub const inline_properties_in_transpiler = true;
 
@@ -103,7 +104,7 @@ pub const same_target_becomes_destructuring = true;
 
 pub const react_server_components = true;
 
-pub const help_catch_memory_issues = @import("root").bun.Environment.allow_assert;
+pub const help_catch_memory_issues = bun.Environment.allow_assert;
 
 /// This performs similar transforms as https://github.com/rollup/plugins/tree/master/packages/commonjs
 ///
@@ -164,9 +165,15 @@ pub const disable_auto_js_to_ts_in_node_modules = true;
 
 pub const runtime_transpiler_cache = true;
 
-pub const windows_bunx_fast_path = false; // Disabled to simplify fixing the bunx issue
+/// On Windows, node_modules/.bin uses pairs of '.exe' + '.bunx' files.  The
+/// fast path is to load the .bunx file within `bun.exe` instead of
+/// `bun_shim_impl.exe` by using `bun_shim_impl.tryStartupFromBunJS`
+///
+/// When debugging weird script runner issues, it may be worth disabling this in
+/// order to isolate your bug.
+pub const windows_bunx_fast_path = true;
 
-pub const breaking_changes_1_1_0 = false;
+pub const breaking_changes_1_2 = false;
 
 // This causes strange bugs where writing via console.log (sync) has a different
 // order than via Bun.file.writer() so we turn it off until there's a unified,

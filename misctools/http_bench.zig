@@ -63,8 +63,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: bun.PathBuffer = undefined;
+var cwd_buf: bun.PathBuffer = undefined;
 
 pub const Arguments = struct {
     url: URL,
@@ -177,7 +177,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;

@@ -1,0 +1,21 @@
+name: Docs
+
+on:
+  push:
+    paths:
+      - "docs/**"
+      - "CONTRIBUTING.md"
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    steps:
+      # redeploy Vercel site when a file in `docs` changes
+      # using VERCEL_DEPLOY_HOOK environment variable
+      - name: Trigger Webhook
+        run: |
+          curl -v ${{ secrets.VERCEL_DEPLOY_HOOK }}

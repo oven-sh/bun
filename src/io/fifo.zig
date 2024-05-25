@@ -1,5 +1,6 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 
 /// An intrusive first in/first out linked list.
 /// The element type T must have a field called "next" of type ?*T
@@ -53,52 +54,4 @@ pub fn FIFO(comptime T: type) type {
             } else unreachable;
         }
     };
-}
-
-test "push/pop/peek/remove" {
-    const testing = @import("std").testing;
-
-    const Foo = struct { next: ?*@This() = null };
-
-    var one: Foo = .{};
-    var two: Foo = .{};
-    var three: Foo = .{};
-
-    var fifo: FIFO(Foo) = .{};
-
-    fifo.push(&one);
-    try testing.expectEqual(@as(?*Foo, &one), fifo.peek());
-
-    fifo.push(&two);
-    fifo.push(&three);
-    try testing.expectEqual(@as(?*Foo, &one), fifo.peek());
-
-    fifo.remove(&one);
-    try testing.expectEqual(@as(?*Foo, &two), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, &three), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, null), fifo.pop());
-
-    fifo.push(&one);
-    fifo.push(&two);
-    fifo.push(&three);
-    fifo.remove(&two);
-    try testing.expectEqual(@as(?*Foo, &one), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, &three), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, null), fifo.pop());
-
-    fifo.push(&one);
-    fifo.push(&two);
-    fifo.push(&three);
-    fifo.remove(&three);
-    try testing.expectEqual(@as(?*Foo, &one), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, &two), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, null), fifo.pop());
-
-    fifo.push(&one);
-    fifo.push(&two);
-    fifo.remove(&two);
-    fifo.push(&three);
-    try testing.expectEqual(@as(?*Foo, &one), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, &three), fifo.pop());
-    try testing.expectEqual(@as(?*Foo, null), fifo.pop());
 }

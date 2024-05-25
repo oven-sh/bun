@@ -106,6 +106,10 @@ class JSCallback {
       closeCallback(ctx);
     }
   }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
 }
 
 class CString extends String {
@@ -396,6 +400,22 @@ const native = {
 };
 
 function dlopen(path, options) {
+  if (typeof path === "string" && path?.startsWith?.("file:")) {
+    // import.meta.url returns a file: URL
+    // https://github.com/oven-sh/bun/issues/10304
+    path = Bun.fileURLToPath(path);
+  } else if (typeof path === "object" && path) {
+    if (path instanceof URL) {
+      // This is mostly for import.meta.resolve()
+      // https://github.com/oven-sh/bun/issues/10304
+      path = Bun.fileURLToPath(path as URL);
+    } else if (path instanceof Blob) {
+      // must be a Bun.file() blob
+      // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
+      path = path.name;
+    }
+  }
+
   const result = nativeDLOpen(path, options);
   if (result instanceof Error) throw result;
 

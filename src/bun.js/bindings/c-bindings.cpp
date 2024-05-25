@@ -404,6 +404,27 @@ extern "C" void onExitSignal(int sig)
 }
 #endif
 
+#if OS(WINDOWS)
+extern "C" void Bun__restoreWindowsStdio();
+BOOL WINAPI Ctrlhandler(DWORD signal)
+{
+
+    if (signal == CTRL_C_EVENT) {
+        Bun__restoreWindowsStdio();
+        SetConsoleCtrlHandler(Ctrlhandler, FALSE);
+    }
+
+    return FALSE;
+}
+
+extern "C" void Bun__setCTRLHandler(BOOL add)
+{
+    SetConsoleCtrlHandler(Ctrlhandler, add);
+}
+#endif
+
+extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -424,6 +445,7 @@ extern "C" void bun_initialize_process()
     bool anyTTYs = false;
 
     const auto setDevNullFd = [&](int target_fd) -> void {
+        bun_is_stdio_null[target_fd] = 1;
         if (devNullFd_ == -1) {
             do {
                 devNullFd_ = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
@@ -491,6 +513,7 @@ extern "C" void bun_initialize_process()
             // Ignore _close result. If it fails or not depends on used Windows
             // version. We will just check _open result.
             _close(fd);
+            bun_is_stdio_null[fd] = 1;
             if (fd != _open("nul", O_RDWR)) {
                 RELEASE_ASSERT_NOT_REACHED();
             } else {
@@ -517,9 +540,16 @@ extern "C" void bun_initialize_process()
             }
         }
     }
+
+    // add ctrl+c handler on windows
+    Bun__setCTRLHandler(1);
 #endif
 
+#if OS(DARWIN)
     atexit(Bun__onExit);
+#else
+    at_quick_exit(Bun__onExit);
+#endif
 }
 
 #if OS(WINDOWS)

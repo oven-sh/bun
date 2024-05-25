@@ -47,7 +47,7 @@ public:
         if (!m_ivVector.isEmpty() || !iv.length())
             return m_ivVector;
 
-        m_ivVector.append(iv.data(), iv.length());
+        m_ivVector.append(std::span { iv.data(), iv.length() });
         return m_ivVector;
     }
 
@@ -61,7 +61,7 @@ public:
         if (!additionalDataBuffer.length())
             return m_additionalDataVector;
 
-        m_additionalDataVector.append(additionalDataBuffer.data(), additionalDataBuffer.length());
+        m_additionalDataVector.append(std::span { additionalDataBuffer.data(), additionalDataBuffer.length() });
         return m_additionalDataVector;
     }
 

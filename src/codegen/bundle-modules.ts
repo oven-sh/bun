@@ -41,11 +41,14 @@ const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 const t = new Bun.Transpiler({ loader: "tsx" });
 
 let start = performance.now();
-function mark(log: string) {
+const silent = process.env.BUN_SILENT === "1";
+function markVerbose(log: string) {
   const now = performance.now();
   console.log(`${log} (${(now - start).toFixed(0)}ms)`);
   start = now;
 }
+
+const mark = silent ? (log: string) => {} : markVerbose;
 
 const { moduleList, nativeModuleIds, nativeModuleEnumToId, nativeModuleEnums, requireTransformer } =
   createInternalModuleRegistry(BASE);
@@ -373,6 +376,7 @@ pub const ResolvedSourceTag = enum(u32) {
     file = 4,
     esm = 5,
     json_for_object_loader = 6,
+    exports_object = 7,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -396,6 +400,7 @@ writeIfNotChanged(
     File = 4,
     ESM = 5,
     JSONForObjectLoader = 6,
+    ExportsObject = 7,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`
@@ -429,19 +434,21 @@ writeIfNotChanged(js2nativeZigPath, getJS2NativeZig(js2nativeZigPath));
 
 mark("Generate Code");
 
-console.log("");
-console.timeEnd(timeString);
-console.log(
-  `  %s kb`,
-  Math.floor(
-    (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
-      globalThis.internalFunctionJSSize) /
-      1000,
-  ),
-);
-console.log(`  %s internal modules`, moduleList.length);
-console.log(
-  `  %s internal functions across %s files`,
-  globalThis.internalFunctionCount,
-  globalThis.internalFunctionFileCount,
-);
+if (!silent) {
+  console.log("");
+  console.timeEnd(timeString);
+  console.log(
+    `  %s kb`,
+    Math.floor(
+      (moduleList.reduce((a, b) => a + outputs.get(b.slice(0, -3).replaceAll("/", path.sep)).length, 0) +
+        globalThis.internalFunctionJSSize) /
+        1000,
+    ),
+  );
+  console.log(`  %s internal modules`, moduleList.length);
+  console.log(
+    `  %s internal functions across %s files`,
+    globalThis.internalFunctionCount,
+    globalThis.internalFunctionFileCount,
+  );
+}

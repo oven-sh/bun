@@ -309,7 +309,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
     var iter = JSC.JSPropertyIterator(.{
         .skip_empty_name = false,
         .include_value = true,
-    }).init(globalThis, options_obj.asObjectRef());
+    }).init(globalThis, options_obj);
     defer iter.deinit();
 
     while (iter.next()) |long_option| {

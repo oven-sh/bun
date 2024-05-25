@@ -42,7 +42,7 @@ static ExceptionOr<Vector<uint8_t>> signEd25519(const Vector<uint8_t>& sk, size_
     uint8_t newSignature[64];
 
     ED25519_sign(newSignature, data.data(), data.size(), sk.data());
-    return Vector<uint8_t>(newSignature, 64);
+    return Vector<uint8_t>(std::span { newSignature, 64 });
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmEd25519::platformSign(const CryptoKeyOKP& key, const Vector<uint8_t>& data)

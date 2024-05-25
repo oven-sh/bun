@@ -275,6 +275,7 @@ Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // 
 ```
 
 This is useful for:
+
 - Aligning text in a terminal
 - Quickly checking if a string contains ANSI escape codes
 - Measuring the width of a string in a terminal
@@ -372,7 +373,6 @@ npm/string-width 95,000 chars ansi+emoji+ascii     3.68 s/iter        (3.66 s â€
 
 {% /details %}
 
-
 TypeScript definition:
 
 ```ts
@@ -399,7 +399,6 @@ namespace Bun {
   ): number;
 }
 ```
-
 
 <!-- ## `Bun.enableANSIColors()` -->
 
@@ -603,6 +602,9 @@ stream; // => ReadableStream
 await Bun.readableStreamToArrayBuffer(stream);
 // => ArrayBuffer
 
+await Bun.readableStreamToBytes(stream);
+// => Uint8Array
+
 await Bun.readableStreamToBlob(stream);
 // => Blob
 
@@ -635,7 +637,7 @@ Bun.resolveSync("zod", "/path/to/project");
 // => "/path/to/project/node_modules/zod/index.ts"
 ```
 
-To resolve relative to the current working directory, pass `process.cwd` or `"."` as the root.
+To resolve relative to the current working directory, pass `process.cwd()` or `"."` as the root.
 
 ```ts
 Bun.resolveSync("./foo.ts", process.cwd());

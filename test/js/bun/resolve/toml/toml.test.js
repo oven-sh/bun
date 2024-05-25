@@ -1,12 +1,7 @@
-import { describe, it, expect } from "bun:test";
-import { gc } from "harness";
+import { expect, it } from "bun:test";
+import tomlFromCustomTypeAttribute from "./toml-fixture.toml.txt" with { type: "toml" };
 
-it("syntax", async () => {
-  gc();
-
-  const toml = (await import("./toml-fixture.toml")).default;
-  gc();
-
+function checkToml(toml) {
   expect(toml.framework).toBe("next");
   expect(toml.bundle.packages["@emotion/react"]).toBe(true);
   expect(toml.array[0].entry_one).toBe("one");
@@ -22,5 +17,21 @@ it("syntax", async () => {
   expect(toml.install.scopes["@mybigcompany"].url).toBe("https://registry.mybigcompany.com");
   expect(toml.install.scopes["@mybigcompany2"].url).toBe("https://registry.mybigcompany.com");
   expect(toml.install.scopes["@mybigcompany3"].three).toBe(4);
-  gc();
+  expect(toml.install.cache.dir).toBe("C:\\Windows\\System32");
+  expect(toml.install.cache.dir2).toBe("C:\\Windows\\System32\\🏳️‍🌈");
+}
+
+it("via dynamic import", async () => {
+  const toml = (await import("./toml-fixture.toml")).default;
+  checkToml(toml);
+});
+
+it("via import type toml", async () => {
+  checkToml(tomlFromCustomTypeAttribute);
+});
+
+it("via dynamic import with type attribute", async () => {
+  delete require.cache[require.resolve("./toml-fixture.toml.txt")];
+  const toml = (await import("./toml-fixture.toml.txt", { with: { type: "toml" } })).default;
+  checkToml(toml);
 });

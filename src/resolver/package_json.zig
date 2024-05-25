@@ -13,7 +13,7 @@ const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");
@@ -617,7 +617,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parseJSON(r.log, json_source, allocator) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -1442,7 +1442,7 @@ pub const ESModule = struct {
         "%5C",
     };
 
-    threadlocal var resolved_path_buf_percent: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolved_path_buf_percent: bun.PathBuffer = undefined;
     pub fn resolve(r: *const ESModule, package_url: string, subpath: string, exports: ExportsMap.Entry) Resolution {
         return finalize(
             r.resolveExports(package_url, subpath, exports),
@@ -1656,8 +1656,8 @@ pub const ESModule = struct {
         };
     }
 
-    threadlocal var resolve_target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var resolve_target_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_buf: bun.PathBuffer = undefined;
+    threadlocal var resolve_target_buf2: bun.PathBuffer = undefined;
     fn resolveTarget(
         r: *const ESModule,
         package_url: string,
@@ -1962,8 +1962,8 @@ pub const ESModule = struct {
         }
     }
 
-    threadlocal var resolve_target_reverse_prefix_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var resolve_target_reverse_prefix_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf: bun.PathBuffer = undefined;
+    threadlocal var resolve_target_reverse_prefix_buf2: bun.PathBuffer = undefined;
 
     fn resolveTargetReverse(
         r: *const ESModule,

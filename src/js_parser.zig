@@ -3,7 +3,7 @@
 /// ** you must also increment the `expected_version` in RuntimeTranspilerCache.zig **
 /// ** IMPORTANT **
 pub const std = @import("std");
-pub const logger = @import("root").bun.logger;
+pub const logger = bun.logger;
 pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
 pub const js_ast = bun.JSAst;
@@ -43,7 +43,7 @@ pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
@@ -51,7 +51,7 @@ fn _disabledAssert(_: bool) void {
     unreachable;
 }
 
-const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
+const assert = if (Environment.allow_assert) bun.assert else _disabledAssert;
 const debug = Output.scoped(.JSParser, false);
 const ExprListLoc = struct {
     list: ExprNodeList,
@@ -97,10 +97,8 @@ const TypeParameterFlag = packed struct {
     /// TypeScript 5.0
     allow_const_modifier: bool = false,
 
-    pub const all = TypeParameterFlag{
-        .allow_in_out_variance_annotations = true,
-        .allow_const_modifier = true,
-    };
+    /// Allow "<>" without any type parameters
+    allow_empty_type_parameters: bool = false,
 };
 
 const JSXImport = enum {
@@ -139,13 +137,13 @@ const JSXImport = enum {
         pub fn runtimeImportNames(this: *const Symbols, buf: *[3]string) []const string {
             var i: usize = 0;
             if (this.jsxDEV != null) {
-                std.debug.assert(this.jsx == null); // we should never end up with this in the same file
+                bun.assert(this.jsx == null); // we should never end up with this in the same file
                 buf[0] = "jsxDEV";
                 i += 1;
             }
 
             if (this.jsx != null) {
-                std.debug.assert(this.jsxDEV == null); // we should never end up with this in the same file
+                bun.assert(this.jsxDEV == null); // we should never end up with this in the same file
                 buf[0] = "jsx";
                 i += 1;
             }
@@ -330,6 +328,7 @@ const TransposeState = struct {
     is_then_catch_target: bool = false,
     is_require_immediately_assigned_to_decl: bool = false,
     loc: logger.Loc = logger.Loc.Empty,
+    type_attribute: E.Import.TypeAttribute = .none,
 };
 
 var true_args = &[_]Expr{
@@ -719,7 +718,7 @@ pub const TypeScript = struct {
                 return false;
             }
 
-            // If we have a 'yield' keyword, and we're in the [yield] context, then 'yield' is
+            // If we have an 'await' keyword, and we're in the [await] context, then 'await' is
             // considered a keyword and is not an identifier.
             if (p.fn_or_arrow_data_parse.allow_await != .allow_ident and strings.eqlComptime(p.lexer.identifier, "await")) {
                 return false;
@@ -2841,7 +2840,7 @@ pub const Parser = struct {
         transform_only: bool = false,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
-            std.debug.assert(!this.bundle);
+            bun.assert(!this.bundle);
 
             if (did_use_jsx) {
                 if (this.jsx.parse) {
@@ -3400,8 +3399,9 @@ pub const Parser = struct {
                     decls[0] = .{
                         .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            // TODO: test UTF-8 file paths
-                            E.String.init(p.source.path.name.dir),
+                            E.UTF8String{
+                                .data = p.source.path.name.dir,
+                            },
                             logger.Loc.Empty,
                         ),
                     };
@@ -3411,7 +3411,9 @@ pub const Parser = struct {
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
                         .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.String.init(p.source.path.text),
+                            E.UTF8String{
+                                .data = p.source.path.text,
+                            },
                             logger.Loc.Empty,
                         ),
                     };
@@ -3469,7 +3471,7 @@ pub const Parser = struct {
                         .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
                     });
                 }
-                std.debug.assert(remaining_stmts.len == 0);
+                bun.assert(remaining_stmts.len == 0);
             }
 
             if (p.commonjs_named_exports.count() > 0) {
@@ -3882,7 +3884,7 @@ pub const Parser = struct {
         // 3) we are not bundling.
         //
         if (exports_kind == .esm and (uses_dirname or uses_filename)) {
-            std.debug.assert(!p.options.bundle);
+            bun.assert(!p.options.bundle);
             const count = @as(usize, @intFromBool(uses_dirname)) + @as(usize, @intFromBool(uses_filename));
             var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, count) catch unreachable;
             var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
@@ -4962,11 +4964,16 @@ fn NewParser_(
                 }
 
                 const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
+
+                if (state.type_attribute.tag() != .none) {
+                    p.import_records.items[import_record_index].tag = state.type_attribute.tag();
+                }
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.newExpr(E.Import{
                     .expr = arg,
                     .import_record_index = Ref.toInt(import_record_index),
+                    .type_attribute = state.type_attribute,
                     // .leading_interior_comments = arg.getString().
                 }, state.loc);
             }
@@ -4980,6 +4987,7 @@ fn NewParser_(
             return p.newExpr(E.Import{
                 .expr = arg,
                 .import_record_index = std.math.maxInt(u32),
+                .type_attribute = state.type_attribute,
             }, state.loc);
         }
 
@@ -5005,7 +5013,7 @@ fn NewParser_(
         }
 
         pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
-            std.debug.assert(arg.data == .e_string);
+            bun.assert(arg.data == .e_string);
 
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
@@ -7773,8 +7781,7 @@ fn NewParser_(
         }
 
         pub inline fn skipTypescriptReturnType(p: *P) anyerror!void {
-            var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), false, &result);
+            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_return_type), false, {});
         }
 
         pub inline fn skipTypescriptReturnTypeWithMetadata(p: *P) anyerror!TypeScript.Metadata {
@@ -7808,8 +7815,7 @@ fn NewParser_(
 
         inline fn skipTypeScriptType(p: *P, level: js_ast.Op.Level) anyerror!void {
             p.markTypeScriptOnly();
-            var result = TypeScript.Metadata.default;
-            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, false, &result);
+            try p.skipTypeScriptTypeWithOpts(level, TypeScript.SkipTypeOptions.empty, false, {});
         }
 
         inline fn skipTypeScriptTypeWithMetadata(p: *P, level: js_ast.Op.Level) anyerror!TypeScript.Metadata {
@@ -7961,7 +7967,11 @@ fn NewParser_(
         //     let x = (y: any): (y) => {return 0};
         //     let x = (y: any): asserts y is (y) => {};
         //
-        fn skipTypeScriptParenOrFnType(p: *P, comptime get_metadata: bool, result: *TypeScript.Metadata) anyerror!void {
+        fn skipTypeScriptParenOrFnType(
+            p: *P,
+            comptime get_metadata: bool,
+            result: if (get_metadata) *TypeScript.Metadata else void,
+        ) anyerror!void {
             p.markTypeScriptOnly();
 
             if (p.trySkipTypeScriptArrowArgsWithBacktracking()) {
@@ -7984,7 +7994,7 @@ fn NewParser_(
             level: js_ast.Op.Level,
             opts: TypeScript.SkipTypeOptions.Bitset,
             comptime get_metadata: bool,
-            result: *TypeScript.Metadata,
+            result: if (get_metadata) *TypeScript.Metadata else void,
         ) anyerror!void {
             p.markTypeScriptOnly();
 
@@ -8352,8 +8362,7 @@ fn NewParser_(
                             if (p.lexer.token == .t_dot_dot_dot) {
                                 try p.lexer.next();
                             }
-                            var dummy_result = TypeScript.Metadata.default;
-                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels), false, &dummy_result);
+                            try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.allow_tuple_labels), false, {});
                             if (p.lexer.token == .t_question) {
                                 try p.lexer.next();
                             }
@@ -8426,13 +8435,13 @@ fn NewParser_(
                             if (left.finishUnion(p)) |final| {
                                 // finish skipping the rest of the type without collecting type metadata.
                                 result.* = final;
-                                try p.skipTypeScriptType(.bitwise_or);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, false, {});
                             } else {
-                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, get_metadata, result);
                                 result.mergeUnion(left);
                             }
                         } else {
-                            try p.skipTypeScriptType(.bitwise_or);
+                            try p.skipTypeScriptTypeWithOpts(.bitwise_or, opts, false, {});
                         }
                     },
                     .t_ampersand => {
@@ -8447,13 +8456,13 @@ fn NewParser_(
                             if (left.finishIntersection(p)) |final| {
                                 // finish skipping the rest of the type without collecting type metadata.
                                 result.* = final;
-                                try p.skipTypeScriptType(.bitwise_and);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, opts, false, {});
                             } else {
-                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, TypeScript.SkipTypeOptions.empty, get_metadata, result);
+                                try p.skipTypeScriptTypeWithOpts(.bitwise_and, opts, get_metadata, result);
                                 result.mergeIntersection(left);
                             }
                         } else {
-                            try p.skipTypeScriptType(.bitwise_and);
+                            try p.skipTypeScriptTypeWithOpts(.bitwise_and, opts, false, {});
                         }
                     },
                     .t_exclamation => {
@@ -8531,8 +8540,13 @@ fn NewParser_(
                         try p.lexer.next();
 
                         // The type following "extends" is not permitted to be another conditional type
-                        var extends_type = TypeScript.Metadata.default;
-                        try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), get_metadata, &extends_type);
+                        var extends_type = if (get_metadata) TypeScript.Metadata.default else {};
+                        try p.skipTypeScriptTypeWithOpts(
+                            .lowest,
+                            TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types),
+                            get_metadata,
+                            if (get_metadata) &extends_type else {},
+                        );
 
                         if (comptime get_metadata) {
                             // intersection
@@ -8581,8 +8595,7 @@ fn NewParser_(
                 if (p.lexer.token == .t_open_bracket) {
                     // Index signature or computed property
                     try p.lexer.next();
-                    var metadata = TypeScript.Metadata.default;
-                    try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature), false, &metadata);
+                    try p.skipTypeScriptTypeWithOpts(.lowest, TypeScript.SkipTypeOptions.Bitset.initOne(.is_index_signature), false, {});
 
                     // "{ [key: string]: number }"
                     // "{ readonly [K in keyof T]: T[K] }"
@@ -8838,7 +8851,7 @@ fn NewParser_(
             }
 
             if (path.import_tag != .none) {
-                try p.validateSQLiteImportType(path.import_tag, &stmt);
+                try p.validateImportType(path.import_tag, &stmt);
             }
 
             // Track the items for this namespace
@@ -8846,20 +8859,33 @@ fn NewParser_(
             return p.s(stmt, loc);
         }
 
-        fn validateSQLiteImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
+        fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
             @setCold(true);
 
-            if (import_tag == .with_type_sqlite or import_tag == .with_type_sqlite_embedded) {
+            if (import_tag.loader() != null) {
                 p.import_records.items[stmt.import_record_index].tag = import_tag;
 
-                for (stmt.items) |*item| {
-                    if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
-                        try p.log.addError(
-                            p.source,
-                            item.name.loc,
-                            "sqlite imports only support the \"default\" or \"db\" imports",
-                        );
-                        break;
+                if (import_tag.isSQLite()) {
+                    for (stmt.items) |*item| {
+                        if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
+                            try p.log.addError(
+                                p.source,
+                                item.name.loc,
+                                "sqlite imports only support the \"default\" or \"db\" imports",
+                            );
+                            break;
+                        }
+                    }
+                } else if (import_tag.onlySupportsDefaultImports()) {
+                    for (stmt.items) |*item| {
+                        if (!(strings.eqlComptime(item.alias, "default"))) {
+                            try p.log.addError(
+                                p.source,
+                                item.name.loc,
+                                "This loader type only supports the \"default\" import",
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -8876,6 +8902,11 @@ fn NewParser_(
 
             var result = SkipTypeParameterResult.could_be_type_cast;
             try p.lexer.next();
+
+            if (p.lexer.token == .t_greater_than and flags.allow_empty_type_parameters) {
+                try p.lexer.next();
+                return .definitely_type_parameters;
+            }
 
             while (true) {
                 var has_in = false;
@@ -10524,7 +10555,10 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{
+                .allow_in_out_variance_annotations = true,
+                .allow_empty_type_parameters = true,
+            });
 
             try p.lexer.expect(.t_equals);
             try p.skipTypeScriptType(.lowest);
@@ -10652,7 +10686,10 @@ fn NewParser_(
                 p.local_type_names.put(p.allocator, name, true) catch unreachable;
             }
 
-            _ = try p.skipTypeScriptTypeParameters(.{ .allow_in_out_variance_annotations = true });
+            _ = try p.skipTypeScriptTypeParameters(.{
+                .allow_in_out_variance_annotations = true,
+                .allow_empty_type_parameters = true,
+            });
 
             if (p.lexer.token == .t_extends) {
                 try p.lexer.next();
@@ -11682,7 +11719,6 @@ fn NewParser_(
                 try p.lexer.expect(.t_string_literal);
             }
 
-            // For now, we silently strip import assertions
             if (!p.lexer.has_newline_before and (
             // Import Assertions are deprecated.
             // Import Attributes are the new way to do this.
@@ -11737,13 +11773,22 @@ fn NewParser_(
                         if (supported_attribute) |attr| {
                             switch (attr) {
                                 .type => {
-                                    if (strings.eqlComptime(p.lexer.string_literal_slice, "macro")) {
+                                    const type_attr = p.lexer.string_literal_slice;
+                                    if (strings.eqlComptime(type_attr, "macro")) {
                                         path.is_macro = true;
-                                    } else if (strings.eqlComptime(p.lexer.string_literal_slice, "sqlite")) {
+                                    } else if (strings.eqlComptime(type_attr, "sqlite")) {
                                         path.import_tag = .with_type_sqlite;
                                         if (has_seen_embed_true) {
                                             path.import_tag = .with_type_sqlite_embedded;
                                         }
+                                    } else if (strings.eqlComptime(type_attr, "json")) {
+                                        path.import_tag = .with_type_json;
+                                    } else if (strings.eqlComptime(type_attr, "toml")) {
+                                        path.import_tag = .with_type_toml;
+                                    } else if (strings.eqlComptime(type_attr, "text")) {
+                                        path.import_tag = .with_type_text;
+                                    } else if (strings.eqlComptime(type_attr, "file")) {
+                                        path.import_tag = .with_type_file;
                                     }
                                 },
                                 .embed => {
@@ -12452,8 +12497,7 @@ fn NewParser_(
 
             pub fn skipTypeScriptConstraintOfInferTypeWithBacktracking(p: *P, flags: TypeScript.SkipTypeOptions.Bitset) anyerror!bool {
                 try p.lexer.expect(.t_extends);
-                var metadata = TypeScript.Metadata.default;
-                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, &metadata);
+                try p.skipTypeScriptTypeWithOpts(.prefix, TypeScript.SkipTypeOptions.Bitset.initOne(.disallow_conditional_types), false, {});
 
                 if (!flags.contains(.disallow_conditional_types) and p.lexer.token == .t_question) {
                     return error.Backtrack;
@@ -14957,6 +15001,8 @@ fn NewParser_(
 
             const value = try p.parseExpr(.comma);
 
+            var type_attribute = E.Import.TypeAttribute.none;
+
             if (p.lexer.token == .t_comma) {
                 // "import('./foo.json', )"
                 try p.lexer.next();
@@ -14964,7 +15010,28 @@ fn NewParser_(
                 if (p.lexer.token != .t_close_paren) {
                     // for now, we silently strip import assertions
                     // "import('./foo.json', { assert: { type: 'json' } })"
-                    _ = try p.parseExpr(.comma);
+                    const import_expr = try p.parseExpr(.comma);
+                    if (import_expr.data == .e_object) {
+                        if (import_expr.data.e_object.get("with") orelse import_expr.data.e_object.get("assert")) |with| {
+                            if (with.data == .e_object) {
+                                const with_object = with.data.e_object;
+                                if (with_object.get("type")) |field| {
+                                    if (field.data == .e_string) {
+                                        const str = field.data.e_string;
+                                        if (str.eqlComptime("json")) {
+                                            type_attribute = .json;
+                                        } else if (str.eqlComptime("toml")) {
+                                            type_attribute = .toml;
+                                        } else if (str.eqlComptime("text")) {
+                                            type_attribute = .text;
+                                        } else if (str.eqlComptime("file")) {
+                                            type_attribute = .file;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     if (p.lexer.token == .t_comma) {
                         // "import('./foo.json', { assert: { type: 'json' } }, , )"
@@ -14985,11 +15052,17 @@ fn NewParser_(
                         .expr = value,
                         .leading_interior_comments = comments,
                         .import_record_index = import_record_index,
+                        .type_attribute = type_attribute,
                     }, loc);
                 }
             }
 
-            return p.newExpr(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = std.math.maxInt(u32) }, loc);
+            return p.newExpr(E.Import{
+                .expr = value,
+                .type_attribute = type_attribute,
+                .leading_interior_comments = comments,
+                .import_record_index = std.math.maxInt(u32),
+            }, loc);
         }
 
         fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {
@@ -15540,7 +15613,7 @@ fn NewParser_(
         }
 
         fn recordDeclaredSymbol(p: *P, ref: Ref) anyerror!void {
-            std.debug.assert(ref.isSymbol());
+            bun.assert(ref.isSymbol());
             try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
@@ -16824,6 +16897,7 @@ fn NewParser_(
                         .is_await_target = if (p.await_target != null) p.await_target.? == .e_import and p.await_target.?.e_import == e_ else false,
                         .is_then_catch_target = p.then_catch_chain.has_catch and std.meta.activeTag(p.then_catch_chain.next_target) == .e_import and expr.data.e_import == p.then_catch_chain.next_target.e_import,
                         .loc = e_.expr.loc,
+                        .type_attribute = e_.type_attribute,
                     };
 
                     e_.expr = p.visitExpr(e_.expr);
@@ -17106,7 +17180,7 @@ fn NewParser_(
         fn recordUsageOfRuntimeRequire(p: *P) void {
             // target bun does not have __require
             if (!p.options.features.use_import_meta_require) {
-                std.debug.assert(p.options.features.allow_runtime);
+                bun.assert(p.options.features.allow_runtime);
 
                 p.ensureRequireSymbol();
                 p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
@@ -17114,7 +17188,7 @@ fn NewParser_(
         }
 
         inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
-            std.debug.assert(!p.isSourceRuntime());
+            bun.assert(!p.isSourceRuntime());
             return Expr{
                 .data = .{
                     .e_require_call_target = {},
@@ -18564,7 +18638,7 @@ fn NewParser_(
 
                                     // This is to handle TS decorators, mostly.
                                     var class_stmts = p.lowerClass(.{ .stmt = s2 });
-                                    std.debug.assert(class_stmts[0].data == .s_class);
+                                    bun.assert(class_stmts[0].data == .s_class);
 
                                     if (class_stmts.len > 1) {
                                         data.value.stmt = class_stmts[0];
@@ -19648,7 +19722,7 @@ fn NewParser_(
                         var output_properties = object.properties.slice();
                         var end: u32 = 0;
                         for (bound_object.properties) |property| {
-                            if (property.key.asString(p.allocator)) |name| {
+                            if (property.key.asStringLiteral(p.allocator)) |name| {
                                 if (object.asProperty(name)) |query| {
                                     switch (query.expr.data) {
                                         .e_object, .e_array => p.visitBindingAndExprForMacro(property.value, query.expr),
@@ -20329,7 +20403,7 @@ fn NewParser_(
 
                 .m_dot => |_refs| {
                     var refs = _refs;
-                    std.debug.assert(refs.items.len >= 2);
+                    bun.assert(refs.items.len >= 2);
                     defer refs.deinit(p.allocator);
 
                     var dots = p.newExpr(
@@ -22067,7 +22141,7 @@ fn NewParser_(
 
                 // Wrap everything in a try/catch/finally block
                 p.recordUsage(caught_ref);
-                result.ensureUnusedCapacity(2) catch bun.outOfMemory();
+                result.ensureUnusedCapacity(2 + @as(usize, @intFromBool(exports.items.len > 0))) catch bun.outOfMemory();
                 result.appendAssumeCapacity(p.s(S.Local{
                     .decls = decls: {
                         const decls = p.allocator.alloc(Decl, 1) catch bun.outOfMemory();
@@ -22957,6 +23031,7 @@ fn NewParser_(
                 // Only enable during bundling
                 .commonjs_named_exports_deoptimized = !opts.bundle,
             };
+            this.lexer.track_comments = opts.features.minify_identifiers;
 
             this.unwrap_all_requires = brk: {
                 if (opts.bundle) {

@@ -1,0 +1,13 @@
+{
+  " != undefined": "This is by definition Undefined Behavior.",
+  " == undefined": "This is by definition Undefined Behavior.",
+  "@import(\"root\").bun.": "Only import 'bun' once",
+  "std.debug.assert": "Use bun.assert instead",
+  "std.debug.dumpStackTrace": "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead",
+  "std.debug.print": "Don't let this be committed",
+  "std.mem.indexOfAny": "Use bun.strings.indexAny or bun.strings.indexAnyComptime",
+  "undefined != ": "This is by definition Undefined Behavior.",
+  "undefined == ": "This is by definition Undefined Behavior.",
+  "bun.toFD(std.fs.cwd().fd)": "Use bun.FD.cwd()",
+  "": ""
+}

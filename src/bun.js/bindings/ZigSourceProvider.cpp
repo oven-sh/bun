@@ -30,6 +30,9 @@ using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
 SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {
+
+    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "specifier should not already be a file URL");
+
     if (isBuiltin) {
         if (sourceURL.startsWith("node:"_s)) {
             return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
@@ -40,23 +43,9 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
         }
     }
 
-    ASSERT_WITH_MESSAGE(!sourceURL.startsWith("file://"_s), "sourceURL should not already be a file URL");
     return SourceOrigin(WTF::URL::fileURLWithFileSystemPath(sourceURL));
 }
 
-void forEachSourceProvider(const WTF::Function<void(JSC::SourceID)>& func)
-{
-    // if (sourceProviderMap == nullptr) {
-    //     return;
-    // }
-
-    // for (auto& pair : *sourceProviderMap) {
-    //     auto sourceProvider = pair.value;
-    //     if (sourceProvider) {
-    //         func(sourceProvider);
-    //     }
-    // }
-}
 extern "C" int ByteRangeMapping__getSourceID(void* mappings, BunString sourceURL);
 extern "C" void* ByteRangeMapping__find(BunString sourceURL);
 void* sourceMappingForSourceURL(const WTF::String& sourceURL)
@@ -77,10 +66,15 @@ JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL)
 }
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
+extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
-Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, ResolvedSource& resolvedSource, JSC::SourceProviderSourceType sourceType, bool isBuiltin)
-{
-
+Ref<SourceProvider> SourceProvider::create(
+    Zig::GlobalObject* globalObject,
+    ResolvedSource& resolvedSource,
+    JSC::SourceProviderSourceType sourceType,
+    bool isBuiltin
+) {
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
@@ -110,7 +104,18 @@ Ref<SourceProvider> SourceProvider::create(Zig::GlobalObject* globalObject, Reso
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
     }
 
+    if (resolvedSource.already_bundled) {
+        Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &resolvedSource.source_url);
+    }
+
     return provider;
+}
+
+SourceProvider::~SourceProvider() {
+    if(m_resolvedSource.already_bundled) {
+        BunString str = Bun::toString(sourceURL());
+        Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
+    }
 }
 
 unsigned SourceProvider::hash() const
@@ -150,9 +155,8 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
 }
-SourceProvider::~SourceProvider()
-{
-}
+
+
 void SourceProvider::commitCachedBytecode()
 {
     // if (!m_resolvedSource.bytecodecache_fd || !m_cachedBytecode || !m_cachedBytecode->hasUpdates())
@@ -240,4 +244,9 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     //   return 0;
     // }
 }
+
+extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider) {
+    return Bun::toStringView(provider->source());
+}
+
 }; // namespace Zig

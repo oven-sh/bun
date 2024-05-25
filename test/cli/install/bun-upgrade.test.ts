@@ -1,23 +1,24 @@
-import { spawn } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, rm } from "fs/promises";
-import { tmpdir } from "os";
+import { spawn, spawnSync } from "bun";
+import { beforeEach, expect, it, setDefaultTimeout, beforeAll } from "bun:test";
+import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
 import { join } from "path";
 import { copyFileSync } from "js/node/fs/export-star-from";
+import { upgrade_test_helpers } from "bun:internal-for-testing";
+const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
 let run_dir: string;
 let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
 
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
+
 beforeEach(async () => {
-  run_dir = await realpath(
-    await mkdtemp(join(tmpdir(), "bun-upgrade.test." + Math.trunc(Math.random() * 9999999).toString(32))),
-  );
+  run_dir = tmpdirSync();
   copyFileSync(bunExe(), join(run_dir, exe_name));
 });
 
 it("two invalid arguments, should display error message and suggest command", async () => {
-  console.log(run_dir, exe_name);
   const { stderr } = spawn({
     cmd: [join(run_dir, exe_name), "upgrade", "bun-types", "--dev"],
     cwd: run_dir,
@@ -95,16 +96,81 @@ it("two valid argument, should succeed", async () => {
 });
 
 it("zero arguments, should succeed", async () => {
-  const { stderr } = spawn({
+  using server = Bun.serve({
+    tls: tls,
+    port: 0,
+    async fetch() {
+      return new Response(
+        JSON.stringify({
+          "tag_name": "bun-v1.1.4",
+          "assets": [
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-windows-x64.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-windows-x64.zip`,
+            },
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-windows-x64-baseline.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-windows-x64-baseline.zip`,
+            },
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-linux-x64.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-linux-x64.zip`,
+            },
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-linux-x64-baseline.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-linux-x64-baseline.zip`,
+            },
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-darwin-x64.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-darwin-x64.zip`,
+            },
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-darwin-x64-baseline.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-darwin-x64-baseline.zip`,
+            },
+            {
+              "url": "foo",
+              "content_type": "application/zip",
+              "name": "bun-darwin-aarch64.zip",
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-darwin-aarch64.zip`,
+            },
+          ],
+        }),
+      );
+    },
+  });
+
+  // On windows, open the temporary directory without FILE_SHARE_DELETE before spawning
+  // the upgrade process. This is to test for EBUSY errors
+  openTempDirWithoutSharingDelete();
+
+  const { stderr } = spawnSync({
     cmd: [join(run_dir, exe_name), "upgrade"],
     cwd: run_dir,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `localhost:${server.port}`,
+    },
   });
 
-  const err = await new Response(stderr).text();
+  closeTempDirHandle();
+
   // Should not contain error message
-  expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
+  expect(stderr.toString()).not.toContain("error:");
 });

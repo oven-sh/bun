@@ -1,6 +1,6 @@
 const std = @import("std");
 const js_ast = bun.JSAst;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const js_lexer = bun.js_lexer;
 const json_parser = bun.JSON;
 const fs = @import("fs.zig");
@@ -62,6 +62,7 @@ pub const DefineData = struct {
             .value = b.value,
             .can_be_removed_if_unused = a.can_be_removed_if_unused,
             .call_can_be_unwrapped_if_unused = a.call_can_be_unwrapped_if_unused,
+            .original_name = b.original_name,
         };
     }
 
@@ -69,8 +70,8 @@ pub const DefineData = struct {
         try user_defines.ensureUnusedCapacity(@as(u32, @truncate(defines.count())));
         var iter = defines.iterator();
         while (iter.next()) |entry| {
-            var splitter = std.mem.split(u8, entry.key_ptr.*, ".");
-            while (splitter.next()) |part| {
+            var keySplitter = std.mem.split(u8, entry.key_ptr.*, ".");
+            while (keySplitter.next()) |part| {
                 if (!js_lexer.isIdentifier(part)) {
                     if (strings.eql(part, entry.key_ptr)) {
                         try log.addErrorFmt(null, logger.Loc{}, allocator, "define key \"{s}\" must be a valid identifier", .{entry.key_ptr.*});
@@ -81,7 +82,16 @@ pub const DefineData = struct {
                 }
             }
 
-            if (js_lexer.isIdentifier(entry.value_ptr.*) and !js_lexer.Keywords.has(entry.value_ptr.*)) {
+            // check for nested identifiers
+            var valueSplitter = std.mem.split(u8, entry.value_ptr.*, ".");
+            var isIdent = true;
+            while (valueSplitter.next()) |part| {
+                if (!js_lexer.isIdentifier(part) or js_lexer.Keywords.has(part)) {
+                    isIdent = false;
+                    break;
+                }
+            }
+            if (isIdent) {
 
                 // Special-case undefined. it's not an identifier here
                 // https://github.com/evanw/esbuild/issues/1407
@@ -306,22 +316,3 @@ pub const Define = struct {
         return define;
     }
 };
-
-const expect = std.testing.expect;
-test "UserDefines" {
-    js_ast.Stmt.Data.Store.create(default_allocator);
-    js_ast.Expr.Data.Store.create(default_allocator);
-    var orig = RawDefines.init(default_allocator);
-    try orig.put("process.env.NODE_ENV", "\"development\"");
-    try orig.put("globalThis", "window");
-    var log = logger.Log.init(default_allocator);
-    var data = try DefineData.from_input(orig, &log, default_allocator);
-
-    try expect(data.contains("process.env.NODE_ENV"));
-    try expect(data.contains("globalThis"));
-    const globalThis = data.get("globalThis");
-    const val = data.get("process.env.NODE_ENV");
-    try expect(val != null);
-    try expect(val.?.value.e_string.eql([]const u8, "development"));
-    try std.testing.expectEqualStrings(globalThis.?.original_name.?, "window");
-}

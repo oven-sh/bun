@@ -18,14 +18,14 @@ const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIter
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
-pub const eval = @import("./interpreter.zig");
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
-pub const Interpreter = eval.Interpreter;
+pub const Interpreter = interpret.Interpreter;
 pub const Subprocess = subproc.ShellSubprocess;
+pub const ExitCode = interpret.ExitCode;
 pub const IOWriter = Interpreter.IOWriter;
 pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
@@ -108,23 +108,20 @@ pub const ShellErr = union(enum) {
     pub fn throwMini(this: @This()) void {
         defer this.deinit(bun.default_allocator);
         switch (this) {
-            .sys => {
-                const err = this.sys;
-                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: {s}: {}", .{ err.message, err.path }) catch bun.outOfMemory();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+            .sys => |err| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
                 bun.Global.exit(1);
             },
-            .custom => {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{this.custom});
+            .custom => |custom| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>{s}<r>", .{custom});
                 bun.Global.exit(1);
             },
-            .invalid_arguments => {
-                const str = std.fmt.allocPrint(bun.default_allocator, "bunsh: invalid arguments: {s}", .{this.invalid_arguments.val}) catch bun.outOfMemory();
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>{s}<r>", .{str});
+            .invalid_arguments => |invalid_arguments| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {s}<r>", .{invalid_arguments.val});
                 bun.Global.exit(1);
             },
-            .todo => {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed to due to error <b>TODO: {s}<r>", .{this.todo});
+            .todo => |todo| {
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>TODO: {s}<r>", .{todo});
                 bun.Global.exit(1);
             },
         }
@@ -160,7 +157,9 @@ pub fn Result(comptime T: anytype) type {
 
 pub const ShellError = error{ Init, Process, GlobalThisThrown, Spawn };
 pub const ParseError = error{
+    Unsupported,
     Expected,
+    Unexpected,
     Unknown,
     Lex,
 };
@@ -176,8 +175,8 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, false);
-const logsys = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SHELL, true);
+const logsys = bun.Output.scoped(.SYS, true);
 
 pub const GlobalJS = struct {
     globalThis: *JSC.JSGlobalObject,
@@ -347,24 +346,301 @@ pub const AST = struct {
 
     pub const Expr = union(Expr.Tag) {
         assign: []Assign,
-        cond: *Conditional,
+        binary: *Binary,
         pipeline: *Pipeline,
         cmd: *Cmd,
-        subshell: Script,
+        subshell: *Subshell,
+        @"if": *If,
+        condexpr: *CondExpr,
+        /// Valid async (`&`) expressions:
+        /// - pipeline
+        /// - cmd
+        /// - subshell
+        /// - if
+        /// - condexpr
+        /// Note that commands in a pipeline cannot be async
+        /// TODO: Extra indirection for essentially a boolean feels bad for performance
+        /// could probably find a more efficient way to encode this information.
+        @"async": *Expr,
 
         pub fn asPipelineItem(this: *Expr) ?PipelineItem {
             return switch (this.*) {
                 .assign => .{ .assigns = this.assign },
                 .cmd => .{ .cmd = this.cmd },
                 .subshell => .{ .subshell = this.subshell },
+                .@"if" => .{ .@"if" = this.@"if" },
+                .condexpr => .{ .condexpr = this.condexpr },
                 else => null,
             };
         }
 
-        pub const Tag = enum { assign, cond, pipeline, cmd, subshell };
+        pub const Tag = enum {
+            assign,
+            binary,
+            pipeline,
+            cmd,
+            subshell,
+            @"if",
+            condexpr,
+            @"async",
+        };
     };
 
-    pub const Conditional = struct {
+    /// https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
+    pub const CondExpr = struct {
+        op: Op,
+        args: ArgList = ArgList.zeroes,
+
+        const ArgList = SmolList(Atom, 2);
+
+        // args: SmolList(1, comptime INLINED_MAX: comptime_int)
+        pub const Op = enum {
+            /// -a file
+            ///   True if file exists.
+            @"-a",
+
+            /// -b file
+            ///   True if file exists and is a block special file.
+            @"-b",
+
+            /// -c file
+            ///   True if file exists and is a character special file.
+            @"-c",
+
+            /// -d file
+            ///   True if file exists and is a directory.
+            @"-d",
+
+            /// -e file
+            ///   True if file exists.
+            @"-e",
+
+            /// -f file
+            ///   True if file exists and is a regular file.
+            @"-f",
+
+            /// -g file
+            ///   True if file exists and its set-group-id bit is set.
+            @"-g",
+
+            /// -h file
+            ///   True if file exists and is a symbolic link.
+            @"-h",
+
+            /// -k file
+            ///   True if file exists and its "sticky" bit is set.
+            @"-k",
+
+            /// -p file
+            ///   True if file exists and is a named pipe (FIFO).
+            @"-p",
+
+            /// -r file
+            ///   True if file exists and is readable.
+            @"-r",
+
+            /// -s file
+            ///   True if file exists and has a size greater than zero.
+            @"-s",
+
+            /// -t fd
+            ///   True if file descriptor fd is open and refers to a terminal.
+            @"-t",
+
+            /// -u file
+            ///   True if file exists and its set-user-id bit is set.
+            @"-u",
+
+            /// -w file
+            ///   True if file exists and is writable.
+            @"-w",
+
+            /// -x file
+            ///   True if file exists and is executable.
+            @"-x",
+
+            /// -G file
+            ///   True if file exists and is owned by the effective group id.
+            @"-G",
+
+            /// -L file
+            ///   True if file exists and is a symbolic link.
+            @"-L",
+
+            /// -N file
+            ///   True if file exists and has been modified since it was last read.
+            @"-N",
+
+            /// -O file
+            ///   True if file exists and is owned by the effective user id.
+            @"-O",
+
+            /// -S file
+            ///   True if file exists and is a socket.
+            @"-S",
+
+            /// file1 -ef file2
+            ///   True if file1 and file2 refer to the same device and inode numbers.
+            @"-ef",
+
+            /// file1 -nt file2
+            ///   True if file1 is newer than file2, or if file1 exists and file2 does not.
+            @"-nt",
+
+            /// file1 -ot file2
+            ///   True if file1 is older than file2, or if file2 exists and file1 does not.
+            @"-ot",
+
+            /// -o optname
+            ///   True if the shell option optname is enabled.
+            @"-o",
+
+            /// -v varname
+            ///   True if the shell variable varname is set.
+            @"-v",
+
+            /// -R varname
+            ///   True if the shell variable varname is set and is a name reference.
+            @"-R",
+
+            /// -z string
+            ///   True if the length of string is zero.
+            @"-z",
+
+            /// -n string
+            ///   True if the length of string is non-zero.
+            @"-n",
+
+            /// string1 == string2
+            ///   True if the strings are equal.
+            @"==",
+
+            /// string1 != string2
+            ///   True if the strings are not equal.
+            @"!=",
+
+            /// string1 < string2
+            ///   True if string1 sorts before string2 lexicographically.
+            @"<",
+
+            /// string1 > string2
+            ///   True if string1 sorts after string2 lexicographically.
+            @">",
+
+            /// arg1 OP arg2
+            ///   OP is one of ‘-eq’, ‘-ne’, ‘-lt’, ‘-le’, ‘-gt’, or ‘-ge’.
+            ///   These arithmetic binary operators return true if arg1 is equal to, not equal to, less than,
+            ///   less than or equal to, greater than, or greater than or equal to arg2, respectively.
+            @"-eq",
+            @"-ne",
+            @"-lt",
+            @"-le",
+            @"-gt",
+            @"-ge",
+
+            pub const SUPPORTED: []const Op = &.{
+                .@"-f",
+                .@"-z",
+                .@"-n",
+                .@"-d",
+                .@"-c",
+                .@"==",
+                .@"!=",
+            };
+
+            pub fn isSupported(op: Op) bool {
+                inline for (SUPPORTED) |supported_op| {
+                    if (supported_op == op) return true;
+                }
+                return false;
+            }
+
+            const SINGLE_ARG_OPS: []const std.builtin.Type.EnumField = brk: {
+                const fields: []const std.builtin.Type.EnumField = std.meta.fields(AST.CondExpr.Op);
+                const count = count: {
+                    var count: usize = 0;
+                    for (fields) |f| {
+                        if (f.name[0] == '-' and f.name.len == 2) {
+                            count += 1;
+                        }
+                    }
+                    break :count count;
+                };
+                var ret: [count]std.builtin.Type.EnumField = undefined;
+                var len: usize = 0;
+                for (fields) |f| {
+                    if (f.name[0] == '-' and f.name.len == 2) {
+                        ret[len] = f;
+                        len += 1;
+                    }
+                }
+                break :brk &ret;
+            };
+
+            const BINARY_OPS: []const std.builtin.Type.EnumField = brk: {
+                const fields: []const std.builtin.Type.EnumField = std.meta.fields(AST.CondExpr.Op);
+                const count = count: {
+                    var count: usize = 0;
+                    for (fields) |f| {
+                        if (!(f.name[0] == '-' and f.name.len == 2)) {
+                            count += 1;
+                        }
+                    }
+                    break :count count;
+                };
+                var ret: [count]std.builtin.Type.EnumField = undefined;
+                var len: usize = 0;
+                for (fields) |f| {
+                    if (!(f.name[0] == '-' and f.name.len == 2)) {
+                        ret[len] = f;
+                        len += 1;
+                    }
+                }
+                break :brk &ret;
+            };
+        };
+
+        pub fn to_expr(this: CondExpr, alloc: Allocator) !Expr {
+            const condexpr = try alloc.create(CondExpr);
+            condexpr.* = this;
+            return .{
+                .condexpr = condexpr,
+            };
+        }
+    };
+
+    pub const Subshell = struct {
+        script: Script,
+        redirect: ?Redirect = null,
+        redirect_flags: RedirectFlags = .{},
+    };
+
+    /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
+    pub const If = struct {
+        cond: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
+        then: SmolList(Stmt, 1) = SmolList(Stmt, 1).zeroes,
+        /// From the spec:
+        ///
+        /// else_part        : Elif compound_list Then else_part
+        ///                  | Else compound_list
+        ///
+        /// If len is:
+        /// - 0                                   => no else
+        /// - 1                                   => just else
+        /// - 2n (n is # of elif/then branches)   => n elif/then branches
+        /// - 2n + 1                              => n elif/then branches and an else branch
+        else_parts: SmolList(SmolList(Stmt, 1), 1) = SmolList(SmolList(Stmt, 1), 1).zeroes,
+
+        pub fn to_expr(this: If, alloc: Allocator) !Expr {
+            const @"if" = try alloc.create(If);
+            @"if".* = this;
+            return .{
+                .@"if" = @"if",
+            };
+        }
+    };
+
+    pub const Binary = struct {
         op: Op,
         left: Expr,
         right: Expr,
@@ -379,7 +655,9 @@ pub const AST = struct {
     pub const PipelineItem = union(enum) {
         cmd: *Cmd,
         assigns: []Assign,
-        subshell: Script,
+        subshell: *Subshell,
+        @"if": *If,
+        condexpr: *CondExpr,
     };
 
     pub const CmdOrAssigns = union(CmdOrAssigns.Tag) {
@@ -446,86 +724,90 @@ pub const AST = struct {
         name_and_args: []Atom,
         redirect: RedirectFlags = .{},
         redirect_file: ?Redirect = null,
+    };
 
-        /// Bit flags for redirects:
-        /// -  `>`  = Redirect.Stdout
-        /// -  `1>` = Redirect.Stdout
-        /// -  `2>` = Redirect.Stderr
-        /// -  `&>` = Redirect.Stdout | Redirect.Stderr
-        /// -  `>>` = Redirect.Append | Redirect.Stdout
-        /// - `1>>` = Redirect.Append | Redirect.Stdout
-        /// - `2>>` = Redirect.Append | Redirect.Stderr
-        /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
-        ///
-        /// Multiple redirects and redirecting stdin is not supported yet.
-        pub const RedirectFlags = packed struct(u8) {
-            stdin: bool = false,
-            stdout: bool = false,
-            stderr: bool = false,
-            append: bool = false,
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
-            duplicate_out: bool = false,
-            __unused: u3 = 0,
+    /// Bit flags for redirects:
+    /// -  `>`  = Redirect.Stdout
+    /// -  `1>` = Redirect.Stdout
+    /// -  `2>` = Redirect.Stderr
+    /// -  `&>` = Redirect.Stdout | Redirect.Stderr
+    /// -  `>>` = Redirect.Append | Redirect.Stdout
+    /// - `1>>` = Redirect.Append | Redirect.Stdout
+    /// - `2>>` = Redirect.Append | Redirect.Stderr
+    /// - `&>>` = Redirect.Append | Redirect.Stdout | Redirect.Stderr
+    ///
+    /// Multiple redirects and redirecting stdin is not supported yet.
+    pub const RedirectFlags = packed struct(u8) {
+        stdin: bool = false,
+        stdout: bool = false,
+        stderr: bool = false,
+        append: bool = false,
+        /// 1>&2 === stdout=true and duplicate_out=true
+        /// 2>&1 === stderr=true and duplicate_out=true
+        duplicate_out: bool = false,
+        __unused: u3 = 0,
 
-            pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
-                return switch (io_kind) {
-                    .stdin => this.stdin,
-                    .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
-                    .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
-                };
-            }
+        pub inline fn isEmpty(this: RedirectFlags) bool {
+            return @as(u8, @bitCast(this)) == 0;
+        }
 
-            pub fn @"2>&1"() RedirectFlags {
-                return .{ .stderr = true, .duplicate = true };
-            }
+        pub fn redirectsElsewhere(this: RedirectFlags, io_kind: enum { stdin, stdout, stderr }) bool {
+            return switch (io_kind) {
+                .stdin => this.stdin,
+                .stdout => if (this.duplicate_out) !this.stdout else this.stdout,
+                .stderr => if (this.duplicate_out) !this.stderr else this.stderr,
+            };
+        }
 
-            pub fn @"1>&2"() RedirectFlags {
-                return .{ .stdout = true, .duplicate = true };
-            }
+        pub fn @"2>&1"() RedirectFlags {
+            return .{ .stderr = true, .duplicate = true };
+        }
 
-            pub fn toFlags(this: RedirectFlags) bun.Mode {
-                const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
-                const extra: bun.Mode = if (this.append) std.os.O.APPEND else std.os.O.TRUNC;
-                const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
-                return final_flags;
-            }
+        pub fn @"1>&2"() RedirectFlags {
+            return .{ .stdout = true, .duplicate = true };
+        }
 
-            pub fn @"<"() RedirectFlags {
-                return .{ .stdin = true };
-            }
+        pub fn toFlags(this: RedirectFlags) bun.Mode {
+            const read_write_flags: bun.Mode = if (this.stdin) std.os.O.RDONLY else std.os.O.WRONLY | std.os.O.CREAT;
+            const extra: bun.Mode = if (this.append) std.os.O.APPEND else std.os.O.TRUNC;
+            const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
+            return final_flags;
+        }
 
-            pub fn @"<<"() RedirectFlags {
-                return .{ .stdin = true, .append = true };
-            }
+        pub fn @"<"() RedirectFlags {
+            return .{ .stdin = true };
+        }
 
-            pub fn @">"() RedirectFlags {
-                return .{ .stdout = true };
-            }
+        pub fn @"<<"() RedirectFlags {
+            return .{ .stdin = true, .append = true };
+        }
 
-            pub fn @">>"() RedirectFlags {
-                return .{ .append = true, .stdout = true };
-            }
+        pub fn @">"() RedirectFlags {
+            return .{ .stdout = true };
+        }
 
-            pub fn @"&>"() RedirectFlags {
-                return .{ .stdout = true, .stderr = true };
-            }
+        pub fn @">>"() RedirectFlags {
+            return .{ .append = true, .stdout = true };
+        }
 
-            pub fn @"&>>"() RedirectFlags {
-                return .{ .append = true, .stdout = true, .stderr = true };
-            }
+        pub fn @"&>"() RedirectFlags {
+            return .{ .stdout = true, .stderr = true };
+        }
 
-            pub fn merge(a: RedirectFlags, b: RedirectFlags) RedirectFlags {
-                const anum: u8 = @bitCast(a);
-                const bnum: u8 = @bitCast(b);
-                return @bitCast(anum | bnum);
-            }
-        };
+        pub fn @"&>>"() RedirectFlags {
+            return .{ .append = true, .stdout = true, .stderr = true };
+        }
 
-        pub const Redirect = union(enum) {
-            atom: Atom,
-            jsbuf: JSBuf,
-        };
+        pub fn merge(a: RedirectFlags, b: RedirectFlags) RedirectFlags {
+            const anum: u8 = @bitCast(a);
+            const bnum: u8 = @bitCast(b);
+            return @bitCast(anum | bnum);
+        }
+    };
+
+    pub const Redirect = union(enum) {
+        atom: Atom,
+        jsbuf: JSBuf,
     };
 
     pub const Atom = union(Atom.Tag) {
@@ -533,6 +815,50 @@ pub const AST = struct {
         compound: CompoundAtom,
 
         pub const Tag = enum(u8) { simple, compound };
+
+        pub fn merge(this: Atom, right: Atom, allocator: Allocator) !Atom {
+            if (this == .simple and right == .simple) {
+                var atoms = try allocator.alloc(SimpleAtom, 2);
+                atoms[0] = this.simple;
+                atoms[1] = right.simple;
+                return .{ .compound = .{
+                    .atoms = atoms,
+                    .brace_expansion_hint = this.simple == .brace_begin or this.simple == .brace_end or right.simple == .brace_begin or right.simple == .brace_end,
+                    .glob_hint = this.simple == .asterisk or this.simple == .double_asterisk or right.simple == .asterisk or right.simple == .double_asterisk,
+                } };
+            }
+
+            if (this == .compound and right == .compound) {
+                var atoms = try allocator.alloc(SimpleAtom, this.compound.atoms.len + right.compound.atoms.len);
+                @memcpy(atoms[0..this.compound.atoms.len], this.compound.atoms);
+                @memcpy(atoms[this.compound.atoms.len .. this.compound.atoms.len + right.compound.atoms.len], right.compound.atoms);
+                return .{ .compound = .{
+                    .atoms = atoms,
+                    .brace_expansion_hint = this.compound.brace_expansion_hint or right.compound.brace_expansion_hint,
+                    .glob_hint = this.compound.glob_hint or right.compound.glob_hint,
+                } };
+            }
+
+            if (this == .simple) {
+                var atoms = try allocator.alloc(SimpleAtom, 1 + right.compound.atoms.len);
+                atoms[0] = this.simple;
+                @memcpy(atoms[1 .. right.compound.atoms.len + 1], right.compound.atoms);
+                return .{ .compound = .{
+                    .atoms = atoms,
+                    .brace_expansion_hint = this.simple == .brace_begin or this.simple == .brace_end or right.compound.brace_expansion_hint,
+                    .glob_hint = this.simple == .asterisk or this.simple == .double_asterisk or right.compound.glob_hint,
+                } };
+            }
+
+            var atoms = try allocator.alloc(SimpleAtom, 1 + this.compound.atoms.len);
+            @memcpy(atoms[0..this.compound.atoms.len], this.compound.atoms);
+            atoms[this.compound.atoms.len] = right.simple;
+            return .{ .compound = .{
+                .atoms = atoms,
+                .brace_expansion_hint = right.simple == .brace_begin or right.simple == .brace_end or this.compound.brace_expansion_hint,
+                .glob_hint = right.simple == .asterisk or right.simple == .double_asterisk or this.compound.glob_hint,
+            } };
+        }
 
         pub fn atomsLen(this: *const Atom) u32 {
             return switch (this.*) {
@@ -548,7 +874,7 @@ pub const AST = struct {
         pub fn is_compound(self: *const Atom) bool {
             switch (self.*) {
                 .compound => return true,
-                else => return false,
+                .simple => return false,
             }
         }
 
@@ -569,16 +895,25 @@ pub const AST = struct {
                 .compound => self.compound.brace_expansion_hint,
             };
         }
+
+        pub fn hasTildeExpansion(self: *const Atom) bool {
+            return switch (self.*) {
+                .simple => self.simple == .tilde,
+                .compound => self.compound.atoms.len > 0 and self.compound.atoms[0] == .tilde,
+            };
+        }
     };
 
     pub const SimpleAtom = union(enum) {
         Var: []const u8,
+        VarArgv: u8,
         Text: []const u8,
         asterisk,
         double_asterisk,
         brace_begin,
         brace_end,
         comma,
+        tilde,
         cmd_subst: struct {
             script: Script,
             quoted: bool = false,
@@ -586,15 +921,16 @@ pub const AST = struct {
 
         pub fn glob_hint(this: SimpleAtom) bool {
             return switch (this) {
-                .asterisk, .double_asterisk => true,
-                else => false,
-            };
-        }
-
-        pub fn mightNeedIO(this: SimpleAtom) bool {
-            return switch (this) {
-                .asterisk, .double_asterisk, .cmd_subst => true,
-                else => false,
+                .Var => false,
+                .VarArgv => false,
+                .Text => false,
+                .asterisk => true,
+                .double_asterisk => true,
+                .brace_begin => false,
+                .brace_end => false,
+                .comma => false,
+                .cmd_subst => false,
+                .tilde => false,
             };
         }
     };
@@ -643,6 +979,9 @@ pub const Parser = struct {
         };
     }
 
+    /// __WARNING__:
+    /// If you make a subparser and call some fallible functions on it, you need to catch the errors and call `.continue_from_subparser()`, otherwise errors
+    /// will not propagate upwards to the parent.
     pub fn make_subparser(this: *Parser, kind: SubshellKind) Parser {
         const subparser = .{
             .strpool = this.strpool,
@@ -665,22 +1004,10 @@ pub const Parser = struct {
         this.errors = subparser.errors;
     }
 
+    /// Main parse function
+    ///
+    /// Loosely based on the shell gramar documented in the spec: https://pubs.opengroup.org/onlinepubs/009604499/utilities/xcu_chap02.html#tag_02_10
     pub fn parse(self: *Parser) !AST.Script {
-        // Check for subshell syntax which is not supported rn
-        for (self.tokens) |tok| {
-            switch (tok) {
-                .OpenParen => {
-                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-                    return ParseError.Expected;
-                },
-                .CloseParen => {
-                    try self.add_error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.", .{});
-                    return ParseError.Expected;
-                },
-                else => {},
-            }
-        }
-
         return try self.parse_impl();
     }
 
@@ -694,7 +1021,9 @@ pub const Parser = struct {
         else
             !self.match_any(&.{ .Eof, self.inside_subshell.?.closing_tok() }))
         {
+            self.skip_newlines();
             try stmts.append(try self.parse_stmt());
+            self.skip_newlines();
         }
         if (self.inside_subshell) |kind| {
             _ = self.expect_any(&.{ .Eof, kind.closing_tok() });
@@ -713,7 +1042,51 @@ pub const Parser = struct {
             !self.match_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
         {
             const expr = try self.parse_expr();
+            if (self.match(.Ampersand)) {
+                try self.add_error("Background commands \"&\" are not supported yet.", .{});
+                return ParseError.Unsupported;
+                // Uncomment when we enable ampersand
+                // switch (expr) {
+                //     .binary => {
+                //         var newexpr = expr;
+                //         const right_alloc = try self.allocate(AST.Expr, newexpr.binary.right);
+                //         const right: AST.Expr = .{ .@"async" = right_alloc };
+                //         newexpr.binary.right = right;
+                //         try exprs.append(newexpr);
+                //     },
+                //     else => {
+                //         const @"async" = .{ .@"async" = try self.allocate(AST.Expr, expr) };
+                //         try exprs.append(@"async");
+                //     },
+                // }
+
+                // _ = self.match_any_comptime(&.{ .Semicolon, .Newline });
+
+                // // Scripts like: `echo foo & && echo hi` aren't allowed because
+                // // `&&` and `||` require the left-hand side's exit code to be
+                // // immediately observable, but the `&` makes it run in the
+                // // background.
+                // //
+                // // So we do a quick check for this kind of syntax here, and
+                // // provide a helpful error message to the user.
+                // if (self.peek() == .DoubleAmpersand) {
+                //     try self.add_error("\"&\" is not allowed on the left-hand side of \"&&\"", .{});
+                //     return ParseError.Unsupported;
+                // }
+
+                // break;
+            }
             try exprs.append(expr);
+
+            // This might be necessary, so leaving it here in case it is
+            // switch (self.peek()) {
+            //     .Eof, .Newline, .Semicolon => {},
+            //     else => |t| {
+            //         if (self.inside_subshell == null or self.inside_subshell.?.closing_tok() != t) {
+            //             @panic("Oh no!");
+            //         }
+            //     },
+            // }
         }
 
         return .{
@@ -722,13 +1095,13 @@ pub const Parser = struct {
     }
 
     fn parse_expr(self: *Parser) !AST.Expr {
-        return self.parse_cond();
+        return try self.parse_binary();
     }
 
-    fn parse_cond(self: *Parser) !AST.Expr {
+    fn parse_binary(self: *Parser) !AST.Expr {
         var left = try self.parse_pipeline();
         while (self.match_any_comptime(&.{ .DoubleAmpersand, .DoublePipe })) {
-            const op: AST.Conditional.Op = op: {
+            const op: AST.Binary.Op = op: {
                 const previous = @as(TokenTag, self.prev());
                 switch (previous) {
                     .DoubleAmpersand => break :op .And,
@@ -738,15 +1111,16 @@ pub const Parser = struct {
             };
 
             const right = try self.parse_pipeline();
-            const conditional = try self.allocate(AST.Conditional, .{ .op = op, .left = left, .right = right });
-            left = .{ .cond = conditional };
+
+            const binary = try self.allocate(AST.Binary, .{ .op = op, .left = left, .right = right });
+            left = .{ .binary = binary };
         }
 
         return left;
     }
 
     fn parse_pipeline(self: *Parser) !AST.Expr {
-        var expr = try self.parse_subshell();
+        var expr = try self.parse_compound_cmd();
 
         if (self.peek() == .Pipe) {
             var pipeline_items = std.ArrayList(AST.PipelineItem).init(self.alloc);
@@ -756,7 +1130,7 @@ pub const Parser = struct {
             });
 
             while (self.match(.Pipe)) {
-                expr = try self.parse_subshell();
+                expr = try self.parse_compound_cmd();
                 try pipeline_items.append(expr.asPipelineItem() orelse {
                     try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
                     return ParseError.Expected;
@@ -769,19 +1143,320 @@ pub const Parser = struct {
         return expr;
     }
 
-    /// Placeholder for when we fully support subshells
-    fn parse_subshell(self: *Parser) anyerror!AST.Expr {
-        // if (self.peek() == .OpenParen) {
-        //     _ = self.expect(.OpenParen);
-        //     const script = try self.parse_impl(true);
-        //     _ = self.expect(.CloseParen);
-        //     return .{ .subshell = script };
-        // }
-        // return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
-        return (try self.parse_cmd_or_assigns()).to_expr(self.alloc);
+    fn extractIfClauseTextToken(comptime if_clause_token: @TypeOf(.EnumLiteral)) []const u8 {
+        const tagname = comptime switch (if_clause_token) {
+            .@"if" => "if",
+            .@"else" => "else",
+            .elif => "elif",
+            .then => "then",
+            .fi => "fi",
+            else => @compileError("Invalid " ++ @tagName(if_clause_token)),
+        };
+        return tagname;
     }
 
-    fn parse_cmd_or_assigns(self: *Parser) !AST.CmdOrAssigns {
+    fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) Token {
+        const tagname = comptime extractIfClauseTextToken(if_clause_token);
+        if (bun.Environment.allow_assert) assert(@as(TokenTag, self.peek()) == .Text);
+        if (self.peek() == .Text and
+            self.delimits(self.peek_n(1)) and
+            std.mem.eql(u8, self.text(self.peek().Text), tagname))
+        {
+            const tok = self.advance();
+            _ = self.expect_delimit();
+            return tok;
+        }
+        @panic("Expected: " ++ @tagName(if_clause_token));
+    }
+
+    fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+        return switch (self.peek()) {
+            .Text => |range| self.isIfClauseTextTokenImpl(range, if_clause_token),
+            else => false,
+        };
+    }
+
+    fn isIfClauseTextTokenImpl(self: *Parser, range: Token.TextRange, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+        const tagname = comptime extractIfClauseTextToken(if_clause_token);
+        return bun.strings.eqlComptime(self.text(range), tagname);
+    }
+
+    fn skip_newlines(self: *Parser) void {
+        while (self.match(.Newline)) {}
+    }
+
+    fn parse_compound_cmd(self: *Parser) anyerror!AST.Expr {
+        // Placeholder for when we fully support subshells
+        if (self.peek() == .OpenParen) {
+            const subshell = try self.parse_subshell();
+            if (!subshell.redirect_flags.isEmpty()) {
+                try self.add_error("Subshells with redirections are currently not supported. Please open a GitHub issue.", .{});
+                return ParseError.Unsupported;
+            }
+
+            return .{
+                .subshell = try self.allocate(AST.Subshell, subshell),
+            };
+        }
+
+        if (self.isIfClauseTextToken(.@"if")) return (try self.parse_if_clause()).to_expr(self.alloc);
+
+        switch (self.peek()) {
+            .DoubleBracketOpen => return (try self.parse_cond_expr()).to_expr(self.alloc),
+            else => {},
+        }
+
+        return (try self.parse_simple_cmd()).to_expr(self.alloc);
+    }
+
+    fn parse_subshell(self: *Parser) !AST.Subshell {
+        _ = self.expect(.OpenParen);
+        var subparser = self.make_subparser(.normal);
+        const script = subparser.parse_impl() catch |e| {
+            self.continue_from_subparser(&subparser);
+            return e;
+        };
+        self.continue_from_subparser(&subparser);
+        const parsed_redirect = try self.parse_redirect();
+
+        return .{
+            .script = script,
+            .redirect = parsed_redirect.redirect,
+            .redirect_flags = parsed_redirect.flags,
+        };
+    }
+
+    fn parse_cond_expr(self: *Parser) !AST.CondExpr {
+        _ = self.expect(.DoubleBracketOpen);
+
+        // Quick check to see if it's a single operand operator
+        // Operators are not allowed to be expanded (i.e. `FOO=-f; [[ $FOO package.json ]]` won't work)
+        // So it must be a .Text token
+        // Also, all single operand operators start with "-", so check it starts with "-".
+        switch (self.peek()) {
+            .Text => |range| {
+                const txt = self.text(range);
+
+                if (txt[0] == '-') {
+                    // Is a potential single arg op
+                    inline for (AST.CondExpr.Op.SINGLE_ARG_OPS) |single_arg_op| {
+                        if (bun.strings.eqlComptime(txt, single_arg_op.name)) {
+                            const is_supported = comptime AST.CondExpr.Op.isSupported(@enumFromInt(single_arg_op.value));
+                            if (!is_supported) {
+                                try self.add_error("Conditional expression operation: {s}, is not supported right now. Please open a GitHub issue if you would like it to be supported.", .{single_arg_op.name});
+                                return ParseError.Unsupported;
+                            }
+
+                            _ = self.expect(.Text);
+                            if (!self.match(.Delimit)) {
+                                try self.add_error("Expected a single, simple word", .{});
+                                return ParseError.Expected;
+                            }
+
+                            const arg = try self.parse_atom() orelse {
+                                try self.add_error("Expected a word, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                                return ParseError.Expected;
+                            };
+
+                            if (!self.match(.DoubleBracketClose)) {
+                                try self.add_error("Expected \"]]\" but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                                return ParseError.Expected;
+                            }
+
+                            return .{
+                                .op = @enumFromInt(single_arg_op.value),
+                                .args = AST.CondExpr.ArgList.initWith(arg),
+                            };
+                        }
+                    }
+
+                    try self.add_error("Unknown conditional expression operation: {s}", .{txt});
+                    return ParseError.Unknown;
+                }
+            },
+            else => {},
+        }
+
+        // Otherwise check binary operators like:
+        //     arg1 -eq arg2
+        // Again the token associated with the operator (in this case `-eq`) *must* be a .Text token.
+
+        const arg1 = try self.parse_atom() orelse {
+            try self.add_error("Expected a conditional expression operand, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+            return ParseError.Expected;
+        };
+
+        // Operator must be a regular text token
+        if (self.peek() != .Text) {
+            try self.add_error("Expected a conditional expression operator, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+            return ParseError.Expected;
+        }
+
+        const op = self.expect(.Text);
+        if (!self.match(.Delimit)) {
+            try self.add_error("Expected a single, simple word", .{});
+            return ParseError.Expected;
+        }
+        const txt = self.text(op.Text);
+
+        inline for (AST.CondExpr.Op.BINARY_OPS) |binary_op| {
+            if (bun.strings.eqlComptime(txt, binary_op.name)) {
+                const is_supported = comptime AST.CondExpr.Op.isSupported(@enumFromInt(binary_op.value));
+                if (!is_supported) {
+                    try self.add_error("Conditional expression operation: {s}, is not supported right now. Please open a GitHub issue if you would like it to be supported.", .{binary_op.name});
+                    return ParseError.Unsupported;
+                }
+
+                const arg2 = try self.parse_atom() orelse {
+                    try self.add_error("Expected a word, but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                    return ParseError.Expected;
+                };
+
+                if (!self.match(.DoubleBracketClose)) {
+                    try self.add_error("Expected \"]]\" but got: {s}", .{self.peek().asHumanReadable(self.strpool)});
+                    return ParseError.Expected;
+                }
+
+                return .{
+                    .op = @enumFromInt(binary_op.value),
+                    .args = AST.CondExpr.ArgList.initWithSlice(&.{ arg1, arg2 }),
+                };
+            }
+        }
+
+        try self.add_error("Unknown conditional expression operation: {s}", .{txt});
+        return ParseError.Unknown;
+    }
+
+    /// We make it so that `if`/`else`/`elif`/`then`/`fi` need to be single,
+    /// simple .Text tokens (so the whitespace logic remains the same).
+    /// This is used to convert them
+    const IfClauseTok = enum {
+        @"if",
+        @"else",
+        elif,
+        then,
+        fi,
+
+        pub fn fromTok(p: *Parser, tok: Token) ?IfClauseTok {
+            return switch (tok) {
+                .Text => fromText(p.text(tok.Text)),
+                else => null,
+            };
+        }
+
+        pub fn fromText(txt: []const u8) ?IfClauseTok {
+            if (bun.strings.eqlComptime(txt, "if")) return .@"if";
+            if (bun.strings.eqlComptime(txt, "else")) return .@"else";
+            if (bun.strings.eqlComptime(txt, "elif")) return .elif;
+            if (bun.strings.eqlComptime(txt, "then")) return .then;
+            if (bun.strings.eqlComptime(txt, "fi")) return .fi;
+
+            return null;
+        }
+    };
+
+    fn parse_if_body(self: *Parser, comptime until: []const IfClauseTok) !SmolList(AST.Stmt, 1) {
+        var ret: SmolList(AST.Stmt, 1) = SmolList(AST.Stmt, 1).zeroes;
+        while (if (self.inside_subshell == null)
+            !self.peek_any_comptime_ifclausetok(until) and !self.peek_any_comptime(&.{.Eof})
+        else
+            !self.peek_any_ifclausetok(until) and !self.peek_any(&.{ self.inside_subshell.?.closing_tok(), .Eof }))
+        {
+            self.skip_newlines();
+            const stmt = try self.parse_stmt();
+            ret.append(stmt);
+            self.skip_newlines();
+        }
+
+        return ret;
+    }
+
+    fn parse_if_clause(self: *Parser) !AST.If {
+        _ = self.expectIfClauseTextToken(.@"if");
+        // _ = self.expect(.If);
+
+        const cond = try self.parse_if_body(&.{.then});
+
+        if (!self.match_if_clausetok(.then)) {
+            try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
+            return ParseError.Expected;
+        }
+
+        const then = try self.parse_if_body(&.{ .@"else", .elif, .fi });
+
+        var else_parts: SmolList(SmolList(AST.Stmt, 1), 1) = SmolList(SmolList(AST.Stmt, 1), 1).zeroes;
+
+        const if_clause_tok = IfClauseTok.fromTok(self, self.peek()) orelse {
+            try self.add_error("Expected \"else\", \"elif\", or \"fi\" but got: {s}", .{@tagName(self.peek())});
+            return ParseError.Expected;
+        };
+
+        switch (if_clause_tok) {
+            .@"if", .then => {
+                try self.add_error("Expected \"else\", \"elif\", or \"fi\" but got: {s}", .{@tagName(self.peek())});
+                return ParseError.Expected;
+            },
+            .@"else" => {
+                _ = self.expectIfClauseTextToken(.@"else");
+                const @"else" = try self.parse_if_body(&.{.fi});
+                if (!self.match_if_clausetok(.fi)) {
+                    try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
+                    return ParseError.Expected;
+                }
+                else_parts.append(@"else");
+                return .{
+                    .cond = cond,
+                    .then = then,
+                    .else_parts = else_parts,
+                };
+            },
+            .elif => {
+                while (true) {
+                    _ = self.expectIfClauseTextToken(.elif);
+                    const elif_cond = try self.parse_if_body(&.{.then});
+                    if (!self.match_if_clausetok(.then)) {
+                        try self.add_error("Expected \"then\" but got: {s}", .{@tagName(self.peek())});
+                        return ParseError.Expected;
+                    }
+                    const then_part = try self.parse_if_body(&.{ .elif, .@"else", .fi });
+                    else_parts.append(elif_cond);
+                    else_parts.append(then_part);
+
+                    switch (IfClauseTok.fromTok(self, self.peek()) orelse {
+                        break;
+                    }) {
+                        .elif => continue,
+                        .@"else" => {
+                            _ = self.expectIfClauseTextToken(.@"else");
+                            const else_part = try self.parse_if_body(&.{.fi});
+                            else_parts.append(else_part);
+                            break;
+                        },
+                        else => break,
+                    }
+                }
+                if (!self.match_if_clausetok(.fi)) {
+                    try self.add_error("Expected \"fi\" but got: {s}", .{@tagName(self.peek())});
+                    return ParseError.Expected;
+                }
+                return .{
+                    .cond = cond,
+                    .then = then,
+                    .else_parts = else_parts,
+                };
+            },
+            .fi => {
+                _ = self.expectIfClauseTextToken(.fi);
+                return .{
+                    .cond = cond,
+                    .then = then,
+                };
+            },
+        }
+    }
+
+    fn parse_simple_cmd(self: *Parser) !AST.CmdOrAssigns {
         var assigns = std.ArrayList(AST.Assign).init(self.alloc);
         while (if (self.inside_subshell == null)
             !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
@@ -796,9 +1471,9 @@ pub const Parser = struct {
         }
 
         if (if (self.inside_subshell == null)
-            self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
+            self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
         else
-            self.match_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
+            self.check_any(&.{ .Semicolon, .Newline, .Eof, self.inside_subshell.?.closing_tok() }))
         {
             if (assigns.items.len == 0) {
                 try self.add_error("expected a command or assignment", .{});
@@ -820,11 +1495,20 @@ pub const Parser = struct {
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
         }
+        const parsed_redirect = try self.parse_redirect();
 
-        // TODO Parse redirects (need to update lexer to have tokens for different parts e.g. &>>)
+        return .{ .cmd = .{
+            .assigns = assigns.items[0..],
+            .name_and_args = name_and_args.items[0..],
+            .redirect_file = parsed_redirect.redirect,
+            .redirect = parsed_redirect.flags,
+        } };
+    }
+
+    fn parse_redirect(self: *Parser) !ParsedRedirect {
         const has_redirect = self.match(.Redirect);
-        const redirect = if (has_redirect) self.prev().Redirect else AST.Cmd.RedirectFlags{};
-        const redirect_file: ?AST.Cmd.Redirect = redirect_file: {
+        const redirect = if (has_redirect) self.prev().Redirect else AST.RedirectFlags{};
+        const redirect_file: ?AST.Redirect = redirect_file: {
             if (has_redirect) {
                 if (self.match(.JSObjRef)) {
                     const obj_ref = self.prev().JSObjRef;
@@ -841,16 +1525,13 @@ pub const Parser = struct {
             break :redirect_file null;
         };
         // TODO check for multiple redirects and error
-
-        return .{ .cmd = .{
-            .assigns = assigns.items[0..],
-            .name_and_args = name_and_args.items[0..],
-            .redirect = redirect,
-            .redirect_file = redirect_file,
-        } };
+        return .{ .flags = redirect, .redirect = redirect_file };
     }
 
-    const ParsedRedirect = struct { flags: AST.Cmd.RedirectFlags, redirect: AST.Cmd.Redirect };
+    const ParsedRedirect = struct {
+        flags: AST.RedirectFlags = .{},
+        redirect: ?AST.Redirect = null,
+    };
 
     /// Try to parse an assignment. If no assignment could be parsed then return
     /// null and backtrack the parser state
@@ -872,7 +1553,7 @@ pub const Parser = struct {
                         }
 
                         if (eq_idx == txt.len - 1) {
-                            if (self.peek() == .Delimit) {
+                            if (self.delimits(self.peek())) {
                                 _ = self.expect_delimit();
                                 break :var_decl .{
                                     .label = label,
@@ -890,10 +1571,25 @@ pub const Parser = struct {
                         }
 
                         const txt_value = txt[eq_idx + 1 .. txt.len];
-                        _ = self.expect_delimit();
+                        if (self.delimits(self.peek())) {
+                            _ = self.expect_delimit();
+                            break :var_decl .{
+                                .label = label,
+                                .value = .{ .simple = .{ .Text = txt_value } },
+                            };
+                        }
+
+                        const right = try self.parse_atom() orelse {
+                            try self.add_error("Expected an atom", .{});
+                            return ParseError.Expected;
+                        };
+                        const left: AST.Atom = .{
+                            .simple = .{ .Text = txt_value },
+                        };
+                        const merged = try AST.Atom.merge(left, right, self.alloc);
                         break :var_decl .{
                             .label = label,
-                            .value = .{ .simple = .{ .Text = txt_value } },
+                            .value = merged,
                         };
                     }
                     break :var_decl null;
@@ -985,7 +1681,10 @@ pub const Parser = struct {
                         _ = self.expect(.CmdSubstBegin);
                         const is_quoted = self.match(.CmdSubstQuoted);
                         var subparser = self.make_subparser(.cmd_subst);
-                        const script = try subparser.parse_impl();
+                        const script = subparser.parse_impl() catch |e| {
+                            self.continue_from_subparser(&subparser);
+                            return e;
+                        };
                         try atoms.append(.{ .cmd_subst = .{
                             .script = script,
                             .quoted = is_quoted,
@@ -996,10 +1695,18 @@ pub const Parser = struct {
                             break;
                         }
                     },
-                    .Text => |txtrng| {
-                        _ = self.expect(.Text);
-                        const txt = self.text(txtrng);
-                        try atoms.append(.{ .Text = txt });
+                    .SingleQuotedText, .DoubleQuotedText, .Text => |txtrng| {
+                        _ = self.advance();
+                        var txt = self.text(txtrng);
+                        if (peeked == .Text and txt.len > 0 and txt[0] == '~') {
+                            txt = txt[1..];
+                            try atoms.append(.tilde);
+                            if (txt.len > 0) {
+                                try atoms.append(.{ .Text = txt });
+                            }
+                        } else {
+                            try atoms.append(.{ .Text = txt });
+                        }
                         if (next_delimits) {
                             _ = self.match(.Delimit);
                             if (should_break) break;
@@ -1014,11 +1721,34 @@ pub const Parser = struct {
                             if (should_break) break;
                         }
                     },
+                    .VarArgv => |int| {
+                        _ = self.expect(.VarArgv);
+                        try atoms.append(.{ .VarArgv = int });
+                        if (next_delimits) {
+                            _ = self.match(.Delimit);
+                            if (should_break) break;
+                        }
+                    },
                     .OpenParen, .CloseParen => {
                         try self.add_error("Unexpected token: `{s}`", .{if (peeked == .OpenParen) "(" else ")"});
-                        return null;
+                        return ParseError.Unexpected;
                     },
-                    else => return null,
+                    .Pipe => return null,
+                    .DoublePipe => return null,
+                    .Ampersand => return null,
+                    .DoubleAmpersand => return null,
+                    .Redirect => return null,
+                    .Dollar => return null,
+                    .Eq => return null,
+                    .Semicolon => return null,
+                    .Newline => return null,
+                    .CmdSubstQuoted => return null,
+                    .CmdSubstEnd => return null,
+                    .JSObjRef => return null,
+                    .Delimit => return null,
+                    .Eof => return null,
+                    .DoubleBracketOpen => return null,
+                    .DoubleBracketClose => return null,
                 }
             }
         }
@@ -1026,7 +1756,7 @@ pub const Parser = struct {
         return switch (atoms.items.len) {
             0 => null,
             1 => {
-                std.debug.assert(atoms.capacity == 1);
+                if (bun.Environment.allow_assert) assert(atoms.capacity == 1);
                 return AST.Atom.new_simple(atoms.items[0]);
             },
             else => .{ .compound = .{
@@ -1059,34 +1789,44 @@ pub const Parser = struct {
     }
 
     fn expect(self: *Parser, toktag: TokenTag) Token {
-        std.debug.assert(toktag == @as(TokenTag, self.peek()));
+        if (bun.Environment.allow_assert) assert(toktag == @as(TokenTag, self.peek()));
         if (self.check(toktag)) {
             return self.advance();
         }
-        unreachable;
+        @panic("Unexpected token");
     }
 
     fn expect_any(self: *Parser, toktags: []const TokenTag) Token {
-        // std.debug.assert(toktag == @as(TokenTag, self.peek()));
-
         const peeked = self.peek();
         for (toktags) |toktag| {
             if (toktag == @as(TokenTag, peeked)) return self.advance();
         }
 
-        unreachable;
+        @panic("Unexpected token");
     }
 
     fn delimits(self: *Parser, tok: Token) bool {
-        return tok == .Delimit or tok == .Semicolon or tok == .Semicolon or tok == .Eof or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
+        return tok == .Delimit or tok == .Semicolon or tok == .Semicolon or tok == .Eof or tok == .Newline or (self.inside_subshell != null and tok == self.inside_subshell.?.closing_tok());
     }
 
     fn expect_delimit(self: *Parser) Token {
-        std.debug.assert(self.delimits(self.peek()));
+        if (bun.Environment.allow_assert) assert(self.delimits(self.peek()));
         if (self.check(.Delimit) or self.check(.Semicolon) or self.check(.Newline) or self.check(.Eof) or (self.inside_subshell != null and self.check(self.inside_subshell.?.closing_tok()))) {
             return self.advance();
         }
-        unreachable;
+        @panic("Expected a delimiter token");
+    }
+
+    fn match_if_clausetok(self: *Parser, toktag: IfClauseTok) bool {
+        if (self.peek() == .Text and
+            self.delimits(self.peek_n(1)) and
+            bun.strings.eql(self.text(self.peek().Text), @tagName(toktag)))
+        {
+            _ = self.advance();
+            _ = self.expect_delimit();
+            return true;
+        }
+        return false;
     }
 
     /// Consumes token if it matches
@@ -1114,6 +1854,54 @@ pub const Parser = struct {
         for (toktags) |tag| {
             if (peeked == tag) {
                 _ = self.advance();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any_ifclausetok(self: *Parser, toktags: []const IfClauseTok) bool {
+        const peektok = self.peek();
+        const peeked = @as(TokenTag, peektok);
+        if (peeked != .Text) return false;
+
+        const txt = self.text(peektok.Text);
+        for (toktags) |tag| {
+            if (bun.strings.eql(txt, @tagName(tag))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any_comptime_ifclausetok(self: *Parser, comptime toktags: []const IfClauseTok) bool {
+        const peektok = self.peek();
+        const peeked = @as(TokenTag, peektok);
+        if (peeked != .Text) return false;
+
+        const txt = self.text(peektok.Text);
+        inline for (toktags) |tag| {
+            if (bun.strings.eqlComptime(txt, @tagName(tag))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any_comptime(self: *Parser, comptime toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        inline for (toktags) |tag| {
+            if (peeked == tag) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn peek_any(self: *Parser, toktags: []const TokenTag) bool {
+        const peeked = @as(TokenTag, self.peek());
+        for (toktags) |tag| {
+            if (peeked == tag) {
                 return true;
             }
         }
@@ -1214,8 +2002,13 @@ pub const TokenTag = enum {
     OpenParen,
     CloseParen,
     Var,
+    VarArgv,
     Text,
+    SingleQuotedText,
+    DoubleQuotedText,
     JSObjRef,
+    DoubleBracketOpen,
+    DoubleBracketClose,
     Delimit,
     Eof,
 };
@@ -1230,7 +2023,7 @@ pub const Token = union(TokenTag) {
     /// &&
     DoubleAmpersand,
 
-    Redirect: AST.Cmd.RedirectFlags,
+    Redirect: AST.RedirectFlags,
 
     /// $
     Dollar,
@@ -1262,8 +2055,16 @@ pub const Token = union(TokenTag) {
     CloseParen,
 
     Var: TextRange,
+    VarArgv: u8,
     Text: TextRange,
+    /// Quotation information is lost from the lexer -> parser stage and it is
+    /// helpful to disambiguate from regular text and quoted text
+    SingleQuotedText: TextRange,
+    DoubleQuotedText: TextRange,
     JSObjRef: u32,
+
+    DoubleBracketOpen,
+    DoubleBracketClose,
 
     Delimit,
     Eof,
@@ -1271,10 +2072,23 @@ pub const Token = union(TokenTag) {
     pub const TextRange = struct {
         start: u32,
         end: u32,
+
+        pub fn len(range: TextRange) u32 {
+            if (bun.Environment.allow_assert) assert(range.start <= range.end);
+            return range.end - range.start;
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
-        switch (self) {
+        const varargv_strings = blk: {
+            var res: [10][2]u8 = undefined;
+            for (&res, 0..) |*item, i| {
+                item[0] = '$';
+                item[1] = @as(u8, @intCast(i)) + '0';
+            }
+            break :blk res;
+        };
+        return switch (self) {
             .Pipe => "`|`",
             .DoublePipe => "`||`",
             .Ampersand => "`&`",
@@ -1296,26 +2110,31 @@ pub const Token = union(TokenTag) {
             .OpenParen => "`(`",
             .CloseParen => "`)",
             .Var => strpool[self.Var.start..self.Var.end],
+            .VarArgv => &varargv_strings[self.VarArgv],
             .Text => strpool[self.Text.start..self.Text.end],
+            .SingleQuotedText => strpool[self.SingleQuotedText.start..self.SingleQuotedText.end],
+            .DoubleQuotedText => strpool[self.DoubleQuotedText.start..self.DoubleQuotedText.end],
             .JSObjRef => "JSObjRef",
+            .DoubleBracketOpen => "[[",
+            .DoubleBracketClose => "]]",
             .Delimit => "Delimit",
             .Eof => "EOF",
-        }
+        };
     }
 
-    pub fn debug(self: Token, buf: []const u8) void {
-        switch (self) {
-            .Var => |txt| {
-                std.debug.print("(var) {s}\n", .{buf[txt.start..txt.end]});
-            },
-            .Text => |txt| {
-                std.debug.print("(txt) {s}\n", .{buf[txt.start..txt.end]});
-            },
-            else => {
-                std.debug.print("{s}\n", .{@tagName(self)});
-            },
-        }
-    }
+    // pub fn debug(self: Token, buf: []const u8) void {
+    //     switch (self) {
+    //         .Var => |txt| {
+    //             std.debug.print("(var) {s}\n", .{buf[txt.start..txt.end]});
+    //         },
+    //         .Text => |txt| {
+    //             std.debug.print("(txt) {s}\n", .{buf[txt.start..txt.end]});
+    //         },
+    //         else => {
+    //             std.debug.print("{s}\n", .{@tagName(self)});
+    //         },
+    //     }
+    // }
 };
 
 pub const LexerAscii = NewLexer(.ascii);
@@ -1350,8 +2169,16 @@ pub const LexError = struct {
     /// Allocated with lexer arena
     msg: []const u8,
 };
-pub const LEX_JS_OBJREF_PREFIX = "~__bun_";
-pub const LEX_JS_STRING_PREFIX = "~__bunstr_";
+
+/// A special char used to denote the beginning of a special token
+/// used for substituting JS variables into the script string.
+///
+/// \b (decimal value of 8) is deliberately chosen so that it is not
+/// easy for the user to accidentally use this char in their script.
+///
+const SPECIAL_JS_CHAR = 8;
+pub const LEX_JS_OBJREF_PREFIX = &[_]u8{SPECIAL_JS_CHAR} ++ "__bun_";
+pub const LEX_JS_STRING_PREFIX = &[_]u8{SPECIAL_JS_CHAR} ++ "__bunstr_";
 
 pub fn NewLexer(comptime encoding: StringEncoding) type {
     const Chars = ShellCharIter(encoding);
@@ -1490,7 +2317,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 const escaped = input.escaped;
 
                 // Special token to denote substituted JS variables
-                if (char == '~') {
+                // we use 8 or \b which is a non printable char
+                if (char == SPECIAL_JS_CHAR) {
                     if (self.looksLikeJSStringRef()) {
                         if (self.eatJSStringRef()) |bunstr| {
                             try self.break_word(false);
@@ -1515,7 +2343,67 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 // 3. word breakers (spaces, etc.)
                 else if (!escaped) escaped: {
                     switch (char) {
+                        // possibly double bracket open
+                        '[' => {
+                            comptime assertSpecialChar('[');
+
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |p| {
+                                if (p.escaped or p.char != '[') break :escaped;
+                                const state = self.make_snapshot();
+                                _ = self.eat();
+                                do_backtrack: {
+                                    const p2 = self.peek() orelse {
+                                        try self.break_word(true);
+                                        try self.tokens.append(.DoubleBracketClose);
+                                        continue;
+                                    };
+                                    if (p2.escaped) break :do_backtrack;
+                                    switch (p2.char) {
+                                        ' ', '\r', '\n', '\t' => {
+                                            try self.break_word(true);
+                                            try self.tokens.append(.DoubleBracketOpen);
+                                        },
+                                        else => break :do_backtrack,
+                                    }
+                                    continue;
+                                }
+                                self.backtrack(state);
+                            }
+                            break :escaped;
+                        },
+                        ']' => {
+                            comptime assertSpecialChar(']');
+
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.peek()) |p| {
+                                if (p.escaped or p.char != ']') break :escaped;
+                                const state = self.make_snapshot();
+                                _ = self.eat();
+                                do_backtrack: {
+                                    const p2 = self.peek() orelse {
+                                        try self.break_word(true);
+                                        try self.tokens.append(.DoubleBracketClose);
+                                        continue;
+                                    };
+                                    if (p2.escaped) break :do_backtrack;
+                                    switch (p2.char) {
+                                        ' ', '\r', '\n', '\t', ';', '&', '|', '>' => {
+                                            try self.break_word(true);
+                                            try self.tokens.append(.DoubleBracketClose);
+                                        },
+                                        else => break :do_backtrack,
+                                    }
+                                    continue;
+                                }
+                                self.backtrack(state);
+                            }
+                            break :escaped;
+                        },
+
                         '#' => {
+                            comptime assertSpecialChar('#');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             const whitespace_preceding =
                                 if (self.chars.prev) |prev|
@@ -1528,20 +2416,26 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         ';' => {
+                            comptime assertSpecialChar(';');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
                             try self.tokens.append(.Semicolon);
                             continue;
                         },
                         '\n' => {
+                            comptime assertSpecialChar('\n');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_impl(true, true, false);
                             try self.tokens.append(.Newline);
                             continue;
                         },
 
                         // glob asterisks
                         '*' => {
+                            comptime assertSpecialChar('*');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.peek()) |next| {
                                 if (!next.escaped and next.char == '*') {
@@ -1558,18 +2452,24 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // brace expansion syntax
                         '{' => {
+                            comptime assertSpecialChar('{');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(false);
                             try self.tokens.append(.BraceBegin);
                             continue;
                         },
                         ',' => {
+                            comptime assertSpecialChar(',');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(false);
                             try self.tokens.append(.Comma);
                             continue;
                         },
                         '}' => {
+                            comptime assertSpecialChar('}');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(false);
                             try self.tokens.append(.BraceEnd);
@@ -1578,9 +2478,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // Command substitution
                         '`' => {
+                            comptime assertSpecialChar('`');
+
                             if (self.chars.state == .Single) break :escaped;
                             if (self.in_subshell == .backtick) {
-                                try self.break_word(true);
+                                try self.break_word_operator();
                                 if (self.last_tok_tag()) |toktag| {
                                     if (toktag != .Delimit) try self.tokens.append(.Delimit);
                                 }
@@ -1592,6 +2494,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
                         // Command substitution/vars
                         '$' => {
+                            comptime assertSpecialChar('$');
+
                             if (self.chars.state == .Single) break :escaped;
 
                             const peeked = self.peek() orelse InputChar{ .char = 0 };
@@ -1605,23 +2509,38 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             // Handle variable
                             try self.break_word(false);
                             const var_tok = try self.eat_var();
-                            // empty var
-                            if (var_tok.start == var_tok.end) {
-                                try self.appendCharToStrPool('$');
-                                try self.break_word(false);
-                            } else {
-                                try self.tokens.append(.{ .Var = var_tok });
+
+                            switch (var_tok.len()) {
+                                0 => {
+                                    try self.appendCharToStrPool('$');
+                                    try self.break_word(false);
+                                },
+                                1 => blk: {
+                                    const c = self.strpool.items[var_tok.start];
+                                    if (c >= '0' and c <= '9') {
+                                        try self.tokens.append(.{ .VarArgv = c - '0' });
+                                        break :blk;
+                                    }
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                },
+                                else => {
+                                    try self.tokens.append(.{ .Var = var_tok });
+                                },
                             }
                             self.word_start = self.j;
                             continue;
                         },
                         '(' => {
+                            comptime assertSpecialChar('(');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             try self.break_word(true);
                             try self.eat_subshell(.normal);
                             continue;
                         },
                         ')' => {
+                            comptime assertSpecialChar(')');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
                             if (self.in_subshell != .dollar and self.in_subshell != .normal) {
                                 self.add_error("Unexpected ')'");
@@ -1629,9 +2548,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             }
 
                             try self.break_word(true);
-                            if (self.last_tok_tag()) |toktag| {
-                                if (toktag != .Delimit) try self.tokens.append(.Delimit);
+                            // Command substitution can be put in a word so need
+                            // to add delimiter
+                            if (self.in_subshell == .dollar) {
+                                if (self.last_tok_tag()) |toktag| {
+                                    switch (toktag) {
+                                        .Delimit, .Semicolon, .Eof, .Newline => {},
+                                        else => {
+                                            try self.tokens.append(.Delimit);
+                                        },
+                                    }
+                                }
                             }
+
                             if (self.in_subshell == .dollar) {
                                 try self.tokens.append(.CmdSubstEnd);
                             } else if (self.in_subshell == .normal) {
@@ -1641,6 +2570,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
 
                         '0'...'9' => {
+                            comptime for ('0'..'9') |c| assertSpecialChar(c);
+
                             if (self.chars.state != .Normal) break :escaped;
                             const snapshot = self.make_snapshot();
                             if (self.eat_redirect(input)) |redirect| {
@@ -1654,8 +2585,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // Operators
                         '|' => {
+                            comptime assertSpecialChar('|');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_operator();
 
                             const next = self.peek() orelse {
                                 self.add_error("Unexpected EOF");
@@ -1674,44 +2607,56 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             continue;
                         },
                         '>' => {
+                            comptime assertSpecialChar('>');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word_impl(true, false, true);
+                            try self.break_word_operator();
                             const redirect = self.eat_simple_redirect(.out);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
                         },
                         '<' => {
+                            comptime assertSpecialChar('<');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word_impl(true, false, true);
+                            try self.break_word_operator();
                             const redirect = self.eat_simple_redirect(.in);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
                         },
                         '&' => {
+                            comptime assertSpecialChar('&');
+
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_operator();
 
                             const next = self.peek() orelse {
-                                self.add_error("Unexpected EOF");
-                                return;
+                                try self.tokens.append(.Ampersand);
+                                continue;
                             };
+
                             if (next.char == '>' and !next.escaped) {
                                 _ = self.eat();
                                 const inner = if (self.eat_simple_redirect_operator(.out))
-                                    AST.Cmd.RedirectFlags.@"&>>"()
+                                    AST.RedirectFlags.@"&>>"()
                                 else
-                                    AST.Cmd.RedirectFlags.@"&>"();
+                                    AST.RedirectFlags.@"&>"();
                                 try self.tokens.append(.{ .Redirect = inner });
                             } else if (next.escaped or next.char != '&') {
                                 try self.tokens.append(.Ampersand);
                             } else if (next.char == '&') {
                                 _ = self.eat() orelse unreachable;
                                 try self.tokens.append(.DoubleAmpersand);
-                            } else continue;
+                            } else {
+                                try self.tokens.append(.Ampersand);
+                                continue;
+                            }
                         },
 
                         // 2. State switchers
                         '\'' => {
+                            comptime assertSpecialChar('\'');
+
                             if (self.chars.state == .Single) {
                                 self.chars.state = .Normal;
                                 continue;
@@ -1723,6 +2668,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             break :escaped;
                         },
                         '"' => {
+                            comptime assertSpecialChar('"');
+
                             if (self.chars.state == .Single) break :escaped;
                             if (self.chars.state == .Normal) {
                                 try self.break_word(false);
@@ -1737,6 +2684,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                         // 3. Word breakers
                         ' ' => {
+                            comptime assertSpecialChar(' ');
+
                             if (self.chars.state == .Normal) {
                                 try self.break_word_impl(true, true, false);
                                 continue;
@@ -1745,6 +2694,16 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                         },
 
                         else => break :escaped,
+                    }
+                    continue;
+                }
+                // Treat newline preceded by backslash as whitespace
+                else if (char == '\n') {
+                    if (comptime bun.Environment.allow_assert) {
+                        assert(input.escaped);
+                    }
+                    if (self.chars.state != .Double) {
+                        try self.break_word_impl(true, true, false);
                     }
                     continue;
                 }
@@ -1792,18 +2751,68 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return try self.break_word_impl(add_delimiter, false, false);
         }
 
-        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_redirect_operator: bool) !void {
+        /// NOTE: this adds a delimiter
+        fn break_word_operator(self: *@This()) !void {
+            return try self.break_word_impl(true, false, true);
+        }
+
+        inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
+            return (self.chars.state == .Double and
+                (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
+                (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
+        }
+
+        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_operator: bool) !void {
             const start: u32 = self.word_start;
             const end: u32 = self.j;
-            if (start != end) {
-                try self.tokens.append(.{ .Text = .{ .start = start, .end = end } });
+            if (start != end or
+                self.isImmediatelyEscapedQuote() // we want to preserve immediately escaped quotes like: ""
+            ) {
+                const tok: Token =
+                    switch (self.chars.state) {
+                    .Normal => @unionInit(Token, "Text", .{ .start = start, .end = end }),
+                    .Single => @unionInit(Token, "SingleQuotedText", .{ .start = start, .end = end }),
+                    .Double => @unionInit(Token, "DoubleQuotedText", .{ .start = start, .end = end }),
+                };
+                try self.tokens.append(tok);
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);
                 }
-            } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
+            } else if ((in_normal_space or in_operator) and self.tokens.items.len > 0 and
+                // whether or not to add a delimiter token
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
-                .Var, .Text, .BraceBegin, .Comma, .BraceEnd, .CmdSubstEnd => true,
-                else => false,
+                .Var,
+                .VarArgv,
+                .Text,
+                .SingleQuotedText,
+                .DoubleQuotedText,
+                .BraceBegin,
+                .Comma,
+                .BraceEnd,
+                .CmdSubstEnd,
+                .Asterisk,
+                => true,
+
+                .Pipe,
+                .DoublePipe,
+                .Ampersand,
+                .DoubleAmpersand,
+                .Redirect,
+                .Dollar,
+                .DoubleAsterisk,
+                .Eq,
+                .Semicolon,
+                .Newline,
+                .CmdSubstBegin,
+                .CmdSubstQuoted,
+                .OpenParen,
+                .CloseParen,
+                .JSObjRef,
+                .DoubleBracketOpen,
+                .DoubleBracketClose,
+                .Delimit,
+                .Eof,
+                => false,
             }) {
                 try self.tokens.append(.Delimit);
                 self.delimit_quote = false;
@@ -1813,19 +2822,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         const RedirectDirection = enum { out, in };
 
-        fn eat_simple_redirect(self: *@This(), dir: RedirectDirection) AST.Cmd.RedirectFlags {
+        fn eat_simple_redirect(self: *@This(), dir: RedirectDirection) AST.RedirectFlags {
             const is_double = self.eat_simple_redirect_operator(dir);
 
             if (is_double) {
                 return switch (dir) {
-                    .out => AST.Cmd.RedirectFlags.@">>"(),
-                    .in => AST.Cmd.RedirectFlags.@"<<"(),
+                    .out => AST.RedirectFlags.@">>"(),
+                    .in => AST.RedirectFlags.@"<<"(),
                 };
             }
 
             return switch (dir) {
-                .out => AST.Cmd.RedirectFlags.@">"(),
-                .in => AST.Cmd.RedirectFlags.@"<"(),
+                .out => AST.RedirectFlags.@">"(),
+                .in => AST.RedirectFlags.@"<"(),
             };
         }
 
@@ -1856,8 +2865,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         // TODO Arbitrary file descriptor redirect
-        fn eat_redirect(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
-            var flags: AST.Cmd.RedirectFlags = .{};
+        fn eat_redirect(self: *@This(), first: InputChar) ?AST.RedirectFlags {
+            var flags: AST.RedirectFlags = .{};
             switch (first.char) {
                 '0' => flags.stdin = true,
                 '1' => flags.stdout = true,
@@ -1913,8 +2922,8 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             } else return null;
         }
 
-        fn eat_redirect_old(self: *@This(), first: InputChar) ?AST.Cmd.RedirectFlags {
-            var flags: AST.Cmd.RedirectFlags = .{};
+        fn eat_redirect_old(self: *@This(), first: InputChar) ?AST.RedirectFlags {
+            var flags: AST.RedirectFlags = .{};
             if (self.matchesAsciiLiteral("2>&1")) {} else if (self.matchesAsciiLiteral("1>&2")) {} else switch (first.char) {
                 '0'...'9' => {
                     // Codepoint int casts are safe here because the digits are in the ASCII range
@@ -2054,9 +3063,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 },
                 .normal => try self.tokens.append(.OpenParen),
             }
+            const prev_quote_state = self.chars.state;
             var sublexer = self.make_sublexer(kind);
             try sublexer.lex();
             self.continue_from_sublexer(&sublexer);
+            self.chars.state = prev_quote_state;
         }
 
         fn appendStringToStrPool(self: *@This(), bunstr: bun.String) !void {
@@ -2221,6 +3232,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         fn eat_var(self: *@This()) !Token.TextRange {
             const start = self.j;
             var i: usize = 0;
+            var is_int = false;
             // Eat until special character
             while (self.peek()) |result| {
                 defer i += 1;
@@ -2229,10 +3241,19 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                 if (i == 0) {
                     switch (char) {
-                        '=', '0'...'9' => return .{ .start = start, .end = self.j },
+                        '=' => return .{ .start = start, .end = self.j },
+                        '0'...'9' => {
+                            is_int = true;
+                            _ = self.eat().?;
+                            try self.appendCharToStrPool(char);
+                            continue;
+                        },
                         'a'...'z', 'A'...'Z', '_' => {},
                         else => return .{ .start = start, .end = self.j },
                     }
+                }
+                if (is_int) {
+                    return .{ .start = start, .end = self.j };
                 }
 
                 // if (char
@@ -2307,13 +3328,13 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return self.chars.read_char();
         }
 
-        fn debug_tokens(self: *const @This()) void {
-            std.debug.print("Tokens: \n", .{});
-            for (self.tokens.items, 0..) |tok, i| {
-                std.debug.print("{d}: ", .{i});
-                tok.debug(self.strpool.items[0..self.strpool.items.len]);
-            }
-        }
+        // fn debug_tokens(self: *const @This()) void {
+        //     std.debug.print("Tokens: \n", .{});
+        //     for (self.tokens.items, 0..) |tok, i| {
+        //         std.debug.print("{d}: ", .{i});
+        //         tok.debug(self.strpool.items[0..self.strpool.items.len]);
+        //     }
+        // }
     };
 }
 
@@ -2505,7 +3526,8 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
                         else => return .{ .char = char, .escaped = false },
                     }
                 },
-                else => unreachable,
+                // We checked `self.state == .Single` above so this is impossible
+                .Single => unreachable,
             }
 
             return .{ .char = char, .escaped = true };
@@ -2549,40 +3571,11 @@ fn isValidVarNameAscii(var_name: []const u8) bool {
         '=', '0'...'9' => {
             return false;
         },
-        'a'...'z', 'A'...'Z', '_' => {},
+        'a'...'z', 'A'...'Z', '_' => {
+            if (var_name.len == 1) return true;
+        },
         else => return false,
     }
-
-    if (var_name.len - 1 < 16)
-        return isValidVarNameSlowAscii(var_name);
-
-    const upper_a: @Vector(16, u8) = @splat('A');
-    const upper_z: @Vector(16, u8) = @splat('Z');
-    const lower_a: @Vector(16, u8) = @splat('a');
-    const lower_z: @Vector(16, u8) = @splat('z');
-    const zero: @Vector(16, u8) = @splat(0);
-    const nine: @Vector(16, u8) = @splat(9);
-    const underscore: @Vector(16, u8) = @splat('_');
-
-    const BoolVec = @Vector(16, u1);
-
-    var i: usize = 0;
-    while (i + 16 <= var_name.len) : (i += 16) {
-        const chars: @Vector(16, u8) = var_name[i..][0..16].*;
-
-        const in_upper = @as(BoolVec, @bitCast(chars > upper_a)) & @as(BoolVec, @bitCast(chars < upper_z));
-        const in_lower = @as(BoolVec, @bitCast(chars > lower_a)) & @as(BoolVec, @bitCast(chars < lower_z));
-        const in_digit = @as(BoolVec, @bitCast(chars > zero)) & @as(BoolVec, @bitCast(chars < nine));
-        const is_underscore = @as(BoolVec, @bitCast(chars == underscore));
-
-        const merged = @as(@Vector(16, bool), @bitCast(in_upper | in_lower | in_digit | is_underscore));
-        if (std.simd.countTrues(merged) != 16) return false;
-    }
-
-    return isValidVarNameSlowAscii(var_name[i..]);
-}
-
-fn isValidVarNameSlowAscii(var_name: []const u8) bool {
     for (var_name) |c| {
         switch (c) {
             '0'...'9', 'a'...'z', 'A'...'Z', '_' => {},
@@ -2696,7 +3689,7 @@ pub const Test = struct {
         DoubleAmpersand,
 
         // >
-        Redirect: AST.Cmd.RedirectFlags,
+        Redirect: AST.RedirectFlags,
 
         // $
         Dollar,
@@ -2718,8 +3711,14 @@ pub const Test = struct {
         CloseParen,
 
         Var: []const u8,
+        VarArgv: u8,
         Text: []const u8,
+        SingleQuotedText: []const u8,
+        DoubleQuotedText: []const u8,
         JSObjRef: u32,
+
+        DoubleBracketOpen,
+        DoubleBracketClose,
 
         Delimit,
         Eof,
@@ -2727,7 +3726,10 @@ pub const Test = struct {
         pub fn from_real(the_token: Token, buf: []const u8) TestToken {
             switch (the_token) {
                 .Var => |txt| return .{ .Var = buf[txt.start..txt.end] },
+                .VarArgv => |int| return .{ .VarArgv = int },
                 .Text => |txt| return .{ .Text = buf[txt.start..txt.end] },
+                .SingleQuotedText => |txt| return .{ .SingleQuotedText = buf[txt.start..txt.end] },
+                .DoubleQuotedText => |txt| return .{ .DoubleQuotedText = buf[txt.start..txt.end] },
                 .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,
                 .DoublePipe => return .DoublePipe,
@@ -2748,6 +3750,8 @@ pub const Test = struct {
                 .CmdSubstEnd => return .CmdSubstEnd,
                 .OpenParen => return .OpenParen,
                 .CloseParen => return .CloseParen,
+                .DoubleBracketOpen => return .DoubleBracketOpen,
+                .DoubleBracketClose => return .DoubleBracketClose,
                 .Delimit => return .Delimit,
                 .Eof => return .Eof,
             }
@@ -3004,7 +4008,18 @@ pub const ShellSrcBuilder = struct {
 };
 
 /// Characters that need to escaped
-const SPECIAL_CHARS = [_]u8{ '$', '>', '&', '|', '=', ';', '\n', '{', '}', ',', '(', ')', '\\', '\"', ' ', '\'' };
+const SPECIAL_CHARS = [_]u8{ '~', '[', ']', '#', ';', '\n', '*', '{', ',', '}', '`', '$', '=', '(', ')', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '|', '>', '<', '&', '\'', '"', ' ', '\\' };
+const SPECIAL_CHARS_TABLE: std.bit_set.IntegerBitSet(256) = brk: {
+    var table = std.bit_set.IntegerBitSet(256).initEmpty();
+    for (SPECIAL_CHARS) |c| {
+        table.set(c);
+    }
+    break :brk table;
+};
+pub fn assertSpecialChar(c: u8) void {
+    comptime bun.assert(@inComptime());
+    bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
+}
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
@@ -3113,38 +4128,10 @@ pub fn needsEscapeBunstr(bunstr: bun.String) bool {
     return needsEscapeUtf8AsciiLatin1(bunstr.byteSlice());
 }
 
-pub fn needsEscapeUTF16Slow(str: []const u16) bool {
-    for (str) |codeunit| {
-        inline for (SPECIAL_CHARS) |spc| {
-            if (@as(u16, @intCast(spc)) == codeunit) return true;
-        }
-    }
-
-    return false;
-}
-
 pub fn needsEscapeUTF16(str: []const u16) bool {
-    if (str.len < 64) return needsEscapeUTF16Slow(str);
-
-    const needles = comptime brk: {
-        var needles: [SPECIAL_CHARS.len]@Vector(8, u16) = undefined;
-        for (SPECIAL_CHARS, 0..) |c, i| {
-            needles[i] = @splat(@as(u16, @intCast(c)));
-        }
-        break :brk needles;
-    };
-
-    var i: usize = 0;
-    while (i + 8 <= str.len) : (i += 8) {
-        const haystack: @Vector(8, u16) = str[i..][0..8].*;
-
-        inline for (needles) |needle| {
-            const result = haystack == needle;
-            if (std.simd.firstTrue(result) != null) return true;
-        }
+    for (str) |codeunit| {
+        if (codeunit < 0xff and SPECIAL_CHARS_TABLE.isSet(codeunit)) return true;
     }
-
-    if (i < str.len) return needsEscapeUTF16Slow(str[i..]);
 
     return false;
 }
@@ -3154,43 +4141,253 @@ pub fn needsEscapeUTF16(str: []const u16) bool {
 /// false positives, but it is faster than running the shell lexer through the
 /// input string for a more correct implementation.
 pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
-    if (str.len < 128) return needsEscapeUtf8AsciiLatin1Slow(str);
-
-    const needles = comptime brk: {
-        var needles: [SPECIAL_CHARS.len]@Vector(16, u8) = undefined;
-        for (SPECIAL_CHARS, 0..) |c, i| {
-            needles[i] = @splat(c);
-        }
-        break :brk needles;
-    };
-
-    var i: usize = 0;
-    while (i + 16 <= str.len) : (i += 16) {
-        const haystack: @Vector(16, u8) = str[i..][0..16].*;
-
-        inline for (needles) |needle| {
-            const result = haystack == needle;
-            if (std.simd.firstTrue(result) != null) return true;
-        }
-    }
-
-    if (i < str.len) return needsEscapeUtf8AsciiLatin1Slow(str[i..]);
-
-    return false;
-}
-
-pub fn needsEscapeUtf8AsciiLatin1Slow(str: []const u8) bool {
     for (str) |c| {
-        inline for (SPECIAL_CHARS) |spc| {
-            if (spc == c) return true;
-        }
+        if (SPECIAL_CHARS_TABLE.isSet(c)) return true;
     }
     return false;
 }
-pub const ExitCode = eval.ExitCode;
+
+/// A list that can store its items inlined, and promote itself to a heap allocated bun.ByteList
+pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
+    return union(enum) {
+        inlined: Inlined,
+        heap: ByteList,
+
+        const ByteList = bun.BabyList(T);
+
+        pub fn initWith(val: T) @This() {
+            var this: @This() = @This().zeroes;
+            this.inlined.items[0] = val;
+            this.inlined.len += 1;
+            return this;
+        }
+
+        pub fn initWithSlice(vals: []const T) @This() {
+            if (bun.Environment.allow_assert) assert(vals.len <= std.math.maxInt(u32));
+            if (vals.len <= INLINED_MAX) {
+                var this: @This() = @This().zeroes;
+                @memcpy(this.inlined.items[0..vals.len], vals);
+                this.inlined.len += @intCast(vals.len);
+                return this;
+            }
+            var this: @This() = .{
+                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+            };
+            this.heap.appendSliceAssumeCapacity(vals);
+            return this;
+        }
+
+        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const slc = this.slice();
+            try writer.print("{}", .{slc});
+        }
+
+        pub fn jsonStringify(this: *const @This(), writer: anytype) !void {
+            const slc = this.slice();
+            try writer.write(slc);
+        }
+
+        pub const zeroes: @This() = .{
+            .inlined = .{},
+        };
+
+        pub const Inlined = struct {
+            items: [INLINED_MAX]T = undefined,
+            len: u32 = 0,
+
+            pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
+                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
+                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
+                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                return list;
+            }
+
+            pub fn orderedRemove(this: *Inlined, idx: usize) T {
+                if (this.len - 1 == idx) return this.pop();
+                const slice_to_shift = this.items[idx + 1 .. this.len];
+                std.mem.copyForwards(T, this.items[idx .. this.len - 1], slice_to_shift);
+                this.len -= 1;
+            }
+
+            pub fn swapRemove(this: *Inlined, idx: usize) T {
+                if (this.len - 1 == idx) return this.pop();
+
+                const old_item = this.items[idx];
+                this.items[idx] = this.pop();
+                return old_item;
+            }
+
+            pub fn pop(this: *Inlined) T {
+                const ret = this.items[this.items.len - 1];
+                this.len -= 1;
+                return ret;
+            }
+        };
+
+        pub inline fn len(this: *const @This()) usize {
+            return switch (this.*) {
+                .inlined => this.inlined.len,
+                .heap => this.heap.len,
+            };
+        }
+
+        pub fn orderedRemove(this: *@This(), idx: usize) void {
+            switch (this.*) {
+                .heap => {
+                    var list = this.heap.listManaged(bun.default_allocator);
+                    _ = list.orderedRemove(idx);
+                },
+                .inlined => {
+                    _ = this.inlined.orderedRemove(idx);
+                },
+            }
+        }
+
+        pub fn swapRemove(this: *@This(), idx: usize) void {
+            switch (this.*) {
+                .heap => {
+                    var list = this.heap.listManaged(bun.default_allocator);
+                    _ = list.swapRemove(idx);
+                },
+                .inlined => {
+                    _ = this.inlined.swapRemove(idx);
+                },
+            }
+        }
+
+        pub fn truncate(this: *@This(), starting_idx: usize) void {
+            switch (this.*) {
+                .inlined => {
+                    if (starting_idx >= this.inlined.len) return;
+                    const slice_to_move = this.inlined.items[starting_idx..this.inlined.len];
+                    bun.copy(T, this.inlined.items[0..starting_idx], slice_to_move);
+                    this.inlined.len = @intCast(slice_to_move.len);
+                },
+                .heap => {
+                    const slc = this.heap.ptr[starting_idx..this.heap.len];
+                    bun.copy(T, this.heap.ptr[0..slc.len], slc);
+                    this.heap.len = @intCast(slc.len);
+                },
+            }
+        }
+
+        pub inline fn sliceMutable(this: *@This()) []T {
+            return switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == 0) return &[_]T{};
+                    return this.inlined.items[0..this.inlined.len];
+                },
+                .heap => {
+                    if (this.heap.len == 0) return &[_]T{};
+                    return this.heap.slice();
+                },
+            };
+        }
+
+        pub inline fn slice(this: *const @This()) []const T {
+            return switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == 0) return &[_]T{};
+                    return this.inlined.items[0..this.inlined.len];
+                },
+                .heap => {
+                    if (this.heap.len == 0) return &[_]T{};
+                    return this.heap.slice();
+                },
+            };
+        }
+
+        pub inline fn get(this: *@This(), idx: usize) *T {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    return &this.inlined.items[idx];
+                },
+                .heap => &this.heap.ptr[idx],
+            };
+        }
+
+        pub inline fn getConst(this: *const @This(), idx: usize) *const T {
+            return switch (this.*) {
+                .inlined => {
+                    if (bun.Environment.allow_assert) {
+                        if (idx >= this.inlined.len) @panic("Index out of bounds");
+                    }
+                    return &this.inlined.items[idx];
+                },
+                .heap => &this.heap.ptr[idx],
+            };
+        }
+
+        pub fn append(this: *@This(), new: T) void {
+            switch (this.*) {
+                .inlined => {
+                    if (this.inlined.len == INLINED_MAX) {
+                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
+                        return;
+                    }
+                    this.inlined.items[this.inlined.len] = new;
+                    this.inlined.len += 1;
+                },
+                .heap => {
+                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                },
+            }
+        }
+
+        pub fn clearRetainingCapacity(this: *@This()) void {
+            switch (this.*) {
+                .inlined => {
+                    this.inlined.len = 0;
+                },
+                .heap => {
+                    this.heap.clearRetainingCapacity();
+                },
+            }
+        }
+
+        pub fn last(this: *@This()) ?*T {
+            if (this.len() == 0) return null;
+            return this.get(this.len() - 1);
+        }
+
+        pub fn lastUnchecked(this: *@This()) *T {
+            return this.get(this.len() - 1);
+        }
+
+        pub fn lastUncheckedConst(this: *const @This()) *const T {
+            return this.getConst(this.len() - 1);
+        }
+    };
+}
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
+    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        if (comptime bun.Environment.isWindows) return JSValue.false;
+
+        const arguments_ = callframe.arguments(1);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const string = arguments.nextEat() orelse {
+            globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
+            return JSC.JSValue.jsUndefined();
+        };
+
+        const bunstr = string.toBunString(globalThis);
+        defer bunstr.deref();
+        const utf8str = bunstr.toUTF8(bun.default_allocator);
+        defer utf8str.deinit();
+
+        inline for (Interpreter.Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
+            if (bun.strings.eqlComptime(utf8str.byteSlice(), @tagName(disabled))) {
+                return JSValue.true;
+            }
+        }
+        return JSValue.false;
+    }
+
     pub fn shellLex(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -3322,7 +4519,7 @@ pub const TestingAPIs = struct {
 
         const script_ast = Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
             if (err == ParseError.Lex) {
-                std.debug.assert(out_lex_result != null);
+                if (bun.Environment.allow_assert) assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());
                 globalThis.throwPretty("{s}", .{str});
                 return .undefined;
@@ -3348,3 +4545,5 @@ pub const TestingAPIs = struct {
         return bun_str.toJS(globalThis);
     }
 };
+
+const assert = bun.assert;

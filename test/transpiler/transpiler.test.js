@@ -7,6 +7,9 @@ describe("Bun.Transpiler", () => {
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
       user_undefined: "undefined",
+      user_nested: "location.origin",
+      "hello.earth": "hello.mars",
+      "Math.log": "console.error",
     },
     macro: {
       react: {
@@ -54,10 +57,9 @@ describe("Bun.Transpiler", () => {
       } catch (er) {
         var err = er;
         if (er instanceof AggregateError) {
-          err = err.errors[0];
+          err = er.errors[0];
         }
-
-        expect(er.message).toBe(message);
+        expect(err.message).toBe(message);
 
         return;
       }
@@ -111,6 +113,22 @@ describe("Bun.Transpiler", () => {
         "var c = Math.random() ? ({ ...{} }) : ({ ...{} })",
         "var c = Math.random() ? { ...{} } : { ...{} }",
       );
+    });
+
+    it("should parse empty type parameters", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      exp("type X<> = never;var x: X", "var x");
+      exp("interface X<> {};var x: X", "var x");
+      err("class Foo<> {}", 'Expected identifier but found ">"');
+      err("function foo<>(): void {}", 'Expected identifier but found ">"');
+      err("const x: Foo<> = {}", "Unexpected >");
+    });
+
+    it("should parse infer extends ternary correctly #9959", () => {
+      ts.expectPrinted_("type Foo<T> = T extends infer U ? U : never;", "");
+      ts.expectPrinted_("var foo: Foo extends string | infer Foo extends string ? Foo : never", "var foo");
+      ts.expectPrinted_("var foo: Foo extends string & infer Foo extends string ? Foo : never", "var foo");
     });
 
     it.todo("instantiation expressions", async () => {
@@ -305,14 +323,10 @@ describe("Bun.Transpiler", () => {
       exp("let x: [infer: string]", "let x;\n");
       err("let x: A extends B ? keyof : string", "Unexpected :");
       err("let x: A extends B ? readonly : string", "Unexpected :");
-      // err("let x: A extends B ? infer : string", 'Expected identifier but found ":"\n');
-      err("let x: A extends B ? infer : string", "Parse error");
-      // err("let x: {[new: string]: number}", 'Expected "(" but found ":"\n');
-      err("let x: {[new: string]: number}", "Parse error");
-      // err("let x: {[import: string]: number}", 'Expected "(" but found ":"\n');
-      err("let x: {[import: string]: number}", "Parse error");
-      // err("let x: {[typeof: string]: number}", 'Expected identifier but found ":"\n');
-      err("let x: {[typeof: string]: number}", "Parse error");
+      err("let x: A extends B ? infer : string", 'Expected identifier but found ":"');
+      err("let x: {[new: string]: number}", 'Expected "(" but found ":"');
+      err("let x: {[import: string]: number}", 'Expected "(" but found ":"');
+      err("let x: {[typeof: string]: number}", 'Expected identifier but found ":"');
       exp("let x: () => void = Foo", "let x = Foo;\n");
       exp("let x: new () => void = Foo", "let x = Foo;\n");
       exp("let x = 'x' as keyof T", 'let x = "x";\n');
@@ -392,11 +406,9 @@ describe("Bun.Transpiler", () => {
 
       exp("let foo = bar as (null)", "let foo = bar;\n");
       exp("let foo = bar\nas (null)", "let foo = bar;\nas(null);\n");
-      // err("let foo = (bar\nas (null))", 'Expected ")" but found "as"');
-      err("let foo = (bar\nas (null))", "Parse error");
+      err("let foo = (bar\nas (null))", 'Expected ")" but found "as"');
 
       exp("a as any ? b : c;", "a ? b : c;\n");
-      // exp("a as any ? async () => b : c;", "a ? async () => b : c;\n");
       exp("a as any ? async () => b : c;", "a || c;\n");
 
       exp("foo as number extends Object ? any : any;", "foo;\n");
@@ -406,8 +418,7 @@ describe("Bun.Transpiler", () => {
         "let a = b ? c : d ? e : f;\n",
       );
       err("type a = b extends c", 'Expected "?" but found end of file');
-      err("type a = b extends c extends d", "Parse error");
-      // err("type a = b extends c extends d", 'Expected "?" but found "extends"');
+      err("type a = b extends c extends d", 'Expected "?" but found "extends"');
       err("type a = b ? c : d", 'Expected ";" but found "?"');
 
       exp("let foo: keyof Object = 'toString'", 'let foo = "toString";\n');
@@ -488,12 +499,9 @@ describe("Bun.Transpiler", () => {
       exp("let x: abstract new () => void = Foo", "let x = Foo;\n");
       exp("let x: abstract new <T>() => Foo<T>", "let x;\n");
       exp("let x: abstract new <T extends object>() => Foo<T>", "let x;\n");
-      // err("let x: abstract () => void = Foo", 'Expected ";" but found "("');
-      err("let x: abstract () => void = Foo", "Parse error");
-      // err("let x: abstract <T>() => Foo<T>", 'Expected ";" but found "("');
-      err("let x: abstract <T>() => Foo<T>", "Parse error");
-      // err("let x: abstract <T extends object>() => Foo<T>", 'Expected "?" but found ">"');
-      err("let x: abstract <T extends object>() => Foo<T>", "Parse error");
+      err("let x: abstract () => void = Foo", 'Expected ";" but found "("');
+      err("let x: abstract <T>() => Foo<T>", 'Expected ";" but found "("');
+      err("let x: abstract <T extends object>() => Foo<T>", 'Expected "?" but found ">"');
 
       // TypeScript 4.7
       // jsxErrorArrow := "The character \">\" is not valid inside a JSX element\n" +
@@ -506,17 +514,12 @@ describe("Bun.Transpiler", () => {
       exp("type Foo<in X, out Y> = [X, Y]", "");
       exp("type Foo<out X, in Y> = [X, Y]", "");
       exp("type Foo<out X, out Y extends keyof X> = [X, Y]", "");
-      // err( "type Foo<i\\u006E T> = T", "Expected identifier but found \"i\\\\u006E\"\n")
-      err("type Foo<i\\u006E T> = T", "Parse error");
-      // err( "type Foo<ou\\u0074 T> = T", "Expected \">\" but found \"T\"\n")
-      err("type Foo<ou\\u0074 T> = T", "Parse error");
-      // err( "type Foo<in in> = T", "The modifier \"in\" is not valid here:\nExpected identifier but found \">\"\n")
-      err("type Foo<in in> = T", "Parse error");
-      // err( "type Foo<out in> = T", "The modifier \"in\" is not valid here:\nExpected identifier but found \">\"\n")
-      err("type Foo<out in> = T", "Parse error");
+      err("type Foo<i\\u006E T> = T", 'Expected identifier but found "i\\u006E"');
+      err("type Foo<ou\\u0074 T> = T", 'Expected ">" but found "T"');
+      err("type Foo<in in> = T", 'The modifier "in" is not valid here');
+      err("type Foo<out in> = T", 'The modifier "in" is not valid here');
       err("type Foo<out in T> = T", 'The modifier "in" is not valid here');
-      // err( "type Foo<public T> = T", "Expected \">\" but found \"T\"\n")
-      err("type Foo<public T> = T", "Parse error");
+      err("type Foo<public T> = T", 'Expected ">" but found "T"');
       err("type Foo<in out in T> = T", 'The modifier "in" is not valid here');
       err("type Foo<in out out T> = T", 'The modifier "out" is not valid here');
       exp("class Foo<in T> {}", "class Foo {\n}");
@@ -537,16 +540,12 @@ describe("Bun.Transpiler", () => {
       err("export default function foo<out T>() {}", 'The modifier "out" is not valid here');
       err("export default function <in T>() {}", 'The modifier "in" is not valid here');
       err("export default function <out T>() {}", 'The modifier "out" is not valid here');
-      // err("let foo: Foo<in T>", 'Unexpected "in"');
-      err("let foo: Foo<in T>", "Parse error");
-      // err("let foo: Foo<out T>", 'Expected ">" but found "T"');
-      err("let foo: Foo<out T>", "Parse error");
+      err("let foo: Foo<in T>", "Unexpected in");
+      err("let foo: Foo<out T>", 'Expected ">" but found "T"');
       err("declare function foo<in T>()", 'The modifier "in" is not valid here');
       err("declare function foo<out T>()", 'The modifier "out" is not valid here');
-      // err("declare let foo: Foo<in T>", 'Unexpected "in"');
-      err("declare let foo: Foo<in T>", "Parse error");
-      // err("declare let foo: Foo<out T>", 'Expected ">" but found "T"');
-      err("declare let foo: Foo<out T>", "Parse error");
+      err("declare let foo: Foo<in T>", "Unexpected in");
+      err("declare let foo: Foo<out T>", 'Expected ">" but found "T"');
       exp("Foo = class <in T> {}", "Foo = class {\n}");
       exp("Foo = class <out T> {}", "Foo = class {\n}");
       exp("Foo = class Bar<in T> {}", "Foo = class Bar {\n}");
@@ -559,27 +558,17 @@ describe("Bun.Transpiler", () => {
       err("foo = { foo<out T>(): T {} }", 'The modifier "out" is not valid here');
       err("<in T>() => {}", 'The modifier "in" is not valid here');
       err("<out T>() => {}", 'The modifier "out" is not valid here');
-      err("<in T, out T>() => {}", "Parse error");
-      // err("<in T, out T>() => {}", 'The modifier "in" is not valid here:\nThe modifier "out" is not valid here');
+      err("<in T, out T>() => {}", 'The modifier "in" is not valid here');
       err("let x: <in T>() => {}", 'The modifier "in" is not valid here');
       err("let x: <out T>() => {}", 'The modifier "out" is not valid here');
-      err("let x: <in T, out T>() => {}", "Parse error");
-      // err("let x: <in T, out T>() => {}", 'The modifier "in" is not valid here:\nThe modifier "out" is not valid here');
+      err("let x: <in T, out T>() => {}", 'The modifier "in" is not valid here');
       err("let x: new <in T>() => {}", 'The modifier "in" is not valid here');
       err("let x: new <out T>() => {}", 'The modifier "out" is not valid here');
-      err("let x: new <in T, out T>() => {}", "Parse error");
+      err("let x: new <in T, out T>() => {}", 'The modifier "in" is not valid here');
 
-      // err(
-      //   "let x: new <in T, out T>() => {}",
-      //   'The modifier "in" is not valid here:\nThe modifier "out" is not valid here',
-      // );
       err("let x: { y<in T>(): any }", 'The modifier "in" is not valid here');
       err("let x: { y<out T>(): any }", 'The modifier "out" is not valid here');
-      // err(
-      //   "let x: { y<in T, out T>(): any }",
-      //   'The modifier "in" is not valid here:\nThe modifier "out" is not valid here',
-      // );
-      err("let x: new <in T, out T>() => {}", "Parse error");
+      err("let x: new <in T, out T>() => {}", 'The modifier "in" is not valid here');
 
       // expectPrintedTSX(t, "<in T></in>", "/* @__PURE__ */ React.createElement(\"in\", { T: true });\n")
       // expectPrintedTSX(t, "<out T></out>", "/* @__PURE__ */ React.createElement(\"out\", { T: true });\n")
@@ -623,12 +612,9 @@ describe("Bun.Transpiler", () => {
       exp("let x: new <const const T>() => T = y", "let x = y;\n");
       err("type Foo<const T> = T", 'The modifier "const" is not valid here');
       err("interface Foo<const T> {}", 'The modifier "const" is not valid here');
-      err("let x: <const>() => {}", "Parse error");
-      // err("let x: <const>() => {}", 'Expected identifier but found ">"');
-      err("let x: new <const>() => {}", "Parse error");
-      // err("let x: new <const>() => {}", 'Expected identifier but found ">"');
-      // err("let x: Foo<const T>", 'Expected ">" but found "T"');
-      err("let x: Foo<const T>", "Parse error");
+      err("let x: <const>() => {}", 'Expected identifier but found ">"');
+      err("let x: new <const>() => {}", 'Expected identifier but found ">"');
+      err("let x: Foo<const T>", 'Expected ">" but found "T"');
       err("x = <T,>(y)", 'Expected "=>" but found end of file');
       err("x = <const T>(y)", 'Expected "=>" but found end of file');
       err("x = <T extends X>(y)", 'Expected "=>" but found end of file');
@@ -641,12 +627,9 @@ describe("Bun.Transpiler", () => {
       exp("class Foo<in const out T> {}", "class Foo {\n}");
       exp("class Foo<in out const T> {}", "class Foo {\n}");
       exp("class Foo<const in const out const T> {}", "class Foo {\n}");
-      // err("class Foo<in const> {}", 'Expected identifier but found ">"');
-      err("class Foo<in const> {}", "Parse error");
-      // err("class Foo<out const> {}", 'Expected identifier but found ">"');
-      err("class Foo<out const> {}", "Parse error");
-      // err("class Foo<in out const> {}", 'Expected identifier but found ">"');
-      err("class Foo<in out const> {}", "Parse error");
+      err("class Foo<in const> {}", 'Expected identifier but found ">"');
+      err("class Foo<out const> {}", 'Expected identifier but found ">"');
+      err("class Foo<in out const> {}", 'Expected identifier but found ">"');
       // expectPrintedTSX(t, "<const>(x)</const>", '/* @__PURE__ */ React.createElement("const", null, "(x)");\n');
       // expectPrintedTSX(t, "<const const/>", '/* @__PURE__ */ React.createElement("const", { const: true });\n');
       // expectPrintedTSX(t, "<const const></const>", '/* @__PURE__ */ React.createElement("const", { const: true });\n');
@@ -1956,6 +1939,10 @@ console.log(resolve.length)
 
       expectPrinted_(`export default typeof user_undefined !== 'undefined';`, `export default false`);
       expectPrinted_(`export default !user_undefined;`, `export default true`);
+
+      expectPrinted_(`export default user_nested;`, `export default location.origin`);
+      expectPrinted_("hello.earth('hi')", 'hello.mars("hi")');
+      expectPrinted_("Math.log('hi')", 'console.error("hi")');
     });
 
     it("jsx symbol should work", () => {

@@ -24,7 +24,7 @@ pub const system = darwin;
 const fd_t = os.fd_t;
 
 const mem = std.mem;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const c = std.c;
 const bun = @import("root").bun;
 pub const darwin = struct {
@@ -201,7 +201,7 @@ pub const Waker = struct {
 //             &timespec,
 //         );
 
-//         std.debug.assert(errno == 0);
+//         bun.assert(errno == 0);
 
 //         return UserFilterWaker{
 //             .kq = kq,

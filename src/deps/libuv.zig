@@ -25,7 +25,7 @@ const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
 const Env = bun.Environment;
 
-pub const log = bun.Output.scoped(.uv, false);
+pub const log = bun.Output.scoped(.uv, true);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -682,16 +682,6 @@ pub const Loop = extern struct {
         this.wq_async.send();
     }
 
-    pub fn refConcurrently(this: *Loop) void {
-        log("refConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
-    }
-
-    pub fn unrefConcurrently(this: *Loop) void {
-        log("unrefConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
-    }
-
     pub fn unrefCount(this: *Loop, count: i32) void {
         log("unrefCount({d})", .{count});
         this.active_handles -= @intCast(count);
@@ -729,7 +719,7 @@ pub const uv_buf_t = extern struct {
     base: [*]u8,
 
     pub fn init(input: []const u8) uv_buf_t {
-        std.debug.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
+        bun.assert(input.len <= @as(usize, std.math.maxInt(ULONG)));
         return .{ .len = @truncate(input.len), .base = @constCast(input.ptr) };
     }
 
@@ -1522,7 +1512,7 @@ pub const struct_uv_fs_event_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_fs_event_t = struct_uv_fs_event_s;
-pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, c_int) callconv(.C) void;
+pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, ReturnCode) callconv(.C) void;
 pub const struct_uv_fs_event_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1532,15 +1522,32 @@ pub const struct_uv_fs_event_s = extern struct {
     u: union_unnamed_428,
     endgame_next: [*c]uv_handle_t,
     flags: c_uint,
-    path: [*]u8,
+    path: ?[*:0]u8,
     req: struct_uv_fs_event_req_s,
     dir_handle: HANDLE,
     req_pending: c_int,
     cb: uv_fs_event_cb,
-    filew: [*]WCHAR,
-    short_filew: [*]WCHAR,
-    dirw: [*]WCHAR,
+    filew: ?[*]WCHAR = null,
+    short_filew: ?[*]WCHAR = null,
+    dirw: ?[*]WCHAR = null,
     buffer: [*]u8,
+
+    pub fn isDir(this: *const uv_fs_event_t) bool {
+        return this.dirw != null;
+    }
+
+    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: ReturnCode) u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        if (this.path) |path| {
+            hasher.update(bun.sliceTo(path, 0));
+        } else {
+            hasher.update("null");
+        }
+        hasher.update(std.mem.asBytes(&events));
+        hasher.update(filename);
+        hasher.update(std.mem.asBytes(&status));
+        return hasher.final();
+    }
 };
 const union_unnamed_432 = extern union {
     fd: c_int,
@@ -1920,7 +1927,7 @@ pub const struct_uv_utsname_s = extern struct {
     machine: [255:0]u8,
 
     comptime {
-        std.debug.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
+        bun.assert(@sizeOf(struct_uv_utsname_s) == 256 * 4);
     }
 };
 pub const uv_utsname_t = struct_uv_utsname_s;
@@ -2420,10 +2427,11 @@ pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
 pub const UV_FS_EVENT_STAT: c_int = 2;
 pub const UV_FS_EVENT_RECURSIVE: c_int = 4;
 pub const enum_uv_fs_event_flags = c_uint;
-pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*]const u8, flags: c_uint) c_int;
+pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) ReturnCode;
+pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*:0]const u8, flags: c_uint) ReturnCode;
+/// always returns zero
 pub extern fn uv_fs_event_stop(handle: *uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: *usize) ReturnCode;
 pub extern fn uv_ip4_addr(ip: [*]const u8, port: c_int, addr: [*c]sockaddr_in) c_int;
 pub extern fn uv_ip6_addr(ip: [*]const u8, port: c_int, addr: ?*sockaddr_in6) c_int;
 pub extern fn uv_ip4_name(src: [*c]const sockaddr_in, dst: [*]u8, size: usize) c_int;

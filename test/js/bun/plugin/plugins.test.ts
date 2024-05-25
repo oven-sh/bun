@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { resolve } from "path";
+import { resolve, dirname } from "path";
 
 declare global {
   var failingObject: any;
@@ -89,8 +89,9 @@ plugin({
     }));
 
     builder.onLoad({ filter: /.*/, namespace: "delay" }, ({ path }) => ({
-      contents: (globalThis.laterCode ||= ""),
+      contents: globalThis.laterCode || "",
       loader: "js",
+      resolveDir: process.cwd(),
     }));
   },
 });
@@ -468,7 +469,7 @@ describe("errors", () => {
     Three Act Tragedy
     Death in the Clouds`;
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         server.stop();

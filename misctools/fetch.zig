@@ -14,13 +14,13 @@ pub usingnamespace @import("root").bun;
 const clap = bun.clap;
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const HTTPThread = @import("root").bun.http.HTTPThread;
-const HTTP = @import("root").bun.http;
+const HTTPThread = bun.http.HTTPThread;
+const HTTP = bun.http;
 fn noop_resolver(in: string) !string {
     return in;
 }
@@ -62,8 +62,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: bun.PathBuffer = undefined;
+var cwd_buf: bun.PathBuffer = undefined;
 
 pub const Arguments = struct {
     url: URL,

@@ -64,6 +64,8 @@ URLSearchParams::URLSearchParams(const Vector<KeyValuePair<String, String>>& pai
 {
 }
 
+URLSearchParams::~URLSearchParams() = default;
+
 ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&& variant)
 {
     auto visitor = WTF::makeVisitor([&](const Vector<Vector<String>>& vector) -> ExceptionOr<Ref<URLSearchParams>> {
@@ -165,7 +167,7 @@ String URLSearchParams::toString() const
 void URLSearchParams::updateURL()
 {
     if (m_associatedURL)
-        m_associatedURL->setQuery(WTF::URLParser::serialize(m_pairs));
+        m_associatedURL->setSearch(WTF::URLParser::serialize(m_pairs));
 }
 
 void URLSearchParams::updateFromAssociatedURL()

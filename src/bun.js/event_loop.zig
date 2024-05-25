@@ -1,5 +1,5 @@
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Allocator = std.mem.Allocator;
@@ -25,7 +25,7 @@ const Waker = bun.Async.Waker;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 const Async = bun.Async;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
@@ -42,8 +42,10 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         // This is a poll because we want it to enter the uSockets loop
         ref: Async.KeepAlive = .{},
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
-            var this = bun.new(This, .{
+            var this = This.new(.{
                 .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
@@ -80,7 +82,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            bun.destroy(this);
+            this.promise.strong.deinit();
+            this.destroy();
         }
     };
 }
@@ -223,13 +226,14 @@ pub const AnyTaskWithExtraContext = struct {
     callback: *const (fn (*anyopaque, *anyopaque) void) = undefined,
     next: ?*AnyTaskWithExtraContext = null,
 
+    pub fn fromCallbackAutoDeinit(of: anytype, comptime callback: anytype) *AnyTaskWithExtraContext {
+        const TheTask = NewManaged(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), callback));
+        const task = bun.default_allocator.create(AnyTaskWithExtraContext) catch bun.outOfMemory();
+        task.* = TheTask.init(of);
+        return task;
+    }
+
     pub fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This() {
-        // this.* = .{
-        //     .ctx = of,
-        //     .callback = @field(std.meta.Child(@TypeOf(of)), field),
-        //     .next = null,
-        // };
-        // return this;
         const TheTask = New(std.meta.Child(@TypeOf(of)), void, @field(std.meta.Child(@TypeOf(of)), field));
         this.* = TheTask.init(of);
         return this;
@@ -263,6 +267,30 @@ pub const AnyTaskWithExtraContext = struct {
             }
         };
     }
+
+    pub fn NewManaged(comptime Type: type, comptime ContextType: type, comptime Callback: anytype) type {
+        return struct {
+            pub fn init(ctx: *Type) AnyTaskWithExtraContext {
+                return AnyTaskWithExtraContext{
+                    .callback = wrap,
+                    .ctx = ctx,
+                };
+            }
+
+            pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) void {
+                @call(
+                    .always_inline,
+                    Callback,
+                    .{
+                        @as(*Type, @ptrCast(@alignCast(this.?))),
+                        @as(*ContextType, @ptrCast(@alignCast(extra.?))),
+                    },
+                );
+                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr(AnyTaskWithExtraContext, "ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
+                bun.default_allocator.destroy(anytask);
+            }
+        };
+    }
 };
 
 pub const CppTask = opaque {
@@ -282,9 +310,9 @@ pub const JSCScheduler = struct {
         JSC.markBinding(@src());
 
         if (delta > 0) {
-            jsc_vm.event_loop_handle.?.refConcurrently();
+            jsc_vm.event_loop.refConcurrently();
         } else {
-            jsc_vm.event_loop_handle.?.unrefConcurrently();
+            jsc_vm.event_loop.unrefConcurrently();
         }
     }
 
@@ -349,6 +377,9 @@ const Futimes = JSC.Node.Async.futimes;
 const Lchmod = JSC.Node.Async.lchmod;
 const Lchown = JSC.Node.Async.lchown;
 const Unlink = JSC.Node.Async.unlink;
+const BrotliDecoder = JSC.API.BrotliDecoder;
+const BrotliEncoder = JSC.API.BrotliEncoder;
+
 const ShellGlobTask = bun.shell.interpret.Interpreter.Expansion.ShellGlobTask;
 const ShellRmTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask;
 const ShellRmDirTask = bun.shell.Interpreter.Builtin.Rm.ShellRmTask.DirTask;
@@ -357,8 +388,11 @@ const ShellMvCheckTargetTask = bun.shell.Interpreter.Builtin.Mv.ShellMvCheckTarg
 const ShellMvBatchedTask = bun.shell.Interpreter.Builtin.Mv.ShellMvBatchedTask;
 const ShellMkdirTask = bun.shell.Interpreter.Builtin.Mkdir.ShellMkdirTask;
 const ShellTouchTask = bun.shell.Interpreter.Builtin.Touch.ShellTouchTask;
+const ShellCpTask = bun.shell.Interpreter.Builtin.Cp.ShellCpTask;
+const ShellCondExprStatTask = bun.shell.Interpreter.CondExpr.ShellCondExprStatTask;
+const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
-const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinit;
+const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
 const TimerReference = JSC.BunTimer.Timeout.TimerReference;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
@@ -425,6 +459,8 @@ pub const Task = TaggedPointerUnion(.{
     Lchmod,
     Lchown,
     Unlink,
+    BrotliEncoder,
+    BrotliDecoder,
     ShellGlobTask,
     ShellRmTask,
     ShellRmDirTask,
@@ -433,8 +469,12 @@ pub const Task = TaggedPointerUnion(.{
     ShellLsTask,
     ShellMkdirTask,
     ShellTouchTask,
+    ShellCpTask,
+    ShellCondExprStatTask,
+    ShellAsync,
     ShellAsyncSubprocessDone,
     TimerReference,
+    bun.shell.Interpreter.Builtin.Yes.YesTask,
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
@@ -735,6 +775,7 @@ pub const EventLoop = struct {
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
+    concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
 
     pub const Debug = if (Environment.isDebug) struct {
         is_inside_tick_queue: bool = false,
@@ -842,7 +883,7 @@ pub const EventLoop = struct {
         const result = callback.callWithThis(globalObject, thisValue, arguments);
 
         if (result.toError()) |err| {
-            this.virtual_machine.onUnhandledError(globalObject, err);
+            _ = this.virtual_machine.uncaughtException(globalObject, err, false);
         }
     }
 
@@ -885,6 +926,10 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
+                @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
+                    var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
+                    shell_ls_task.runFromMainThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsyncSubprocessDone))) => {
                     var shell_ls_task: *ShellAsyncSubprocessDone = task.get(ShellAsyncSubprocessDone).?;
                     shell_ls_task.runFromMainThread();
@@ -892,27 +937,30 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOWriterAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOWriterAsyncDeinit = task.get(ShellIOWriterAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellIOReaderAsyncDeinit))) => {
                     var shell_ls_task: *ShellIOReaderAsyncDeinit = task.get(ShellIOReaderAsyncDeinit).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellCondExprStatTask))) => {
+                    var shell_ls_task: *ShellCondExprStatTask = task.get(ShellCondExprStatTask).?;
+                    shell_ls_task.task.runFromMainThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(ShellCpTask))) => {
+                    var shell_ls_task: *ShellCpTask = task.get(ShellCpTask).?;
+                    shell_ls_task.runFromMainThread();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellTouchTask))) => {
                     var shell_ls_task: *ShellTouchTask = task.get(ShellTouchTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMkdirTask))) => {
                     var shell_ls_task: *ShellMkdirTask = task.get(ShellMkdirTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellLsTask))) => {
                     var shell_ls_task: *ShellLsTask = task.get(ShellLsTask).?;
                     shell_ls_task.runFromMainThread();
-                    // shell_ls_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellMvBatchedTask))) => {
                     var shell_mv_batched_task: *ShellMvBatchedTask = task.get(ShellMvBatchedTask).?;
@@ -925,12 +973,10 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmTask))) => {
                     var shell_rm_task: *ShellRmTask = task.get(ShellRmTask).?;
                     shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellRmDirTask))) => {
                     var shell_rm_task: *ShellRmDirTask = task.get(ShellRmDirTask).?;
                     shell_rm_task.runFromMainThread();
-                    // shell_rm_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(ShellGlobTask))) => {
                     var shell_glob_task: *ShellGlobTask = task.get(ShellGlobTask).?;
@@ -986,7 +1032,7 @@ pub const EventLoop = struct {
                     // special case: we return
                     return 0;
                 },
-                .FSWatchTask => {
+                @field(Task.Tag, typeBaseName(@typeName(FSWatchTask))) => {
                     var transform_task: *FSWatchTask = task.get(FSWatchTask).?;
                     transform_task.*.run();
                     transform_task.deinit();
@@ -1173,6 +1219,14 @@ pub const EventLoop = struct {
                     var any: *Unlink = task.get(Unlink).?;
                     any.runFromJSThread();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(BrotliEncoder))) => {
+                    var any: *BrotliEncoder = task.get(BrotliEncoder).?;
+                    any.runFromJSThread();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(BrotliDecoder))) => {
+                    var any: *BrotliDecoder = task.get(BrotliDecoder).?;
+                    any.runFromJSThread();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(ProcessWaiterThreadTask))) => {
                     bun.markPosixOnly();
                     var any: *ProcessWaiterThreadTask = task.get(ProcessWaiterThreadTask).?;
@@ -1217,6 +1271,24 @@ pub const EventLoop = struct {
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         JSC.markBinding(@src());
+        const delta = this.concurrent_ref.swap(0, .Monotonic);
+        const loop = this.virtual_machine.event_loop_handle.?;
+        if (comptime Environment.isWindows) {
+            if (delta > 0) {
+                loop.active_handles += @intCast(delta);
+            } else {
+                loop.active_handles -= @intCast(-delta);
+            }
+        } else {
+            if (delta > 0) {
+                loop.num_polls += @intCast(delta);
+                loop.active += @intCast(delta);
+            } else {
+                loop.num_polls -= @intCast(-delta);
+                loop.active -= @intCast(-delta);
+            }
+        }
+
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
         if (count == 0)
@@ -1545,6 +1617,7 @@ pub const EventLoop = struct {
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
         }
+        bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -1583,6 +1656,18 @@ pub const EventLoop = struct {
         }
 
         this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
+        this.wakeup();
+    }
+
+    pub fn refConcurrently(this: *EventLoop) void {
+        // TODO maybe this should be AcquireRelease
+        _ = this.concurrent_ref.fetchAdd(1, .Monotonic);
+        this.wakeup();
+    }
+
+    pub fn unrefConcurrently(this: *EventLoop) void {
+        // TODO maybe this should be AcquireRelease
+        _ = this.concurrent_ref.fetchSub(1, .Monotonic);
         this.wakeup();
     }
 };
@@ -1719,6 +1804,7 @@ pub const MiniEventLoop = struct {
         const loop = MiniEventLoop.init(bun.default_allocator);
         global = bun.default_allocator.create(MiniEventLoop) catch bun.outOfMemory();
         global.* = loop;
+        global.loop.internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(global));
         global.env = env orelse bun.DotEnv.instance orelse env_loader: {
             const map = bun.default_allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
             map.* = bun.DotEnv.Map.init(bun.default_allocator);
@@ -1780,7 +1866,7 @@ pub const MiniEventLoop = struct {
 
     pub fn deinit(this: *MiniEventLoop) void {
         this.tasks.deinit();
-        std.debug.assert(this.concurrent_tasks.isEmpty());
+        bun.assert(this.concurrent_tasks.isEmpty());
     }
 
     pub fn tickConcurrentWithCount(this: *MiniEventLoop) usize {
@@ -1908,7 +1994,7 @@ pub const MiniEventLoop = struct {
             }
 
             store.* = JSC.WebCore.Blob.Store{
-                .ref_count = 2,
+                .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{
@@ -1940,7 +2026,7 @@ pub const MiniEventLoop = struct {
             }
 
             store.* = JSC.WebCore.Blob.Store{
-                .ref_count = 2,
+                .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
                     .file = JSC.WebCore.Blob.FileStore{
@@ -2071,6 +2157,13 @@ pub const AnyEventLoop = union(enum) {
 pub const EventLoopHandle = union(enum) {
     js: *JSC.EventLoop,
     mini: *MiniEventLoop,
+
+    pub fn globalObject(this: EventLoopHandle) ?*JSC.JSGlobalObject {
+        return switch (this) {
+            .js => this.js.global,
+            .mini => null,
+        };
+    }
 
     pub fn stdout(this: EventLoopHandle) *JSC.WebCore.Blob.Store {
         return switch (this) {

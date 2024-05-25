@@ -151,6 +151,19 @@ By default, Bun respects this shebang and executes the script with `node`. Howev
 $ bun run --bun vite
 ```
 
+### Filtering
+
+in monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
+
+Use `bun run --filter <name_pattern> <script>` to execute `<script>` in all packages whose name matches `<name_pattern>`.
+For example, if you have subdirectories containing packages named `foo`, `bar` and `baz`, running 
+```bash
+bun run --filter 'ba*' <script>
+```
+will execute `<script>` in both `bar` and `baz`, but not in `foo`.
+
+Find more details in the docs page for [filter](/docs/cli/filter).
+
 ## `bun run -` to pipe code from stdin
 
 `bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.

@@ -185,3 +185,12 @@ exports[`console.table ansi colors 1`] = `
 └───────┴─────────────────────────────────────────────┘
 "
 `;
+
+exports[`console.table expected output for: properties - interesting character 1`] = `
+"┌───┬────────┐
+│   │ Values │
+├───┼────────┤
+│ a │ _字    │
+└───┴────────┘
+"
+`;

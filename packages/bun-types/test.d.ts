@@ -94,6 +94,7 @@ declare module "bun:test" {
     clearAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
+    setTimeout(milliseconds: number): void;
   }
   export const jest: Jest;
   export namespace jest {
@@ -202,11 +203,16 @@ declare module "bun:test" {
      */
     skipIf(condition: boolean): (label: string, fn: () => void) => void;
     /**
+     * Marks this group of tests as to be written or to be fixed, if `condition` is true.
+     *
+     * @param condition if these tests should be skipped
+     */
+    todoIf(condition: boolean): (label: string, fn: () => void) => void;
+    /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-
     each<T extends Readonly<[any, ...any[]]>>(
       table: readonly T[],
     ): (label: string, fn: (...args: [...T]) => void | Promise<unknown>, options?: number | TestOptions) => void;
@@ -288,6 +294,13 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  /**
+   * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
+   * override this value. The default timeout is 5000ms (5 seconds).
+   *
+   * @param milliseconds the number of milliseconds for the default timeout
+   */
+  export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.
@@ -408,6 +421,18 @@ declare module "bun:test" {
      * @param condition if the test should be skipped
      */
     skipIf(
+      condition: boolean,
+    ): (
+      label: string,
+      fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+      options?: number | TestOptions,
+    ) => void;
+    /**
+     * Marks this test as to be written or to be fixed, if `condition` is true.
+     *
+     * @param condition if the test should be marked TODO
+     */
+    todoIf(
       condition: boolean,
     ): (
       label: string,
@@ -1427,6 +1452,22 @@ declare module "bun:test" {
      * @param expected the string to end with
      */
     toEndWith(expected: string): void;
+    /**
+     * Ensures that a mock function has returned successfully at least once.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturned(): void;
+
+    /**
+     * Ensures that a mock function has returned successfully at `times` times.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturnedTimes(times: number): void;
+
     /**
      * Ensures that a mock function is called.
      */

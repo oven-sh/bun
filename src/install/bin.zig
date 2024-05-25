@@ -5,12 +5,12 @@ const String = Semver.String;
 const Output = bun.Output;
 const Global = bun.Global;
 const std = @import("std");
-const strings = @import("root").bun.strings;
+const strings = bun.strings;
 const Environment = @import("../env.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const C = @import("../c.zig");
 const Fs = @import("../fs.zig");
-const stringZ = @import("root").bun.stringZ;
+const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
 const string = bun.string;
@@ -185,7 +185,7 @@ pub const Bin = extern struct {
         dir_iterator: ?std.fs.Dir.Iterator = null,
         package_name: String,
         package_installed_node_modules: std.fs.Dir = bun.invalid_fd.asDir(),
-        buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+        buf: bun.PathBuffer = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
 
@@ -364,7 +364,7 @@ pub const Bin = extern struct {
                 var filename3_buf: bun.WPathBuffer = undefined;
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(strings.hasPrefixComptime(target_path, "..\\"));
+                    bun.assert(strings.hasPrefixComptime(target_path, "..\\"));
                 }
 
                 const target_wpath = bun.strings.toWPathNormalized(&filename1_buf, target_path[3..]);
@@ -474,8 +474,8 @@ pub const Bin = extern struct {
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
         pub fn link(this: *Linker, link_global: bool) void {
-            var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var target_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
             var from_remain: []u8 = &target_buf;
             var remain: []u8 = &dest_buf;
 
@@ -698,8 +698,8 @@ pub const Bin = extern struct {
         }
 
         pub fn unlink(this: *Linker, link_global: bool) void {
-            var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var target_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
             var from_remain: []u8 = &target_buf;
             var remain: []u8 = &dest_buf;
 

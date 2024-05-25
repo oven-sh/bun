@@ -126,8 +126,9 @@ bool isValidHTTPHeaderValue(const String& value)
     if (isTabOrSpace(c))
         return false;
     if (value.is8Bit()) {
-        const LChar* end = value.characters8() + value.length();
-        for (const LChar* p = value.characters8(); p != end; ++p) {
+        const LChar* begin = value.span8().data();
+        const LChar* end = begin + value.length();
+        for (const LChar* p = begin; p != end; ++p) {
             if (UNLIKELY(*p <= 13)) {
                 LChar c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
@@ -198,7 +199,7 @@ bool isValidHTTPToken(StringView value)
         return false;
 
     if (value.is8Bit()) {
-        const LChar* characters = value.characters8();
+        const LChar* characters = value.span8().data();
         const LChar* end = characters + value.length();
         while (characters < end) {
             if (!RFC7230::isTokenCharacter(*characters++))
@@ -333,13 +334,13 @@ template<typename CharType>
 static String trimInputSample(CharType* p, size_t length)
 {
     if (length <= maxInputSampleSize)
-        return String(p, length);
-    return makeString(StringView(p, length).left(maxInputSampleSize), horizontalEllipsis);
+        return String({ p, length });
+    return makeString(StringView(std::span { p, length }).left(maxInputSampleSize), horizontalEllipsis);
 }
 
 std::optional<WallTime> parseHTTPDate(const String& value)
 {
-    double dateInMillisecondsSinceEpoch = parseDateFromNullTerminatedCharacters(value.utf8().data());
+    double dateInMillisecondsSinceEpoch = parseDate(value.utf8().span());
     if (!std::isfinite(dateInMillisecondsSinceEpoch))
         return std::nullopt;
     // This assumes system_clock epoch equals Unix epoch which is true for all implementations but unspecified.
@@ -772,7 +773,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
     }
 
     nameSize = name.size();
-    nameStr = StringView(namePtr, nameSize);
+    nameStr = StringView(std::span { namePtr, nameSize });
 
     for (; p < end && *p == 0x20; p++) {
     }
@@ -799,7 +800,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
         failureReason = makeString("CR doesn't follow LF after header value at ", trimInputSample(p, end - p));
         return 0;
     }
-    valueStr = String::fromUTF8(value.data(), value.size());
+    valueStr = String::fromUTF8({ value.data(), value.size() });
     if (valueStr.isNull()) {
         failureReason = "Invalid UTF-8 sequence in header value"_s;
         return 0;
@@ -810,7 +811,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
 size_t parseHTTPRequestBody(const uint8_t* data, size_t length, Vector<uint8_t>& body)
 {
     body.clear();
-    body.append(data, length);
+    body.append(std::span { data, length });
 
     return length;
 }

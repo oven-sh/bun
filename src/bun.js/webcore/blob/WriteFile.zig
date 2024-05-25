@@ -137,7 +137,7 @@ pub const WriteFile = struct {
         wrote: *usize,
     ) bool {
         const fd = this.opened_fd;
-        std.debug.assert(fd != invalid_fd);
+        bun.assert(fd != invalid_fd);
 
         const result: JSC.Maybe(usize) =
             // We do not use pwrite() because the file may not be
@@ -416,7 +416,7 @@ pub const WriteFileWindows = struct {
             },
         }
 
-        write_file.loop().refConcurrently();
+        write_file.event_loop.refConcurrently();
         return write_file;
     }
     pub const ResultType = WriteFile.ResultType;
@@ -446,7 +446,7 @@ pub const WriteFileWindows = struct {
 
         // libuv always returns 0 when a callback is specified
         if (rc.errEnum()) |err| {
-            std.debug.assert(err != .NOENT);
+            bun.assert(err != .NOENT);
 
             this.throw(.{
                 .errno = @intFromEnum(err),
@@ -460,7 +460,7 @@ pub const WriteFileWindows = struct {
 
     pub fn onOpen(req: *uv.fs_t) callconv(.C) void {
         var this: *WriteFileWindows = @fieldParentPtr(WriteFileWindows, "io_request", req);
-        std.debug.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (comptime Environment.allow_assert)
             log("onOpen({s}) = {}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
@@ -492,7 +492,7 @@ pub const WriteFileWindows = struct {
     fn mkdirp(this: *WriteFileWindows) void {
         log("mkdirp", .{});
         this.mkdirp_if_not_exists = false;
-        this.loop().refConcurrently();
+        this.event_loop.refConcurrently();
 
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         JSC.Node.Async.AsyncMkdirp.new(.{
@@ -505,7 +505,7 @@ pub const WriteFileWindows = struct {
     }
 
     fn onMkdirpComplete(this: *WriteFileWindows) void {
-        this.loop().unrefConcurrently();
+        this.event_loop.unrefConcurrently();
 
         if (this.err) |err| {
             this.throw(err);
@@ -518,14 +518,14 @@ pub const WriteFileWindows = struct {
 
     fn onMkdirpCompleteConcurrent(this: *WriteFileWindows, err_: JSC.Maybe(void)) void {
         log("mkdirp complete", .{});
-        std.debug.assert(this.err == null);
+        bun.assert(this.err == null);
         this.err = if (err_ == .err) err_.err else null;
         this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
     }
 
     fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
         var this: *WriteFileWindows = @fieldParentPtr(WriteFileWindows, "io_request", req);
-        std.debug.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {
             this.throw(.{
@@ -540,7 +540,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn onFinish(container: *WriteFileWindows) void {
-        container.loop().unrefConcurrently();
+        container.event_loop.unrefConcurrently();
         var event_loop = container.event_loop;
         event_loop.enter();
         defer event_loop.exit();
@@ -566,7 +566,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn throw(this: *WriteFileWindows, err: bun.sys.Error) void {
-        std.debug.assert(this.err == null);
+        bun.assert(this.err == null);
         this.err = err;
         this.onFinish();
     }
@@ -711,6 +711,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 if (new_promise.asAnyPromise()) |_promise| {
                     switch (_promise.status(globalThis.vm())) {
                         .Pending => {
+                            // Fulfill the new promise using the old promise
                             promise.resolve(
                                 globalThis,
                                 new_promise,

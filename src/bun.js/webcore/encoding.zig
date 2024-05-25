@@ -2,21 +2,21 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const bun = @import("root").bun;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -35,7 +35,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 
 pub const TextEncoder = struct {
     filler: u32 = 0,
@@ -61,17 +61,17 @@ pub const TextEncoder = struct {
         if (slice.len <= buf.len / 2) {
             const result = strings.copyLatin1IntoUTF8(&buf, []const u8, slice);
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
-            std.debug.assert(result.written <= buf.len);
-            std.debug.assert(result.read == slice.len);
+            bun.assert(result.written <= buf.len);
+            bun.assert(result.read == slice.len);
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
-            std.debug.assert(result.written == array_buffer.len);
+            bun.assert(result.written == array_buffer.len);
             @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
             const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
                 return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
             };
-            std.debug.assert(bytes.len >= slice.len);
+            bun.assert(bytes.len >= slice.len);
             return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
         }
     }
@@ -104,10 +104,10 @@ pub const TextEncoder = struct {
                 return uint8array;
             }
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
-            std.debug.assert(result.written <= buf.len);
-            std.debug.assert(result.read == slice.len);
+            bun.assert(result.written <= buf.len);
+            bun.assert(result.read == slice.len);
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
-            std.debug.assert(result.written == array_buffer.len);
+            bun.assert(result.written == array_buffer.len);
             @memcpy(array_buffer.slice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
@@ -178,7 +178,7 @@ pub const TextEncoder = struct {
         globalThis: *JSGlobalObject,
         rope_str: *JSC.JSString,
     ) JSValue {
-        if (comptime Environment.allow_assert) std.debug.assert(rope_str.is8Bit());
+        if (comptime Environment.allow_assert) bun.assert(rope_str.is8Bit());
         var stack_buf: [2048]u8 = undefined;
         var buf_to_use: []u8 = &stack_buf;
         const length = rope_str.length();
@@ -1008,7 +1008,7 @@ pub const Encoder = struct {
                 defer str.deref();
 
                 const wrote = strings.encodeBytesToHex(chars, input);
-                std.debug.assert(wrote == chars.len);
+                bun.assert(wrote == chars.len);
                 return str.toJS(global);
             },
 

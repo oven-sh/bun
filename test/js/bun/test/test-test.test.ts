@@ -2,8 +2,8 @@
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
-import { mkdtemp, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe } from "harness";
+import { rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 
@@ -27,7 +27,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
   })
 `;
 
-  const test_dir = await mkdtemp(join(tmp, "test"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(join(test_dir, "bad.test.js"), code);
     const { stdout, stderr, exited } = spawn({
@@ -259,7 +259,7 @@ test("test async exceptions fail tests", () => {
   });
 
   `;
-  const dir = join(tmp, "test-throwing-bun");
+  const dir = tmpdirSync();
   const filepath = join(dir, "test-throwing-eventemitter.test.js");
   rmSync(filepath, {
     force: true,
@@ -289,7 +289,7 @@ test("test async exceptions fail tests", () => {
 });
 
 it("should return non-zero exit code for invalid syntax", async () => {
-  const test_dir = await mkdtemp(join(tmp, "test"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(join(test_dir, "bad.test.js"), "!!!");
     const { stdout, stderr, exited } = spawn({
@@ -314,7 +314,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
 });
 
 it("invalid syntax counts towards bail", async () => {
-  const test_dir = await mkdtemp(join(tmp, "test"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(join(test_dir, "bad1.test.js"), "!!!");
     await writeFile(join(test_dir, "bad2.test.js"), "!!!");
@@ -526,7 +526,7 @@ it("test.todo doesnt cause exit code 1", () => {
 it("test timeouts when expected", () => {
   const path = join(tmp, "test-timeout.test.js");
   copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
-  const { stdout, stderr, exited } = spawnSync({
+  const { stderr } = spawnSync({
     cmd: [bunExe(), "test", path],
     stdout: "pipe",
     stderr: "pipe",
@@ -537,6 +537,22 @@ it("test timeouts when expected", () => {
   const err = stderr!.toString();
   expect(err).toContain("timed out after 10ms");
   expect(err).not.toContain("unreachable code");
+});
+
+test("jest.setTimeout will change default timeout", () => {
+  const path = join(tmp, "jest-setTimeout-test.test.js");
+  copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);
+  const { stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: dirname(path),
+  });
+
+  const err = stderr!.toString();
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
 });
 
 it("expect().toEqual() on objects with property indices doesn't print undefined", () => {
@@ -616,7 +632,7 @@ it("skip() and skipIf()", () => {
 });
 
 it("should run beforeAll() & afterAll() even without tests", async () => {
-  const test_dir = await mkdtemp(join(tmp, "test-hooks-empty"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(
       join(test_dir, "empty.test.js"),

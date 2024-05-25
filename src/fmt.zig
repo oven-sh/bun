@@ -99,7 +99,6 @@ pub inline fn utf16(slice_: []const u16) FormatUTF16 {
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
-    escape_backslashes: bool = false,
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {
@@ -1259,8 +1258,6 @@ pub fn fmtSlice(data: anytype, comptime delim: []const u8) FormatSlice(@TypeOf(d
 }
 
 fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
-    std.debug.assert(@typeInfo(T).Pointer.size == .Slice);
-
     return struct {
         slice: T,
 
@@ -1271,6 +1268,56 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
             for (self.slice[1..]) |item| {
                 if (delim.len > 0) try writer.writeAll(delim);
                 try writer.print(f, .{item});
+            }
+        }
+    };
+}
+
+/// Uses WebKit's double formatter
+pub fn fmtDouble(number: f64) FormatDouble {
+    return .{ .number = number };
+}
+
+pub const FormatDouble = struct {
+    number: f64,
+
+    extern "C" fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
+
+    pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
+        WTF__dtoa(buf, number);
+        return bun.sliceTo(buf, 0);
+    }
+
+    pub fn dtoaWithNegativeZero(buf: *[124]u8, number: f64) []const u8 {
+        if (std.math.isNegativeZero(number)) {
+            return "-0";
+        }
+
+        WTF__dtoa(buf, number);
+        return bun.sliceTo(buf, 0);
+    }
+
+    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        var buf: [124]u8 = undefined;
+        const slice = dtoa(&buf, self.number);
+        try writer.writeAll(slice);
+    }
+};
+
+pub fn nullableFallback(value: anytype, null_fallback: []const u8) NullableFallback(@TypeOf(value)) {
+    return .{ .value = value, .null_fallback = null_fallback };
+}
+
+pub fn NullableFallback(comptime T: type) type {
+    return struct {
+        value: T,
+        null_fallback: []const u8,
+
+        pub fn format(self: @This(), comptime template: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+            if (self.value) |value| {
+                try std.fmt.formatType(value, template, opts, writer, 4);
+            } else {
+                try writer.writeAll(self.null_fallback);
             }
         }
     };

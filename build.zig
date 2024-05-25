@@ -148,7 +148,7 @@ const fs = std.fs;
 pub fn build(b: *Build) !void {
     build_(b) catch |err| {
         if (@errorReturnTrace()) |trace| {
-            std.debug.dumpStackTrace(trace.*);
+            (std.debug).dumpStackTrace(trace.*);
         }
 
         return err;
@@ -400,6 +400,7 @@ pub fn build_(b: *Build) !void {
         if (target.result.os.tag == .windows) {
             obj.dll_export_fns = true;
         }
+
         obj.subsystem = .Console;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {

@@ -1,4 +1,4 @@
-This document describes the build process for Windows. If you run into problems, please join the [#windows channel on our Discord](http://bun.sh/discord) for help.
+This document describes the build process for Windows. If you run into problems, please join the [#contributing channel on our Discord](http://bun.sh/discord) for help.
 
 It is strongly recommended to use [PowerShell 7 (`pwsh.exe`)](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows?view=powershell-7.4) instead of the default `powershell.exe`.
 
@@ -39,19 +39,24 @@ I recommend using VSCode through SSH instead of Tunnels or the Tailscale extensi
 By default, running unverified scripts are blocked.
 
 ```ps1
-Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
+> Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy Unrestricted
 ```
 
 ### System Dependencies
 
-- Bun 1.1 or later. We use Bun to run it's own code generators.
+Bun v1.1 or later. We use Bun to run it's own code generators.
 
 ```ps1
-irm bun.sh/install.ps1 | iex
+> irm bun.sh/install.ps1 | iex
 ```
 
-- [Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload.
-  - Install Git and CMake from this installer, if not already installed.
+[Visual Studio](https://visualstudio.microsoft.com) with the "Desktop Development with C++" workload. While installing, make sure to install Git as well, if Git for Windows is not already installed.
+
+Visual Studio can be installed graphically using the wizard or through WinGet:
+
+```ps1
+> winget install "Visual Studio Community 2022" --override "--add Microsoft.VisualStudio.Workload.NativeDesktop Microsoft.VisualStudio.Component.Git " -s msstore
+```
 
 After Visual Studio, you need the following:
 
@@ -64,34 +69,51 @@ After Visual Studio, you need the following:
 - Node.js
 
 {% callout %}
-The Zig compiler is automatically downloaded, installed, and updated by the building process.
+**Note** – The Zig compiler is automatically downloaded, installed, and updated by the building process.
 {% /callout %}
 
-[Scoop](https://scoop.sh) can be used to install these remaining tools easily:
+[WinGet](https://learn.microsoft.com/windows/package-manager/winget) or [Scoop](https://scoop.sh) can be used to install these remaining tools easily:
 
-```ps1
-irm https://get.scoop.sh | iex
+{% codetabs group="a" %}
 
-scoop install nodejs-lts go rust nasm ruby perl
-scoop llvm@16.0.4 # scoop bug if you install llvm and the rest at the same time
+```ps1#WinGet
+## Select "Add LLVM to the system PATH for all users" in the LLVM installer
+> winget install -i LLVM.LLVM -v 16.0.6 && winget install GoLang.Go Rustlang.Rustup NASM.NASM StrawberryPerl.StrawberryPerl RubyInstallerTeam.Ruby.3.2 OpenJS.NodeJS.LTS
 ```
+
+```ps1#Scoop
+> irm https://get.scoop.sh | iex
+> scoop install nodejs-lts go rust nasm ruby perl
+# scoop seems to be buggy if you install llvm and the rest at the same time
+> scoop install llvm@16.0.6
+```
+
+{% /codetabs %}
 
 If you intend on building WebKit locally (optional), you should install these packages:
 
-```ps1
-scoop install make cygwin python
+{% codetabs group="a" %}
+
+```ps1#WinGet
+> winget install ezwinports.make Cygwin.Cygwin Python.Python.3.12
 ```
+
+```ps1#Scoop
+> scoop install make cygwin python
+```
+
+{% /codetabs %}
 
 From here on out, it is **expected you use a PowerShell Terminal with `.\scripts\env.ps1` sourced**. This script is available in the Bun repository and can be loaded by executing it:
 
 ```ps1
-.\scripts\env.ps1
+> .\scripts\env.ps1
 ```
 
 To verify, you can check for an MSVC-only command line such as `mt.exe`
 
 ```ps1
-Get-Command mt
+> Get-Command mt
 ```
 
 {% callout %}
@@ -101,24 +123,24 @@ It is not recommended to install `ninja` / `cmake` into your global path, becaus
 ## Building
 
 ```ps1
-bun install
+> bun install
 
-.\scripts\env.ps1
-.\scripts\update-submodules.ps1 # this syncs git submodule state
-.\scripts\all-dependencies.ps1 # this builds all dependencies
-.\scripts\make-old-js.ps1 # runs some old code generators
+> .\scripts\env.ps1
+> .\scripts\update-submodules.ps1 # this syncs git submodule state
+> .\scripts\all-dependencies.ps1 # this builds all dependencies
+> .\scripts\make-old-js.ps1 # runs some old code generators
 
 # Configure build environment
-cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug
+> cmake -Bbuild -GNinja -DCMAKE_BUILD_TYPE=Debug
 
 # Build bun
-ninja -Cbuild
+> ninja -Cbuild
 ```
 
 If this was successful, you should have a `bun-debug.exe` in the `build` folder.
 
 ```ps1
-.\build\bun-debug.exe --revision
+> .\build\bun-debug.exe --revision
 ```
 
 You should add this to `$Env:PATH`. The simplest way to do so is to open the start menu, type "Path", and then navigate the environment variables menu to add `C:\.....\bun\build` to the user environment variable `PATH`. You should then restart your editor (if it does not update still, log out and log back in).
@@ -134,15 +156,15 @@ You can run the test suite either using `bun test`, or by using the wrapper scri
 
 ```ps1
 # Setup
-bun i --cwd packages\bun-internal-test
+> bun i --cwd packages\bun-internal-test
 
 # Run the entire test suite with reporter
 # the package.json script "test" uses "build/bun-debug.exe" by default
-bun run test
+> bun run test
 
 # Run an individual test file:
-bun-debug test node\fs
-bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
+> bun-debug test node\fs
+> bun-debug test "C:\bun\test\js\bun\resolve\import-meta.test.js"
 ```
 
 ## Troubleshooting

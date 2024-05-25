@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { mkdirSync } from "fs";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { writeFileSync } from "fs";
-import { tmpdir } from "os";
 import { join } from "path";
 
 test("running extensionless file works", async () => {
-  const dir = join(realpathSync(tmpdir()), "bun-run-test1");
+  const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
   await Bun.write(join(dir, "cool"), "const x: Test = 2; console.log('hello world');");
   let { stdout } = Bun.spawnSync({
@@ -18,7 +17,7 @@ test("running extensionless file works", async () => {
 });
 
 test.skipIf(isWindows)("running shebang typescript file works", async () => {
-  const dir = join(realpathSync(tmpdir()), "bun-run-test2");
+  const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "cool"), `#!${bunExe()}\nconst x: Test = 2; console.log('hello world');`, { mode: 0o777 });
 

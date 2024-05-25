@@ -11,7 +11,7 @@ const C = bun.C;
 const std = @import("std");
 
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
@@ -28,16 +28,16 @@ const bundler = bun.bundler;
 
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
 const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("root").bun.http.Headers;
+const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 
 pub var initialized_store = false;
@@ -155,7 +155,8 @@ pub const UpgradeCheckerThread = struct {
     fn run(env_loader: *DotEnv.Loader) void {
         _run(env_loader) catch |err| {
             if (Environment.isDebug) {
-                std.debug.print("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
+                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
+                Output.flush();
             }
         };
     }
@@ -164,10 +165,10 @@ pub const UpgradeCheckerThread = struct {
 pub const UpgradeCommand = struct {
     pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
-    var github_repository_url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var current_executable_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var unzip_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var tmpdir_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var github_repository_url_buf: bun.PathBuffer = undefined;
+    var current_executable_buf: bun.PathBuffer = undefined;
+    var unzip_path_buf: bun.PathBuffer = undefined;
+    var tmpdir_path_buf: bun.PathBuffer = undefined;
 
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
@@ -211,19 +212,19 @@ pub const UpgradeCommand = struct {
             ),
         );
 
-        if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
+        if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
-                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "Access-TokenBearer {s}", .{access_token});
+                headers_buf = try std.fmt.allocPrint(allocator, default_github_headers ++ "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(
                     allocator,
                     Headers.Kv{
                         .name = Api.StringPointer{
-                            .offset = accept.value.length + accept.value.offset,
-                            .length = @as(u32, @intCast("Access-Token".len)),
+                            .offset = accept.value.offset + accept.value.length,
+                            .length = @as(u32, @intCast("Authorization".len)),
                         },
                         .value = Api.StringPointer{
-                            .offset = @as(u32, @intCast(accept.value.length + accept.value.offset + "Access-Token".len)),
-                            .length = @as(u32, @intCast(access_token.len)),
+                            .offset = @as(u32, @intCast(accept.value.offset + accept.value.length + "Authorization".len)),
+                            .length = @as(u32, @intCast("Bearer ".len + access_token.len)),
                         },
                     },
                 );
@@ -410,7 +411,7 @@ pub const UpgradeCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         @setCold(true);
 
-        const args = bun.argv();
+        const args = bun.argv;
         if (args.len > 2) {
             for (args[2..]) |arg| {
                 if (!strings.contains(arg, "--")) {
@@ -455,14 +456,14 @@ pub const UpgradeCommand = struct {
         const use_canary = brk: {
             const default_use_canary = Environment.is_canary;
 
-            if (default_use_canary and strings.containsAny(bun.argv(), "--stable"))
+            if (default_use_canary and strings.containsAny(bun.argv, "--stable"))
                 break :brk false;
 
             break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-                strings.containsAny(bun.argv(), "--canary") or default_use_canary;
+                strings.containsAny(bun.argv, "--canary") or default_use_canary;
         };
 
-        const use_profile = strings.containsAny(bun.argv(), "--profile");
+        const use_profile = strings.containsAny(bun.argv, "--profile");
 
         const version: Version = if (!use_canary) v: {
             var refresher = std.Progress{};
@@ -494,7 +495,7 @@ pub const UpgradeCommand = struct {
             }
 
             if (!Environment.is_canary) {
-                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+                Output.prettyErrorln("<r><b>Bun <cyan>v{s}<r> is out<r>! You're on <blue>v{s}<r>\n", .{ version.name().?, Global.package_json_version });
             } else {
                 Output.prettyErrorln("<r><b>Downgrading from Bun <blue>{s}-canary<r> to Bun <cyan>v{s}<r><r>\n", .{ Global.package_json_version, version.name().? });
             }
@@ -574,14 +575,18 @@ pub const UpgradeCommand = struct {
 
             const version_name = version.name().?;
 
-            var save_dir_ = filesystem.tmpdir();
-            const save_dir_it = save_dir_.makeOpenPath(version_name, .{}) catch {
-                Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
+            var save_dir_ = filesystem.tmpdir() catch |err| {
+                Output.errGeneric("Failed to open temporary directory: {s}", .{@errorName(err)});
+                Global.exit(1);
+            };
+
+            const save_dir_it = save_dir_.makeOpenPath(version_name, .{}) catch |err| {
+                Output.errGeneric("Failed to open temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
             const save_dir = save_dir_it;
-            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
-                Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
+            const tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch |err| {
+                Output.errGeneric("Failed to read temporary directory: {s}", .{@errorName(err)});
                 Global.exit(1);
             };
 
@@ -613,7 +618,7 @@ pub const UpgradeCommand = struct {
                 }
 
                 if (comptime Environment.isPosix) {
-                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", "unzip") orelse {
+                    const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
                         Global.exit(1);
@@ -658,8 +663,21 @@ pub const UpgradeCommand = struct {
                         },
                     );
 
+                    var buf: bun.PathBuffer = undefined;
+                    const powershell_path =
+                        bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
+                        hardcoded_system_powershell: {
+                        const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                        const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
+                        if (bun.sys.exists(hardcoded_system_powershell)) {
+                            break :hardcoded_system_powershell hardcoded_system_powershell;
+                        }
+                        Output.prettyErrorln("<r><red>error:<r> Failed to unzip {s} due to PowerShell not being installed.", .{tmpname});
+                        Global.exit(1);
+                    };
+
                     var unzip_argv = [_]string{
-                        "powershell.exe",
+                        powershell_path,
                         "-NoProfile",
                         "-ExecutionPolicy",
                         "Bypass",
@@ -667,24 +685,26 @@ pub const UpgradeCommand = struct {
                         unzip_script,
                     };
 
-                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    _ = (bun.spawnSync(&.{
+                        .argv = &unzip_argv,
 
-                    unzip_process.cwd = tmpdir_path;
-                    unzip_process.stdin_behavior = .Inherit;
-                    unzip_process.stdout_behavior = .Inherit;
-                    unzip_process.stderr_behavior = .Inherit;
+                        .envp = null,
+                        .cwd = tmpdir_path,
 
-                    const unzip_result = unzip_process.spawnAndWait() catch |err| {
-                        save_dir.deleteFileZ(tmpname) catch {};
-                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
+                        .stderr = .inherit,
+                        .stdout = .inherit,
+                        .stdin = .inherit,
+
+                        .windows = if (Environment.isWindows) .{
+                            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                        } else {},
+                    }) catch |err| {
+                        Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
+                        Global.exit(1);
+                    }).unwrap() catch |err| {
+                        Output.prettyErrorln("<r><red>error:<r> Failed to run Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
                         Global.exit(1);
                     };
-
-                    if (unzip_result.Exited != 0) {
-                        Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
-                        save_dir.deleteFileZ(tmpname) catch {};
-                        Global.exit(1);
-                    }
                 }
             }
             {
@@ -950,48 +970,97 @@ pub const UpgradeCommand = struct {
 
             if (Environment.isWindows) {
                 if (outdated_filename) |to_remove| {
-                    current_executable_buf[target_dir_.len] = '\\';
-                    const delete_old_script = try std.fmt.allocPrint(
-                        ctx.allocator,
-                        // What is this?
-                        // 1. spawns powershell
-                        // 2. waits for all processes with the same path as the current executable to exit (including the current process)
-                        // 3. deletes the old executable
-                        //
-                        // probably possible to hit a race condition, but i think the worst case is simply the file not getting deleted.
-                        //
-                        // in that edge case, the next time you upgrade it will simply override itself, fixing the bug.
-                        //
-                        // -NoNewWindow doesnt work, will keep the parent alive it seems
-                        // -WindowStyle Hidden seems to just do nothing, not sure why.
-                        // Using -WindowStyle Minimized seems to work, but you can spot a powershell icon appear in your taskbar for about ~1 second
-                        //
-                        // Alternative: we could simply do nothing and leave the `.outdated` file.
-                        \\Start-Process powershell.exe -WindowStyle Minimized -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-Command",'&{{$ErrorActionPreference=''SilentlyContinue''; Get-Process|Where-Object{{ $_.Path -eq ''{s}'' }}|Wait-Process; Remove-Item -Path ''{s}'' -Force }};'; exit
-                    ,
-                        .{
-                            destination_executable,
-                            to_remove,
-                        },
-                    );
-
-                    var delete_argv = [_]string{
-                        "powershell.exe",
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        delete_old_script,
-                    };
-
-                    _ = std.ChildProcess.run(.{
-                        .allocator = ctx.allocator,
-                        .argv = &delete_argv,
-                        .cwd = tmpdir_path,
-                        .max_output_bytes = 512,
-                    }) catch {};
+                    // TODO: this file gets left on disk
+                    //
+                    // We should remove it, however we cannot remove an exe that is still running.
+                    // A prior approach was to spawn a subprocess to remove the file, but that
+                    // would open a terminal window, which steals user focus (even if minimized).
+                    _ = to_remove;
                 }
             }
         }
+    }
+};
+
+pub const upgrade_js_bindings = struct {
+    const JSC = bun.JSC;
+    const JSValue = JSC.JSValue;
+    const ZigString = JSC.ZigString;
+
+    var tempdir_fd: ?bun.FileDescriptor = null;
+
+    pub fn generate(global: *JSC.JSGlobalObject) JSC.JSValue {
+        const obj = JSValue.createEmptyObject(global, 3);
+        const open = ZigString.static("openTempDirWithoutSharingDelete");
+        obj.put(global, open, JSC.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
+        const close = ZigString.static("closeTempDirHandle");
+        obj.put(global, close, JSC.createCallback(global, close, 1, jsCloseTempDirHandle));
+        return obj;
+    }
+
+    /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
+    /// Windows only
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+        if (comptime !Environment.isWindows) return .undefined;
+        const w = std.os.windows;
+
+        var buf: bun.WPathBuffer = undefined;
+        const tmpdir_path = fs.FileSystem.RealFS.getDefaultTempDir();
+        const path = switch (bun.sys.normalizePathWindows(u8, bun.invalid_fd, tmpdir_path, &buf)) {
+            .err => return .undefined,
+            .result => |norm| norm,
+        };
+
+        const path_len_bytes: u16 = @truncate(path.len * 2);
+        var nt_name = std.os.windows.UNICODE_STRING{
+            .Length = path_len_bytes,
+            .MaximumLength = path_len_bytes,
+            .Buffer = @constCast(path.ptr),
+        };
+
+        var attr = std.os.windows.OBJECT_ATTRIBUTES{
+            .Length = @sizeOf(std.os.windows.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .Attributes = 0,
+            .ObjectName = &nt_name,
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        };
+
+        const flags: u32 = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA | w.SYNCHRONIZE | w.FILE_TRAVERSE;
+
+        var fd: std.os.windows.HANDLE = std.os.windows.INVALID_HANDLE_VALUE;
+        var io: std.os.windows.IO_STATUS_BLOCK = undefined;
+
+        const rc = std.os.windows.ntdll.NtCreateFile(
+            &fd,
+            flags,
+            &attr,
+            &io,
+            null,
+            0,
+            w.FILE_SHARE_READ | w.FILE_SHARE_WRITE,
+            w.FILE_OPEN,
+            w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT,
+            null,
+            0,
+        );
+
+        switch (bun.windows.Win32Error.fromNTStatus(rc)) {
+            .SUCCESS => tempdir_fd = bun.toFD(fd),
+            else => {},
+        }
+
+        return .undefined;
+    }
+
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        if (comptime !Environment.isWindows) return .undefined;
+
+        if (tempdir_fd) |fd| {
+            _ = bun.sys.close(fd);
+        }
+
+        return .undefined;
     }
 };

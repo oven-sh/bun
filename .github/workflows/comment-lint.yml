@@ -1,0 +1,85 @@
+name: C++ Linter comment
+
+permissions:
+  actions: read
+  pull-requests: write
+
+on:
+  workflow_run:
+    workflows:
+      - lint-cpp
+    types:
+      - completed
+
+jobs:
+  comment-lint:
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    name: Comment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Comment
+        uses: actions/download-artifact@v4
+        with:
+          name: format.log
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: PR Number
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-number.txt
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Did Fail
+        uses: actions/download-artifact@v4
+        with:
+          name: did_fail.txt
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Setup Environment
+        id: env
+        shell: bash
+        run: |
+          # Copy to outputs
+          echo "pr-number=$(cat pr-number.txt)" >> $GITHUB_OUTPUT
+          {
+            echo 'text_output<<EOF'
+            cat format.log
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+          echo "did_fail=$(cat did_fail.txt)" >> $GITHUB_OUTPUT
+
+      - name: Find Comment
+        id: comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ steps.env.outputs.pr-number }}
+          comment-author: github-actions[bot]
+          body-includes: <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
+      - name: Update Comment
+        uses: peter-evans/create-or-update-comment@v4
+        if: steps.env.outputs.did_fail != '0'
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ steps.env.outputs.pr-number }}
+          body: |
+            @${{ github.actor }}, `clang-tidy` had something to share with you about your code:
+
+            ```cpp
+            ${{ steps.env.outputs.text_output }}
+            ```
+
+            Commit: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+            <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
+          edit-mode: replace
+      - name: Update Previous Comment
+        uses: peter-evans/create-or-update-comment@v4
+        if: steps.env.outputs.did_fail == '0' && steps.comment.outputs.comment-id != ''
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ steps.env.outputs.pr-number }}
+          body: |
+            clang-tidy nits are fixed! Thank you.
+
+            <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
+          edit-mode: replace

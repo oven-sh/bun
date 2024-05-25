@@ -1,12 +1,12 @@
 const EditorContext = @import("../open.zig").EditorContext;
 const Blob = JSC.WebCore.Blob;
-const default_allocator = @import("root").bun.default_allocator;
-const Output = @import("root").bun.Output;
+const default_allocator = bun.default_allocator;
+const Output = bun.Output;
 const RareData = @This();
 const Syscall = bun.sys;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const std = @import("std");
-const BoringSSL = @import("root").bun.BoringSSL;
+const BoringSSL = bun.BoringSSL;
 const bun = @import("root").bun;
 const FDImpl = bun.FDImpl;
 const Environment = bun.Environment;
@@ -15,7 +15,7 @@ const UUID = @import("./uuid.zig");
 const Async = bun.Async;
 const StatWatcherScheduler = @import("./node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const IPC = @import("./ipc.zig");
-const uws = @import("root").bun.uws;
+const uws = bun.uws;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
@@ -283,7 +283,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
         }
 
         store.* = Blob.Store{
-            .ref_count = 2,
+            .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
                 .file = Blob.FileStore{
@@ -315,7 +315,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             .err => {},
         }
         store.* = Blob.Store{
-            .ref_count = 2,
+            .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
                 .file = Blob.FileStore{
@@ -347,7 +347,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         }
         store.* = Blob.Store{
             .allocator = default_allocator,
-            .ref_count = 2,
+            .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{

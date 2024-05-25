@@ -57,7 +57,7 @@ pub const PackageManagerCommand = struct {
 
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
-        var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_buffer: bun.PathBuffer = undefined;
         @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
         const lockfile = lockfile_buffer[0..lockfile_.len :0];
@@ -123,7 +123,7 @@ pub const PackageManagerCommand = struct {
 
         var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 if (bun.getcwd(&cwd_buf)) |cwd| {
                     Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
                 } else |_| {
@@ -137,7 +137,7 @@ pub const PackageManagerCommand = struct {
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
-            try pm.setupGlobalDir(&ctx);
+            try pm.setupGlobalDir(ctx);
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {
@@ -151,8 +151,8 @@ pub const PackageManagerCommand = struct {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
                         if (bun.getenvZ("PATH")) |path| {
-                            var path_splitter = std.mem.split(u8, path, ":");
-                            while (path_splitter.next()) |entry| {
+                            var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
+                            while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {
                                     break :warner;
                                 }
@@ -193,7 +193,7 @@ pub const PackageManagerCommand = struct {
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
-            var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
             const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
@@ -300,7 +300,7 @@ pub const PackageManagerCommand = struct {
             if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
                 try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
             } else {
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 const path = bun.getcwd(&cwd_buf) catch {
                     Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                     Global.exit(1);
@@ -428,7 +428,7 @@ fn printNodeModulesFolderStructure(
                 Output.prettyln("{s}<d>@{s}<r>", .{ path, directory_version });
             }
         } else {
-            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cwd_buf: bun.PathBuffer = undefined;
             const path = bun.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Global.exit(1);

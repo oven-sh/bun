@@ -12,15 +12,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeMiniStore;
-const logger = @import("root").bun.logger;
-const Output = @import("root").bun.Output;
+const logger = bun.logger;
+const Output = bun.Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("root").bun.Environment;
+const Environment = bun.Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 const json_parser = bun.JSON;
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -216,7 +216,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("root").bun.picohttp;
+    const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,
@@ -272,7 +272,7 @@ pub const Registry = struct {
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
+                PackageManifest.Serializer.saveAsync(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory());
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -566,6 +566,14 @@ pub const PackageManifest = struct {
         return this.pkg.name.slice(this.string_buf);
     }
 
+    pub fn byteLength(this: *const PackageManifest) usize {
+        var counter = std.io.countingWriter(std.io.null_writer);
+        const writer = counter.writer();
+
+        Serializer.write(this, @TypeOf(writer), writer) catch return 0;
+        return counter.bytes_written;
+    }
+
     pub const Serializer = struct {
         pub const version = "bun-npm-manifest-cache-v0.0.2\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
@@ -657,13 +665,173 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
-                .truncate = true,
-            });
-            defer tmpfile.close();
-            const writer = tmpfile.writer();
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir, outpath: [:0]const u8) !void {
+            // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
+            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
+
+            const allocator = stack_fallback.get();
+            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength() + 64);
+            defer buffer.deinit();
+            const writer = &buffer.writer();
             try Serializer.write(this, @TypeOf(writer), writer);
+            // --- Perf Improvement #1 ----
+            // Do not forget to buffer writes!
+            //
+            // PS C:\bun> hyperfine "bun-debug install --ignore-scripts" "bun install --ignore-scripts" --prepare="del /s /q bun.lockb && del /s /q C:\Users\window\.bun\install\cache"
+            // Benchmark 1: bun-debug install --ignore-scripts
+            //   Time (mean ± σ):      1.266 s ±  0.284 s    [User: 1.631 s, System: 0.205 s]
+            //   Range (min … max):    1.071 s …  1.804 s    10 runs
+            //
+            //   Warning: Statistical outliers were detected. Consider re-running this benchmark on a quiet system without any interferences from other programs. It might help to use the '--warmup' or '--prepare' options.
+            //
+            // Benchmark 2: bun install --ignore-scripts
+            //   Time (mean ± σ):      3.202 s ±  0.095 s    [User: 0.255 s, System: 0.172 s]
+            //   Range (min … max):    3.058 s …  3.371 s    10 runs
+            //
+            // Summary
+            //   bun-debug install --ignore-scripts ran
+            //     2.53 ± 0.57 times faster than bun install --ignore-scripts
+            // --- Perf Improvement #2 ----
+            // GetFinalPathnameByHandle is very expensive if called many times
+            // We skip calling it when we are giving an absolute file path.
+            // This needs many more call sites, doesn't have much impact on this location.
+            var realpath_buf: bun.PathBuffer = undefined;
+            const path_to_use_for_opening_file = if (Environment.isWindows)
+                bun.path.joinAbsStringBufZ(PackageManager.instance.temp_dir_path, &realpath_buf, &.{ PackageManager.instance.temp_dir_path, tmp_path }, .auto)
+            else
+                tmp_path;
+
+            var is_using_o_tmpfile = if (Environment.isLinux) false else {};
+            const file = brk: {
+                const flags = std.os.O.WRONLY;
+                const mask = if (Environment.isPosix) 0o664 else 0;
+
+                // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
+                // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
+                // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
+                if (Environment.isLinux) {
+                    switch (bun.sys.File.openat(cache_dir, ".", flags | std.os.linux.O.TMPFILE, mask)) {
+                        .err => {
+                            const warner = struct {
+                                var did_warn = std.atomic.Value(bool).init(false);
+
+                                pub fn warnOnce() void {
+                                    if (!did_warn.swap(true, .Monotonic)) {
+                                        // This is not an error. Nor is it really a warning.
+                                        Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});
+                                        Output.flush();
+                                    }
+                                }
+                            };
+                            if (PackageManager.verbose_install)
+                                warner.warnOnce();
+                        },
+                        .result => |f| {
+                            is_using_o_tmpfile = true;
+                            break :brk f;
+                        },
+                    }
+                }
+
+                break :brk try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, flags | std.os.O.CREAT | std.os.O.TRUNC, if (Environment.isPosix) 0o664 else 0).unwrap();
+            };
+
+            {
+                errdefer file.close();
+                try file.writeAll(buffer.items).unwrap();
+            }
+            if (comptime Environment.isWindows) {
+                var realpath2_buf: bun.PathBuffer = undefined;
+                var did_close = false;
+                errdefer if (!did_close) file.close();
+
+                const cache_dir_abs = PackageManager.instance.cache_directory_path;
+                const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
+                file.close();
+                did_close = true;
+                try bun.sys.renameat(bun.FD.cwd(), path_to_use_for_opening_file, bun.FD.cwd(), cache_path_abs).unwrap();
+            } else if (Environment.isLinux and is_using_o_tmpfile) {
+                defer file.close();
+                // Attempt #1.
+                bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap() catch {
+                    // Attempt #2: the file may already exist. Let's unlink and try again.
+                    bun.sys.unlinkat(bun.toFD(cache_dir), outpath).unwrap() catch {};
+                    try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
+
+                    // There is no attempt #3. This is a cache, so it's not essential.
+                };
+            } else {
+                defer file.close();
+                // Attempt #1. Rename the file.
+                const rc = bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath);
+
+                switch (rc) {
+                    .err => |err| {
+                        // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
+                        defer {
+                            // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
+                            bun.sys.unlinkat(bun.toFD(tmpdir), tmp_path).unwrap() catch {};
+                        }
+
+                        if (switch (err.getErrno()) {
+                            .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                            else => false,
+                        }) {
+
+                            // Atomically swap the old file with the new file.
+                            try bun.sys.renameat2(bun.toFD(tmpdir.fd), tmp_path, bun.toFD(cache_dir.fd), outpath, .{
+                                .exchange = true,
+                            }).unwrap();
+
+                            // Success.
+                            return;
+                        }
+                    },
+                    .result => {},
+                }
+
+                try rc.unwrap();
+            }
+        }
+
+        /// We save into a temporary directory and then move the file to the cache directory.
+        /// Saving the files to the manifest cache doesn't need to prevent application exit.
+        /// It's an optional cache.
+        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
+        ///
+        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
+        pub fn saveAsync(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+            const SaveTask = struct {
+                manifest: PackageManifest,
+                tmpdir: std.fs.Dir,
+                cache_dir: std.fs.Dir,
+
+                task: bun.ThreadPool.Task = .{ .callback = &run },
+                pub usingnamespace bun.New(@This());
+
+                pub fn run(task: *bun.ThreadPool.Task) void {
+                    const save_task: *@This() = @fieldParentPtr(@This(), "task", task);
+                    defer {
+                        save_task.destroy();
+                    }
+
+                    Serializer.save(&save_task.manifest, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                        if (PackageManager.verbose_install) {
+                            Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
+                            Output.flush();
+                        }
+                    };
+                }
+            };
+
+            const task = SaveTask.new(.{
+                .manifest = this.*,
+                .tmpdir = tmpdir,
+                .cache_dir = cache_dir,
+            });
+
+            const batch = bun.ThreadPool.Batch.from(&task.task);
+            PackageManager.instance.thread_pool.schedule(batch);
         }
 
         pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -678,13 +846,11 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-            try writeFile(this, tmp_path, tmpdir);
             const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            try writeFile(this, tmp_path, tmpdir, cache_dir, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash11.hash(0, package_name);
+        pub fn loadByFileID(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -692,10 +858,6 @@ pub const PackageManifest = struct {
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
-            var timer: std.time.Timer = undefined;
-            if (PackageManager.verbose_install) {
-                timer = std.time.Timer.start() catch @panic("timer fail");
-            }
             defer cache_file.close();
             const bytes = try cache_file.readToEndAllocOptions(
                 allocator,
@@ -707,7 +869,17 @@ pub const PackageManifest = struct {
 
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
-            const result = try readAll(bytes);
+            return try readAll(bytes);
+        }
+
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+            var timer: std.time.Timer = undefined;
+            if (PackageManager.verbose_install) {
+                timer = std.time.Timer.start() catch @panic("timer fail");
+            }
+
+            const result = try loadByFileID(allocator, cache_dir, bun.Wyhash11.hash(0, package_name)) orelse return null;
+
             if (PackageManager.verbose_install) {
                 Output.prettyError("\n ", .{});
                 Output.printTimer(&timer);
@@ -892,7 +1064,7 @@ pub const PackageManifest = struct {
         const source = logger.Source.initPathString(expected_name, json_buffer);
         initializeStore();
         defer bun.JSAst.Stmt.Data.Store.memory_allocator.?.pop();
-        var arena = @import("root").bun.ArenaAllocator.init(allocator);
+        var arena = bun.ArenaAllocator.init(allocator);
         defer arena.deinit();
         const json = json_parser.ParseJSONUTF8(
             &source,
@@ -960,7 +1132,7 @@ pub const PackageManifest = struct {
                     const sliced_version = SlicedString.init(version_name, version_name);
                     const parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) assert(parsed_version.valid);
                     if (!parsed_version.valid) {
                         log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
@@ -1149,15 +1321,15 @@ pub const PackageManifest = struct {
                     var sliced_version = SlicedString.init(version_name, version_name);
                     var parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) std.debug.assert(parsed_version.valid);
+                    if (Environment.allow_assert) assert(parsed_version.valid);
                     // We only need to copy the version tags if it contains pre and/or build
                     if (parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre()) {
                         const version_string = string_builder.append(String, version_name);
                         sliced_version = version_string.sliced(string_buf);
                         parsed_version = Semver.Version.parse(sliced_version);
                         if (Environment.allow_assert) {
-                            std.debug.assert(parsed_version.valid);
-                            std.debug.assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
+                            assert(parsed_version.valid);
+                            assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
                         }
                     }
                     if (!parsed_version.valid) continue;
@@ -1522,13 +1694,13 @@ pub const PackageManifest = struct {
                                 if (comptime Environment.allow_assert) {
                                     const dependencies_list = @field(package_version, pair.field);
 
-                                    std.debug.assert(dependencies_list.name.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
-                                    std.debug.assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
+                                    assert(dependencies_list.name.off < all_extern_strings.len);
+                                    assert(dependencies_list.value.off < all_extern_strings.len);
+                                    assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
+                                    assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
 
-                                    std.debug.assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
-                                    std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
+                                    assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
+                                    assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
                                     var j: usize = 0;
                                     const name_dependencies = dependencies_list.name.get(all_extern_strings);
 
@@ -1536,31 +1708,31 @@ pub const PackageManifest = struct {
                                         if (optional_peer_dep_names.items.len == 0) {
                                             while (j < name_dependencies.len) : (j += 1) {
                                                 const dep_name = name_dependencies[j];
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
                                             }
 
                                             j = 0;
                                             while (j < dependencies_list.value.len) : (j += 1) {
                                                 const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                             }
                                         }
                                     } else {
                                         while (j < name_dependencies.len) : (j += 1) {
                                             const dep_name = name_dependencies[j];
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
                                         }
 
                                         j = 0;
                                         while (j < dependencies_list.value.len) : (j += 1) {
                                             const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                            std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                         }
                                     }
                                 }
@@ -1613,8 +1785,8 @@ pub const PackageManifest = struct {
                 };
 
                 if (comptime Environment.allow_assert) {
-                    std.debug.assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
-                    std.debug.assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
+                    assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
+                    assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
                 }
 
                 extern_strings = extern_strings[dist_tag_i..];
@@ -1723,13 +1895,13 @@ pub const PackageManifest = struct {
                             const first = semver_versions_[0];
                             const second = semver_versions_[1];
                             const order = second.order(first, string_buf, string_buf);
-                            std.debug.assert(order == .gt);
+                            assert(order == .gt);
                         }
                     }
                 }
             },
             else => {
-                std.debug.assert(max_versions_count == 0);
+                assert(max_versions_count == 0);
             },
         }
 
@@ -1737,7 +1909,7 @@ pub const PackageManifest = struct {
             const src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
-                std.debug.assert(dst.len >= src.len);
+                assert(dst.len >= src.len);
                 @memcpy(dst[0..src.len], src);
             }
 
@@ -1769,3 +1941,5 @@ pub const PackageManifest = struct {
         return result;
     }
 };
+
+const assert = bun.assert;

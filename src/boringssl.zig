@@ -12,7 +12,7 @@ pub fn load() void {
     if (loaded) return;
     loaded = true;
     boring.CRYPTO_library_init();
-    std.debug.assert(boring.SSL_library_init() > 0);
+    bun.assert(boring.SSL_library_init() > 0);
     boring.SSL_load_error_strings();
     boring.ERR_load_BIO_strings();
     boring.OpenSSL_add_all_algorithms();
@@ -205,8 +205,4 @@ pub fn checkServerIdentity(
         }
     }
     return false;
-}
-
-test "load" {
-    load();
 }

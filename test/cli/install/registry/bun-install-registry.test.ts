@@ -2314,6 +2314,55 @@ describe("workspaces", async () => {
 });
 
 describe("update", () => {
+  test("--no-save will update packages in node_modules and not save to package.json", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    let { out } = await runBunUpdate(env, packageDir, ["--no-save"]);
+    expect(out).toEqual(["", "+ a-dep@1.0.1", "", "1 package installed"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "1.0.1",
+      },
+    });
+
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "^1.0.1",
+        },
+      }),
+    );
+
+    ({ out } = await runBunUpdate(env, packageDir, ["--no-save"]));
+    expect(out).toEqual(["", "+ a-dep@1.0.10", "", "1 package installed"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "^1.0.1",
+      },
+    });
+
+    // now save
+    ({ out } = await runBunUpdate(env, packageDir));
+    expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "^1.0.10",
+      },
+    });
+  });
   test("update should update all packages in the current workspace", async () => {
     await writeFile(
       join(packageDir, "package.json"),

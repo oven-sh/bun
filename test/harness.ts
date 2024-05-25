@@ -394,6 +394,8 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
                   if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    // workspaces don't need a version
+                    if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
                     if (dep.behavior.peer && dep.npm) {
                       // allow peer dependencies to not match exactly, but still satisfy
                       if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
@@ -840,8 +842,8 @@ export async function runBunUpdate(
   let out = await Bun.readableStreamToText(stdout);
   let exitCode = await exited;
   if (exitCode !== 0) {
-    console.log("stdout:", stdout);
-    console.log("stderr:", stderr);
+    console.log("stdout:", out);
+    console.log("stderr:", err);
     expect().fail("bun update failed");
   }
 

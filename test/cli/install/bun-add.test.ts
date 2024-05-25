@@ -1733,11 +1733,8 @@ it("should add dependency alongside peerDependencies", async () => {
   });
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
-    dependencies: {
-      bar: "^0.0.2",
-    },
     peerDependencies: {
-      bar: "~0.0.1",
+      bar: "^0.0.2",
     },
   });
   await access(join(package_dir, "bun.lockb"));

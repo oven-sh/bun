@@ -56,6 +56,28 @@ pub fn getMatcherFlags(comptime T: type, value: JSValue) Expect.Flags {
     return .{};
 }
 
+pub inline fn getCurrentTest(parent_scope: Expect.ParentScope) ?*jest.TestRunnerTask {
+    _ = parent_scope; // to be used when supporting concurrent tests
+
+    // try to get from value set during the synchronous execution of the "test" function
+    if (Jest.runner) |runner| {
+        if (runner.pending_test) |curr_test| {
+            return curr_test;
+        }
+    }
+    return null;
+}
+
+pub inline fn getCurrentTestOrThrow(globalObject: *JSGlobalObject, parent_scope: Expect.ParentScope, caller_name: []const u8) ?*jest.TestRunnerTask {
+    if (getCurrentTest(parent_scope)) |curr_test| {
+        return curr_test;
+    }
+    const err = globalObject.createErrorInstance("{s} must be called in a test", .{caller_name});
+    err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+    globalObject.throwValue(err);
+    return null;
+}
+
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
@@ -979,7 +1001,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const expected = arguments[0];
         expected.ensureStillAlive();
@@ -3120,7 +3142,7 @@ pub const Expect = struct {
         const thisValue = callFrame.this();
         const value: JSValue = this.getValue(globalThis, thisValue, "toBeValidDate", "") orelse return .zero;
 
-        active_test_expectation_counter.actual += 1;
+        incrementExpectCallCounter();
 
         const not = this.flags.not;
         var pass = (value.isDate() and !std.math.isNan(value.getUnixTimestamp()));
@@ -4137,9 +4159,9 @@ pub const Expect = struct {
             return .zero;
         }
 
-        var expect_proto = Expect__getPrototype(globalObject);
-        var expect_constructor = Expect.getConstructor(globalObject);
-        var expect_static_proto = ExpectStatic__getPrototype(globalObject);
+        const expect_proto = Expect__getPrototype(globalObject);
+        const expect_constructor = Expect.getConstructor(globalObject);
+        const expect_static_proto = ExpectStatic__getPrototype(globalObject);
 
         const matchers_to_register = args[0];
         {
@@ -4186,7 +4208,7 @@ pub const Expect = struct {
                 var source_slice = source_str.toSlice(this.globalObject.allocator());
                 defer source_slice.deinit();
 
-                var source: string = source_slice.slice();
+                const source: string = source_slice.slice();
                 if (std.mem.indexOfScalar(u8, source, '(')) |lparen| {
                     if (std.mem.indexOfScalarPos(u8, source, lparen, ')')) |rparen| {
                         const params_str = source[(lparen + 1)..rparen];
@@ -4335,7 +4357,7 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalObject.vm())); // checked above
 
-            var message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
+            const message_result = message.callWithGlobalThis(globalObject, &[_]JSValue{});
             assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalObject.throwValue(err);
@@ -4373,7 +4395,7 @@ pub const Expect = struct {
 
         // retrieve the user-provided matcher function (matcher_fn)
         const func: JSValue = callFrame.callee();
-        var matcher_fn = getCustomMatcherFn(func, globalObject) orelse JSValue.undefined;
+        const matcher_fn = getCustomMatcherFn(func, globalObject) orelse JSValue.undefined;
         if (!matcher_fn.jsType().isFunction()) {
             globalObject.throw("Internal consistency error: failed to retrieve the matcher function for a custom matcher!", .{});
             return .zero;
@@ -4429,6 +4451,7 @@ pub const Expect = struct {
     }
 
     pub const addSnapshotSerializer = notImplementedStaticFn;
+    pub const addEqualityTesters = notImplementedStaticFn;
 
     pub fn hasAssertions(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callFrame;
@@ -4471,6 +4494,24 @@ pub const Expect = struct {
         expected_assertions_number = unsigned_expected_assertions;
 
         return .undefined;
+    }
+
+    pub fn getState(globalObject: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        const curr_test = getCurrentTestOrThrow(globalObject, .{ .global = {} }, "expect.getState()") orelse return .zero;
+
+        const state = globalObject.bunVM().allocator.create(ExpectMatcherContext) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        state.* = .{
+            .flags = null,
+            .parent = .{ .TestScope = .{
+                .test_id = curr_test.test_id,
+                .describe = curr_test.describe,
+            } },
+        };
+
+        return state.toJS(globalObject);
     }
 
     pub fn notImplementedJSCFn(_: *Expect, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -4580,7 +4621,7 @@ pub const ExpectStatic = struct {
         //const this: *ExpectStatic = ExpectStatic.fromJS(callFrame.this());
         const instance_jsvalue = T.call(globalObject, callFrame);
         if (!instance_jsvalue.isEmpty() and !instance_jsvalue.isAnyError()) {
-            var instance = T.fromJS(instance_jsvalue) orelse {
+            const instance = T.fromJS(instance_jsvalue) orelse {
                 globalObject.throwOutOfMemory();
                 return .zero;
             };
@@ -4639,7 +4680,7 @@ pub const ExpectAnything = struct {
         const anything_js_value = anything.toJS(globalObject);
         anything_js_value.ensureStillAlive();
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
 
         return anything_js_value;
@@ -4677,7 +4718,7 @@ pub const ExpectStringMatching = struct {
         const string_matching_js_value = string_matching.toJS(globalObject);
         ExpectStringMatching.testValueSetCached(string_matching_js_value, globalObject, test_value);
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return string_matching_js_value;
     }
@@ -4724,7 +4765,7 @@ pub const ExpectCloseTo = struct {
         ExpectCloseTo.numberValueSetCached(instance_jsvalue, globalObject, number_value);
         ExpectCloseTo.digitsValueSetCached(instance_jsvalue, globalObject, precision_value);
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return instance_jsvalue;
     }
@@ -4761,7 +4802,7 @@ pub const ExpectObjectContaining = struct {
         const instance_jsvalue = instance.toJS(globalObject);
         ExpectObjectContaining.objectValueSetCached(instance_jsvalue, globalObject, object_value);
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return instance_jsvalue;
     }
@@ -4798,7 +4839,7 @@ pub const ExpectStringContaining = struct {
         const string_containing_js_value = string_containing.toJS(globalObject);
         ExpectStringContaining.stringValueSetCached(string_containing_js_value, globalObject, string_value);
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return string_containing_js_value;
     }
@@ -4843,7 +4884,7 @@ pub const ExpectAny = struct {
         ExpectAny.constructorValueSetCached(any_js_value, globalObject, constructor);
         any_js_value.ensureStillAlive();
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
 
         return any_js_value;
@@ -4881,7 +4922,7 @@ pub const ExpectArrayContaining = struct {
         const array_containing_js_value = array_containing.toJS(globalObject);
         ExpectArrayContaining.arrayValueSetCached(array_containing_js_value, globalObject, array_value);
 
-        var vm = globalObject.bunVM();
+        const vm = globalObject.bunVM();
         vm.autoGarbageCollect();
         return array_containing_js_value;
     }
@@ -4935,7 +4976,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         // capture the args as a JS array saved in the instance, so the matcher can be executed later on with them
         const args_ptr = callFrame.argumentsPtr();
         const args_count: usize = callFrame.argumentsCount();
-        var args = JSValue.createEmptyArray(globalObject, args_count);
+        const args = JSValue.createEmptyArray(globalObject, args_count);
         for (0..args_count) |i| {
             args.putIndex(globalObject, @truncate(i), args_ptr[i]);
         }
@@ -5006,7 +5047,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     args.appendAssumeCapacity(arg);
                 }
 
-                var result = matcher_fn.callWithThis(globalObject, thisValue, args.items);
+                const result = matcher_fn.callWithThis(globalObject, thisValue, args.items);
                 if (result.toError()) |err| {
                     if (dontThrow) {
                         return false;
@@ -5044,7 +5085,9 @@ pub const ExpectCustomAsymmetricMatcher = struct {
 pub const ExpectMatcherContext = struct {
     pub usingnamespace JSC.Codegen.JSExpectMatcherContext;
 
-    flags: Expect.Flags = .{},
+    flags: ?Expect.Flags = null,
+
+    parent: Expect.ParentScope = .{ .global = {} },
 
     pub fn finalize(
         this: *ExpectMatcherContext,
@@ -5052,30 +5095,97 @@ pub const ExpectMatcherContext = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
+    //
+    // Test state
+    //
+
+    pub fn getCurrentTestName(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (getCurrentTest(this.parent)) |curr_test| {
+            const test_scope = curr_test.describe.tests.items[curr_test.test_id];
+            return bun.String.static(test_scope.label).toJS(globalObject);
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getTestPath(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (getCurrentTest(this.parent)) |curr_test| {
+            return bun.String.static(curr_test.source_file_path).toJS(globalObject);
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getAssertionCalls(this: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (getCurrentTest(this.parent)) |curr_test| {
+            _ = curr_test;
+            return JSValue.jsNumber(active_test_expectation_counter.actual);
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getExpectedAssertionsNumber(this: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (getCurrentTest(this.parent)) |curr_test| {
+            _ = curr_test;
+            return if (is_expecting_assertions_count) JSValue.jsNumber(@as(i32, @intCast(expected_assertions_number))) else JSValue.null;
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getIsExpectingAssertions(this: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (getCurrentTest(this.parent)) |curr_test| {
+            _ = curr_test;
+            return JSValue.jsBoolean(is_expecting_assertions);
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getSnapshotState(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (getCurrentTest(this.parent)) |curr_test| {
+            _ = curr_test;
+            globalObject.throw("Not implemented", .{});
+            return .zero;
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getExpand(_: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (Jest.runner) |runner| {
+            return JSValue.jsBoolean(runner.test_options.expand);
+        }
+        return JSValue.undefined;
+    }
+
+    //
+    // Matcher state
+    //
+
+    pub fn getIsNot(this: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (this.flags) |flags| {
+            return JSValue.jsBoolean(flags.not);
+        }
+        return JSValue.undefined;
+    }
+
+    pub fn getPromise(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (this.flags) |flags| {
+            return switch (flags.promise) {
+                .rejects => bun.String.static("rejects").toJS(globalObject),
+                .resolves => bun.String.static("resolves").toJS(globalObject),
+                else => bun.String.empty.toJS(globalObject),
+            };
+        }
+        return JSValue.undefined;
+    }
+
+    //
+    // Matcher utils
+    //
+
     pub fn getUtils(_: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return ExpectMatcherUtils__getSingleton(globalObject);
     }
 
-    pub fn getIsNot(this: *ExpectMatcherContext, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSValue.jsBoolean(this.flags.not);
-    }
-
-    pub fn getPromise(this: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return switch (this.flags.promise) {
-            .rejects => bun.String.static("rejects").toJS(globalObject),
-            .resolves => bun.String.static("resolves").toJS(globalObject),
-            else => bun.String.empty.toJS(globalObject),
-        };
-    }
-
-    pub fn getExpand(_: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        _ = globalObject;
-        // TODO: this should return whether running tests in verbose mode or not (jest flag --expand), but bun currently doesn't have this switch
-        return JSValue.false;
-    }
-
     pub fn equals(_: *ExpectMatcherContext, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var arguments = callframe.arguments(3);
+        const arguments = callframe.arguments(3);
         if (arguments.len < 2) {
             globalObject.throw("expect.extends matcher: this.util.equals expects at least 2 arguments", .{});
             return .zero;
@@ -5090,10 +5200,11 @@ pub const ExpectMatcherUtils = struct {
     pub usingnamespace JSC.Codegen.JSExpectMatcherUtils;
 
     fn createSingleton(globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        var instance = globalObject.bunVM().allocator.create(ExpectMatcherUtils) catch {
+        const instance = globalObject.bunVM().allocator.create(ExpectMatcherUtils) catch {
             globalObject.throwOutOfMemory();
             return .zero;
         };
+        instance.* = .{};
         return instance.toJS(globalObject);
     }
 
@@ -5121,11 +5232,11 @@ pub const ExpectMatcherUtils = struct {
             .globalThis = globalObject,
             .quote_strings = true,
         };
-        try writer.print("{}", .{value.toFmt(globalObject, &formatter)});
+        const value_fmt = value.toFmt(globalObject, &formatter);
 
-        if (comptime color_or_null) |_| {
+        if (comptime color_or_null) |color| {
             if (Output.enable_ansi_colors) {
-                try writer.writeAll(Output.prettyFmt("<r>", true));
+                return try JSValue.printStringPretty(globalObject, 2048, Output.prettyFmt(color, true) ++ "{}<r>", .{value_fmt});
             }
         }
 
@@ -5157,6 +5268,22 @@ pub const ExpectMatcherUtils = struct {
         const arguments = callframe.arguments(1).slice();
         const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
         return printValueCatched(globalObject, value, "<red>");
+    }
+
+    pub fn diff(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(2).slice();
+        const expected = if (arguments.len > 0) arguments[0] else JSValue.undefined;
+        const received = if (arguments.len > 1) arguments[1] else JSValue.undefined;
+
+        const diff_format = DiffFormatter{
+            .expected = expected,
+            .received = received,
+            .globalObject = globalObject,
+        };
+        return JSValue.printString(globalObject, 2048, "{any}\n", .{diff_format}) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
     }
 
     pub fn matcherHint(_: *ExpectMatcherUtils, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -5228,7 +5355,7 @@ pub const ExpectMatcherUtils = struct {
 
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
 inline fn getCustomMatcherFn(thisValue: JSValue, globalObject: *JSGlobalObject) ?JSValue {
-    var matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(thisValue, globalObject);
+    const matcher_fn = Bun__JSWrappingFunction__getWrappedFunction(thisValue, globalObject);
     return if (matcher_fn.isEmpty()) null else matcher_fn;
 }
 

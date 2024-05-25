@@ -453,6 +453,14 @@ declare module "bun:test" {
     each<T>(
       table: T[],
     ): (label: string, fn: (...args: T[]) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each(
+      strings: TemplateStringsArray,
+      ...values: any[]
+    ): (
+      label: string,
+      fn: (obj: { [k: string]: any }) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ) => void;
   }
   /**
    * Runs a test.
@@ -582,6 +590,11 @@ declare module "bun:test" {
      * Ensures that a specific number of assertions are made
      */
     assertions(neededAssertions: number): void;
+
+    /**
+     * Get information about the current test
+     */
+    getState(): Readonly<TestState>;
   }
 
   /**
@@ -921,7 +934,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Array<unknown> | Iterable<unknown>): void;
+    toBeOneOf(expected: unknown[] | Iterable<unknown>): void;
     /**
      * Asserts that a value contains what is expected.
      *
@@ -1560,21 +1573,36 @@ declare module "bun:test" {
     equals: EqualsFunction;
   }
 
-  interface MatcherState {
-    //assertionCalls: number;
+  export interface TestState {
+    /** The name of the current test */
+    currentTestName: string;
     //currentConcurrentTestName?: () => string | undefined;
-    //currentTestName?: string;
-    //error?: Error;
-    //expand: boolean;
-    //expectedAssertionsNumber: number | null;
-    //expectedAssertionsNumberError?: Error;
-    //isExpectingAssertions: boolean;
-    //isExpectingAssertionsError?: Error;
-    isNot: boolean;
+    /** The path of the current test file */
+    testPath: string;
+    /** Number of `expect()` calls that passed so far */
     //numPassingAsserts: number;
-    promise: string;
-    //suppressedErrors: Array<Error>;
-    //testPath?: string;
+    /** Total number of `expect()` calls so far */
+    assertionCalls: number;
+    //error?: Error;
+    /** Expected number of `expect()` calls, as set by calling `expect.assertions(n)` */
+    expectedAssertionsNumber: number | null;
+    //expectedAssertionsNumberError?: Error;
+    /** Whether the test expects at least one `expect()` calls, as set by calling `expect.hasAssertions()` */
+    isExpectingAssertions: boolean;
+    //isExpectingAssertionsError?: Error;
+
+    /** Errors for the `expect.soft()` calls that failed so far */
+    //suppressedErrors: Error[];
+    //snapshotState: unknown;
+    /** Whether to report more verbose messages */
+    expand: boolean;
+  }
+
+  interface MatcherState extends TestState {
+    /** Whether the `expect()` call had the ".not" modifier */
+    isNot: boolean;
+    /** Whether the `expect()` call had the either ".resolves" or the ".rejects" modifier */
+    promise: "resolves" | "rejects" | "";
   }
 
   type MatcherHintColor = (arg: string) => string; // subset of Chalk type
@@ -1587,6 +1615,7 @@ declare module "bun:test" {
       stringify(value: unknown): string;
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
+      diff(a: unknown, b: unknown): string;
       matcherHint(
         matcherName: string,
         received?: unknown,

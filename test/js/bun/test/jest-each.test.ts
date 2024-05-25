@@ -45,6 +45,28 @@ describe("jest-each", () => {
   it.each([undefined, null, NaN, Infinity])("stringify %#: %j", (arg, cb) => {
     cb();
   });
+
+  describe("support each in Tagged Template Literal", () => {
+    // issue #6364
+
+    describe("basic", () => {
+      let numExecutions = 0;
+
+      it.each`
+        a    | b    | expected
+        ${1} | ${1} | ${2}
+        ${1} | ${2} | ${3}
+        ${2} | ${1} | ${3}
+      `("returns $expected when $a is added to $b", ({ a, b, expected }) => {
+        numExecutions += 1;
+        expect(a + b).toBe(expected);
+      });
+
+      it("should execute all cases", () => {
+        expect(numExecutions).toBe(3);
+      });
+    });
+  });
 });
 
 describe.each(["some", "cool", "strings"])("works with describe: %s", s => {

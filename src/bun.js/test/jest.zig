@@ -32,6 +32,7 @@ const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 const getAllocator = @import("../base.zig").getAllocator;
+const util_format = @import("../node/util/format.zig");
 const RegularExpression = bun.RegularExpression;
 
 const ZigString = JSC.ZigString;
@@ -1772,74 +1773,36 @@ fn consumeArg(
 }
 
 // Generate test label by positionally injecting parameters with printf formatting
-fn formatLabel(globalThis: *JSC.JSGlobalObject, label: string, function_args: []JSC.JSValue, test_idx: usize) !string {
-    const allocator = getAllocator(globalThis);
-    var idx: usize = 0;
-    var args_idx: usize = 0;
-    var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len);
+fn formatLabel(globalObject: *JSC.JSGlobalObject, label: string, function_args: []JSC.JSValue, root_object: ?JSValue, test_idx: usize, headers: ?JSValue) !string {
+    var allocator = globalObject.allocator();
 
-    while (idx < label.len) {
-        const char = label[idx];
-        if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
-            const current_arg = function_args[args_idx];
+    const WRITER_STACK_CAPACITY = 2048;
+    var heap_fallback = std.heap.stackFallback(WRITER_STACK_CAPACITY, globalObject.allocator());
 
-            switch (label[idx + 1]) {
-                's' => {
-                    try consumeArg(globalThis, !current_arg.isEmpty() and current_arg.jsType().isString(), &idx, &args_idx, &list, &current_arg, "%s");
-                },
-                'i' => {
-                    try consumeArg(globalThis, current_arg.isAnyInt(), &idx, &args_idx, &list, &current_arg, "%i");
-                },
-                'd' => {
-                    try consumeArg(globalThis, current_arg.isNumber(), &idx, &args_idx, &list, &current_arg, "%d");
-                },
-                'f' => {
-                    try consumeArg(globalThis, current_arg.isNumber(), &idx, &args_idx, &list, &current_arg, "%f");
-                },
-                'j', 'o' => {
-                    var str = bun.String.empty;
-                    defer str.deref();
-                    current_arg.jsonStringify(globalThis, 0, &str);
-                    const owned_slice = try str.toOwnedSlice(allocator);
-                    defer allocator.free(owned_slice);
-                    try list.appendSlice(allocator, owned_slice);
-                    idx += 1;
-                    args_idx += 1;
-                },
-                'p' => {
-                    var formatter = JSC.ConsoleObject.Formatter{
-                        .globalThis = globalThis,
-                        .quote_strings = true,
-                    };
-                    const value_fmt = current_arg.toFmt(globalThis, &formatter);
-                    const test_index_str = try std.fmt.allocPrint(allocator, "{any}", .{value_fmt});
-                    defer allocator.free(test_index_str);
-                    try list.appendSlice(allocator, test_index_str);
-                    idx += 1;
-                    args_idx += 1;
-                },
-                '#' => {
-                    const test_index_str = try std.fmt.allocPrint(allocator, "{d}", .{test_idx});
-                    defer allocator.free(test_index_str);
-                    try list.appendSlice(allocator, test_index_str);
-                    idx += 1;
-                },
-                '%' => {
-                    try list.append(allocator, '%');
-                    idx += 1;
-                },
-                else => {
-                    // ignore unrecognized fmt
-                },
-            }
-        } else try list.append(allocator, char);
-        idx += 1;
-    }
+    var buf = try MutableString.init(heap_fallback.get(), @max(WRITER_STACK_CAPACITY, label.len));
+    defer buf.deinit();
 
-    return list.toOwnedSlice(allocator);
+    try util_format.formatImpl(
+        buf.writer(),
+        globalObject,
+        null,
+        label,
+        function_args,
+        util_format.TestLabelFormatExtras{
+            .test_idx = test_idx,
+            .table_headers = headers,
+            .root_object = root_object,
+        },
+    );
+
+    return allocator.dupe(u8, buf.toOwnedSliceLeaky());
 }
 
-pub const EachData = struct { strong: JSC.Strong, is_test: bool };
+pub const EachData = struct {
+    strong: JSC.Strong,
+    has_headers: bool,
+    is_test: bool,
+};
 
 fn eachBind(
     globalThis: *JSGlobalObject,
@@ -1912,13 +1875,18 @@ fn eachBind(
 
         var iter = array.arrayIterator(globalThis);
 
+        const headers: ?JSValue = if (each_data.has_headers) iter.next() else null;
+        const headers_len: usize = if (headers) |h| h.getLength(globalThis) else 0;
+
         var test_idx: usize = 0;
         while (iter.next()) |item| {
             const func_params_length = function.getLength(globalThis);
             const item_is_array = !item.isEmptyOrUndefinedOrNull() and item.jsType().isArray();
             var arg_size: usize = 1;
 
-            if (item_is_array) {
+            if (headers != null) {
+                arg_size = 1;
+            } else if (item_is_array) {
                 arg_size = item.getLength(globalThis);
             }
 
@@ -1928,10 +1896,21 @@ fn eachBind(
                 arg_size += 1;
             }
 
-            var function_args = allocator.alloc(JSC.JSValue, arg_size) catch @panic("can't create function_args");
+            const function_args = allocator.alloc(JSC.JSValue, arg_size) catch @panic("can't create function_args");
+            var root_object: ?JSValue = null;
             var idx: u32 = 0;
 
-            if (item_is_array) {
+            if (headers) |headers_| {
+                // Build an object with table header names as fields
+                const obj = JSValue.createEmptyObject(globalThis, headers_len);
+                for (0..headers_len) |i| {
+                    const propname = headers_.getIndex(globalThis, @truncate(i));
+                    const value = item.getIndex(globalThis, @truncate(i));
+                    obj.put(globalThis, &propname.getZigString(globalThis), value);
+                }
+                obj.protect();
+                function_args[0] = obj;
+            } else if (item_is_array) {
                 // Spread array as args
                 var item_iter = item.arrayIterator(globalThis);
                 while (item_iter.next()) |array_item| {
@@ -1946,13 +1925,17 @@ fn eachBind(
             } else {
                 item.protect();
                 function_args[0] = item;
+                if (item.isObject()) {
+                    root_object = item;
+                }
             }
 
             const label = if (description.isEmptyOrUndefinedOrNull())
                 ""
             else
                 (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-            const formattedLabel = formatLabel(globalThis, label, function_args, test_idx) catch return .zero;
+
+            const formatted_label = formatLabel(globalThis, label, function_args, root_object, test_idx, headers) catch return .zero;
 
             const tag = parent.tag;
 
@@ -1968,7 +1951,7 @@ fn eachBind(
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;
                 buffer.reset();
                 appendParentLabel(&buffer, parent) catch @panic("Bun ran out of memory while filtering tests");
-                buffer.append(formattedLabel) catch unreachable;
+                buffer.append(formatted_label) catch unreachable;
                 const str = bun.String.fromBytes(buffer.toOwnedSliceLeaky());
                 is_skip = !regex.matches(str);
             }
@@ -1982,7 +1965,7 @@ fn eachBind(
                 } else {
                     function.protect();
                     parent.tests.append(allocator, TestScope{
-                        .label = formattedLabel,
+                        .label = formatted_label,
                         .parent = parent,
                         .tag = tag,
                         .func = function,
@@ -2000,7 +1983,7 @@ fn eachBind(
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;
                 scope.* = .{
-                    .label = formattedLabel,
+                    .label = formatted_label,
                     .parent = parent,
                     .file_id = parent.file_id,
                     .tag = tag,
@@ -2017,6 +2000,97 @@ fn eachBind(
     return .zero;
 }
 
+fn concatJSValues(globalObject: *JSGlobalObject, a: ?JSValue, b: JSValue) JSValue {
+    if (a) |a_| {
+        var concat_result = bun.String.createFromConcat(globalObject.allocator(), &[_]bun.String{
+            bun.String.init(a_.toString(globalObject).getZigString(globalObject)),
+            bun.String.init(b.toString(globalObject).getZigString(globalObject)),
+        }) catch unreachable;
+        defer concat_result.deinit();
+        return concat_result.str.toJS(globalObject);
+    } else {
+        return b;
+    }
+}
+
+fn parseTaggedTemplateLiteralTable(
+    globalThis: *JSGlobalObject,
+    callframe: *CallFrame,
+) ?JSValue {
+    // arguments[0] is the js array with the substituted values
+    // arguments[1..] are the strings inbetween
+    const values_len = callframe.argumentsCount() - 1;
+    const strings_array = callframe.argument(0);
+    const strings_len = strings_array.getLength(globalThis);
+
+    var stack_fallback = std.heap.stackFallback(512, globalThis.allocator());
+
+    if (values_len != strings_len - 1) {
+        return null; // invalid tag function call
+    }
+
+    var row: usize = 0;
+    var col: usize = 0;
+
+    const rows = JSValue.createEmptyArray(globalThis, 0);
+    var curr_row: ?JSValue = null;
+    var curr_val: ?JSValue = null;
+
+    for (0..strings_len) |val_idx| {
+        const str = strings_array.getIndex(globalThis, @truncate(val_idx));
+        if (!str.isString()) return null;
+
+        var sliced = str.toSlice(globalThis, stack_fallback.get());
+        defer sliced.deinit();
+        const slice = sliced.slice();
+
+        var split_idx: usize = 0;
+        var iter = std.mem.splitAny(u8, slice, "|\n");
+        while (iter.next()) |portion| : (split_idx += 1) {
+            const content = std.mem.trim(u8, portion, " ");
+            if (content.len > 0) {
+                curr_val = concatJSValues(globalThis, curr_val, bun.String.static(content).toJS(globalThis));
+            }
+
+            var delim: ?u8 = undefined;
+            if (iter.index) |delim_end| {
+                delim = slice[delim_end - 1];
+            } else if (val_idx == strings_len - 1) { // for last split match of the last template string portion, count the sep as '\n'
+                delim = '\n';
+            } else {
+                delim = null;
+            }
+
+            if (delim) |delim_| {
+                if (curr_val != null or delim_ == '|') {
+                    if (curr_row == null) curr_row = JSValue.createEmptyArray(globalThis, 0);
+                    curr_row.?.push(globalThis, curr_val orelse JSValue.undefined);
+                    curr_val = null;
+                }
+
+                if (delim_ == '|') {
+                    col += 1;
+                } else { // '\n'
+                    if (curr_row) |curr_row_| { // if non-empty row
+                        rows.push(globalThis, curr_row_);
+                        row += 1;
+                        col = 0;
+                        curr_row = null;
+                    }
+                }
+            }
+        }
+
+        if (val_idx < values_len) { // consume next value provided to the tagged template string
+            const val = callframe.argumentsPtr()[1 + val_idx];
+            curr_val = concatJSValues(globalThis, curr_val, val);
+        }
+    }
+
+    if (row < 2) return null; // invalid: need at least the header row and 1 data row
+    return rows;
+}
+
 inline fn createEach(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
@@ -2024,18 +2098,25 @@ inline fn createEach(
     comptime signature: string,
     comptime is_test: bool,
 ) JSValue {
-    const arguments = callframe.arguments(1);
-    const args = arguments.slice();
-
+    const args = callframe.argumentsSlice();
     if (args.len == 0) {
         globalThis.throwPretty("{s} expects an array", .{signature});
         return .zero;
     }
 
     var array = args[0];
+    var is_tagged_template_literal = false;
     if (array.isEmpty() or !array.jsType().isArray()) {
         globalThis.throwPretty("{s} expects an array", .{signature});
         return .zero;
+    }
+
+    if (array.get(globalThis, "raw") != null) { // tagged template literal table TODO: find better check
+        is_tagged_template_literal = true;
+        array = parseTaggedTemplateLiteralTable(globalThis, callframe) orelse {
+            globalThis.throwPretty("{s} invalid tagged template literal table", .{signature});
+            return .zero;
+        };
     }
 
     const allocator = getAllocator(globalThis);
@@ -2044,6 +2125,7 @@ inline fn createEach(
     const each_data = allocator.create(EachData) catch unreachable;
     each_data.* = EachData{
         .strong = strong,
+        .has_headers = is_tagged_template_literal,
         .is_test = is_test,
     };
 

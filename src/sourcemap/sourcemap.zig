@@ -484,11 +484,6 @@ pub const Mapping = struct {
             }
             remain = remain[source_index_delta.start..];
 
-            // // "AAAA" is extremely common
-            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
-
-            // }
-
             // Read the original line
             const original_line_delta = decodeVLQ(remain, 0);
             if (original_line_delta.start == 0) {
@@ -713,7 +708,15 @@ pub const SourceProviderMap = opaque {
                         arena.allocator(),
                         found_url.slice(),
                         result,
-                    ) catch return null,
+                    ) catch |err| {
+                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        });
+                        // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
                 };
             }
 
@@ -725,11 +728,8 @@ pub const SourceProviderMap = opaque {
                 @memcpy(load_path_buf[0..source_filename.len], source_filename);
                 @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
 
-                const data = switch (bun.sys.File.readFrom(
-                    std.fs.cwd(),
-                    load_path_buf[0 .. source_filename.len + 4],
-                    arena.allocator(),
-                )) {
+                const load_path = load_path_buf[0 .. source_filename.len + 4];
+                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, arena.allocator())) {
                     .err => break :try_external,
                     .result => |data| data,
                 };
@@ -741,7 +741,15 @@ pub const SourceProviderMap = opaque {
                         arena.allocator(),
                         data,
                         result,
-                    ) catch return null,
+                    ) catch |err| {
+                        bun.Output.warn("Could not decode sourcemap '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        });
+                        // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
                 };
             }
 
@@ -766,7 +774,7 @@ pub const LineColumnOffset = struct {
         pub fn advance(this: *Optional, input: []const u8) void {
             switch (this.*) {
                 .null => {},
-                .value => this.value.advance(input),
+                .value => |*v| v.advance(input),
             }
         }
 
@@ -787,7 +795,13 @@ pub const LineColumnOffset = struct {
         }
     }
 
-    pub fn advance(this: *LineColumnOffset, input: []const u8) void {
+    pub fn advance(this_ptr: *LineColumnOffset, input: []const u8) void {
+        // Instead of mutating `this_ptr` directly, copy the state to the stack and do
+        // all the work here, then move it back to the input pointer. When sourcemaps
+        // are enabled, this function is extremely hot.
+        var this = this_ptr.*;
+        defer this_ptr.* = this;
+
         var offset: u32 = 0;
         while (strings.indexOfNewlineOrNonASCII(input, offset)) |i| {
             assert(i >= offset);
@@ -1775,7 +1789,7 @@ pub const Chunk = struct {
                     loc.start == Logger.Loc.Empty.start)
                     return;
 
-                b.prev_loc = loc;
+            b.prev_loc = loc;
                 const list = b.line_offset_tables;
 
                 // We have no sourcemappings.

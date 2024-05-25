@@ -7060,7 +7060,6 @@ const LinkerContext = struct {
             const source_index = @as(i32, @intCast(next_source_index));
             next_source_index += 1;
 
-            std.debug.print("aaa {d} : {d}\n", .{ offset.lines, offset.columns });
             var start_state = sourcemap.SourceMapState{
                 .source_index = source_index,
                 .generated_line = offset.lines,

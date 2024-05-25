@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
 import path from "path";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
@@ -263,6 +263,19 @@ export interface BundlerTestInput {
 
   /* TODO: remove this from the tests after this is implemented */
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
+
+  /**
+   * 'snapshotSourceMap' does not use bun snapshots because they are huge, but instead
+   * we will just inline a SHA256 hash of the JSON. This prevents us from comitting megabytes
+   * of snapshot files to the repo.
+   *
+   * When updating these, make sure to actually investigate the sourcemap with tools like:
+   * - https://evanw.github.io/source-map-visualization/
+   * - https://www.murzwin.com/base64vlq.html
+   *
+   * `expectBundled` will print a directory path when running.
+   */
+  snapshotSourceMap?: Record<string, string>;
 }
 
 export interface BundlerTestBundleAPI {
@@ -364,6 +377,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    conditions,
     dce,
     dceKeepMarkerCount,
     define,
@@ -387,26 +401,26 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    todo: notImplemented,
     onAfterBundle,
-    root: outbase,
     outdir,
     outfile,
     outputPaths,
     plugins,
     publicPath,
+    root: outbase,
     run,
     runtimeFiles,
     serverComponents = false,
     skipOnEsbuild,
+    snapshotSourceMap,
     sourceMap,
     splitting,
     target,
+    todo: notImplemented,
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
-    conditions,
     // @ts-expect-error
     _referenceFn,
     ...unknownProps
@@ -487,7 +501,9 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(tempDirectory, id);
+    let root = path.join(tempDirectory, id);
+    mkdirSync(root, { recursive: true });
+    root = realpathSync(root);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -502,7 +518,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir || "", path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file).replace(/\.[jt]sx?$/, ".js")))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -1081,7 +1097,7 @@ for (const [key, blob] of build.outputs) {
     if (dce && typeof dceKeepMarkerCount !== "number" && dceKeepMarkerCount !== false) {
       for (const file of Object.entries(files)) {
         keepMarkers[outfile ? outfile : path.join(outdir!, file[0]).slice(root.length).replace(/\.ts$/, ".js")] ??= [
-          ...file[1].matchAll(/KEEP/gi),
+          ...String(file[1]).matchAll(/KEEP/gi),
         ].length;
       }
     }
@@ -1248,23 +1264,55 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
-    // Check that all source maps are valid JSON
+    // Check that all source maps are valid
+    let snapshottedSourceMaps = 0;
     if (opts.sourceMap === "external" && outdir) {
-      for (const file of readdirSync(outdir, { recursive: true })) {
+      for (const file_input of readdirSync(outdir, { recursive: true })) {
+        const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
         if (file.endsWith(".map")) {
           const parsed = await Bun.file(path.join(outdir, file)).json();
+          const mappedLocations = new Map();
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {
               expect(m.source).toBeDefined();
-              expect(m.generatedLine).toBeGreaterThanOrEqual(0);
+              expect(m.generatedLine).toBeGreaterThanOrEqual(1);
               expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
-              expect(m.originalLine).toBeGreaterThanOrEqual(0);
+              expect(m.originalLine).toBeGreaterThanOrEqual(1);
               expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+
+              const loc_key = `${m.generatedLine}:${m.generatedColumn}`;
+              if (mappedLocations.has(loc_key)) {
+                const fmtLoc = (loc: any) =>
+                  `${loc.generatedLine}:${m.generatedColumn} -> ${m.originalLine}:${m.originalColumn} [${m.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
+
+                const a = fmtLoc(mappedLocations.get(loc_key));
+                const b = fmtLoc(m);
+
+                // We only care about duplicates that point to
+                // multiple source locations.
+                if (a !== b) throw new Error("Duplicate mapping in source-map for " + loc_key + "\n" + a + "\n" + b);
+              }
+              mappedLocations.set(loc_key, { ...m });
             });
           });
+          if (snapshotSourceMap) {
+            const hash = new Bun.CryptoHasher("sha256").update(JSON.stringify(parsed)).digest("hex");
+            if (!snapshotSourceMap[file]) {
+              throw new Error(`snapshotSourceMap is missing "${file}": "${hash}"`);
+            }
+            try {
+              expect(hash).toBe(snapshotSourceMap[file]);
+            } catch (e) {
+              console.log(`inspect files for mistakes: ${outdir}`);
+              throw e;
+            }
+          }
         }
       }
     }
+    // if (snapshotSourceMap && snapshottedSourceMaps === 0) {
+    //   throw new Error("snapshotSourceMap=true but no source maps detected.");
+    // }
 
     // Runtime checks!
     if (run) {

@@ -37,6 +37,17 @@ describe("bundler", () => {
         console.log(await res.text());
       `,
     },
+    // this test serves two purposes
+    // - does react work when bundled
+    // - do sourcemaps on a library work
+    sourceMap: "external",
+    outdir: "out/",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    snapshotSourceMap: {
+      "entry.js.map": "fec584437037e37b5b538a3404e3e540921cb397a1ef630ade3660b8d90512f5",
+    },
     run: {
       stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
     },

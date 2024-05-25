@@ -6842,9 +6842,29 @@ pub const PackageManager = struct {
                                                 },
                                             ),
                                         };
-                                        dep.value = try JSAst.Expr.init(
-                                            JSAst.E.String,
-                                            JSAst.E.String{
+                                        if (workspace_dep.version.value.npm.is_alias) {
+                                            // it's an alias, preserve the version literal up to `@`
+                                            const dep_literal = workspace_dep.version.literal.slice(string_buf);
+                                            if (strings.indexOfChar(dep_literal, '@')) |at_index| {
+                                                dep.value = try Expr.init(
+                                                    E.String,
+                                                    E.String{
+                                                        .data = try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                                            dep_literal[0..at_index],
+                                                            new_version,
+                                                        }),
+                                                    },
+                                                    logger.Loc.Empty,
+                                                ).clone(allocator);
+                                                continue;
+                                            }
+
+                                            // fallthrough and replace entire version
+                                        }
+
+                                        dep.value = try Expr.init(
+                                            E.String,
+                                            E.String{
                                                 .data = new_version,
                                             },
                                             logger.Loc.Empty,
@@ -7234,13 +7254,27 @@ pub const PackageManager = struct {
                             if (request.version.tag == .dist_tag or
                                 (op == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
                             {
-                                switch (options.exact_versions) {
-                                    inline else => |exact_versions| {
-                                        break :brk try std.fmt.allocPrint(allocator, if (comptime exact_versions) "{}" else "^{}", .{
+                                const new_version = try switch (options.exact_versions) {
+                                    inline else => |exact_versions| std.fmt.allocPrint(
+                                        allocator,
+                                        if (comptime exact_versions) "{}" else "^{}",
+                                        .{
                                             request.resolution.value.npm.version.fmt(request.version_buf),
+                                        },
+                                    ),
+                                };
+
+                                if (request.version.tag == .npm and request.version.value.npm.is_alias) {
+                                    const dep_literal = request.version.literal.slice(request.version_buf);
+                                    if (strings.indexOfChar(dep_literal, '@')) |at_index| {
+                                        break :brk try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                            dep_literal[0..at_index],
+                                            new_version,
                                         });
-                                    },
+                                    }
                                 }
+
+                                break :brk new_version;
                             }
 
                             break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));

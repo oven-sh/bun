@@ -2314,6 +2314,54 @@ describe("workspaces", async () => {
 });
 
 describe("update", () => {
+  describe("alised dependencies", () => {
+    test("update all", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "aliased-dep": "npm:no-deps@^1.0.0",
+          },
+        }),
+      );
+
+      await runBunUpdate(env, packageDir);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "aliased-dep": "npm:no-deps@^1.1.0",
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.1.0",
+      });
+    });
+    test("update specific aliased package", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "aliased-dep": "npm:no-deps@^1.0.0",
+          },
+        }),
+      );
+
+      await runBunUpdate(env, packageDir, ["aliased-dep"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "aliased-dep": "npm:no-deps@^1.1.0",
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.1.0",
+      });
+    });
+  });
   test("--no-save will update packages in node_modules and not save to package.json", async () => {
     await write(
       join(packageDir, "package.json"),

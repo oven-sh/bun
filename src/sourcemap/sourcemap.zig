@@ -773,7 +773,7 @@ pub const LineColumnOffset = struct {
         pub fn reset(this: *Optional) void {
             switch (this.*) {
                 .null => {},
-                .value => this.value = .{},
+                .value => this.* = .{ .value = .{} },
             }
         }
     };
@@ -788,8 +788,6 @@ pub const LineColumnOffset = struct {
     }
 
     pub fn advance(this: *LineColumnOffset, input: []const u8) void {
-        var columns = this.columns;
-        defer this.columns = columns;
         var offset: u32 = 0;
         while (strings.indexOfNewlineOrNonASCII(input, offset)) |i| {
             assert(i >= offset);
@@ -803,7 +801,7 @@ pub const LineColumnOffset = struct {
             // This can lead to integer overflow, crashes, or hangs.
             // https://github.com/oven-sh/bun/issues/10624
             if (cursor.width == 0) {
-                columns += 1;
+                this.columns += 1;
                 offset = i + 1;
                 continue;
             }
@@ -814,22 +812,32 @@ pub const LineColumnOffset = struct {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
-                        columns += 1;
+                        this.columns += 1;
                         continue;
                     }
 
                     this.lines += 1;
-                    columns = 0;
+                    this.columns = 0;
                 },
                 else => |c| {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    columns += switch (c) {
+                    this.columns += switch (c) {
                         0...0xFFFF => 1,
                         else => 2,
                     };
                 },
             }
         }
+
+        const remain = input[offset..];
+
+        if (bun.Environment.allow_assert) {
+            assert(bun.strings.isAllASCII(remain));
+            assert(!bun.strings.containsChar(remain, '\n'));
+            assert(!bun.strings.containsChar(remain, '\r'));
+        }
+
+        this.columns += @intCast(remain.len);
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
@@ -977,43 +985,44 @@ pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
-    if (start_state.generated_line > 0) {
+    if (start_state.generated_line != 0) {
         j.push(try strings.repeatingAlloc(allocator, @intCast(start_state.generated_line), ';'), allocator);
         prev_end_state.generated_column = 0;
     }
 
+    // Skip past any leading semicolons, which indicate line breaks
     var source_map = source_map_;
     if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
-        j.pushStatic(source_map[0..semicolons]);
-        source_map = source_map[semicolons..];
-        prev_end_state.generated_column = 0;
-        start_state.generated_column = 0;
+        if (semicolons > 0) {
+            j.pushStatic(source_map[0..semicolons]);
+            source_map = source_map[semicolons..];
+            prev_end_state.generated_column = 0;
+            start_state.generated_column = 0;
+        }
     }
 
     // Strip off the first mapping from the buffer. The first mapping should be
     // for the start of the original file (the printer always generates one for
     // the start of the file).
-    //
-    // Bun has a 24-byte header for source map meta-data
     var i: usize = 0;
-    const generated_column_ = decodeVLQAssumeValid(source_map, i);
-    i = generated_column_.start;
-    const source_index_ = decodeVLQAssumeValid(source_map, i);
-    i = source_index_.start;
-    const original_line_ = decodeVLQAssumeValid(source_map, i);
-    i = original_line_.start;
-    const original_column_ = decodeVLQAssumeValid(source_map, i);
-    i = original_column_.start;
+    const generated_column = decodeVLQAssumeValid(source_map, i);
+    i = generated_column.start;
+    const source_index = decodeVLQAssumeValid(source_map, i);
+    i = source_index.start;
+    const original_line = decodeVLQAssumeValid(source_map, i);
+    i = original_line.start;
+    const original_column = decodeVLQAssumeValid(source_map, i);
+    i = original_column.start;
 
     source_map = source_map[i..];
 
     // Rewrite the first mapping to be relative to the end state of the previous
     // chunk. We now know what the end state is because we're in the second pass
     // where all chunks have already been generated.
-    start_state.source_index += source_index_.value;
-    start_state.generated_column += generated_column_.value;
-    start_state.original_line += original_line_.value;
-    start_state.original_column += original_column_.value;
+    start_state.source_index += source_index.value;
+    start_state.generated_column += generated_column.value;
+    start_state.original_line += original_line.value;
+    start_state.original_column += original_column.value;
 
     j.push(
         appendMappingToBuffer(

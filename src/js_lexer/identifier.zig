@@ -137,28 +137,6 @@ pub const JumpTableInline = struct {
     }
 };
 
-// test "isIdentifier" {
-//     Bitset.init();
-
-//     const expect = std.testing.expect;
-//     try expect(!Bitset.isIdentifierStart(0x2029));
-//     try expect(!Bitset.isIdentifierStart(0x2028));
-//     try expect(!Bitset.isIdentifier("\\u2028"));
-//     try expect(!Bitset.isIdentifier("\\u2029"));
-
-//     try expect(!Bitset.isIdentifierPart(':'));
-//     try expect(!Bitset.isIdentifier("javascript:"));
-
-//     try expect(Bitset.isIdentifier("javascript"));
-
-//     try expect(!Bitset.isIdentifier(":2"));
-//     try expect(!Bitset.isIdentifier("2:"));
-//     try expect(Bitset.isIdentifier("$"));
-//     try expect(!Bitset.isIdentifier("$:"));
-
-//     try expect(Bitset.isIdentifier("ಠ_ಠ"));
-// }
-
 // // ----- The benchmark ------
 
 // const std = @import("std");
@@ -2040,12 +2018,4 @@ pub const JumpTableInline = struct {
 //             },
 //         );
 //     }
-// }
-
-// test "Print size of bitset" {
-//     var err = std.io.getStdErr();
-//     try err.writer().print(
-//         "Size is: {d} + {d}\n",
-//         .{ @sizeOf(@TypeOf(Bitset.id_start)), @sizeOf(@TypeOf(Bitset.id_continue)) },
-//     );
 // }

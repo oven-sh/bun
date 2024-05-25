@@ -37,6 +37,37 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     return JSCStackTrace(newFrames);
 }
 
+static bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
+{
+    ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
+        if (auto* codeBlock = visitor->codeBlock()) {
+            if (auto* executable = codeBlock->ownerExecutable()) {
+                return executable->implementationVisibility();
+            }
+            return ImplementationVisibility::Public;
+        }
+
+#if ENABLE(WEBASSEMBLY)
+        if (visitor->isNativeCalleeFrame())
+            return visitor->callee().asNativeCallee()->implementationVisibility();
+#endif
+
+        if (visitor->callee().isCell()) {
+            if (auto* callee = visitor->callee().asCell()) {
+                if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
+                    if (auto* executable = jsFunction->executable())
+                        return executable->implementationVisibility();
+                    return ImplementationVisibility::Public;
+                }
+            }
+        }
+
+        return ImplementationVisibility::Public;
+    }();
+
+    return implementationVisibility != ImplementationVisibility::Public;
+}
+
 JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, size_t frameLimit, JSC::JSValue caller)
 {
     JSC::VM& vm = globalObject->vm();
@@ -63,23 +94,64 @@ JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globa
         callerName = callerFunctionInternal->name();
     }
 
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // skip caller frame and all frames above it
-        if (!callerName.isEmpty()) {
+    if (!callerName.isEmpty()) {
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            // skip caller frame and all frames above it
             if (!belowCaller) {
+                skipFrames += 1;
+
                 if (visitor->functionName() == callerName) {
                     belowCaller = true;
                     return WTF::IterationStatus::Continue;
                 }
-                skipFrames += 1;
             }
-        }
-        if (!visitor->isNativeFrame()) {
-            framesCount++;
-        }
 
-        return WTF::IterationStatus::Continue;
-    });
+            return WTF::IterationStatus::Continue;
+        });
+    } else if (caller && caller.isCell()) {
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            // skip caller frame and all frames above it
+            if (!belowCaller) {
+                auto callee = visitor->callee();
+                skipFrames += 1;
+                if (callee.isCell() && callee.asCell() == caller) {
+                    belowCaller = true;
+                    return WTF::IterationStatus::Continue;
+                }
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    } else if (caller.isEmpty() || caller.isUndefined()) {
+        // Skip the first frame.
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            if (!belowCaller) {
+                skipFrames += 1;
+                belowCaller = true;
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    }
+
     framesCount = std::min(frameLimit, framesCount);
 
     // Create the actual stack frames
@@ -87,7 +159,7 @@ JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globa
     stackFrames.reserveInitialCapacity(framesCount);
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         // Skip native frames
-        if (visitor->isNativeFrame()) {
+        if (isImplementationVisibilityPrivate(visitor)) {
             return WTF::IterationStatus::Continue;
         }
 

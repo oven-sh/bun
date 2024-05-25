@@ -1,0 +1,3 @@
+Index:
+  Background: Skip # Disable slow background indexing of these files.
+

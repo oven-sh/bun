@@ -243,7 +243,7 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     if (UNLIKELY(str->length() == 0))
         return JSC::JSValue::encode(JSC::jsNumber(0));
 
-    auto view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->tryGetValue(lexicalGlobalObject);
     size_t written = 0;
 
     switch (encoding) {
@@ -257,9 +257,11 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     case WebCore::BufferEncodingType::hex: {
 
         if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1(view.characters8(), view.length(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            const auto span = view.span8();
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         } else {
-            written = Bun__encoding__writeUTF16(view.characters16(), view.length(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            const auto span = view.span16();
+            written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         }
         break;
     }
@@ -369,10 +371,12 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto view = str->tryGetValue(lexicalGlobalObject);
+    const auto& view = str->tryGetValue(lexicalGlobalObject);
     JSC::EncodedJSValue result;
 
     if (view.is8Bit()) {
+        const auto span = view.span8();
+
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::ucs2:
@@ -380,12 +384,13 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         case WebCore::BufferEncodingType::base64:
         case WebCore::BufferEncodingType::base64url:
         case WebCore::BufferEncodingType::hex: {
-            result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, view.characters8(), view.length(), static_cast<uint8_t>(encoding));
+
+            result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }
         case WebCore::BufferEncodingType::ascii: // ascii is a noop for latin1
         case WebCore::BufferEncodingType::latin1: { // The native encoding is latin1, so we don't need to do any conversion.
-            result = JSValue::encode(createBuffer(lexicalGlobalObject, view.characters8(), view.length()));
+            result = JSValue::encode(createBuffer(lexicalGlobalObject, span.data(), span.size()));
             break;
         }
         default: {
@@ -394,6 +399,7 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         }
         }
     } else {
+        const auto span = view.span16();
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::base64:
@@ -401,14 +407,14 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         case WebCore::BufferEncodingType::hex:
         case WebCore::BufferEncodingType::ascii:
         case WebCore::BufferEncodingType::latin1: {
-            result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, view.characters16(), view.length(), static_cast<uint8_t>(encoding));
+            result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }
         case WebCore::BufferEncodingType::ucs2:
         case WebCore::BufferEncodingType::utf16le: {
             // The native encoding is UTF-16
             // so we don't need to do any conversion.
-            result = JSValue::encode(createBuffer(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(view.characters16()), view.length() * 2));
+            result = JSValue::encode(createBuffer(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(span.data()), span.size() * 2));
             break;
         }
         default: {
@@ -597,20 +603,22 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url: {
         int64_t length = str->length();
-        auto view = str->tryGetValue(lexicalGlobalObject);
+        const auto& view = str->tryGetValue(lexicalGlobalObject);
 
         if (view.is8Bit()) {
-            if (view.characters8()[length - 1] == 0x3D) {
+            const auto span = view.span8();
+            if (span.data()[length - 1] == 0x3D) {
                 length--;
 
-                if (length > 1 && view.characters8()[length - 1] == '=')
+                if (length > 1 && span.data()[length - 1] == '=')
                     length--;
             }
         } else {
-            if (view.characters16()[length - 1] == 0x3D) {
+            const auto span = view.span16();
+            if (span.data()[length - 1] == 0x3D) {
                 length--;
 
-                if (length > 1 && view.characters16()[length - 1] == '=')
+                if (length > 1 && span.data()[length - 1] == '=')
                     length--;
             }
         }
@@ -624,11 +632,13 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
     }
 
     case WebCore::BufferEncodingType::utf8: {
-        auto view = str->tryGetValue(lexicalGlobalObject);
+        const auto& view = str->tryGetValue(lexicalGlobalObject);
         if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1(view.characters8(), view.length(), static_cast<uint8_t>(encoding));
+            const auto span = view.span8();
+            written = Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
         } else {
-            written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
+            const auto span = view.span16();
+            written = Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
         }
         break;
     }

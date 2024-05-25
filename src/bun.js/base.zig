@@ -312,7 +312,7 @@ pub const ArrayBuffer = extern struct {
         return buffer_value;
     }
 
-    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize) JSC.JSValue;
+    extern fn ArrayBuffer__fromSharedMemfd(fd: i64, globalObject: *JSC.JSGlobalObject, byte_offset: usize, byte_length: usize, total_size: usize, JSC.JSValue.JSType) JSC.JSValue;
     pub const toArrayBufferFromSharedMemfd = ArrayBuffer__fromSharedMemfd;
 
     pub fn toJSBufferFromMemfd(fd: bun.FileDescriptor, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -384,11 +384,10 @@ pub const ArrayBuffer = extern struct {
         return Stream{ .pos = 0, .buf = this.slice() };
     }
 
-    pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: BinaryType) JSValue {
+    pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSValue.JSType) JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {
             .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false),
-            .Buffer => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true),
             .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, bytes.ptr, bytes.len),
             else => @compileError("Not implemented yet"),
         };
@@ -414,7 +413,7 @@ pub const ArrayBuffer = extern struct {
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
-        std.debug.assert(value.asArrayBuffer_(ctx.ptr(), &out));
+        bun.assert(value.asArrayBuffer_(ctx.ptr(), &out));
         out.value = value;
         return out;
     }
@@ -580,6 +579,7 @@ pub const MarkedArrayBuffer = struct {
             .buffer = ArrayBuffer.fromTypedArray(ctx, value),
         };
     }
+
     pub fn fromArrayBuffer(ctx: JSC.C.JSContextRef, value: JSC.JSValue) MarkedArrayBuffer {
         return MarkedArrayBuffer{
             .allocator = null,
@@ -743,7 +743,7 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     // mimalloc knows the size of things
     // but we don't
     // if (comptime Environment.allow_assert) {
-    //     std.debug.assert(mimalloc.mi_check_owned(bytes_) or
+    //     bun.assert(mimalloc.mi_check_owned(bytes_) or
     //         mimalloc.mi_heap_check_owned(JSC.VirtualMachine.get().arena.heap.?, bytes_));
     // }
 
@@ -1526,6 +1526,8 @@ pub const Ref = struct {
 };
 
 pub const Strong = @import("./Strong.zig").Strong;
+pub const Weak = @import("./Weak.zig").Weak;
+pub const WeakRefType = @import("./Weak.zig").WeakRefType;
 
 pub const BinaryType = enum {
     Buffer,
@@ -1690,7 +1692,7 @@ pub const MemoryReportingAllocator = struct {
         _ = prev;
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
-            // std.debug.assert(prev > this.memory_cost.load(.Monotonic));
+            // bun.assert(prev > this.memory_cost.load(.Monotonic));
             log("free({d}) = {d}", .{ buf.len, this.memory_cost.raw });
         }
     }

@@ -87,7 +87,7 @@ pub const Source = struct {
 
     pub fn configureThread() void {
         if (source_set) return;
-        std.debug.assert(stdout_stream_set);
+        bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
     }
 
@@ -360,17 +360,17 @@ pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 pub fn errorWriter() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
 pub fn errorStream() Source.StreamType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream;
 }
 
 pub fn writer() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.stream.quietWriter();
 }
 
@@ -533,7 +533,7 @@ pub fn debug(comptime fmt: string, args: anytype) void {
 }
 
 pub inline fn _debug(comptime fmt: string, args: anytype) void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     println(fmt, args);
 }
 
@@ -544,8 +544,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        if (comptime Environment.allow_assert)
-            std.debug.assert(source_set);
+        bun.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
@@ -563,21 +562,25 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const _log_fn = fn (comptime fmt: string, args: anytype) void;
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
+const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),
-        []const u8 => tag,
-        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@Type(tag))),
+        else => tag,
     };
-    if (comptime !Environment.isDebug or !Environment.isNative) {
+
+    if (comptime !Environment.isDebug) {
         return struct {
+            pub fn isVisible() bool {
+                return false;
+            }
             pub fn log(comptime _: string, _: anytype) void {}
-        }.log;
+        };
     }
 
     return struct {
         const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
+
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
@@ -585,22 +588,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
         var evaluated_disable = false;
         var lock = std.Thread.Mutex{};
 
-        /// Debug-only logs which should not appear in release mode
-        /// To enable a specific log at runtime, set the environment variable
-        ///   BUN_DEBUG_${TAG} to 1
-        /// For example, to enable the "foo" log, set the environment variable
-        ///   BUN_DEBUG_foo=1
-        /// To enable all logs, set the environment variable
-        ///   BUN_DEBUG_ALL=1
-        pub fn log(comptime fmt: string, args: anytype) void {
-            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-                return log(fmt ++ "\n", args);
-            }
-
-            if (ScopedDebugWriter.disable_inside_log > 0) {
-                return;
-            }
-
+        pub fn isVisible() bool {
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
@@ -611,8 +599,27 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
             }
+            return !really_disable;
+        }
 
-            if (really_disable)
+        /// Debug-only logs which should not appear in release mode
+        /// To enable a specific log at runtime, set the environment variable
+        ///   BUN_DEBUG_${TAG} to 1
+        /// For example, to enable the "foo" log, set the environment variable
+        ///   BUN_DEBUG_foo=1
+        /// To enable all logs, set the environment variable
+        ///   BUN_DEBUG_ALL=1
+        pub fn log(comptime fmt: string, args: anytype) void {
+            if (!source_set) return;
+            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
+                return log(fmt ++ "\n", args);
+            }
+
+            if (ScopedDebugWriter.disable_inside_log > 0) {
+                return;
+            }
+
+            if (!isVisible())
                 return;
 
             if (!out_set) {
@@ -645,7 +652,11 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 };
             }
         }
-    }.log;
+    };
+}
+
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
+    return Scoped(tag, disabled).log;
 }
 
 // Valid "colors":
@@ -863,9 +874,11 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
+const debugWarnScope = Scoped("debug warn", false);
+
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (Environment.isDebug) {
+    if (debugWarnScope.isVisible()) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }
@@ -917,7 +930,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         // enum literals
         if (info == .EnumLiteral) {
             const tag = @tagName(info);
-            comptime std.debug.assert(tag.len > 0); // how?
+            comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
             break :display_name .{ tag, true };
         }
@@ -940,7 +953,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     }
 }
 
-const ScopedDebugWriter = struct {
+pub const ScopedDebugWriter = struct {
     pub var scoped_file_writer: File.QuietWriter = undefined;
     pub threadlocal var disable_inside_log: isize = 0;
 };
@@ -954,7 +967,7 @@ pub fn enableScopedDebugWriter() void {
 extern "c" fn getpid() c_int;
 
 pub fn initScopedDebugWriterAtStartup() void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
 
     if (bun.getenvZ("BUN_DEBUG")) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
@@ -996,7 +1009,7 @@ fn scopedWriter() File.QuietWriter {
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
-    prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
+    prettyErrorln("<r><red>error<r><d>:<r> " ++ fmt, args);
 }
 
 /// This struct is a workaround a Windows terminal bug.

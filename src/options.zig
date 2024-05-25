@@ -30,7 +30,7 @@ const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const WriteDestination = enum {
     stdout,
@@ -1188,7 +1188,7 @@ pub fn definesFromTransformOptions(
         const framework = framework_env orelse break :load_env;
 
         if (Environment.allow_assert) {
-            std.debug.assert(framework.behavior != ._none);
+            bun.assert(framework.behavior != ._none);
         }
 
         behavior = framework.behavior;
@@ -1760,7 +1760,6 @@ pub const BundleOptions = struct {
 
         opts.polyfill_node_globals = opts.target == .browser;
 
-        Analytics.Features.framework += @as(usize, @intFromBool(opts.framework != null));
         Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
         Analytics.Features.origin += @as(usize, @intFromBool(opts.origin.href.len > 0));
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
@@ -2306,7 +2305,7 @@ pub const EntryPoint = struct {
     }
 
     fn normalizedPath(this: *const EntryPoint, allocator: std.mem.Allocator, toplevel_path: string) !string {
-        std.debug.assert(std.fs.path.isAbsolute(this.path));
+        bun.assert(std.fs.path.isAbsolute(this.path));
         var str = this.path;
         if (strings.indexOf(str, toplevel_path)) |top| {
             str = str[top + toplevel_path.len ..];
@@ -2645,7 +2644,7 @@ pub const PathTemplate = struct {
 
                 if (count == 0) {
                     end_len = @intFromPtr(c) - @intFromPtr(remain.ptr);
-                    std.debug.assert(end_len <= remain.len);
+                    bun.assert(end_len <= remain.len);
                     break;
                 }
             }

@@ -49,7 +49,7 @@ const bun = @import("root").bun;
 pub const OsIterator = struct {
     const Error = process.ArgIterator.InitError;
 
-    arena: @import("root").bun.ArenaAllocator,
+    arena: bun.ArenaAllocator,
     remain: [][:0]const u8,
 
     /// The executable path (this is the first argument passed to the program)
@@ -59,9 +59,9 @@ pub const OsIterator = struct {
 
     pub fn init(allocator: mem.Allocator) OsIterator {
         var res = OsIterator{
-            .arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .arena = bun.ArenaAllocator.init(allocator),
             .exe_arg = undefined,
-            .remain = bun.argv(),
+            .remain = bun.argv,
         };
         res.exe_arg = res.next();
         return res;
@@ -90,12 +90,12 @@ pub const ShellIterator = struct {
         QuoteNotClosed,
     } || mem.Allocator.Error;
 
-    arena: @import("root").bun.ArenaAllocator,
+    arena: bun.ArenaAllocator,
     str: []const u8,
 
     pub fn init(allocator: mem.Allocator, str: []const u8) ShellIterator {
         return .{
-            .arena = @import("root").bun.ArenaAllocator.init(allocator),
+            .arena = bun.ArenaAllocator.init(allocator),
             .str = str,
         };
     }

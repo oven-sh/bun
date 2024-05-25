@@ -125,20 +125,35 @@ pub const Source = union(enum) {
         };
     }
 
+    pub var stdin_tty: uv.uv_tty_t = undefined;
+    pub var stdin_tty_init = false;
+
     pub fn openTty(loop: *uv.Loop, fd: bun.FileDescriptor) bun.JSC.Maybe(*Source.Tty) {
         log("openTTY (fd = {})", .{fd});
-        const tty = bun.default_allocator.create(Source.Tty) catch bun.outOfMemory();
 
-        return switch (tty.init(loop, bun.uvfdcast(fd))) {
+        const uv_fd = bun.uvfdcast(fd);
+
+        if (uv_fd == 0) {
+            if (!stdin_tty_init) {
+                switch (stdin_tty.init(loop, uv_fd)) {
+                    .err => |err| return .{ .err = err },
+                    .result => {},
+                }
+                stdin_tty_init = true;
+            }
+
+            return .{ .result = &stdin_tty };
+        }
+
+        const tty = bun.default_allocator.create(Source.Tty) catch bun.outOfMemory();
+        return switch (tty.init(loop, uv_fd)) {
             .err => |err| .{ .err = err },
-            .result => brk: {
-                break :brk .{ .result = tty };
-            },
+            .result => .{ .result = tty },
         };
     }
 
     pub fn openFile(fd: bun.FileDescriptor) *Source.File {
-        std.debug.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
+        bun.assert(fd.isValid() and bun.uvfdcast(fd) != -1);
         log("openFile (fd = {})", .{fd});
         const file = bun.default_allocator.create(Source.File) catch bun.outOfMemory();
 
@@ -209,3 +224,14 @@ pub const Source = union(enum) {
         };
     }
 };
+
+export fn Source__setRawModeStdin(raw: bool) c_int {
+    const tty = switch (Source.openTty(bun.JSC.VirtualMachine.get().uvLoop(), bun.STDIN_FD)) {
+        .result => |tty| tty,
+        .err => |e| return e.errno,
+    };
+    if (tty.setMode(if (raw) .raw else .normal).toError(.uv_tty_set_mode)) |err| {
+        return err.errno;
+    }
+    return 0;
+}

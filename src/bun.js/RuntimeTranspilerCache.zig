@@ -153,7 +153,7 @@ pub const RuntimeTranspilerCache = struct {
             defer tracer.end();
 
             // atomically write to a tmpfile and then move it to the final destination
-            var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var tmpname_buf: bun.PathBuffer = undefined;
             const tmpfilename = bun.sliceTo(try bun.fs.FileSystem.instance.tmpname(std.fs.path.extension(destination_path.slice()), &tmpname_buf, input_hash), 0);
 
             const output_bytes = output_code.byteSlice();
@@ -203,7 +203,7 @@ pub const RuntimeTranspilerCache = struct {
                         var metadata_stream2 = std.io.fixedBufferStream(metadata_buf[0..Metadata.size]);
                         var metadata2 = Metadata{};
                         metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not rountrip encode -> decode  successfully: {s}", .{@errorName(err)});
-                        std.debug.assert(std.meta.eql(metadata, metadata2));
+                        bun.assert(std.meta.eql(metadata, metadata2));
                     }
 
                     break :brk metadata_buf[0..metadata_stream.pos];
@@ -228,16 +228,16 @@ pub const RuntimeTranspilerCache = struct {
                     var total: usize = 0;
                     for (vecs) |v| {
                         if (comptime bun.Environment.isWindows) {
-                            std.debug.assert(v.len > 0);
+                            bun.assert(v.len > 0);
                             total += v.len;
                         } else {
-                            std.debug.assert(v.iov_len > 0);
+                            bun.assert(v.iov_len > 0);
                             total += v.iov_len;
                         }
                     }
-                    std.debug.assert(end_position == total);
+                    bun.assert(end_position == total);
                 }
-                std.debug.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
+                bun.assert(end_position == @as(i64, @intCast(sourcemap.len + output_bytes.len + Metadata.size)));
 
                 bun.C.preallocate_file(tmpfile.fd.cast(), 0, @intCast(end_position)) catch {};
                 while (position < end_position) {
@@ -264,7 +264,7 @@ pub const RuntimeTranspilerCache = struct {
                 return error.MissingData;
             }
 
-            std.debug.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
+            bun.assert(this.output_code == .utf8 and this.output_code.utf8.len == 0); // this should be the default value
 
             this.output_code = if (this.metadata.output_byte_length == 0)
                 .{ .string = bun.String.empty }
@@ -365,7 +365,7 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     pub fn getCacheFilePath(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         input_hash: u64,
     ) ![:0]const u8 {
         const cache_dir = try getCacheDir(buf);
@@ -376,7 +376,7 @@ pub const RuntimeTranspilerCache = struct {
         return buf[0 .. cache_dir.len + 1 + cache_filename_len :0];
     }
 
-    fn reallyGetCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+    fn reallyGetCacheDir(buf: *bun.PathBuffer) [:0]const u8 {
         if (comptime bun.Environment.isDebug) {
             bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE") != null;
         }
@@ -424,11 +424,11 @@ pub const RuntimeTranspilerCache = struct {
     }
 
     // Only do this at most once per-thread.
-    threadlocal var runtime_transpiler_cache_static_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var runtime_transpiler_cache_static_buffer: bun.PathBuffer = undefined;
     threadlocal var runtime_transpiler_cache: ?[:0]const u8 = null;
     pub var is_disabled = false;
 
-    fn getCacheDir(buf: *[bun.MAX_PATH_BYTES]u8) ![:0]const u8 {
+    fn getCacheDir(buf: *bun.PathBuffer) ![:0]const u8 {
         if (is_disabled) return error.CacheDisabled;
         const path = runtime_transpiler_cache orelse path: {
             const path = reallyGetCacheDir(&runtime_transpiler_cache_static_buffer);
@@ -454,9 +454,9 @@ pub const RuntimeTranspilerCache = struct {
         var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.fromFile");
         defer tracer.end();
 
-        var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var cache_file_path_buf: bun.PathBuffer = undefined;
         const cache_file_path = try getCacheFilePath(&cache_file_path_buf, input_hash);
-        std.debug.assert(cache_file_path.len > 0);
+        bun.assert(cache_file_path.len > 0);
         return fromFileWithCacheFilePath(
             bun.PathString.init(cache_file_path),
             input_hash,
@@ -528,7 +528,7 @@ pub const RuntimeTranspilerCache = struct {
         var tracer = bun.tracy.traceNamed(@src(), "RuntimeTranspilerCache.toFile");
         defer tracer.end();
 
-        var cache_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var cache_file_path_buf: bun.PathBuffer = undefined;
         const output_code: Entry.OutputCode = switch (source_code.encoding()) {
             .utf8 => .{ .utf8 = source_code.byteSlice() },
             else => .{ .string = source_code },
@@ -548,10 +548,10 @@ pub const RuntimeTranspilerCache = struct {
                 break :brk try bun.toLibUVOwnedFD(dir.fd);
             }
 
-            break :brk bun.toFD(std.fs.cwd().fd);
+            break :brk bun.FD.cwd();
         };
         defer {
-            if (cache_dir_fd != bun.toFD(std.fs.cwd().fd)) _ = bun.sys.close(cache_dir_fd);
+            if (cache_dir_fd != bun.FD.cwd()) _ = bun.sys.close(cache_dir_fd);
         }
 
         try Entry.save(
@@ -626,7 +626,7 @@ pub const RuntimeTranspilerCache = struct {
         if (this.input_hash == null or is_disabled) {
             return;
         }
-        std.debug.assert(this.entry == null);
+        bun.assert(this.entry == null);
         const output_code = bun.String.createLatin1(output_code_bytes);
         this.output_code = output_code;
 

@@ -9,13 +9,14 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const cli = @import("../cli.zig");
+const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 const debug = Output.scoped(.bunx, false);
 
 pub const BunxCommand = struct {
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
 
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -81,7 +82,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create(default_allocator);
         bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
-        const expr = try bun.JSON.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.ParsePackageJSONUTF8(&source, bundler.log, bundler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -134,20 +135,20 @@ pub const BunxCommand = struct {
     }
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
-        var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var subpath: bun.PathBuffer = undefined;
         const subpath_z = std.fmt.bufPrintZ(&subpath, bun.pathLiteral("node_modules/{s}/package.json"), .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
     fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
-        var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var subpath: bun.PathBuffer = undefined;
         if (with_stale_check) {
             const subpath_z = std.fmt.bufPrintZ(
                 &subpath,
                 bun.pathLiteral("{s}/package.json"),
                 .{tempdir_name},
             ) catch unreachable;
-            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
+            const target_package_json_fd = bun.sys.openat(bun.FD.cwd(), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
             const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
             const is_stale = is_stale: {
@@ -185,7 +186,7 @@ pub const BunxCommand = struct {
             .{ tempdir_name, package_name },
         ) catch unreachable;
 
-        return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
+        return try getBinNameFromSubpath(bundler, bun.FD.cwd(), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -212,8 +213,7 @@ pub const BunxCommand = struct {
         Global.exit(1);
     }
 
-    pub fn exec(ctx_: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
-        var ctx = ctx_;
+    pub fn exec(ctx: bun.CLI.Command.Context, argv: [][:0]const u8) !void {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -221,6 +221,8 @@ pub const BunxCommand = struct {
         var maybe_package_name: ?string = null;
         var verbose_install = false;
         var silent_install = false;
+        var has_version = false;
+        var has_revision = false;
         {
             var found_subcommand_name = false;
 
@@ -231,7 +233,11 @@ pub const BunxCommand = struct {
                 }
 
                 if (positional.len > 0 and positional[0] == '-') {
-                    if (strings.eqlComptime(positional, "--verbose")) {
+                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
+                        has_version = true;
+                    } else if (strings.eqlComptime(positional, "--revision")) {
+                        has_revision = true;
+                    } else if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
                     } else if (strings.eqlComptime(positional, "--silent")) {
                         silent_install = true;
@@ -250,7 +256,13 @@ pub const BunxCommand = struct {
 
         // check if package_name_for_update_request is empty string or " "
         if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-            exitWithUsage();
+            if (has_revision) {
+                cli.printRevisionAndExit();
+            } else if (has_version) {
+                cli.printVersionAndExit();
+            } else {
+                exitWithUsage();
+            }
         }
 
         const package_name = maybe_package_name.?;
@@ -269,7 +281,7 @@ pub const BunxCommand = struct {
             exitWithUsage();
         }
 
-        std.debug.assert(update_requests.len == 1); // One positional cannot parse to multiple requests
+        bun.assert(update_requests.len == 1); // One positional cannot parse to multiple requests
         var update_request = update_requests[0];
 
         // if you type "tsc" and TypeScript is not installed:
@@ -331,8 +343,7 @@ pub const BunxCommand = struct {
                 else => ":",
             };
 
-            const has_banned_char = std.mem.indexOfAny(u8, update_request.name, banned_path_chars) != null or
-                std.mem.indexOfAny(u8, display_version, banned_path_chars) != null;
+            const has_banned_char = bun.strings.indexAnyComptime(update_request.name, banned_path_chars) != null or bun.strings.indexAnyComptime(display_version, banned_path_chars) != null;
 
             break :brk try if (has_banned_char)
                 // This branch gets hit usually when a URL is requested as the package
@@ -531,7 +542,7 @@ pub const BunxCommand = struct {
 
             // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
             const root_dir_fd = root_dir_info.getFileDescriptor();
-            std.debug.assert(root_dir_fd != .zero);
+            bun.assert(root_dir_fd != .zero);
             if (getBinName(&this_bundler, root_dir_fd, bunx_cache_dir, initial_bin_name)) |package_name_for_bin| {
                 // if we check the bin name and its actually the same, we don't need to check $PATH here again
                 if (!strings.eqlLong(package_name_for_bin, initial_bin_name, true)) {

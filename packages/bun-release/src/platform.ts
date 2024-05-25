@@ -111,7 +111,7 @@ function isWindowsAVX2(): boolean {
       spawn("powershell", [
         "-c",
         `(Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern bool IsProcessorFeaturePresent(int ProcessorFeature);' -Name 'Kernel32' -Namespace 'Win32' -PassThru)::IsProcessorFeaturePresent(40);`,
-      ]).stdout == "True"
+      ]).stdout.trim() === "True"
     );
   } catch (error) {
     debug("isWindowsAVX2 failed", error);

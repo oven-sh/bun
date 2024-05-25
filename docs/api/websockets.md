@@ -23,7 +23,7 @@ Bun.serve({
     if (server.upgrade(req)) {
       return; // do not return a Response
     }
-    return new Response("Upgrade failed :(", { status: 500 });
+    return new Response("Upgrade failed", { status: 500 });
   },
   websocket: {}, // handlers
 });
@@ -321,7 +321,7 @@ namespace Bun {
         message: string | ArrayBuffer | Uint8Array,
       ) => void;
       open?: (ws: ServerWebSocket) => void;
-      close?: (ws: ServerWebSocket) => void;
+      close?: (ws: ServerWebSocket, code: number, reason: string) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
       drain?: (ws: ServerWebSocket) => void;
 
@@ -356,7 +356,7 @@ type Compressor =
   | `"256KB"`;
 
 interface Server {
-  pendingWebsockets: number;
+  pendingWebSockets: number;
   publish(
     topic: string,
     data: string | ArrayBufferView | ArrayBuffer,

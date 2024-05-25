@@ -41,7 +41,7 @@ const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
-var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var bun_path_buf: bun.PathBuffer = undefined;
 const Futex = @import("../futex.zig");
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
@@ -235,7 +235,7 @@ const CreateOptions = struct {
 };
 
 const BUN_CREATE_DIR = ".bun-create";
-var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var home_dir_buf: bun.PathBuffer = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
         @setCold(true);
@@ -378,7 +378,7 @@ pub const CreateCommand = struct {
                 progress.refresh();
 
                 var pluckers: [1]Archive.Plucker = if (!create_options.skip_package_json)
-                    [1]Archive.Plucker{try Archive.Plucker.init("package.json", 2048, ctx.allocator)}
+                    [1]Archive.Plucker{try Archive.Plucker.init(comptime strings.literal(bun.OSPathChar, "package.json"), 2048, ctx.allocator)}
                 else
                     [1]Archive.Plucker{undefined};
 
@@ -597,7 +597,7 @@ pub const CreateCommand = struct {
             var parent_dir = try std.fs.openDirAbsolute(destination, .{});
             defer parent_dir.close();
             if (comptime Environment.isWindows) {
-                try parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{});
+                parent_dir.copyFile("gitignore", parent_dir, ".gitignore", .{}) catch {};
             } else {
                 std.os.linkat(parent_dir.fd, "gitignore", parent_dir.fd, ".gitignore", 0) catch {};
             }
@@ -1611,6 +1611,7 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1622,6 +1623,7 @@ pub const CreateCommand = struct {
                     const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                     home_dir_buf[outdir_path.len] = 0;
                     const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                    if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
                     std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                     example_tag = Example.Tag.local_folder;
                     break :brk outdir_path;
@@ -1633,6 +1635,7 @@ pub const CreateCommand = struct {
                         const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                        if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
                         std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
                         example_tag = Example.Tag.local_folder;
                         break :brk outdir_path;
@@ -1848,7 +1851,7 @@ pub const Example = struct {
         var header_entries: Headers.Entries = .{};
         var headers_buf: string = "";
 
-        if (env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
+        if (env_loader.map.get("GITHUB_TOKEN") orelse env_loader.map.get("GITHUB_ACCESS_TOKEN")) |access_token| {
             if (access_token.len > 0) {
                 headers_buf = try std.fmt.allocPrint(ctx.allocator, "AuthorizationBearer {s}", .{access_token});
                 try header_entries.append(

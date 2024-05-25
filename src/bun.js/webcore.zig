@@ -122,6 +122,15 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
 
     switch (first_byte) {
         '\n' => return .false,
+        '\r' => {
+            const next_byte = reader.readByte() catch {
+                // They may have said yes, but the stdin is invalid.
+                return .false;
+            };
+            if (next_byte == '\n') {
+                return .false;
+            }
+        },
         'y', 'Y' => {
             const next_byte = reader.readByte() catch {
                 // They may have said yes, but the stdin is invalid.
@@ -133,13 +142,21 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
                 return .true;
+            } else if (next_byte == '\r') {
+                //Check Windows style
+                const second_byte = reader.readByte() catch {
+                    return .false;
+                };
+                if (second_byte == '\n') {
+                    return .true;
+                }
             }
         },
         else => {},
     }
 
     while (reader.readByte()) |b| {
-        if (b == '\n') break;
+        if (b == '\n' or b == '\r') break;
     } else |_| {}
 
     // 8. If the user responded positively, return true; otherwise, the user
@@ -322,8 +339,8 @@ pub const Prompt = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(input.items.len > 0);
-            std.debug.assert(input.items[input.items.len - 1] != '\r');
+            bun.assert(input.items.len > 0);
+            bun.assert(input.items[input.items.len - 1] != '\r');
         }
 
         // 8. Let result be null if the user aborts, or otherwise the string

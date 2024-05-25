@@ -13,7 +13,7 @@ if (process.argv.length > 2) {
 }
 
 const b = await launch({
-  headless: (process.env.BUN_TEST_HEADLESS ?? "1") === "0",
+  headless: true,
   dumpio: true,
 });
 

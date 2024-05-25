@@ -9,7 +9,7 @@ const StringBuilder = bun.StringBuilder;
 
 const fmt = std.fmt;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const Header = struct {
     name: []const u8,
@@ -199,30 +199,6 @@ pub const Response = struct {
     }
 };
 
-test "pico_http: parse response" {
-    const RES = "HTTP/1.1 200 OK\r\n" ++
-        "Date: Mon, 22 Mar 2021 08:15:54 GMT\r\n" ++
-        "Content-Type: text/html; charset=utf-8\r\n" ++
-        "Content-Length: 9593\r\n" ++
-        "Connection: keep-alive\r\n" ++
-        "Server: gunicorn/19.9.0\r\n" ++
-        "Access-Control-Allow-Origin: *\r\n" ++
-        "Access-Control-Allow-Credentials: true\r\n" ++
-        "\r\n";
-
-    var headers: [32]Header = undefined;
-
-    const res = try Response.parse(RES, &headers);
-
-    std.debug.print("Minor Version: {}\n", .{res.minor_version});
-    std.debug.print("Status Code: {}\n", .{res.status_code});
-    std.debug.print("Status: {s}\n", .{res.status});
-
-    for (res.headers) |header| {
-        std.debug.print("{}\n", .{header});
-    }
-}
-
 pub const Headers = struct {
     headers: []const Header,
 
@@ -252,23 +228,5 @@ pub const Headers = struct {
         };
     }
 };
-
-test "pico_http: parse headers" {
-    const HEADERS = "Date: Mon, 22 Mar 2021 08:15:54 GMT\r\n" ++
-        "Content-Type: text/html; charset=utf-8\r\n" ++
-        "Content-Length: 9593\r\n" ++
-        "Connection: keep-alive\r\n" ++
-        "Server: gunicorn/19.9.0\r\n" ++
-        "Access-Control-Allow-Origin: *\r\n" ++
-        "Access-Control-Allow-Credentials: true\r\n" ++
-        "\r\n";
-
-    var headers: [32]Header = undefined;
-
-    const result = try Headers.parse(HEADERS, &headers);
-    for (result.headers) |header| {
-        std.debug.print("{}\n", .{header});
-    }
-}
 
 pub usingnamespace c;

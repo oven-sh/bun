@@ -17,9 +17,9 @@ const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 const Path = bun.path;
 
-threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-threadlocal var json_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var final_path_buf: bun.PathBuffer = undefined;
+threadlocal var folder_name_buf: bun.PathBuffer = undefined;
+threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
 pub const Repository = extern struct {
     owner: String = .{},
@@ -78,7 +78,7 @@ pub const Repository = extern struct {
         buf: []const u8,
         repository: *const Repository,
         pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (comptime Environment.allow_assert) std.debug.assert(formatter.label.len > 0);
+            if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
             const repo = formatter.repository.repo.slice(formatter.buf);

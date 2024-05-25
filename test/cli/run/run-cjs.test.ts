@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
+import { mkdirSync } from "fs";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
 test("running a commonjs module works", async () => {
-  const dir = join(realpathSync(tmpdir()), "bun-run-test1");
+  const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
   await Bun.write(join(dir, "index1.js"), "module.exports = 1; console.log('hello world');");
   let { stdout } = Bun.spawnSync({

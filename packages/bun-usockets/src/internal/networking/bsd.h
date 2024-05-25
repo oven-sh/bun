@@ -40,12 +40,12 @@
 #endif
 /* For socklen_t */
 #include <sys/socket.h>
+#include <netdb.h>
 #define SETSOCKOPT_PTR_TYPE int *
 #define LIBUS_SOCKET_ERROR -1
 #endif
 
 #define LIBUS_UDP_MAX_SIZE (64 * 1024)
-#define LIBUS_UDP_MAX_NUM 1024
 
 struct bsd_addr_t {
     struct sockaddr_storage mem;
@@ -55,15 +55,61 @@ struct bsd_addr_t {
     int port;
 };
 
-int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags);
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, void *msgvec, unsigned int vlen, int flags, void *timeout);
-int bsd_udp_packet_buffer_payload_length(void *msgvec, int index);
-char *bsd_udp_packet_buffer_payload(void *msgvec, int index);
-char *bsd_udp_packet_buffer_peer(void *msgvec, int index);
-int bsd_udp_packet_buffer_local_ip(void *msgvec, int index, char *ip);
-int bsd_udp_packet_buffer_ecn(void *msgvec, int index);
-void *bsd_create_udp_packet_buffer();
-void bsd_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
+#ifdef _WIN32
+// on windows we can only receive one packet at a time
+#define LIBUS_UDP_RECV_COUNT 1
+#else
+// on unix we can receive at most as many packets as fit into the receive buffer
+#define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
+#endif
+
+#ifdef __APPLE__
+// a.k.a msghdr_x
+struct mmsghdr { 
+    struct msghdr msg_hdr;
+    size_t msg_len;	/* byte length of buffer in msg_iov */
+};
+
+ssize_t sendmsg_x(int s, struct mmsghdr *msgp, u_int cnt, int flags);
+ssize_t recvmsg_x(int s, struct mmsghdr *msgp, u_int cnt, int flags);
+#endif
+
+struct udp_recvbuf {
+#if defined(_WIN32)
+    char *buf;
+    size_t buflen;
+    size_t recvlen;
+    struct sockaddr_storage addr;
+#else
+    struct mmsghdr msgvec[LIBUS_UDP_RECV_COUNT];
+    struct iovec iov[LIBUS_UDP_RECV_COUNT];
+    struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
+    char control[LIBUS_UDP_RECV_COUNT][256];
+#endif
+};
+
+struct udp_sendbuf {
+#ifdef _WIN32
+    void **payloads;
+    size_t *lengths;
+    void **addresses;
+    int num;
+#else
+    int num;
+    char has_empty;
+    struct mmsghdr msgvec[];
+#endif
+};
+
+int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags);
+void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
+int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);
+int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
+char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
+char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
+int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip);
+// int bsd_udp_packet_buffer_ecn(struct udp_recvbuf *msgvec, int index);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
@@ -101,8 +147,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t p
 
 /* Creates an UDP socket bound to the hostname and port */
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port);
+int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
+int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
 

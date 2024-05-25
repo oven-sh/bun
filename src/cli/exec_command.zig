@@ -13,7 +13,7 @@ const open = @import("../open.zig");
 const Command = bun.CLI.Command;
 
 pub const ExecCommand = struct {
-    pub fn exec(ctx: *Command.Context) !void {
+    pub fn exec(ctx: Command.Context) !void {
         const script = ctx.positionals[1];
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
         var bundle = try bun.Bundler.init(
@@ -24,7 +24,7 @@ pub const ExecCommand = struct {
         );
         try bundle.runEnvLoader(false);
         const mini = bun.JSC.MiniEventLoop.initGlobal(bundle.env);
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,

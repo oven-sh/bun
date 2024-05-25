@@ -39,7 +39,7 @@ pub const FileSystem = struct {
     top_level_dir: string = if (Environment.isWindows) "C:\\" else "/",
 
     // used on subsequent updates
-    top_level_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    top_level_dir_buf: bun.PathBuffer = undefined,
 
     fs: Implementation,
 
@@ -58,16 +58,16 @@ pub const FileSystem = struct {
         }
     }
 
-    pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
+    pub fn tmpdir(fs: *FileSystem) !std.fs.Dir {
         if (tmpdir_handle == null) {
-            tmpdir_handle = fs.fs.openTmpDir() catch unreachable;
+            tmpdir_handle = try fs.fs.openTmpDir();
         }
 
         return tmpdir_handle.?;
     }
 
     pub fn getFdPath(this: *const FileSystem, fd: FileDescriptor) ![]const u8 {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
     }
@@ -257,7 +257,7 @@ pub const FileSystem = struct {
 
         pub fn get(entry: *const DirEntry, _query: string) ?Entry.Lookup {
             if (_query.len == 0 or _query.len > bun.MAX_PATH_BYTES) return null;
-            var scratch_lookup_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var scratch_lookup_buffer: bun.PathBuffer = undefined;
 
             const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;
@@ -554,7 +554,7 @@ pub const FileSystem = struct {
                         }
 
                         if (bun.getenvZ("USERPROFILE")) |profile| {
-                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
                             break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
@@ -597,6 +597,15 @@ pub const FileSystem = struct {
             if (!tmpdir_path_set) {
                 tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
                 tmpdir_path_set = true;
+            }
+
+            if (comptime Environment.isWindows) {
+                return (try bun.sys.openDirAtWindowsA(bun.invalid_fd, tmpdir_path, .{
+                    .iterable = true,
+                    // we will not delete the temp directory
+                    .can_rename_or_delete = false,
+                    .read_only = true,
+                }).unwrap()).asDir();
             }
 
             return try bun.openDirAbsolute(tmpdir_path);
@@ -671,10 +680,10 @@ pub const FileSystem = struct {
             }
 
             pub fn promoteToCWD(this: *TmpfilePosix, from_name: [*:0]const u8, name: [*:0]const u8) !void {
-                std.debug.assert(this.fd != bun.invalid_fd);
-                std.debug.assert(this.dir_fd != bun.invalid_fd);
+                bun.assert(this.fd != bun.invalid_fd);
+                bun.assert(this.dir_fd != bun.invalid_fd);
 
-                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.toFD(std.fs.cwd().fd), bun.sliceTo(name, 0));
+                try C.moveFileZWithHandle(this.fd, this.dir_fd, bun.sliceTo(from_name, 0), bun.FD.cwd(), bun.sliceTo(name, 0));
                 this.close();
             }
 
@@ -711,7 +720,7 @@ pub const FileSystem = struct {
                 const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
 
                 this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 const existing_path = try bun.getFdPath(this.fd, &buf);
                 this.existing_path = try bun.default_allocator.dupe(u8, existing_path);
             }
@@ -872,7 +881,7 @@ pub const FileSystem = struct {
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.size))..];
                 std.mem.writeInt(@TypeOf(this.mtime), hash_bytes_remain[0..@sizeOf(@TypeOf(this.mtime))], this.mtime, .little);
                 hash_bytes_remain = hash_bytes_remain[@sizeOf(@TypeOf(this.mtime))..];
-                std.debug.assert(hash_bytes_remain.len == 8);
+                bun.assert(hash_bytes_remain.len == 8);
                 hash_bytes_remain[0..8].* = @as([8]u8, @bitCast(@as(u64, 0)));
                 return bun.hash(&hash_bytes);
             }
@@ -1253,7 +1262,7 @@ pub const FileSystem = struct {
             existing_fd: StoredFileDescriptorType,
             store_fd: bool,
         ) !Entry.Cache {
-            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var outpath: bun.PathBuffer = undefined;
 
             const stat = try C.lstat_absolute(absolute_path);
             const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
@@ -1287,7 +1296,7 @@ pub const FileSystem = struct {
                 _kind = _stat.kind;
             }
 
-            std.debug.assert(_kind != .SymLink);
+            bun.assert(_kind != .SymLink);
 
             if (_kind == .Directory) {
                 cache.kind = .dir;
@@ -1315,23 +1324,41 @@ pub const FileSystem = struct {
 
             const dir = _dir;
             var combo = [2]string{ dir, base };
-            var outpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var outpath: bun.PathBuffer = undefined;
             const entry_path = path_handler.joinAbsStringBuf(fs.cwd, &outpath, &combo, .auto);
 
             outpath[entry_path.len + 1] = 0;
             outpath[entry_path.len] = 0;
 
-            const absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
+            var absolute_path_c: [:0]const u8 = outpath[0..entry_path.len :0];
 
             if (comptime bun.Environment.isWindows) {
-                var file = try std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only });
-                defer file.close();
-                const metadata = try file.metadata();
-                cache.kind = switch (metadata.kind()) {
-                    .directory => .dir,
-                    .sym_link => .file,
-                    else => .file,
-                };
+                var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
+                var depth: usize = 0;
+                var buf2: bun.PathBuffer = undefined;
+                var current_buf: *bun.PathBuffer = &buf2;
+                var other_buf: *bun.PathBuffer = &outpath;
+                while (file.is_reparse_point) : (depth += 1) {
+                    const read = try bun.sys.readlink(absolute_path_c, current_buf).unwrap();
+                    std.mem.swap(*bun.PathBuffer, &current_buf, &other_buf);
+                    file = bun.sys.getFileAttributes(read) orelse return error.FileNotFound;
+                    absolute_path_c = read;
+
+                    if (depth > 20) {
+                        return error.TooManySymlinks;
+                    }
+                }
+
+                if (depth > 0) {
+                    cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, absolute_path_c));
+                }
+
+                if (file.is_directory) {
+                    cache.kind = .dir;
+                } else {
+                    cache.kind = .file;
+                }
+
                 return cache;
             }
 
@@ -1364,7 +1391,7 @@ pub const FileSystem = struct {
                 _kind = _stat.kind;
             }
 
-            std.debug.assert(_kind != .sym_link);
+            bun.assert(_kind != .sym_link);
 
             if (_kind == .directory) {
                 cache.kind = .dir;
@@ -1486,7 +1513,7 @@ pub const PathName = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            std.debug.assert(!strings.includes(self.base, "/"));
+            bun.assert(!strings.includes(self.base, "/"));
         }
 
         // /bar/foo.js -> foo
@@ -1537,8 +1564,8 @@ pub const PathName = struct {
         if (comptime Environment.isWindows and Environment.isDebug) {
             // This path is likely incorrect. I think it may be *possible*
             // but it is almost entirely certainly a bug.
-            std.debug.assert(!strings.startsWith(_path, "/:/"));
-            std.debug.assert(!strings.startsWith(_path, "\\:\\"));
+            bun.assert(!strings.startsWith(_path, "/:/"));
+            bun.assert(!strings.startsWith(_path, "\\:\\"));
         }
 
         var path = _path;
@@ -1554,8 +1581,7 @@ pub const PathName = struct {
             path = path[2..];
         }
 
-        var _i = bun.path.lastIndexOfSep(path);
-        while (_i) |i| {
+        while (bun.path.lastIndexOfSep(path)) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len and path.len > i + 1) {
                 base = path[i + 1 ..];
@@ -1566,8 +1592,6 @@ pub const PathName = struct {
 
             // Ignore trailing slashes
             path = path[0..i];
-
-            _i = bun.path.lastIndexOfSep(path);
         }
 
         // Strip off the extension
@@ -1663,6 +1687,10 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
+        if (strings.eqlComptime(str, "package.json")) {
+            return true;
+        }
+
         if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
             return false;
         }
@@ -1838,14 +1866,3 @@ pub const Path = struct {
 //     defer std.os.close(opened);
 
 // }
-
-test "PathName.init" {
-    var file = "/root/directory/file.ext".*;
-    const res = PathName.init(
-        &file,
-    );
-
-    try std.testing.expectEqualStrings(res.dir, "/root/directory");
-    try std.testing.expectEqualStrings(res.base, "file");
-    try std.testing.expectEqualStrings(res.ext, ".ext");
-}

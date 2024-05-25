@@ -41,7 +41,6 @@ class InternalModuleRegistry;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
-#include "ProcessBindingConstants.h"
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
@@ -254,6 +253,7 @@ public:
     JSC::JSFunction* performMicrotaskFunction() const { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
+    JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
@@ -391,6 +391,7 @@ public:
     mutable WriteBarrier<JSFunction> m_assignToStream;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
+    mutable WriteBarrier<JSFunction> m_readableStreamToBytes;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
@@ -535,6 +536,7 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
+    LazyProperty<JSGlobalObject, Structure> m_utilInspectOptionsStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;

@@ -525,7 +525,7 @@ pub const MatchedRoute = struct {
                     const entry_name = entry.name;
                     var str = ZigString.init(entry_name).withEncoding();
 
-                    std.debug.assert(entry.values.len > 0);
+                    bun.assert(entry.values.len > 0);
                     if (entry.values.len > 1) {
                         var values = query_string_value_refs_buf[0..entry.values.len];
                         for (entry.values, 0..) |value, i| {
@@ -555,7 +555,7 @@ pub const MatchedRoute = struct {
         file_path: string,
         client_framework_enabled: bool,
     ) void {
-        var entry_point_tempbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var entry_point_tempbuf: bun.PathBuffer = undefined;
         // We don't store the framework config including the client parts in the server
         // instead, we just store a boolean saying whether we should generate this whenever the script is requested
         // this is kind of bad. we should consider instead a way to inline the contents of the script.
@@ -578,7 +578,7 @@ pub const MatchedRoute = struct {
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var stream = std.io.fixedBufferStream(&buf);
         var writer = stream.writer();
         JSC.API.Bun.getPublicPathWithAssetPrefix(

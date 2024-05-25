@@ -4,17 +4,12 @@
  *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
  */
 import { file, Server } from "bun";
-import { mkdtempSync, realpathSync } from "fs";
 
 let expect: (typeof import("bun:test"))["expect"];
+import { tmpdirSync } from "harness";
 
 import { readdir, rm, writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { basename, join } from "path";
-
-export function tmpdirSync(pattern: string) {
-  return mkdtempSync(join(realpathSync(tmpdir()), pattern));
-}
 
 type Handler = (req: Request) => Response | Promise<Response>;
 type Pkg = {
@@ -26,7 +21,6 @@ type Pkg = {
 };
 let handler: Handler;
 let server: Server;
-let testCounter = 0;
 export let package_dir: string;
 export let requested: number;
 export let root_url: string;
@@ -103,7 +97,7 @@ export function dummyAfterAll() {
 }
 
 let packageDirGetter: () => string = () => {
-  return tmpdirSync("bun-install-test-" + testCounter++ + "--");
+  return tmpdirSync();
 };
 export async function dummyBeforeEach() {
   resetHandler();

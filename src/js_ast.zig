@@ -65,7 +65,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             }
 
             pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index][0..value.len].* = value.*;
                 block.used +|= 1;
@@ -567,21 +567,30 @@ pub const SlotCounts = struct {
     }
 };
 
+const char_freq_count = 64;
 pub const CharAndCount = struct {
     char: u8 = 0,
     count: i32 = 0,
     index: usize = 0,
 
-    pub const Array = [64]CharAndCount;
+    pub const Array = [char_freq_count]CharAndCount;
 
     pub fn lessThan(_: void, a: CharAndCount, b: CharAndCount) bool {
-        return a.count > b.count or (a.count == b.count and a.index < b.index);
+        if (a.count != b.count) {
+            return a.count > b.count;
+        }
+
+        if (a.index != b.index) {
+            return a.index < b.index;
+        }
+
+        return a.char < b.char;
     }
 };
 
 pub const CharFreq = struct {
-    const Vector = @Vector(64, i32);
-    const Buffer = [64]i32;
+    const Vector = @Vector(char_freq_count, i32);
+    const Buffer = [char_freq_count]i32;
 
     freqs: Buffer align(1) = undefined,
 
@@ -601,10 +610,10 @@ pub const CharFreq = struct {
         // https://zig.godbolt.org/z/P5dPojWGK
         var freqs = out.*;
         defer out.* = freqs;
-        var deltas: [255]i32 = [_]i32{0} ** 255;
+        var deltas: [256]i32 = [_]i32{0} ** 256;
         var remain = text;
 
-        std.debug.assert(remain.len >= scan_big_chunk_size);
+        bun.assert(remain.len >= scan_big_chunk_size);
 
         const unrolled = remain.len - (remain.len % scan_big_chunk_size);
         const remain_end = remain.ptr + unrolled;
@@ -613,8 +622,7 @@ pub const CharFreq = struct {
 
         while (unrolled_ptr != remain_end) : (unrolled_ptr += scan_big_chunk_size) {
             const chunk = unrolled_ptr[0..scan_big_chunk_size].*;
-            comptime var i: usize = 0;
-            inline while (i < scan_big_chunk_size) : (i += scan_big_chunk_size) {
+            inline for (0..scan_big_chunk_size) |i| {
                 deltas[@as(usize, chunk[i])] += delta;
             }
         }
@@ -631,7 +639,7 @@ pub const CharFreq = struct {
     }
 
     fn scanSmall(out: *align(1) Buffer, text: string, delta: i32) void {
-        var freqs: [64]i32 = out.*;
+        var freqs: [char_freq_count]i32 = out.*;
         defer out.* = freqs;
 
         for (text) |c| {
@@ -649,29 +657,28 @@ pub const CharFreq = struct {
 
     pub fn include(this: *CharFreq, other: CharFreq) void {
         // https://zig.godbolt.org/z/Mq8eK6K9s
-        var left: @Vector(64, i32) = this.freqs;
-        defer this.freqs = left;
-        const right: @Vector(64, i32) = other.freqs;
+        const left: @Vector(char_freq_count, i32) = this.freqs;
+        const right: @Vector(char_freq_count, i32) = other.freqs;
 
-        left += right;
+        this.freqs = left + right;
     }
 
     pub fn compile(this: *const CharFreq, allocator: std.mem.Allocator) NameMinifier {
-        var array: CharAndCount.Array = brk: {
+        const array: CharAndCount.Array = brk: {
             var _array: CharAndCount.Array = undefined;
-            const freqs = this.freqs;
 
-            for (&_array, NameMinifier.default_tail, &freqs, 0..) |*dest, char, freq, i| {
+            for (&_array, NameMinifier.default_tail, this.freqs, 0..) |*dest, char, freq, i| {
                 dest.* = CharAndCount{
                     .char = char,
                     .index = i,
                     .count = freq,
                 };
             }
+
+            std.sort.pdq(CharAndCount, &_array, {}, CharAndCount.lessThan);
+
             break :brk _array;
         };
-
-        std.sort.pdq(CharAndCount, &array, {}, CharAndCount.lessThan);
 
         var minifier = NameMinifier.init(allocator);
         minifier.head.ensureTotalCapacityPrecise(NameMinifier.default_head.len) catch unreachable;
@@ -711,9 +718,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(this.tail.items[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
     }
 
@@ -726,9 +733,9 @@ pub const NameMinifier = struct {
 
         while (i > 0) {
             i -= 1;
-            j = @as(usize, @intCast(@mod(i, 64)));
+            j = @as(usize, @intCast(@mod(i, char_freq_count)));
             try name.appendSlice(default_tail[j .. j + 1]);
-            i = @divFloor(i, 64);
+            i = @divFloor(i, char_freq_count);
         }
 
         return name.items;
@@ -845,6 +852,26 @@ pub const G = struct {
 
         pub const List = BabyList(Property);
 
+        pub fn deepClone(this: *const Property, allocator: std.mem.Allocator) !Property {
+            var class_static_block: ?*ClassStaticBlock = null;
+            if (this.class_static_block != null) {
+                class_static_block = bun.create(allocator, ClassStaticBlock, .{
+                    .loc = this.class_static_block.?.loc,
+                    .stmts = try this.class_static_block.?.stmts.clone(allocator),
+                });
+            }
+            return .{
+                .initializer = if (this.initializer) |init| try init.deepClone(allocator) else null,
+                .kind = this.kind,
+                .flags = this.flags,
+                .class_static_block = class_static_block,
+                .ts_decorators = try this.ts_decorators.deepClone(allocator),
+                .key = if (this.key) |key| try key.deepClone(allocator) else null,
+                .value = if (this.value) |value| try value.deepClone(allocator) else null,
+                .ts_metadata = this.ts_metadata,
+            };
+        }
+
         pub const Kind = enum(u3) {
             normal,
             get,
@@ -876,6 +903,25 @@ pub const G = struct {
         flags: Flags.Function.Set = Flags.Function.None,
 
         return_ts_metadata: TypeScript.Metadata = .m_none,
+
+        pub fn deepClone(this: *const Fn, allocator: std.mem.Allocator) !Fn {
+            const args = try allocator.alloc(Arg, this.args.len);
+            for (0..args.len) |i| {
+                args[i] = try this.args[i].deepClone(allocator);
+            }
+            return .{
+                .name = this.name,
+                .open_parens_loc = this.open_parens_loc,
+                .args = args,
+                .body = .{
+                    .loc = this.body.loc,
+                    .stmts = this.body.stmts,
+                },
+                .arguments_ref = this.arguments_ref,
+                .flags = this.flags,
+                .return_ts_metadata = this.return_ts_metadata,
+            };
+        }
     };
     pub const Arg = struct {
         ts_decorators: ExprNodeList = ExprNodeList{},
@@ -886,6 +932,16 @@ pub const G = struct {
         is_typescript_ctor_field: bool = false,
 
         ts_metadata: TypeScript.Metadata = .m_none,
+
+        pub fn deepClone(this: *const Arg, allocator: std.mem.Allocator) !Arg {
+            return .{
+                .ts_decorators = try this.ts_decorators.deepClone(allocator),
+                .binding = this.binding,
+                .default = if (this.default) |d| try d.deepClone(allocator) else null,
+                .is_typescript_ctor_field = this.is_typescript_ctor_field,
+                .ts_metadata = this.ts_metadata,
+            };
+        }
     };
 };
 
@@ -1463,7 +1519,7 @@ pub const E = struct {
         pub fn alphabetizeStrings(this: *Array) void {
             if (comptime Environment.allow_assert) {
                 for (this.items.slice()) |item| {
-                    std.debug.assert(item.data == .e_string);
+                    bun.assert(item.data == .e_string);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -1849,7 +1905,7 @@ pub const E = struct {
         //             while (iter.next(&query_string_values_buf)) |entry| {
         //                 str = ZigString.init(entry.name);
 
-        //                 std.debug.assert(entry.values.len > 0);
+        //                 bun.assert(entry.values.len > 0);
         //                 if (entry.values.len > 1) {
         //                     var values = query_string_value_refs_buf[0..entry.values.len];
         //                     for (entry.values) |value, i| {
@@ -2095,7 +2151,7 @@ pub const E = struct {
         pub fn alphabetizeProperties(this: *Object) void {
             if (comptime Environment.allow_assert) {
                 for (this.properties.slice()) |prop| {
-                    std.debug.assert(prop.key.?.data == .e_string);
+                    bun.assert(prop.key.?.data == .e_string);
                 }
             }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
@@ -2191,8 +2247,8 @@ pub const E = struct {
 
         pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
-            std.debug.assert(this.isUTF8());
-            std.debug.assert(other.isUTF8());
+            bun.assert(this.isUTF8());
+            bun.assert(other.isUTF8());
 
             if (other.rope_len == 0) {
                 other.rope_len = @as(u32, @truncate(other.data.len));
@@ -2234,7 +2290,7 @@ pub const E = struct {
         }
 
         pub fn slice16(this: *const String) []const u16 {
-            std.debug.assert(this.is_utf16);
+            bun.assert(this.is_utf16);
             return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
         }
 
@@ -2386,6 +2442,14 @@ pub const E = struct {
             }
         }
 
+        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) !bun.stringZ {
+            if (s.isUTF8()) {
+                return allocator.dupeZ(u8, s.data);
+            } else {
+                return strings.toUTF8AllocZ(allocator, s.slice16());
+            }
+        }
+
         pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) !bun.string {
             if (s.isUTF8()) {
                 return try allocator.dupe(u8, s.data);
@@ -2422,7 +2486,7 @@ pub const E = struct {
             {
                 s.resolveRopeIfNeeded(allocator);
 
-                const decoded = js_lexer.decodeUTF8(s.slice(allocator), allocator) catch unreachable;
+                const decoded = js_lexer.decodeStringLiteralEscapeSequencesToUTF16(s.slice(allocator), allocator) catch unreachable;
                 defer allocator.free(decoded);
 
                 var out, const chars = bun.String.createUninitialized(.utf16, decoded.len);
@@ -2494,7 +2558,7 @@ pub const E = struct {
                 };
             }
 
-            std.debug.assert(this.head == .cooked);
+            bun.assert(this.head == .cooked);
 
             if (this.parts.len == 0) {
                 return Expr.init(E.String, this.head.cooked, loc);
@@ -2504,7 +2568,7 @@ pub const E = struct {
             var head = Expr.init(E.String, this.head.cooked, loc);
             for (this.parts) |part_| {
                 var part = part_;
-                std.debug.assert(part.tail == .cooked);
+                bun.assert(part.tail == .cooked);
 
                 switch (part.value.data) {
                     .e_number => {
@@ -2540,7 +2604,7 @@ pub const E = struct {
                         continue;
                     } else {
                         var prev_part = &parts.items[parts.items.len - 1];
-                        std.debug.assert(prev_part.tail == .cooked);
+                        bun.assert(prev_part.tail == .cooked);
 
                         if (prev_part.tail.cooked.isUTF8()) {
                             if (part.value.data.e_string.len() > 0) {
@@ -2658,6 +2722,8 @@ pub const E = struct {
     pub const Import = struct {
         expr: ExprNodeIndex,
         import_record_index: u32,
+        // This will be dynamic at some point.
+        type_attribute: TypeAttribute = .none,
 
         /// Comments inside "import()" expressions have special meaning for Webpack.
         /// Preserving comments inside these expressions makes it possible to use
@@ -2672,6 +2738,24 @@ pub const E = struct {
         pub fn isImportRecordNull(this: *const Import) bool {
             return this.import_record_index == std.math.maxInt(u32);
         }
+
+        pub const TypeAttribute = enum {
+            none,
+            json,
+            toml,
+            text,
+            file,
+
+            pub fn tag(this: TypeAttribute) ImportRecord.Tag {
+                return switch (this) {
+                    .none => .none,
+                    .json => .with_type_json,
+                    .toml => .with_type_toml,
+                    .text => .with_type_text,
+                    .file => .with_type_file,
+                };
+            }
+        };
     };
 };
 
@@ -3083,6 +3167,13 @@ pub const Expr = struct {
         };
     }
 
+    pub fn deepClone(this: Expr, allocator: std.mem.Allocator) anyerror!Expr {
+        return .{
+            .loc = this.loc,
+            .data = try this.data.deepClone(allocator),
+        };
+    }
+
     pub fn wrapInArrow(this: Expr, allocator: std.mem.Allocator) !Expr {
         var stmts = try allocator.alloc(Stmt, 1);
         stmts[0] = Stmt.alloc(S.Return, S.Return{ .value = this }, this.loc);
@@ -3282,6 +3373,22 @@ pub const Expr = struct {
         }
     }
 
+    pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) ?string {
+        switch (expr.data) {
+            .e_string => |str| return str.stringCloned(allocator) catch null,
+            .e_utf8_string => |str| return allocator.dupe(u8, str.data) catch null,
+            else => return null,
+        }
+    }
+
+    pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) ?stringZ {
+        switch (expr.data) {
+            .e_string => |str| return str.stringZ(allocator) catch null,
+            .e_utf8_string => |str| return allocator.dupeZ(u8, str.data) catch null,
+            else => return null,
+        }
+    }
+
     pub fn asBool(
         expr: *const Expr,
     ) ?bool {
@@ -3359,7 +3466,7 @@ pub const Expr = struct {
     }
 
     pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
-        std.debug.assert(all.len > 0);
+        bun.assert(all.len > 0);
         switch (all.len) {
             1 => {
                 return all[0];
@@ -3736,7 +3843,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -4109,7 +4216,7 @@ pub const Expr = struct {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
                     if (st.data.len > 0 and st.isUTF8()) {
-                        std.debug.assert(@intFromPtr(st.data.ptr) > 0);
+                        bun.assert(@intFromPtr(st.data.ptr) > 0);
                     }
                 }
                 return Expr{
@@ -5046,6 +5153,217 @@ pub const Expr = struct {
             };
         }
 
+        pub fn deepClone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
+            return switch (this) {
+                .e_array => |el| {
+                    const items = try el.items.deepClone(allocator);
+                    const item = bun.create(allocator, E.Array, .{
+                        .items = items,
+                        .comma_after_spread = el.comma_after_spread,
+                        .was_originally_macro = el.was_originally_macro,
+                        .is_single_line = el.is_single_line,
+                        .is_parenthesized = el.is_parenthesized,
+                        .close_bracket_loc = el.close_bracket_loc,
+                    });
+                    return .{ .e_array = item };
+                },
+                .e_unary => |el| {
+                    const item = bun.create(allocator, E.Unary, .{
+                        .op = el.op,
+                        .value = try el.value.deepClone(allocator),
+                    });
+                    return .{ .e_unary = item };
+                },
+                .e_binary => |el| {
+                    const item = bun.create(allocator, E.Binary, .{
+                        .op = el.op,
+                        .left = try el.left.deepClone(allocator),
+                        .right = try el.right.deepClone(allocator),
+                    });
+                    return .{ .e_binary = item };
+                },
+                .e_class => |el| {
+                    const properties = try allocator.alloc(G.Property, el.properties.len);
+                    for (el.properties, 0..) |prop, i| {
+                        properties[i] = try prop.deepClone(allocator);
+                    }
+
+                    const item = bun.create(allocator, E.Class, .{
+                        .class_keyword = el.class_keyword,
+                        .ts_decorators = try el.ts_decorators.deepClone(allocator),
+                        .class_name = el.class_name,
+                        .extends = if (el.extends) |e| try e.deepClone(allocator) else null,
+                        .body_loc = el.body_loc,
+                        .close_brace_loc = el.close_brace_loc,
+                        .properties = properties,
+                        .has_decorators = el.has_decorators,
+                    });
+                    return .{ .e_class = item };
+                },
+                .e_new => |el| {
+                    const item = bun.create(allocator, E.New, .{
+                        .target = try el.target.deepClone(allocator),
+                        .args = try el.args.deepClone(allocator),
+                        .can_be_unwrapped_if_unused = el.can_be_unwrapped_if_unused,
+                        .close_parens_loc = el.close_parens_loc,
+                    });
+
+                    return .{ .e_new = item };
+                },
+                .e_function => |el| {
+                    const item = bun.create(allocator, E.Function, .{
+                        .func = try el.func.deepClone(allocator),
+                    });
+                    return .{ .e_function = item };
+                },
+                .e_call => |el| {
+                    const item = bun.create(allocator, E.Call, .{
+                        .target = try el.target.deepClone(allocator),
+                        .args = try el.args.deepClone(allocator),
+                        .optional_chain = el.optional_chain,
+                        .is_direct_eval = el.is_direct_eval,
+                        .close_paren_loc = el.close_paren_loc,
+                        .can_be_unwrapped_if_unused = el.can_be_unwrapped_if_unused,
+                        .was_jsx_element = el.was_jsx_element,
+                    });
+                    return .{ .e_call = item };
+                },
+                .e_dot => |el| {
+                    const item = bun.create(allocator, E.Dot, .{
+                        .target = try el.target.deepClone(allocator),
+                        .name = el.name,
+                        .name_loc = el.name_loc,
+                        .optional_chain = el.optional_chain,
+                        .can_be_removed_if_unused = el.can_be_removed_if_unused,
+                        .call_can_be_unwrapped_if_unused = el.call_can_be_unwrapped_if_unused,
+                    });
+                    return .{ .e_dot = item };
+                },
+                .e_index => |el| {
+                    const item = bun.create(allocator, E.Index, .{
+                        .target = try el.target.deepClone(allocator),
+                        .index = try el.index.deepClone(allocator),
+                        .optional_chain = el.optional_chain,
+                    });
+                    return .{ .e_index = item };
+                },
+                .e_arrow => |el| {
+                    const args = try allocator.alloc(G.Arg, el.args.len);
+                    for (0..args.len) |i| {
+                        args[i] = try el.args[i].deepClone(allocator);
+                    }
+                    const item = bun.create(allocator, E.Arrow, .{
+                        .args = args,
+                        .body = el.body,
+                        .is_async = el.is_async,
+                        .has_rest_arg = el.has_rest_arg,
+                        .prefer_expr = el.prefer_expr,
+                    });
+
+                    return .{ .e_arrow = item };
+                },
+                .e_jsx_element => |el| {
+                    const item = bun.create(allocator, E.JSXElement, .{
+                        .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
+                        .properties = try el.properties.deepClone(allocator),
+                        .children = try el.children.deepClone(allocator),
+                        .key_prop_index = el.key_prop_index,
+                        .flags = el.flags,
+                        .close_tag_loc = el.close_tag_loc,
+                    });
+                    return .{ .e_jsx_element = item };
+                },
+                .e_object => |el| {
+                    const item = bun.create(allocator, E.Object, .{
+                        .properties = try el.properties.deepClone(allocator),
+                        .comma_after_spread = el.comma_after_spread,
+                        .is_single_line = el.is_single_line,
+                        .is_parenthesized = el.is_parenthesized,
+                        .was_originally_macro = el.was_originally_macro,
+                        .close_brace_loc = el.close_brace_loc,
+                    });
+                    return .{ .e_object = item };
+                },
+                .e_spread => |el| {
+                    const item = bun.create(allocator, E.Spread, .{
+                        .value = try el.value.deepClone(allocator),
+                    });
+                    return .{ .e_spread = item };
+                },
+                .e_template_part => |el| {
+                    const item = bun.create(allocator, E.TemplatePart, .{
+                        .value = try el.value.deepClone(allocator),
+                        .tail_loc = el.tail_loc,
+                        .tail = el.tail,
+                    });
+                    return .{ .e_template_part = item };
+                },
+                .e_template => |el| {
+                    const item = bun.create(allocator, E.Template, .{
+                        .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
+                        .parts = el.parts,
+                        .head = el.head,
+                    });
+                    return .{ .e_template = item };
+                },
+                .e_reg_exp => |el| {
+                    const item = bun.create(allocator, E.RegExp, .{
+                        .value = el.value,
+                        .flags_offset = el.flags_offset,
+                    });
+                    return .{ .e_reg_exp = item };
+                },
+                .e_await => |el| {
+                    const item = bun.create(allocator, E.Await, .{
+                        .value = try el.value.deepClone(allocator),
+                    });
+                    return .{ .e_await = item };
+                },
+                .e_yield => |el| {
+                    const item = bun.create(allocator, E.Yield, .{
+                        .value = if (el.value) |value| try value.deepClone(allocator) else null,
+                        .is_star = el.is_star,
+                    });
+                    return .{ .e_yield = item };
+                },
+                .e_if => |el| {
+                    const item = bun.create(allocator, E.If, .{
+                        .test_ = try el.test_.deepClone(allocator),
+                        .yes = try el.yes.deepClone(allocator),
+                        .no = try el.no.deepClone(allocator),
+                    });
+                    return .{ .e_if = item };
+                },
+                .e_import => |el| {
+                    const item = bun.create(allocator, E.Import, .{
+                        .expr = try el.expr.deepClone(allocator),
+                        .import_record_index = el.import_record_index,
+                        .type_attribute = el.type_attribute,
+                        .leading_interior_comments = el.leading_interior_comments,
+                    });
+                    return .{ .e_import = item };
+                },
+                .e_big_int => |el| {
+                    const item = bun.create(allocator, E.BigInt, .{
+                        .value = el.value,
+                    });
+                    return .{ .e_big_int = item };
+                },
+                .e_string => |el| {
+                    const item = bun.create(allocator, E.String, .{
+                        .data = el.data,
+                        .prefer_template = el.prefer_template,
+                        .next = el.next,
+                        .end = el.end,
+                        .rope_len = el.rope_len,
+                        .is_utf16 = el.is_utf16,
+                    });
+                    return .{ .e_string = item };
+                },
+                else => this,
+            };
+        }
+
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
                 .e_number, .e_boolean, .e_null, .e_undefined => true,
@@ -5481,10 +5799,6 @@ pub const Expr = struct {
         }
     };
 };
-
-test "Byte size of Expr" {
-    try std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("\n\nByte Size {d}\n\n", .{@sizeOf(Expr.Data)}));
-}
 
 pub const EnumValue = struct {
     loc: logger.Loc,
@@ -6868,7 +7182,7 @@ pub const Macro = struct {
             else
                 import_record_path;
 
-            std.debug.assert(!isMacroPath(import_record_path_without_macro_prefix));
+            bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
             const input_specifier = brk: {
                 if (JSC.HardcodedModule.Aliases.get(import_record_path, .bun)) |replacement| {
@@ -7016,7 +7330,7 @@ pub const Macro = struct {
         var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
         if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            vm.runErrorHandler(loaded_result.result(vm.global.vm()), null);
+            _ = vm.unhandledRejection(vm.global, loaded_result.result(vm.global.vm()), loaded_result.asValue());
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
@@ -7127,7 +7441,7 @@ pub const Macro = struct {
             ) MacroError!Expr {
                 switch (comptime tag) {
                     .Error => {
-                        this.macro.vm.runErrorHandler(value, null);
+                        _ = this.macro.vm.uncaughtException(this.global, value, false);
                         return this.caller;
                     },
                     .Undefined => if (this.is_top_level)
@@ -7154,7 +7468,7 @@ pub const Macro = struct {
                                 blob_ = resp.*;
                                 blob_.?.allocator = null;
                             } else if (value.as(JSC.ResolveMessage) != null or value.as(JSC.BuildMessage) != null) {
-                                this.macro.vm.runErrorHandler(value, null);
+                                _ = this.macro.vm.uncaughtException(this.global, value, false);
                                 return error.MacroFailed;
                             }
                         }
@@ -7249,11 +7563,10 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        const object = value.asObjectRef();
                         var object_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
-                        }).init(this.global, object);
+                        }).init(this.global, value);
                         defer object_iter.deinit();
                         var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                         errdefer this.allocator.free(properties);
@@ -7315,15 +7628,11 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var promise_result = JSC.JSValue.zero;
-                        var rejected = false;
-                        if (value.asAnyPromise()) |promise| {
-                            this.macro.vm.waitForPromise(promise);
-                            promise_result = promise.result(this.global.vm());
-                            rejected = promise.status(this.global.vm()) == .Rejected;
-                        } else {
-                            @panic("Unexpected promise type");
-                        }
+                        const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
+
+                        this.macro.vm.waitForPromise(promise);
+                        const promise_result = promise.result(this.global.vm());
+                        const rejected = promise.status(this.global.vm()) == .Rejected;
 
                         if (promise_result.isUndefined() and this.is_top_level) {
                             this.is_top_level = false;
@@ -7331,7 +7640,7 @@ pub const Macro = struct {
                         }
 
                         if (rejected or promise_result.isError() or promise_result.isAggregateError(this.global) or promise_result.isException(this.global.vm())) {
-                            this.macro.vm.runErrorHandler(promise_result, null);
+                            _ = this.macro.vm.unhandledRejection(this.global, promise_result, promise.asValue(this.global));
                             return error.MacroFailed;
                         }
                         this.is_top_level = false;
@@ -7470,7 +7779,7 @@ pub const ASTMemoryAllocator = struct {
 
     pub fn pop(this: *ASTMemoryAllocator) void {
         const prev = this.previous;
-        std.debug.assert(prev != this);
+        bun.assert(prev != this);
         Stmt.Data.Store.memory_allocator = prev;
         Expr.Data.Store.memory_allocator = prev;
         this.previous = null;

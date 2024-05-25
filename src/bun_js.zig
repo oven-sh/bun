@@ -42,8 +42,7 @@ pub const Run = struct {
     arena: Arena,
     any_unhandled: bool = false,
 
-    pub fn bootStandalone(ctx_: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
-        var ctx = ctx_;
+    pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
@@ -55,7 +54,7 @@ pub const Run = struct {
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
         run = .{
@@ -123,7 +122,7 @@ pub const Run = struct {
         vm.global.vm().holdAPILock(&run, callback);
     }
 
-    fn bootBunShell(ctx: *const Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
+    fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
         @setCold(true);
 
         // this is a hack: make dummy bundler so we can use its `.runEnvLoader()` function to populate environment variables probably should split out the functionality
@@ -139,16 +138,15 @@ pub const Run = struct {
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
 
-    pub fn boot(ctx_: Command.Context, entry_path: string) !void {
-        var ctx = ctx_;
+    pub fn boot(ctx: Command.Context, entry_path: string) !void {
         JSC.markBinding(@src());
 
         if (!ctx.debug.loaded_bunfig) {
-            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
         if (strings.endsWithComptime(entry_path, ".sh")) {
-            const exit_code = try bootBunShell(&ctx, entry_path);
+            const exit_code = try bootBunShell(ctx, entry_path);
             Global.exitWide(exit_code);
             return;
         }
@@ -276,14 +274,23 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
-                vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
-                if (vm.hot_reload != .none) {
+                if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
                     vm.exit_handler.exit_code = 1;
                     vm.onExit();
+
+                    if (run.any_unhandled) {
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
+                        Output.prettyErrorln(
+                            "<r>\n<d>{s}<r>",
+                            .{Global.unhandled_error_bun_version_string},
+                        );
+                    }
                     Global.exit(1);
                 }
             }
@@ -309,6 +316,14 @@ pub const Run = struct {
             } else {
                 vm.exit_handler.exit_code = 1;
                 vm.onExit();
+                if (run.any_unhandled) {
+                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
+                    Output.prettyErrorln(
+                        "<r>\n<d>{s}<r>",
+                        .{Global.unhandled_error_bun_version_string},
+                    );
+                }
                 Global.exit(1);
             }
         }
@@ -327,7 +342,7 @@ pub const Run = struct {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
                 if (prev_promise.status(vm.global.vm()) == .Rejected) {
-                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
 
                 while (true) {
@@ -337,7 +352,7 @@ pub const Run = struct {
                         // Report exceptions in hot-reloaded modules
                         if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                             prev_promise = this.vm.pending_internal_promise;
-                            vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                            _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                             continue;
                         }
 
@@ -348,7 +363,7 @@ pub const Run = struct {
 
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
-                        vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                        _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                     }
 
                     vm.eventLoop().tickPossiblyForever();
@@ -356,7 +371,7 @@ pub const Run = struct {
 
                 if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;
-                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
@@ -405,6 +420,13 @@ pub const Run = struct {
         vm.global.handleRejectedPromises();
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
+
+            bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
+            Output.prettyErrorln(
+                "<r>\n<d>{s}<r>",
+                .{Global.unhandled_error_bun_version_string},
+            );
         }
         const exit_code = this.vm.exit_handler.exit_code;
 

@@ -411,6 +411,19 @@ declare module "bun" {
     arrayBuffer(): ArrayBuffer;
 
     /**
+     * Read from stdout as an Uint8Array
+     *
+     * @returns Stdout as an Uint8Array
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
+     * ```
+     */
+    bytes(): Uint8Array;
+
+    /**
      * Read from stdout as a Blob
      *
      * @returns Stdout as a blob
@@ -688,7 +701,17 @@ declare module "bun" {
    * This function is faster because it uses uninitialized memory when copying. Since the entire
    * length of the buffer is known, it is safe to use uninitialized memory.
    */
-  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>): ArrayBuffer;
+  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength?: number): ArrayBuffer;
+  function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
+    maxLength: number,
+    asUint8Array: false,
+  ): ArrayBuffer;
+  function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
+    maxLength: number,
+    asUint8Array: true,
+  ): Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -704,6 +727,21 @@ declare module "bun" {
   function readableStreamToArrayBuffer(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   *
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
+   * chunks of different types, consider {@link readableStreamToBlob}
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   */
+  function readableStreamToBytes(
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
+  ): Promise<Uint8Array> | Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -960,6 +998,41 @@ declare module "bun" {
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
+
+    /**
+     *
+     * **Experimental API**
+     *
+     * Prefetch a hostname.
+     *
+     * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
+     *
+     * @param hostname The hostname to prefetch
+     *
+     * @example
+     * ```js
+     * import { dns } from 'bun';
+     * dns.prefetch('example.com');
+     * // ... something expensive
+     * await fetch('https://example.com');
+     * ```
+     */
+    prefetch(hostname: string): void;
+
+    /**
+     * **Experimental API**
+     */
+    getCacheStats(): {
+      /**
+       * The number of times a cached DNS entry that was already resolved was used.
+       */
+      cacheHitsCompleted: number;
+      cacheHitsInflight: number;
+      cacheMisses: number;
+      size: number;
+      errors: number;
+      totalCount: number;
+    };
   };
 
   interface DNSLookup {
@@ -2414,7 +2487,7 @@ declare module "bun" {
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
     unix?: never;
-    tls?: TLSOptions;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
@@ -2424,7 +2497,7 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
-    tls?: TLSOptions;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface ErrorLike extends Error {
     code?: string;
@@ -2454,6 +2527,19 @@ declare module "bun" {
      * @default false
      */
     lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     */
+    requestCert?: boolean;
 
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -2493,23 +2579,11 @@ declare module "bun" {
   }
 
   interface TLSServeOptions extends ServeOptions, TLSOptions {
-    /**
-     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-     *  The values are SSL options objects.
-     */
-    serverNames?: Record<string, TLSOptions>;
-
-    tls?: TLSOptions;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    /**
-     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-     *  The values are SSL options objects.
-     */
-    serverNames?: Record<string, TLSOptions>;
-
-    tls?: TLSOptions;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface SocketAddress {
@@ -2538,7 +2612,7 @@ declare module "bun" {
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
    */
-  interface Server {
+  interface Server extends Disposable {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -3077,6 +3151,7 @@ declare module "bun" {
 
   type SupportedCryptoAlgorithms =
     | "blake2b256"
+    | "blake2b512"
     | "md4"
     | "md5"
     | "ripemd160"
@@ -3085,7 +3160,15 @@ declare module "bun" {
     | "sha256"
     | "sha384"
     | "sha512"
-    | "sha512-256";
+    | "sha512-224"
+    | "sha512-256"
+    | "sha3-224"
+    | "sha3-256"
+    | "sha3-384"
+    | "sha3-512"
+    | "shake128"
+    | "shake256";
+
   /**
    * Hardware-accelerated cryptographic hash functions
    *
@@ -3978,6 +4061,91 @@ declare module "bun" {
   function listen<Data = undefined>(options: TCPSocketListenOptions<Data>): TCPSocketListener<Data>;
   function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<Data>;
 
+  namespace udp {
+    type Data = string | ArrayBufferView | ArrayBufferLike;
+
+    export interface SocketHandler<DataBinaryType extends BinaryType> {
+      data?(
+        socket: Socket<DataBinaryType>,
+        data: BinaryTypeList[DataBinaryType],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
+      drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
+      error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
+    }
+
+    export interface ConnectedSocketHandler<DataBinaryType extends BinaryType> {
+      data?(
+        socket: ConnectedSocket<DataBinaryType>,
+        data: BinaryTypeList[DataBinaryType],
+        port: number,
+        address: string,
+      ): void | Promise<void>;
+      drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
+      error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
+    }
+
+    export interface SocketOptions<DataBinaryType extends BinaryType> {
+      hostname?: string;
+      port?: number;
+      binaryType?: DataBinaryType;
+      socket?: SocketHandler<DataBinaryType>;
+    }
+
+    export interface ConnectSocketOptions<DataBinaryType extends BinaryType> {
+      hostname?: string;
+      port?: number;
+      binaryType?: DataBinaryType;
+      socket?: ConnectedSocketHandler<DataBinaryType>;
+      connect: {
+        hostname: string;
+        port: number;
+      };
+    }
+
+    export interface BaseUDPSocket {
+      readonly hostname: string;
+      readonly port: number;
+      readonly address: SocketAddress;
+      readonly binaryType: BinaryType;
+      readonly closed: boolean;
+      ref(): void;
+      unref(): void;
+      close(): void;
+    }
+
+    export interface ConnectedSocket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+      readonly remoteAddress: SocketAddress;
+      sendMany(packets: readonly Data[]): number;
+      send(data: Data): boolean;
+      reload(handler: ConnectedSocketHandler<DataBinaryType>): void;
+    }
+
+    export interface Socket<DataBinaryType extends BinaryType> extends BaseUDPSocket {
+      sendMany(packets: readonly (Data | string | number)[]): number;
+      send(data: Data, port: number, address: string): boolean;
+      reload(handler: SocketHandler<DataBinaryType>): void;
+    }
+  }
+
+  /**
+   * Create a UDP socket
+   *
+   * @param options The options to use when creating the server
+   * @param options.socket The socket handler to use
+   * @param options.hostname The hostname to listen on
+   * @param options.port The port to listen on
+   * @param options.binaryType The binary type to use for the socket
+   * @param options.connect The hostname and port to connect to
+   */
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.SocketOptions<DataBinaryType>,
+  ): Promise<udp.Socket<DataBinaryType>>;
+  export function udpSocket<DataBinaryType extends BinaryType = "buffer">(
+    options: udp.ConnectSocketOptions<DataBinaryType>,
+  ): Promise<udp.ConnectedSocket<DataBinaryType>>;
+
   namespace SpawnOptions {
     /**
      * Option for stdout/stderr
@@ -4141,9 +4309,23 @@ declare module "bun" {
       ): void;
 
       /**
+       * The serialization format to use for IPC messages. Defaults to `"advanced"`.
+       *
+       * To communicate with Node.js processes, use `"json"`.
+       *
+       * When `ipc` is not specified, this is ignored.
+       */
+      serialization?: "json" | "advanced";
+
+      /**
        * If true, the subprocess will have a hidden window.
        */
       windowsHide?: boolean;
+
+      /**
+       * If true, no quoting or escaping of arguments is done on Windows.
+       */
+      windowsVerbatimArguments?: boolean;
 
       /**
        * Path to the executable to run in the subprocess. This defaults to `cmds[0]`.
@@ -4280,7 +4462,7 @@ declare module "bun" {
     In extends SpawnOptions.Writable = SpawnOptions.Writable,
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
-  > {
+  > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;
@@ -4669,34 +4851,6 @@ declare module "bun" {
    * This is sort of like readline() except without the IO.
    */
   function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
-
-  /**
-   * Provides a higher level API for command-line argument parsing than interacting
-   * with `process.argv` directly. Takes a specification for the expected arguments
-   * and returns a structured object with the parsed options and positionals.
-   *
-   * ```js
-   * const args = ['-f', '--bar', 'b'];
-   * const options = {
-   *   foo: {
-   *     type: 'boolean',
-   *     short: 'f',
-   *   },
-   *   bar: {
-   *     type: 'string',
-   *   },
-   * };
-   * const {
-   *   values,
-   *   positionals,
-   * } = Bun.parseArgs({ args, options });
-   * console.log(values, positionals);
-   * // Prints: { foo: true, bar: 'b' } []
-   * ```
-   * @param config Used to provide arguments for parsing and to configure the parser.
-   * @return The parsed command line arguments
-   */
-  const parseArgs: typeof import("util").parseArgs;
 
   interface GlobScanOptions {
     /**

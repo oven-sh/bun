@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const string = @import("string_types.zig").string;
 const StringBuilder = @This();
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
@@ -40,6 +40,16 @@ pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
 pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
     if (this.ptr == null or this.cap == 0) return;
     allocator.free(this.ptr.?[0..this.cap]);
+}
+
+pub fn count16(this: *StringBuilder, slice: []const u16) void {
+    const result = bun.simdutf.length.utf8.from.utf16.le(slice);
+    this.cap += result;
+}
+
+pub fn count16Z(this: *StringBuilder, slice: [:0]const u16) void {
+    const result = bun.simdutf.length.utf8.from.utf16.le(slice);
+    this.cap += result + 1;
 }
 
 pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {

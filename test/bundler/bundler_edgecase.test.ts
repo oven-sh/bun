@@ -381,13 +381,13 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
       `,
       "/x.aaaa": `x`,
     },
+    outdir: "/out",
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
@@ -1037,6 +1037,47 @@ describe("bundler", () => {
         }
       `,
     },
+  });
+  itBundled("edgecase/UsingWithSixImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Database } from 'bun:sqlite';
+
+        import 'bun';
+        import 'bun:ffi';
+        import 'bun:jsc';
+        import 'node:assert';
+        import 'bun:test';
+
+        using a = new Database();
+
+        export { a };
+      `,
+    },
+    target: "bun",
+  });
+  itBundled("edgecase/EmitInvalidSourceMap1", {
+    files: {
+      "/src/index.ts": /* ts */ `
+        const y = await import("./second.mts");
+        import * as z from "./third.mts";
+        const v = await import("./third.mts");
+        console.log(z, v, y);
+      `,
+      "/src/second.mts": /* ts */ `
+        export default "swag";
+      `,
+      "/src/third.mts": /* ts */ `
+        export default "bun";
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    splitting: true,
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

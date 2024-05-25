@@ -55,8 +55,8 @@ pub fn isPackagePath(path: string) bool {
 
 pub fn isPackagePathNotAbsolute(non_absolute_path: string) bool {
     if (Environment.allow_assert) {
-        std.debug.assert(!std.fs.path.isAbsolute(non_absolute_path));
-        std.debug.assert(!strings.startsWith(non_absolute_path, "/"));
+        assert(!std.fs.path.isAbsolute(non_absolute_path));
+        assert(!strings.startsWith(non_absolute_path, "/"));
     }
 
     return !strings.startsWith(non_absolute_path, "./") and
@@ -86,34 +86,34 @@ const bufs = struct {
     // packages but we lack a decent module resolution benchmark right now.
     // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
     pub threadlocal var extension_path: [512]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
 
     pub threadlocal var esm_subpath: [512]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var esm_absolute_package_path: bun.PathBuffer = undefined;
+    pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
 
     pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
     pub threadlocal var open_dirs: [256]std.fs.Dir = undefined;
-    pub threadlocal var resolve_without_remapping: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var index: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var dir_info_uncached_filename: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var node_bin_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var dir_info_uncached_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_base_url: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var relative_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var node_modules_check: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var field_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_path_abs: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var check_browser_map: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var remap_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var load_as_file: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var path_in_global_disk_cache: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var abs_to_rel: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var node_modules_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
+    pub threadlocal var index: bun.PathBuffer = undefined;
+    pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
+    pub threadlocal var node_bin_path: bun.PathBuffer = undefined;
+    pub threadlocal var dir_info_uncached_path: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_base_url: bun.PathBuffer = undefined;
+    pub threadlocal var relative_abs_path: bun.PathBuffer = undefined;
+    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined;
+    pub threadlocal var node_modules_check: bun.PathBuffer = undefined;
+    pub threadlocal var field_abs_path: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_path_abs: bun.PathBuffer = undefined;
+    pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
+    pub threadlocal var remap_path: bun.PathBuffer = undefined;
+    pub threadlocal var load_as_file: bun.PathBuffer = undefined;
+    pub threadlocal var remap_path_trailing_slash: bun.PathBuffer = undefined;
+    pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
+    pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
+    pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -731,12 +731,12 @@ pub const Resolver = struct {
         // support passing a package.json or path to a package
         const pkg: *const PackageJSON = result.package_json orelse r.packageJSONForResolvedNodeModuleWithIgnoreMissingName(&result, true) orelse return error.MissingPackageJSON;
 
-        const json = (try r.caches.json.parseJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
+        const json = (try r.caches.json.parsePackageJSON(r.log, pkg.source, r.allocator)) orelse return error.JSONParseError;
 
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();
 
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         pair.framework.resolved_dir = pkg.source.path.sourceDir();
 
@@ -1069,7 +1069,7 @@ pub const Resolver = struct {
                         }
                     } else if (dir.abs_real_path.len > 0) {
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
-                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var buf: bun.PathBuffer = undefined;
 
                         var out = r.fs.absBuf(&parts, &buf);
 
@@ -1084,7 +1084,7 @@ pub const Resolver = struct {
                                 bun.openFileForPath(span);
 
                             if (!store_fd) {
-                                std.debug.assert(bun.FDTag.get(file.handle) == .none);
+                                assert(bun.FDTag.get(file.handle) == .none);
                                 out = try bun.getFdPath(file.handle, &buf);
                                 file.close();
                                 query.entry.cache.fd = .zero;
@@ -1137,7 +1137,7 @@ pub const Resolver = struct {
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
-        std.debug.assert(std.fs.path.isAbsolute(source_dir));
+        assert(std.fs.path.isAbsolute(source_dir));
 
         var import_path = import_path_;
 
@@ -1935,7 +1935,7 @@ pub const Resolver = struct {
                 const dir_path_for_resolution = manager.pathForResolution(resolved_package_id, resolution, bufs(.path_in_global_disk_cache)) catch |err| {
                     // if it's missing, we need to install it
                     if (err == error.FileNotFound) {
-                        switch (manager.getPreinstallState(resolved_package_id, manager.lockfile)) {
+                        switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
                                 var path = Fs.Path.init(import_path);
                                 path.is_disabled = true;
@@ -2096,7 +2096,7 @@ pub const Resolver = struct {
         dir_path_maybe_trail_slash: string,
         package_id: Install.PackageID,
     ) !?*DirInfo {
-        std.debug.assert(r.package_manager != null);
+        assert(r.package_manager != null);
 
         const dir_path = strings.pathWithoutTrailingSlashOne(dir_path_maybe_trail_slash);
 
@@ -2214,7 +2214,7 @@ pub const Resolver = struct {
         var pm = r.getPackageManager();
         if (comptime Environment.allow_assert) {
             // we should never be trying to resolve a dependency that is already resolved
-            std.debug.assert(pm.lockfile.resolve(esm.name, version) == null);
+            assert(pm.lockfile.resolve(esm.name, version) == null);
         }
 
         // Add the containing package to the lockfile
@@ -2576,9 +2576,26 @@ pub const Resolver = struct {
 
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
+            if ((input_path.len == 2 and input_path[1] == ':') or
+                (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
+            {
+                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                win32_normalized_dir_info_cache_buf[2] = '\\';
+                input_path.len = 3;
+            }
+
+            // Filter out \\hello\, a UNC server path but without a share.
+            // When there isn't a share name, such path is not considered to exist.
+            if (bun.strings.hasPrefixComptime(input_path, "\\\\")) {
+                const first_slash = bun.strings.indexOfChar(input_path[2..], '\\') orelse
+                    return null;
+                _ = bun.strings.indexOfChar(input_path[2 + first_slash ..], '\\') orelse
+                    return null;
+            }
         }
 
-        std.debug.assert(std.fs.path.isAbsolute(input_path));
+        assert(std.fs.path.isAbsolute(input_path));
 
         const path_without_trailing_slash = strings.pathWithoutTrailingSlashOne(input_path);
         assertValidCacheKey(path_without_trailing_slash);
@@ -2601,8 +2618,8 @@ pub const Resolver = struct {
             .hash = 0,
             .status = .not_found,
         };
-        const root_path = if (comptime Environment.isWindows)
-            ResolvePath.windowsFilesystemRoot(path)
+        const root_path = if (Environment.isWindows)
+            bun.strings.pathWithoutTrailingSlashOne(ResolvePath.windowsFilesystemRoot(path))
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2614,7 +2631,8 @@ pub const Resolver = struct {
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
 
-        while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
+        while (top.len > root_path.len) : (top = Dirname.dirname(top)) {
+            assert(top.ptr == root_path.ptr);
             const result = try r.dir_cache.getOrPut(top);
 
             if (result.status != .unknown) {
@@ -2670,7 +2688,7 @@ pub const Resolver = struct {
         }
 
         var queue_slice: []DirEntryResolveQueueItem = bufs(.dir_entry_paths_to_resolve)[0..@as(usize, @intCast(i))];
-        if (Environment.allow_assert) std.debug.assert(queue_slice.len > 0);
+        if (Environment.allow_assert) assert(queue_slice.len > 0);
         var open_dir_count: usize = 0;
 
         // When this function halts, any item not processed means it's not found.
@@ -2719,7 +2737,11 @@ pub const Resolver = struct {
                         .{ .no_follow = !follow_symlinks, .iterate = true },
                     )
                 else if (comptime Environment.isWindows) open_req: {
-                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{ .iterable = true, .no_follow = !follow_symlinks, .read_only = true });
+                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{
+                        .iterable = true,
+                        .no_follow = !follow_symlinks,
+                        .read_only = true,
+                    });
                     if (dirfd_result.unwrap()) |result| {
                         break :open_req result.asDir();
                     } else |err| {
@@ -3545,7 +3567,7 @@ pub const Resolver = struct {
             }
 
             if (Environment.allow_assert) {
-                std.debug.assert(std.fs.path.isAbsolute(file.path));
+                assert(std.fs.path.isAbsolute(file.path));
             }
 
             return MatchResult{
@@ -3956,7 +3978,6 @@ pub const Resolver = struct {
         // }
 
         if (parent) |parent_| {
-
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
             info.package_json_for_browser_field = parent_.package_json_for_browser_field;
@@ -4140,7 +4161,7 @@ pub const Dirname = struct {
         const root = brk: {
             if (Environment.isWindows) {
                 const root = ResolvePath.windowsFilesystemRoot(path);
-                std.debug.assert(root.len > 0);
+                assert(root.len > 0);
                 break :brk root;
             }
             break :brk "/";
@@ -4228,3 +4249,5 @@ comptime {
         _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }
+
+const assert = bun.assert;

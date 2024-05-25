@@ -1798,14 +1798,14 @@ pub const Path = struct {
     pub fn dupeAllocFixPretty(this: *const Path, allocator: std.mem.Allocator) !Fs.Path {
         if (this.isPrettyPathPosix()) return this.dupeAlloc(allocator);
         comptime bun.assert(bun.Environment.isWindows);
-        var new = this;
+        var new = this.*;
         new.pretty = "";
-        new = new.dupeAlloc(allocator);
-        const pretty = allocator.dupe(u8, this.pretty);
+        new = try new.dupeAlloc(allocator);
+        const pretty = try allocator.dupe(u8, this.pretty);
         bun.path.platformToPosixInPlace(u8, pretty);
         new.pretty = pretty;
         new.assertPrettyIsValid();
-        return pretty;
+        return new;
     }
 
     pub const empty = Fs.Path.init("");

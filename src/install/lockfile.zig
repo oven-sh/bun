@@ -1263,7 +1263,7 @@ pub const Printer = struct {
             const dependency = dependencies[dep_id];
             const package_id = resolutions[dep_id];
 
-            if (dependency.behavior.isPeer() or dependency.behavior.isWorkspaceOnly() or package_id >= this.lockfile.packages.len) return .no;
+            if (dependency.behavior.isWorkspaceOnly() or package_id >= this.lockfile.packages.len) return .no;
 
             if (id_map) |map| {
                 for (this.updates, map) |update, *update_dependency_id| {

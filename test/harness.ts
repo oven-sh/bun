@@ -354,7 +354,11 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
               switch (pkg.resolution.tag) {
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
-                  if (!Bun.deepMatch({ name: name, version: pkg.resolution.value }, resolved)) {
+                  if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.behavior.peer && dep.npm) {
+                      // allow peer dependencies to not match exactly, but still satisfy
+                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
+                    }
                     return {
                       pass: false,
                       message: () =>
@@ -385,7 +389,23 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             const pkg = lockfile.packages[dep.package_id];
             if (shouldSkip(pkg, dep)) continue;
             try {
-              require.resolve(join(dep.name, "package.json"), { paths: [treeDepPath] });
+              const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
+              switch (pkg.resolution.tag) {
+                case "npm":
+                  const name = dep.is_alias ? dep.npm.name : dep.name;
+                  if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.behavior.peer && dep.npm) {
+                      // allow peer dependencies to not match exactly, but still satisfy
+                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
+                    }
+                    return {
+                      pass: false,
+                      message: () =>
+                        `Expected ${dep.name} to have version ${pkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
+                    };
+                  }
+                  break;
+              }
             } catch (e) {
               return {
                 pass: false,
@@ -800,6 +820,32 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
   let out = await new Response(stdout).text();
   expect(await exited).toBe(0);
   return { out, err, exited };
+}
+
+export async function runBunUpdate(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  packages?: string[],
+): Promise<{ out: string[]; err: string; exitCode: number }> {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "update", ...(packages ?? [])],
+    cwd,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await Bun.readableStreamToText(stderr);
+  let out = await Bun.readableStreamToText(stdout);
+  let exitCode = await exited;
+  if (exitCode !== 0) {
+    console.log("stdout:", stdout);
+    console.log("stderr:", stderr);
+    expect().fail("bun update failed");
+  }
+
+  return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
 }
 
 // If you need to modify, clone it

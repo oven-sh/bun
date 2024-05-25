@@ -6796,52 +6796,60 @@ pub const PackageManager = struct {
         }
 
         /// When `bun update` is called without package names, all dependencies are updated.
-        /// This function will identifier the current workspace and update all changed package
+        /// This function will identify the current workspace and update all changed package
         /// versions.
         pub fn editUpdateNoArgs(
             manager: *PackageManager,
             current_package_json: *Expr,
-            dependency_list: string,
             options: EditOptions,
         ) !void {
             const allocator = manager.allocator;
 
-            if (current_package_json.asProperty(dependency_list)) |query| {
-                if (query.expr.data == .e_object) {
-                    const string_buf = manager.lockfile.buffers.string_bytes.items;
-                    const workspace_package_id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
-                    const packages = manager.lockfile.packages.slice();
-                    const resolutions = packages.items(.resolution);
-                    const deps = packages.items(.dependencies)[workspace_package_id];
-                    const resolution_ids = packages.items(.resolutions)[workspace_package_id];
-                    const workspace_deps = deps.get(manager.lockfile.buffers.dependencies.items);
-                    const workspace_resolution_ids = resolution_ids.get(manager.lockfile.buffers.resolutions.items);
-                    for (query.expr.data.e_object.properties.slice()) |*dep| {
-                        for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
-                            if (dep.key != null and
-                                dep.key.?.data == .e_string and
-                                workspace_dep.version.tag == .npm and
-                                !workspace_dep.version.value.npm.version.isExact() and
-                                dep.key.?.data.e_string.eql(string, workspace_dep.name.slice(string_buf)))
-                            {
-                                const resolution = resolutions[package_id];
-                                if (resolution.tag == .npm) {
-                                    const new_version = try switch (options.exact_versions) {
-                                        inline else => |exact_versions| std.fmt.allocPrint(
-                                            allocator,
-                                            if (comptime exact_versions) "{}" else "^{}",
-                                            .{
-                                                resolution.value.npm.version.fmt(string_buf),
+            const dependency_groups = &.{
+                "dependencies",
+                "devDependencies",
+                "optionalDependencies",
+                "peerDependencies",
+            };
+
+            inline for (dependency_groups) |dependency_group| {
+                if (current_package_json.asProperty(dependency_group)) |query| {
+                    if (query.expr.data == .e_object) {
+                        const string_buf = manager.lockfile.buffers.string_bytes.items;
+                        const workspace_package_id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
+                        const packages = manager.lockfile.packages.slice();
+                        const resolutions = packages.items(.resolution);
+                        const deps = packages.items(.dependencies)[workspace_package_id];
+                        const resolution_ids = packages.items(.resolutions)[workspace_package_id];
+                        const workspace_deps = deps.get(manager.lockfile.buffers.dependencies.items);
+                        const workspace_resolution_ids = resolution_ids.get(manager.lockfile.buffers.resolutions.items);
+                        for (query.expr.data.e_object.properties.slice()) |*dep| {
+                            for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
+                                if (dep.key != null and
+                                    dep.key.?.data == .e_string and
+                                    workspace_dep.version.tag == .npm and
+                                    !workspace_dep.version.value.npm.version.isExact() and
+                                    dep.key.?.data.e_string.eql(string, workspace_dep.name.slice(string_buf)))
+                                {
+                                    const resolution = resolutions[package_id];
+                                    if (resolution.tag == .npm) {
+                                        const new_version = try switch (options.exact_versions) {
+                                            inline else => |exact_versions| std.fmt.allocPrint(
+                                                allocator,
+                                                if (comptime exact_versions) "{}" else "^{}",
+                                                .{
+                                                    resolution.value.npm.version.fmt(string_buf),
+                                                },
+                                            ),
+                                        };
+                                        dep.value = try JSAst.Expr.init(
+                                            JSAst.E.String,
+                                            JSAst.E.String{
+                                                .data = new_version,
                                             },
-                                        ),
-                                    };
-                                    dep.value = try JSAst.Expr.init(
-                                        JSAst.E.String,
-                                        JSAst.E.String{
-                                            .data = new_version,
-                                        },
-                                        logger.Loc.Empty,
-                                    ).clone(allocator);
+                                            logger.Loc.Empty,
+                                        ).clone(allocator);
+                                    }
                                 }
                             }
                         }
@@ -6895,7 +6903,7 @@ pub const PackageManager = struct {
                 }
 
                 for (updates) |*request| {
-                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies" }) |list| {
+                    inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 if (query.expr.asProperty(
@@ -8904,7 +8912,6 @@ pub const PackageManager = struct {
                 try PackageJSONEditor.editUpdateNoArgs(
                     manager,
                     &new_package_json,
-                    dependency_list,
                     .{
                         .exact_versions = manager.options.enable.exact_versions,
                     },

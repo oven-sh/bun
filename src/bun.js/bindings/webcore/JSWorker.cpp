@@ -30,6 +30,7 @@
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
 #include "JSDOMConvertAny.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertInterface.h"
@@ -454,7 +455,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_terminateBody(JSC::J
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.terminate(); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.terminate(); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

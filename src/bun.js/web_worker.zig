@@ -334,20 +334,21 @@ pub const WebWorker = struct {
 
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
-    pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+    pub fn requestTerminate(this: *WebWorker) callconv(.C) bool {
         if (this.status.load(.Acquire) == .terminated) {
-            return;
+            return true;
         }
         if (this.requested_terminate) {
-            return;
+            return true;
         }
         log("[{d}] requestTerminate", .{this.execution_context_id});
-        this.setRef(false);
         this.requested_terminate = true;
         if (this.vm) |vm| {
             vm.jsc.notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
+
+        return false;
     }
 
     /// This handles cleanup, emitting the "close" event, and deinit.

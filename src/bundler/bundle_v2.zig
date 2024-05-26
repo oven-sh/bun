@@ -11309,10 +11309,6 @@ pub const Chunk = struct {
                         ) catch bun.outOfMemory()).len..];
                     }
 
-                    if (remain.len > 0) {
-                        std.debug.print("Remaining Left: {} - \"{s}\"\n", .{ remain.len, total_buf[0 .. total_buf.len - remain.len] });
-                    }
-
                     bun.assert(remain.len == 0);
                     bun.assert(total_buf.len == count + debug_id_len);
 

@@ -152,7 +152,17 @@ pub const NSType = enum(c_int) {
     ns_t_max = 65536,
     _,
 };
-
+pub const struct_ares_server_failover_options = extern struct {
+    retry_chance: c_ushort = 0,
+    retry_delay: usize = 0,
+};
+const ARES_EVSYS_DEFAULT: c_int = 0;
+const ARES_EVSYS_WIN32: c_int = 1;
+const ARES_EVSYS_EPOLL: c_int = 2;
+const ARES_EVSYS_KQUEUE: c_int = 3;
+const ARES_EVSYS_POLL: c_int = 4;
+const ARES_EVSYS_SELECT: c_int = 5;
+const ares_evsys_t = c_uint;
 pub const Options = extern struct {
     flags: c_int = 0,
     timeout: c_int = 0,
@@ -164,9 +174,9 @@ pub const Options = extern struct {
     socket_receive_buffer_size: c_int = 0,
     servers: [*c]struct_in_addr = null,
     nservers: c_int = 0,
-    domains: [*c][*:0]u8 = null,
+    domains: ?[*][*:0]u8 = null,
     ndomains: c_int = 0,
-    lookups: [*c]u8 = null,
+    lookups: ?[*:0]u8 = null,
     sock_state_cb: ares_sock_state_cb = null,
     sock_state_cb_data: ?*anyopaque = null,
     sortlist: ?*struct_apattern = null,
@@ -174,6 +184,11 @@ pub const Options = extern struct {
     ednspsz: c_int = 0,
     resolvconf_path: ?[*:0]u8 = null,
     hosts_path: ?[*:0]u8 = null,
+    udp_max_queries: c_int = 0,
+    maxtimeout: c_int = 0,
+    qcache_max_ttl: c_uint = 0,
+    evsys: ares_evsys_t = 0,
+    server_failover_opts: struct_ares_server_failover_options = @import("std").mem.zeroes(struct_ares_server_failover_options),
 };
 pub const struct_hostent = extern struct {
     h_name: [*c]u8,

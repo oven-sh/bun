@@ -62,6 +62,7 @@
   "[javascriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
+  "prettier.prettierPath": "./node_modules/prettier",
 
   // TypeScript
   "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
@@ -121,6 +122,9 @@
     "**/*.xcscheme": true,
     "**/*.xcodeproj": true,
     "**/*.i": true,
+
+    // uws WebSocket.cpp conflicts with webcore WebSocket.cpp
+    "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
     "*.idl": "cpp",

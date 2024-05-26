@@ -152,9 +152,9 @@ function getMaxFileDescriptor(path) {
 
   hasInitialMaxFD = true;
 
-  if (process.platform === "linux") {
+  if (process.platform === "linux" || process.platform === "darwin") {
     try {
-      readdirSync("/proc/self/fd").forEach(name => {
+      readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").forEach(name => {
         const fd = parseInt(name.trim(), 10);
         if (Number.isSafeInteger(fd) && fd >= 0) {
           maxFd = Math.max(maxFd, fd);
@@ -186,7 +186,7 @@ function checkSlowTests() {
       );
       proc?.stdout?.destroy?.();
       proc?.stderr?.destroy?.();
-      proc?.kill?.();
+      proc?.kill?.(9);
     } else if (now - start > SHORT_TIMEOUT_DURATION) {
       console.error(
         `\x1b[33mwarning\x1b[0;2m:\x1b[0m Test ${JSON.stringify(path)} has been running for ${Math.ceil(
@@ -419,16 +419,10 @@ function linkToGH(linkTo) {
   return `https://github.com/oven-sh/bun/blob/${git_sha}/${linkTo}`;
 }
 
-function sectionLink(linkTo) {
-  return "#" + linkTo.replace(/[^a-zA-Z0-9_-]/g, "").toLowerCase();
-}
-
 failing_tests.sort((a, b) => a.path.localeCompare(b.path));
 passing_tests.sort((a, b) => a.localeCompare(b));
 
-const failingTestDisplay = failing_tests
-  .map(({ path, reason }) => `- [\`${path}\`](${sectionLink(path)})${reason ? ` ${reason}` : ""}`)
-  .join("\n");
+const failingTestDisplay = failing_tests.map(({ path, reason }) => `- \`${path}\` ${reason}`).join("\n");
 
 // const passingTestDisplay = passing_tests.map(path => `- \`${path}\``).join("\n");
 
@@ -538,6 +532,13 @@ function mabeCapitalize(str) {
 }
 
 console.log("-> test-report.md, test-report.json");
+function linkify(text, url) {
+  if (url?.startsWith?.("https://")) {
+    return `[${text}](${url})`;
+  }
+
+  return text;
+}
 
 if (ci) {
   if (failing_tests.length > 0) {
@@ -546,8 +547,11 @@ if (ci) {
   action.setOutput("failing_tests", failingTestDisplay);
   action.setOutput("failing_tests_count", failing_tests.length);
   if (failing_tests.length) {
+    const { env } = process;
     const tag = process.env.BUN_TAG || "unknown";
-    let comment = `## ${emojiTag(tag)}${failing_tests.length} failing tests ${tag
+    const url = `${env.GITHUB_SERVER_URL}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`;
+
+    let comment = `## ${linkify(`${emojiTag(tag)}${failing_tests.length} failing tests`, url)} ${tag
       .split("-")
       .map(mabeCapitalize)
       .join(" ")}

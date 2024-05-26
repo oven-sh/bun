@@ -5,7 +5,6 @@ const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("root").bun;
-pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
@@ -310,6 +309,11 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     const i = @intFromPtr(start) - @intFromPtr(self_ptr);
     bun.unsafeAssert(i < self_len);
     return @as(usize, @intCast(i));
+}
+
+pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
+    if (T == u8) return indexOf(haystack, needle);
+    return std.mem.indexOf(T, haystack, needle);
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {
@@ -993,6 +997,13 @@ pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
 
 pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) ![]u8 {
     return try toUTF8AllocWithType(allocator, []const u16, js);
+}
+
+pub fn toUTF8AllocZ(allocator: std.mem.Allocator, js: []const u16) ![:0]u8 {
+    var list = std.ArrayList(u8).init(allocator);
+    try toUTF8AppendToList(&list, js);
+    try list.append(0);
+    return list.items[0 .. list.items.len - 1 :0];
 }
 
 pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
@@ -1686,7 +1697,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
 
     var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
 
@@ -1716,7 +1727,7 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {
@@ -1857,6 +1868,19 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
 
     const list = try std.ArrayList(u8).initCapacity(allocator, latin1.len);
     return try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
+}
+
+pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
+    if (bun.JSC.is_bindgen)
+        unreachable;
+
+    if (isAllASCII(latin1))
+        return null;
+
+    const list = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 1);
+    var list1 = try allocateLatin1IntoUTF8WithList(list, 0, []const u8, latin1);
+    try list1.append(0);
+    return list1;
 }
 
 pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
@@ -2672,8 +2696,9 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                             buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
                             const copy_len = @intFromPtr(ptr) - @intFromPtr(latin1.ptr);
-                            @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
+                            if (comptime Environment.allow_assert) assert(copy_len <= buf.capacity);
                             buf.items.len = copy_len;
+                            @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
                             any_needs_escape = true;
                             break :scan_and_allocate_lazily;
                         },
@@ -4869,7 +4894,7 @@ pub fn isIPAddress(input: []const u8) bool {
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
 
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) > 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
@@ -4882,7 +4907,7 @@ pub fn isIPV6Address(input: []const u8) bool {
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn cloneNormalizingSeparators(
@@ -5084,7 +5109,7 @@ pub inline fn charIsAnySlash(char: u8) bool {
 }
 
 pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
-    return s.len >= 2 and s[0] == ':' and switch (s[1]) {
+    return s.len > 2 and s[1] == ':' and switch (s[0]) {
         'a'...'z', 'A'...'Z' => true,
         else => false,
     };
@@ -5787,15 +5812,16 @@ pub const visible = struct {
         var len: usize = 0;
         while (bun.strings.firstNonASCII(bytes)) |i| {
             len += asciiFn(bytes[0..i]);
+            const this_chunk = bytes[i..];
+            const byte = this_chunk[0];
 
-            const byte = bytes[i];
             const skip = bun.strings.wtf8ByteSequenceLengthWithInvalid(byte);
-            const cp_bytes: [4]u8 = switch (skip) {
+            const cp_bytes: [4]u8 = switch (@min(@as(usize, skip), this_chunk.len)) {
                 inline 1, 2, 3, 4 => |cp_len| .{
                     byte,
-                    if (comptime cp_len > 1) bytes[1] else 0,
-                    if (comptime cp_len > 2) bytes[2] else 0,
-                    if (comptime cp_len > 3) bytes[3] else 0,
+                    if (comptime cp_len > 1) this_chunk[1] else 0,
+                    if (comptime cp_len > 2) this_chunk[2] else 0,
+                    if (comptime cp_len > 3) this_chunk[3] else 0,
                 },
                 else => unreachable,
             };

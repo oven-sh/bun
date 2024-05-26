@@ -1,4 +1,5 @@
 
+#include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -194,6 +195,13 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     wtfString->ref();
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
+}
+
+BunString toStringView(StringView view) {
+    return {
+        BunStringTag::ZigString,
+        { .zig = toZigString(view) }
+    };
 }
 
 }
@@ -491,9 +499,11 @@ size_t BunString::utf8ByteLength(const WTF::String& str)
         return 0;
 
     if (str.is8Bit()) {
-        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.characters8()), static_cast<size_t>(str.length()));
+        const auto s = str.span8();
+        return simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(s.data()), static_cast<size_t>(s.size()));
     } else {
-        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(str.characters16()), static_cast<size_t>(str.length()));
+        const auto s = str.span16();
+        return simdutf::utf8_length_from_utf16(reinterpret_cast<const char16_t*>(s.data()), static_cast<size_t>(s.size()));
     }
 }
 
@@ -561,10 +571,6 @@ extern "C" bool WTFStringImpl__isThreadSafe(
         return false;
 
     return !(wtf->isSymbol() || wtf->isAtom());
-    // if (wtf->is8Bit())
-    //     return wtf->characters8() == reinterpret_cast_ptr<const LChar*>(reinterpret_cast<const uint8_t*>(wtf) + tailOffset<const LChar*>());
-
-    // return wtf->characters16() == reinterpret_cast_ptr<const UChar*>(reinterpret_cast<const uint16_t*>(wtf) + tailOffset<const UChar*>());
 }
 
 extern "C" void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
@@ -581,7 +587,7 @@ extern "C" void JSC__JSValue__putBunString(
     JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     auto& vm = global->vm();
-    WTF::String str = key->toWTFString();
+    WTF::String str = key->tag == BunStringTag::Empty ? WTF::String(""_s) : key->toWTFString();
     Identifier id = Identifier::fromString(vm, str);
     target->putDirect(vm, id, value, 0);
 }

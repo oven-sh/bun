@@ -1,7 +1,9 @@
 import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
 import crypto from "crypto";
+import path from "path";
 import { hashesFixture } from "./fixtures/sign.fixture.ts";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
 
 describe("CryptoHasher", () => {
@@ -23,6 +25,8 @@ describe("CryptoHasher", () => {
       "sha3-256",
       "sha3-384",
       "sha3-512",
+      "shake128",
+      "shake256",
     ]);
   });
 
@@ -44,6 +48,8 @@ describe("CryptoHasher", () => {
     "sha3-256": "644bcc7e564373040999aac89e7622f3ca71fba1d972fd94a31c3bfbf24e3938",
     "sha3-384": "83bff28dde1b1bf5810071c6643c08e5b05bdb836effd70b403ea8ea0a634dc4997eb1053aa3593f590f9c63630dd90b",
     "sha3-512": "840006653e9ac9e95117a15c915caab81662918e925de9e004f774ff82d7079a40d4d27b1b372657c61d46d470304c88c788b3a4527ad074d1dccbee5dbaa99a",
+    shake128: "3a9159f071e4dd1c8c4f968607c30942",
+    shake256: "369771bb2cb9d2b04c1d54cca487e372d9f187f73f7ba3f65b95c8ee7798c527",
   } as const;
 
   for (const algorithm of CryptoHasher.algorithms) {
@@ -57,15 +63,22 @@ describe("CryptoHasher", () => {
     it(`CryptoHasher.hash ${algorithm}`, () => {
       expect(CryptoHasher.hash(algorithm, "hello world").toString("hex")).toEqual(expected[algorithm]);
     });
-  }
 
-  it("CryptoHasher sha256 multi-part", () => {
-    var hasher = new CryptoHasher("sha256");
-    hasher.update("hello ");
-    hasher.update("world");
-    expect(hasher.digest("hex")).toBe("b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
-    expect(hasher.algorithm).toBe("sha256");
-  });
+    it(`new CryptoHasher ${algorithm} multi-part`, () => {
+      var hasher = new CryptoHasher(algorithm);
+      hasher.update("hello ");
+      hasher.update("world");
+      expect(hasher.digest("hex")).toBe(expected[algorithm]);
+      expect(hasher.algorithm).toBe(algorithm);
+    });
+
+    it(`new CryptoHasher ${algorithm} to Buffer`, () => {
+      var hasher = new CryptoHasher(algorithm);
+      expect(hasher.algorithm).toEqual(algorithm);
+      hasher.update("hello world");
+      expect(hasher.digest()).toEqual(Buffer.from(expected[algorithm], "hex"));
+    });
+  }
 
   it("CryptoHasher resets when digest is called", () => {
     var hasher = new CryptoHasher("sha256");
@@ -195,4 +208,78 @@ describe("crypto.createSign()/.verifySign()", () => {
       expect(verify).toBeTrue();
     },
   );
+});
+
+it("should send cipher events in the right order", async () => {
+  const package_dir = tmpdirSync();
+  const fixture_path = path.join(package_dir, "fixture.js");
+
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    function patchEmitter(emitter, prefix) {
+      var oldEmit = emitter.emit;
+
+      emitter.emit = function () {
+        console.log([prefix, arguments[0]]);
+        oldEmit.apply(emitter, arguments);
+      };
+    }
+
+    const crypto = require("node:crypto");
+
+    const plaintext = "Out of the mountain of despair, a stone of hope.";
+
+    const key = Buffer.from("3fad401bb178066f201b55368712530229d6329a5e2c05f48ff36ca65792d21d", "hex");
+    const iv = Buffer.from("22371787d3e04a6589d8a1de50c81208", "hex");
+
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    patchEmitter(cipher, "cipher");
+    cipher.end(plaintext);
+    let ciph = cipher.read();
+    console.log([1, ciph.toString("hex")]);
+
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    patchEmitter(decipher, "decipher");
+    decipher.end(ciph);
+    let dciph = decipher.read();
+    console.log([2, dciph.toString("hex")]);
+    let txt = dciph.toString("utf8");
+
+    console.log([3, plaintext]);
+    console.log([4, txt]);
+    `,
+  );
+
+  const { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    // `[ "cipher", "readable" ]`,
+    `[ "cipher", "prefinish" ]`,
+    `[ "cipher", "data" ]`,
+    `[ 1, "dfb6b7e029be3ad6b090349ed75931f28f991b52ca9a89f5bf6f82fa1c87aa2d624bd77701dcddfcceaf3add7d66ce06ced17aebca4cb35feffc4b8b9008b3c4"`,
+    `]`,
+    // `[ "decipher", "readable" ]`,
+    `[ "decipher", "prefinish" ]`,
+    `[ "decipher", "data" ]`,
+    `[ 2, "4f7574206f6620746865206d6f756e7461696e206f6620646573706169722c20612073746f6e65206f6620686f70652e"`,
+    `]`,
+    `[ 3, "Out of the mountain of despair, a stone of hope." ]`,
+    `[ 4, "Out of the mountain of despair, a stone of hope." ]`,
+    `[ "cipher", "finish" ]`,
+    `[ "cipher", "end" ]`,
+    `[ "decipher", "finish" ]`,
+    `[ "decipher", "end" ]`,
+    `[ "cipher", "close" ]`,
+    `[ "decipher", "close" ]`,
+    ``,
+  ]);
 });

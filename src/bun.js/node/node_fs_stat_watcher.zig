@@ -385,7 +385,7 @@ pub const StatWatcher = struct {
 
         const vm = this.globalThis.bunVM();
         if (result.isAnyError()) {
-            vm.onUnhandledError(this.globalThis, result);
+            _ = vm.uncaughtException(this.globalThis, result, false);
         }
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
@@ -421,7 +421,7 @@ pub const StatWatcher = struct {
         );
         if (result.isAnyError()) {
             const vm = this.globalThis.bunVM();
-            vm.onUnhandledError(this.globalThis, result);
+            _ = vm.uncaughtException(this.globalThis, result, false);
         }
     }
 
@@ -432,7 +432,7 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];

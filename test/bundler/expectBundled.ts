@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "fs";
 import path from "path";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
@@ -10,6 +10,7 @@ import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
 import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -307,6 +308,10 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
+  /** Expect a certain non-zero exit code */
+  exitCode?: number;
+  /** Run a function with stdout and stderr. Use expect to assert exact outputs */
+  validate?: (ctx: { stdout: string; stderr: string }) => void;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -1243,6 +1248,24 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
+    // Check that all source maps are valid JSON
+    if (opts.sourceMap === "external" && outdir) {
+      for (const file of readdirSync(outdir, { recursive: true })) {
+        if (file.endsWith(".map")) {
+          const parsed = await Bun.file(path.join(outdir, file)).json();
+          await SourceMapConsumer.with(parsed, null, async map => {
+            map.eachMapping(m => {
+              expect(m.source).toBeDefined();
+              expect(m.generatedLine).toBeGreaterThanOrEqual(0);
+              expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
+              expect(m.originalLine).toBeGreaterThanOrEqual(0);
+              expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+            });
+          });
+        }
+      }
+    }
+
     // Runtime checks!
     if (run) {
       const runs = Array.isArray(run) ? run : [run];
@@ -1259,13 +1282,15 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
 
-        const { success, stdout, stderr } = Bun.spawnSync({
-          cmd: [
-            ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
-            ...(run.bunArgs ?? []),
-            file,
-            ...(run.args ?? []),
-          ] as [string, ...string[]],
+        const args = [
+          ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
+          ...(run.bunArgs ?? []),
+          file,
+          ...(run.args ?? []),
+        ] as [string, ...string[]];
+
+        const { success, stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+          cmd: args,
           env: {
             ...bunEnv,
             FORCE_COLOR: "0",
@@ -1274,6 +1299,10 @@ for (const [key, blob] of build.outputs) {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: run.setCwd ? root : undefined,
         });
+
+        if (signalCode === "SIGTRAP") {
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        }
 
         if (run.error) {
           if (success) {
@@ -1294,6 +1323,8 @@ for (const [key, blob] of build.outputs) {
             const lines = stderr!
               .toUnixString()
               .split("\n")
+              // remove `Bun v1.0.0...` line
+              .slice(0, -2)
               .filter(Boolean)
               .map(x => x.trim())
               .reverse();
@@ -1324,7 +1355,15 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          if (run.exitCode) {
+            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
+          } else {
+            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          }
+        }
+
+        if (run.validate) {
+          run.validate({ stderr: stderr.toUnixString(), stdout: stdout.toUnixString() });
         }
 
         if (run.stdout !== undefined) {
@@ -1391,23 +1430,12 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      // it.todo(id, () => {
-      //   throw error;
-      // });
       return ref;
     }
   }
 
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
-    // it(id, async () => {
-    //   try {
-    //     await expectBundled(id, opts as any);
-    //   } catch (error) {
-    //     return;
-    //   }
-    //   throw new Error(`Expected test to fail but it passed.`);
-    // });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }

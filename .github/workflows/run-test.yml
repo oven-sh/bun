@@ -38,6 +38,7 @@ jobs:
             bun.lockb
             test
             packages/bun-internal-test
+            packages/bun-types
       - name: Setup Environment
         shell: bash
         run: |
@@ -49,6 +50,10 @@ jobs:
           path: bun
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run-id || github.run_id }}
+      - name: Download pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
       - if: ${{ runner.os != 'Windows' }}
         name: Setup Bun
         shell: bash
@@ -94,6 +99,8 @@ jobs:
           SMTP_SENDGRID_SENDER: ${{ secrets.SMTP_SENDGRID_SENDER }}
           TLS_MONGODB_DATABASE_URL: ${{ secrets.TLS_MONGODB_DATABASE_URL }}
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
+          TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
+          TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
           SHELLOPTS: igncr
         run: |
           node packages/bun-internal-test/src/runner.node.mjs $(which bun)
@@ -131,6 +138,8 @@ jobs:
           exit 1
   test-node:
     name: Node.js Tests
+    # TODO: enable when we start paying attention to the results. In the meantime, this causes CI to queue jobs wasting developer time.
+    if: 0
     runs-on: ${{ inputs.runs-on }}
     steps:
       - if: ${{ runner.os == 'Windows' }}

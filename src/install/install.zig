@@ -155,6 +155,14 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
             return in.ptr[this.off..@min(in.len, this.off + this.len)];
         }
 
+        pub inline fn begin(this: Slice) u32 {
+            return this.off;
+        }
+
+        pub inline fn end(this: Slice) u32 {
+            return this.off + this.len;
+        }
+
         pub fn init(buf: []const Type, in: []const Type) Slice {
             // if (comptime Environment.allow_assert) {
             //     bun.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr));
@@ -882,6 +890,8 @@ pub const PackageInstall = struct {
         fail: u32 = 0,
         success: u32 = 0,
         skipped: u32 = 0,
+
+        // bitset of dependency ids
         successfully_installed: ?Bitset = null,
 
         /// Package name hash -> number of scripts skipped.
@@ -1139,6 +1149,7 @@ pub const PackageInstall = struct {
         opening_dest_dir,
         copying_files,
         linking,
+        linking_dependency,
 
         pub fn name(this: Step) []const u8 {
             return switch (this) {
@@ -1146,6 +1157,7 @@ pub const PackageInstall = struct {
                 .opening_cache_dir => "opening cache/package/version dir",
                 .opening_dest_dir => "opening node_modules/package dir",
                 .linking => "linking bins",
+                .linking_dependency => "linking dependency/workspace to node_modules",
             };
         }
     };
@@ -1176,7 +1188,7 @@ pub const PackageInstall = struct {
                 walker: *Walker,
             ) !u32 {
                 var real_file_count: u32 = 0;
-                var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var stackpath: bun.PathBuffer = undefined;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
                         .directory => {
@@ -1889,6 +1901,23 @@ pub const PackageInstall = struct {
         destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
+    // these are just a symlink/junction
+    pub fn uninstallLinkBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
+        if (comptime Environment.isWindows) {
+            bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
+                if (err == error.ENOTDIR) {
+                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                }
+            };
+        } else {
+            bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
+                if (err == error.EISDIR or err == error.EPERM) {
+                    _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
+                }
+            };
+        }
+    }
+
     pub fn uninstallBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
         var rand_path_buf: [48]u8 = undefined;
         const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
@@ -2029,18 +2058,18 @@ pub const PackageInstall = struct {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallLinkBeforeInstall(destination_dir);
 
         const subdir = std.fs.path.dirname(dest_path);
 
         var dest_buf: bun.PathBuffer = undefined;
         // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
         const symlinked_path = this.cache_dir_subpath;
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
         const to_path = this.cache_dir.realpath(symlinked_path, &to_buf) catch |err| return Result{
             .fail = .{
                 .err = err,
-                .step = .linking,
+                .step = .linking_dependency,
             },
         };
 
@@ -2052,7 +2081,7 @@ pub const PackageInstall = struct {
             if (dest_path_length == 0) {
                 const e = bun.windows.Win32Error.get();
                 const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                return Result.fail(err, .linking);
+                return Result.fail(err, .linking_dependency);
             }
 
             var i: usize = dest_path_length;
@@ -2069,7 +2098,7 @@ pub const PackageInstall = struct {
                 const fullpath = wbuf[0..i :0];
 
                 _ = node_fs_for_package_installer.mkdirRecursiveOSPathImpl(void, {}, fullpath, 0, false).unwrap() catch |err| {
-                    return Result.fail(err, .linking);
+                    return Result.fail(err, .linking_dependency);
                 };
             }
 
@@ -2094,7 +2123,7 @@ pub const PackageInstall = struct {
                 .err => |err_| brk: {
                     var err = err_;
                     if (err.getErrno() == .EXIST) {
-                        _ = bun.sys.unlink(target_z);
+                        _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
                         switch (bun.sys.symlinkOrJunctionOnWindows(dest_z, target_z)) {
                             .err => |e| err = e,
                             .result => break :brk,
@@ -2104,7 +2133,7 @@ pub const PackageInstall = struct {
                     return Result{
                         .fail = .{
                             .err = bun.errnoToZigErr(err.errno),
-                            .step = .linking,
+                            .step = .linking_dependency,
                         },
                     };
                 },
@@ -2115,7 +2144,7 @@ pub const PackageInstall = struct {
                 break :brk bun.MakePath.makeOpenPath(destination_dir, dir, .{}) catch |err| return Result{
                     .fail = .{
                         .err = err,
-                        .step = .linking,
+                        .step = .linking_dependency,
                     },
                 };
             } else destination_dir;
@@ -2126,7 +2155,7 @@ pub const PackageInstall = struct {
             const dest_dir_path = bun.getFdPath(dest_dir.fd, &dest_buf) catch |err| return Result{
                 .fail = .{
                     .err = err,
-                    .step = .linking,
+                    .step = .linking_dependency,
                 },
             };
 
@@ -2134,7 +2163,7 @@ pub const PackageInstall = struct {
             std.os.symlinkat(target, dest_dir.fd, dest) catch |err| return Result{
                 .fail = .{
                     .err = err,
-                    .step = .linking,
+                    .step = .linking_dependency,
                 },
             };
         }
@@ -2142,7 +2171,7 @@ pub const PackageInstall = struct {
         if (isDanglingSymlink(symlinked_path)) return Result{
             .fail = .{
                 .err = error.DanglingSymlink,
-                .step = .linking,
+                .step = .linking_dependency,
             },
         };
 
@@ -2297,9 +2326,76 @@ const PreallocatedNetworkTasks = bun.HiveArray(NetworkTask, 1024).Fallback;
 const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 
 const ThreadPool = bun.ThreadPool;
-const PackageManifestMap = std.HashMapUnmanaged(PackageNameHash, Npm.PackageManifest, IdentityContext(PackageNameHash), 80);
 const RepositoryMap = std.HashMapUnmanaged(u64, bun.FileDescriptor, IdentityContext(u64), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
+
+const PackageManifestMap = struct {
+    hash_map: HashMap = .{},
+
+    const Value = union(enum) {
+        expired: Npm.PackageManifest,
+        manifest: Npm.PackageManifest,
+
+        // Avoid checking the filesystem again.
+        not_found: void,
+    };
+    const HashMap = std.HashMapUnmanaged(PackageNameHash, Value, IdentityContext(PackageNameHash), 80);
+
+    pub fn byName(this: *PackageManifestMap, name: []const u8) ?*Npm.PackageManifest {
+        return this.byNameHash(String.Builder.stringHash(name));
+    }
+
+    pub fn insert(this: *PackageManifestMap, name_hash: PackageNameHash, manifest: *const Npm.PackageManifest) !void {
+        try this.hash_map.put(bun.default_allocator, name_hash, .{ .manifest = manifest.* });
+    }
+
+    pub fn byNameHash(this: *PackageManifestMap, name_hash: PackageNameHash) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, name_hash, null);
+    }
+
+    pub fn byNameAllowExpired(this: *PackageManifestMap, name: string, is_expired: ?*bool) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, String.Builder.stringHash(name), is_expired);
+    }
+
+    pub fn byNameHashAllowExpired(this: *PackageManifestMap, name_hash: PackageNameHash, is_expired: ?*bool) ?*Npm.PackageManifest {
+        const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch bun.outOfMemory();
+        if (entry.found_existing) {
+            if (entry.value_ptr.* == .manifest) {
+                return &entry.value_ptr.manifest;
+            }
+
+            if (is_expired) |expiry| {
+                if (entry.value_ptr.* == .expired) {
+                    expiry.* = true;
+                    return &entry.value_ptr.expired;
+                }
+            }
+
+            return null;
+        }
+
+        if (PackageManager.instance.options.enable.manifest_cache) {
+            if (Npm.PackageManifest.Serializer.loadByFileID(PackageManager.instance.allocator, PackageManager.instance.getCacheDirectory(), name_hash) catch null) |manifest| {
+                if (PackageManager.instance.options.enable.manifest_cache_control and manifest.pkg.public_max_age > PackageManager.instance.timestamp_for_manifest_cache_control) {
+                    entry.value_ptr.* = .{ .manifest = manifest };
+                    return &entry.value_ptr.manifest;
+                } else {
+                    entry.value_ptr.* = .{ .expired = manifest };
+
+                    if (is_expired) |expiry| {
+                        expiry.* = true;
+                        return &entry.value_ptr.expired;
+                    }
+
+                    return null;
+                }
+            }
+        }
+
+        entry.value_ptr.* = .{ .not_found = {} };
+        return null;
+    }
+};
 
 pub const CacheLevel = struct {
     use_cache_control_headers: bool,
@@ -2315,8 +2411,9 @@ pub const PackageManager = struct {
     cache_directory_: ?std.fs.Dir = null,
 
     // TODO(dylan-conway): remove this field when we move away from `std.ChildProcess` in repository.zig
-    cache_directory_path: string = "",
+    cache_directory_path: stringZ = "",
     temp_dir_: ?std.fs.Dir = null,
+    temp_dir_path: stringZ = "",
     temp_dir_name: string = "",
     root_dir: *Fs.FileSystem.DirEntry,
     allocator: std.mem.Allocator,
@@ -2334,9 +2431,6 @@ pub const PackageManager = struct {
     progress_name_buf_dynamic: []u8 = &[_]u8{},
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
-
-    // used for looking up workspaces that aren't loaded into Lockfile.workspace_paths
-    workspaces: std.StringArrayHashMap(Semver.Version),
 
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
@@ -2403,6 +2497,137 @@ pub const PackageManager = struct {
     trusted_deps_to_add_to_package_json: std.ArrayListUnmanaged(string) = .{},
 
     any_failed_to_install: bool = false,
+
+    // When adding a `file:` dependency in a workspace package, we want to install it
+    // relative to the workspace root, but the path provided is relative to the
+    // workspace package. We keep track of the original here.
+    original_package_json_path: stringZ,
+
+    // null means root. Used during `cleanWithLogger` to identifier which
+    // workspace is adding/removing packages
+    workspace_name_hash: ?PackageNameHash = null,
+
+    workspace_package_json_cache: WorkspacePackageJSONCache = .{},
+
+    // maybe rename to `PackageJSONCache` if we cache more than workspaces
+    pub const WorkspacePackageJSONCache = struct {
+        const js_ast = bun.JSAst;
+        const Expr = js_ast.Expr;
+
+        pub const MapEntry = struct {
+            root: Expr,
+            source: logger.Source,
+        };
+
+        pub const Map = bun.StringHashMapUnmanaged(MapEntry);
+
+        pub const GetJSONOptions = struct {
+            init_reset_store: bool = true,
+            always_decode_escape_sequences: bool = true,
+        };
+
+        pub const GetResult = union(enum) {
+            entry: *MapEntry,
+            read_err: anyerror,
+            parse_err: anyerror,
+
+            pub fn unwrap(this: GetResult) !*MapEntry {
+                return switch (this) {
+                    .entry => |entry| entry,
+                    inline else => |err| err,
+                };
+            }
+        };
+
+        map: Map = .{},
+
+        /// Given an absolute path to a workspace package.json, return the AST
+        /// and contents of the file. If the package.json is not present in the
+        /// cache, it will be read from disk and parsed, and stored in the cache.
+        pub fn getWithPath(this: *@This(), allocator: std.mem.Allocator, log: *logger.Log, abs_package_json_path: anytype, comptime opts: GetJSONOptions) GetResult {
+            bun.assert(std.fs.path.isAbsolute(abs_package_json_path));
+
+            var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+            const path = if (comptime !Environment.isWindows)
+                abs_package_json_path
+            else brk: {
+                @memcpy(buf[0..abs_package_json_path.len], abs_package_json_path);
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, buf[0..abs_package_json_path.len]);
+                break :brk buf[0..abs_package_json_path.len];
+            };
+
+            const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
+            if (entry.found_existing) {
+                return .{ .entry = entry.value_ptr };
+            }
+
+            const key = allocator.dupeZ(u8, path) catch bun.outOfMemory();
+
+            const source = bun.sys.File.toSource(key, allocator).unwrap() catch |err| return .{ .read_err = err };
+
+            if (comptime opts.init_reset_store)
+                initializeStore();
+
+            const _json = if (comptime opts.always_decode_escape_sequences)
+                json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
+            else
+                json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+
+            const json = _json catch |err| return .{ .parse_err = err };
+
+            entry.value_ptr.* = .{
+                .root = json.deepClone(allocator) catch bun.outOfMemory(),
+                .source = source,
+            };
+
+            entry.key_ptr.* = key;
+
+            return .{ .entry = entry.value_ptr };
+        }
+
+        /// source path is used as the key, needs to be absolute
+        pub fn getWithSource(
+            this: *@This(),
+            allocator: std.mem.Allocator,
+            log: *logger.Log,
+            source: logger.Source,
+            comptime opts: GetJSONOptions,
+        ) GetResult {
+            bun.assert(std.fs.path.isAbsolute(source.path.text));
+
+            var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+            const path = if (comptime !Environment.isWindows)
+                source.path.text
+            else brk: {
+                @memcpy(buf[0..source.path.text.len], source.path.text);
+                bun.path.dangerouslyConvertPathToPosixInPlace(u8, buf[0..source.path.text.len]);
+                break :brk buf[0..source.path.text.len];
+            };
+
+            const entry = this.map.getOrPut(allocator, path) catch bun.outOfMemory();
+            if (entry.found_existing) {
+                return .{ .entry = entry.value_ptr };
+            }
+
+            if (comptime opts.init_reset_store)
+                initializeStore();
+
+            const _json = if (comptime opts.always_decode_escape_sequences)
+                json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
+            else
+                json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+            const json = _json catch |err| return .{ .parse_err = err };
+
+            entry.value_ptr.* = .{
+                .root = json.deepClone(allocator) catch bun.outOfMemory(),
+                .source = source,
+            };
+
+            entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
+
+            return .{ .entry = entry.value_ptr };
+        }
+    };
 
     pub var verbose_install = false;
 
@@ -2507,11 +2732,11 @@ pub const PackageManager = struct {
             false,
         );
 
-        const init_cwd_gop = try this.env.map.getOrPutWithoutValue("INIT_CWD");
-        if (!init_cwd_gop.found_existing) {
-            init_cwd_gop.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_gop.key_ptr.*);
-            init_cwd_gop.value_ptr.* = .{
-                .value = try ctx.allocator.dupe(u8, FileSystem.instance.top_level_dir),
+        const init_cwd_entry = try this.env.map.getOrPutWithoutValue("INIT_CWD");
+        if (!init_cwd_entry.found_existing) {
+            init_cwd_entry.key_ptr.* = try ctx.allocator.dupe(u8, init_cwd_entry.key_ptr.*);
+            init_cwd_entry.value_ptr.* = .{
+                .value = try ctx.allocator.dupe(u8, strings.withoutTrailingSlash(FileSystem.instance.top_level_dir)),
                 .conditional = false,
             };
         }
@@ -2519,7 +2744,7 @@ pub const PackageManager = struct {
         this.env.loadCCachePath(this_bundler.fs);
 
         {
-            var node_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var node_path: bun.PathBuffer = undefined;
             if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
                 _ = try this.env.loadNodeJSConfig(this_bundler.fs, bun.default_allocator.dupe(u8, node_pathZ) catch bun.outOfMemory());
             } else brk: {
@@ -2748,7 +2973,7 @@ pub const PackageManager = struct {
             var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
             this.global_dir = global_dir;
             this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{});
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             const _path = try bun.getFdPath(this.global_link_dir.?.fd, &buf);
             this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
             break :brk this.global_link_dir.?;
@@ -2766,6 +2991,7 @@ pub const PackageManager = struct {
         name_hash: PackageNameHash,
         resolution: Resolution,
     ) ?Semver.Version.Formatter {
+        _ = name; // autofix
         switch (resolution.tag) {
             Resolution.Tag.npm => {
                 if (resolution.value.npm.version.tag.hasPre())
@@ -2777,14 +3003,7 @@ pub const PackageManager = struct {
                 if (this.isContinuousIntegration())
                     return null;
 
-                const manifest: *const Npm.PackageManifest = this.manifests.getPtr(name_hash) orelse brk: {
-                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name) catch null) |manifest_| {
-                        this.manifests.put(this.allocator, name_hash, manifest_) catch return null;
-                        break :brk this.manifests.getPtr(name_hash).?;
-                    }
-
-                    return null;
-                };
+                const manifest: *const Npm.PackageManifest = this.manifests.byNameHash(name_hash) orelse return null;
 
                 if (manifest.findByDistTag("latest")) |latest_version| {
                     if (latest_version.version.order(
@@ -2891,7 +3110,7 @@ pub const PackageManager = struct {
         }
     }
 
-    var cached_package_folder_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var cached_package_folder_name_buf: bun.PathBuffer = undefined;
 
     pub inline fn getCacheDirectory(this: *PackageManager) std.fs.Dir {
         return this.cache_directory_ orelse brk: {
@@ -2903,6 +3122,9 @@ pub const PackageManager = struct {
     pub inline fn getTemporaryDirectory(this: *PackageManager) std.fs.Dir {
         return this.temp_dir_ orelse brk: {
             this.temp_dir_ = this.ensureTemporaryDirectory();
+            var pathbuf: bun.PathBuffer = undefined;
+            const temp_dir_path = bun.getFdPathZ(bun.toFD(this.temp_dir_.?), &pathbuf) catch Output.panic("Unable to read temporary directory path", .{});
+            this.temp_dir_path = bun.default_allocator.dupeZ(u8, temp_dir_path) catch bun.outOfMemory();
             break :brk this.temp_dir_.?;
         };
     }
@@ -2911,7 +3133,7 @@ pub const PackageManager = struct {
         loop: while (true) {
             if (this.options.enable.cache) {
                 const cache_dir = fetchCacheDirectoryPath(this.env);
-                this.cache_directory_path = this.allocator.dupe(u8, cache_dir.path) catch bun.outOfMemory();
+                this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
 
                 return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
@@ -2920,7 +3142,7 @@ pub const PackageManager = struct {
                 };
             }
 
-            this.cache_directory_path = this.allocator.dupe(u8, Path.joinAbsString(
+            this.cache_directory_path = this.allocator.dupeZ(u8, Path.joinAbsString(
                 Fs.FileSystem.instance.top_level_dir,
                 &.{
                     "node_modules",
@@ -2958,7 +3180,7 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var tmpbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var tmpbuf: bun.PathBuffer = undefined;
         const tmpname = Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable;
         var timer: std.time.Timer = if (this.options.log_level != .silent) std.time.Timer.start() catch unreachable else undefined;
         brk: while (true) {
@@ -3013,7 +3235,7 @@ pub const PackageManager = struct {
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();
             if (elapsed > std.time.ns_per_ms * 100) {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf: bun.PathBuffer = undefined;
                 const cache_dir_path = bun.getFdPath(cache_directory.fd, &path_buf) catch "it";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
@@ -3029,7 +3251,7 @@ pub const PackageManager = struct {
         if (this.node_gyp_tempdir_name.len > 0) return;
 
         const tempdir = this.getTemporaryDirectory();
-        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: bun.PathBuffer = undefined;
         const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
 
         // used later for adding to path for scripts
@@ -3295,11 +3517,11 @@ pub const PackageManager = struct {
 
     pub fn pathForCachedNPMPath(
         this: *PackageManager,
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         package_name: []const u8,
         npm: Semver.Version,
     ) ![]u8 {
-        var package_name_version_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var package_name_version_buf: bun.PathBuffer = undefined;
 
         const subpath = std.fmt.bufPrintZ(
             &package_name_version_buf,
@@ -3324,7 +3546,7 @@ pub const PackageManager = struct {
         this: *PackageManager,
         package_id: PackageID,
         resolution: Resolution,
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
     ) ![]u8 {
         // const folder_name = this.cachedNPMPackageFolderName(name, version);
         switch (resolution.tag) {
@@ -3401,7 +3623,7 @@ pub const PackageManager = struct {
         );
         for (installed_versions.items) |installed_version| {
             if (version.value.npm.version.satisfies(installed_version, this.lockfile.buffers.string_bytes.items, tags_buf.items)) {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 const npm_package_path = this.pathForCachedNPMPath(&buf, package_name, installed_version) catch |err| {
                     Output.debug("error getting path for cached npm path: {s}", .{bun.span(@errorName(err))});
                     return null;
@@ -3725,12 +3947,49 @@ pub const PackageManager = struct {
 
         switch (version.tag) {
             .npm, .dist_tag => {
-                if (version.tag == .npm) {
-                    if (this.lockfile.workspace_versions.count() > 0) resolve_from_workspace: {
-                        if (this.lockfile.workspace_versions.get(name_hash)) |workspace_version| {
-                            const buf = this.lockfile.buffers.string_bytes.items;
-                            if (version.value.npm.version.satisfies(workspace_version, buf, buf)) {
-                                const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
+                resolve_from_workspace: {
+                    if (version.tag == .npm) {
+                        const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
+                        const workspace_version = this.lockfile.workspace_versions.get(name_hash);
+                        const buf = this.lockfile.buffers.string_bytes.items;
+                        if ((workspace_version != null and version.value.npm.version.satisfies(workspace_version.?, buf, buf)) or
+
+                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
+                            // if the workspace doesn't have a version, it can still be used if
+                            // dependency version is wildcard
+                            (workspace_path != null and version.value.npm.version.@"is *"()))
+                        {
+                            const root_package = this.lockfile.rootPackage() orelse break :resolve_from_workspace;
+                            const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
+                            const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
+
+                            for (root_dependencies, root_resolutions) |root_dep, workspace_package_id| {
+                                if (workspace_package_id != invalid_package_id and root_dep.version.tag == .workspace and root_dep.name_hash == name_hash) {
+                                    // make sure verifyResolutions sees this resolution as a valid package id
+                                    successFn(this, dependency_id, workspace_package_id);
+                                    return .{
+                                        .package = this.lockfile.packages.get(workspace_package_id),
+                                        .is_first_time = false,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Resolve the version from the loaded NPM manifest
+                const manifest = this.manifests.byNameHash(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
+                const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
+                    .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
+                    .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
+                    else => unreachable,
+                } orelse {
+                    resolve_workspace_from_dist_tag: {
+                        // choose a workspace for a dist_tag only if a version was not found
+                        if (version.tag == .dist_tag) {
+                            const workspace_path = if (this.lockfile.workspace_paths.count() > 0) this.lockfile.workspace_paths.get(name_hash) else null;
+                            if (workspace_path != null) {
+                                const root_package = this.lockfile.rootPackage() orelse break :resolve_workspace_from_dist_tag;
                                 const root_dependencies = root_package.dependencies.get(this.lockfile.buffers.dependencies.items);
                                 const root_resolutions = root_package.resolutions.get(this.lockfile.buffers.resolutions.items);
 
@@ -3747,18 +4006,16 @@ pub const PackageManager = struct {
                             }
                         }
                     }
-                }
 
-                // Resolve the version from the loaded NPM manifest
-                const manifest = this.manifests.getPtr(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
-                const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
-                    .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
-                    .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
-                    else => unreachable,
-                } orelse return if (behavior.isPeer()) null else switch (version.tag) {
-                    .npm => error.NoMatchingVersion,
-                    .dist_tag => error.DistTagNotFound,
-                    else => unreachable,
+                    if (behavior.isPeer()) {
+                        return null;
+                    }
+
+                    return switch (version.tag) {
+                        .npm => error.NoMatchingVersion,
+                        .dist_tag => error.DistTagNotFound,
+                        else => unreachable,
+                    };
                 };
 
                 return try this.getOrPutResolvedPackageWithFindResult(
@@ -3779,7 +4036,18 @@ pub const PackageManager = struct {
                 const folder_path = this.lockfile.str(&version.value.folder);
                 var buf2: bun.PathBuffer = undefined;
                 const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
-                    break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
+                    break :blk Path.joinAbsStringBuf(
+                        FileSystem.instance.top_level_dir,
+                        &buf2,
+                        &.{folder_path},
+                        .auto,
+                    );
+                    // break :blk Path.joinAbsStringBuf(
+                    //     strings.withoutSuffixComptime(this.original_package_json_path, "package.json"),
+                    //     &buf2,
+                    //     &[_]string{folder_path},
+                    //     .auto,
+                    // );
                 };
                 const res = FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
 
@@ -3798,7 +4066,7 @@ pub const PackageManager = struct {
             },
             .workspace => {
                 // package name hash should be used to find workspace path from map
-                const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(@truncate(name_hash)) orelse &version.value.workspace;
+                const workspace_path_raw: *const String = this.lockfile.workspace_paths.getPtr(name_hash) orelse &version.value.workspace;
                 const workspace_path = this.lockfile.str(workspace_path_raw);
                 var buf2: bun.PathBuffer = undefined;
                 const workspace_path_u8 = if (std.fs.path.isAbsolute(workspace_path)) workspace_path else blk: {
@@ -4293,13 +4561,9 @@ pub const PackageManager = struct {
                             if (!dependency.behavior.isPeer() or install_peer) {
                                 if (!this.hasCreatedNetworkTask(task_id)) {
                                     if (this.options.enable.manifest_cache) {
-                                        if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name_str) catch null) |manifest_| {
-                                            const manifest: Npm.PackageManifest = manifest_;
-                                            loaded_manifest = manifest;
-
-                                            if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
-                                                try this.manifests.put(this.allocator, manifest.pkg.name.hash, manifest);
-                                            }
+                                        var expired = false;
+                                        if (this.manifests.byNameHashAllowExpired(name_hash, &expired)) |manifest| {
+                                            loaded_manifest = manifest.*;
 
                                             // If it's an exact package version already living in the cache
                                             // We can skip the network request, even if it's beyond the caching period
@@ -4324,7 +4588,7 @@ pub const PackageManager = struct {
                                             }
 
                                             // Was it recent enough to just load it without the network call?
-                                            if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
+                                            if (this.options.enable.manifest_cache_control and !expired) {
                                                 _ = this.network_dedupe_map.remove(task_id);
                                                 continue :retry_from_manifests_ptr;
                                             }
@@ -5078,7 +5342,7 @@ pub const PackageManager = struct {
                     data.json_buf,
                 );
                 initializeStore();
-                const json = json_parser.ParseJSONUTF8(
+                const json = json_parser.ParsePackageJSONUTF8(
                     &package_json_source,
                     manager.log,
                     manager.allocator,
@@ -5311,24 +5575,22 @@ pub const PackageManager = struct {
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms);
-                        Output.prettyError("\n <d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
+                        Output.prettyError("\n<d>Downloaded <r><green>{s}<r> versions\n", .{name.slice()});
                         Output.flush();
                     }
 
                     if (response.status_code == 304) {
                         // The HTTP request was cached
                         if (manifest_req.loaded_manifest) |manifest| {
-                            const entry = try manager.manifests.getOrPut(manager.allocator, manifest.pkg.name.hash);
-                            entry.value_ptr.* = manifest;
+                            const entry = try manager.manifests.hash_map.getOrPut(manager.allocator, manifest.pkg.name.hash);
+                            entry.value_ptr.* = .{ .manifest = manifest };
 
                             if (timestamp_this_tick == null) {
                                 timestamp_this_tick = @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) +| 300;
                             }
 
-                            entry.value_ptr.*.pkg.public_max_age = timestamp_this_tick.?;
-                            {
-                                Npm.PackageManifest.Serializer.save(entry.value_ptr, manager.getTemporaryDirectory(), manager.getCacheDirectory()) catch {};
-                            }
+                            entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
+                            Npm.PackageManifest.Serializer.saveAsync(&entry.value_ptr.manifest, manager.getTemporaryDirectory(), manager.getCacheDirectory());
 
                             const dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
 
@@ -5451,7 +5713,7 @@ pub const PackageManager = struct {
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
-                        Output.prettyError(" <d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
+                        Output.prettyError("<d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
 
@@ -5516,7 +5778,7 @@ pub const PackageManager = struct {
                     }
                     const manifest = &task.data.package_manifest;
 
-                    _ = try manager.manifests.getOrPutValue(manager.allocator, manifest.pkg.name.hash, manifest.*);
+                    try manager.manifests.insert(manifest.pkg.name.hash, manifest);
 
                     const dependency_list_entry = manager.task_queue.getEntry(task.id).?;
                     const dependency_list = dependency_list_entry.value_ptr.*;
@@ -5897,7 +6159,7 @@ pub const PackageManager = struct {
             }
 
             if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 var parts = [_]string{ "install", "global" };
                 const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                 return try std.fs.cwd().makeOpenPath(path, .{});
@@ -5905,14 +6167,14 @@ pub const PackageManager = struct {
 
             if (!Environment.isWindows) {
                 if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var parts = [_]string{ ".bun", "install", "global" };
                     const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                     return try std.fs.cwd().makeOpenPath(path, .{});
                 }
             } else {
                 if (bun.getenvZ("USERPROFILE")) |home_dir| {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var parts = [_]string{ ".bun", "install", "global" };
                     const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
                     return try std.fs.cwd().makeOpenPath(path, .{});
@@ -5936,7 +6198,7 @@ pub const PackageManager = struct {
             }
 
             if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 var parts = [_]string{
                     "bin",
                 };
@@ -5945,7 +6207,7 @@ pub const PackageManager = struct {
             }
 
             if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
                 var parts = [_]string{
                     ".bun",
                     "bin",
@@ -6898,14 +7160,16 @@ pub const PackageManager = struct {
                                     },
                                 }
                             }
-                            break :brk null;
+
+                            break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
                         .uninitialized => switch (request.version.tag) {
                             .uninitialized => try allocator.dupe(u8, latest),
-                            else => null,
+                            else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
                         },
-                        else => null,
-                    } orelse try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
+                        .workspace => try allocator.dupe(u8, "workspace:*"),
+                        else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                    };
                 }
             }
         }
@@ -6947,20 +7211,31 @@ pub const PackageManager = struct {
         var fs = try Fs.FileSystem.init(null);
         const top_level_dir_no_trailing_slash = strings.withoutTrailingSlash(fs.top_level_dir);
         if (comptime Environment.isWindows) {
-            _ = Path.pathToPosixBuf(u8, strings.withoutTrailingSlash(fs.top_level_dir), &cwd_buf);
+            _ = Path.pathToPosixBuf(u8, top_level_dir_no_trailing_slash, &cwd_buf);
         } else {
             @memcpy(cwd_buf[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
         }
 
-        const original_cwd: string = cwd_buf[0..top_level_dir_no_trailing_slash.len];
+        var original_package_json_path_buf = std.ArrayListUnmanaged(u8).initCapacity(ctx.allocator, top_level_dir_no_trailing_slash.len + "/package.json".len + 1) catch bun.outOfMemory();
+        original_package_json_path_buf.appendSliceAssumeCapacity(top_level_dir_no_trailing_slash);
+        original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
+        original_package_json_path_buf.appendAssumeCapacity(0);
+
+        var original_package_json_path: stringZ = original_package_json_path_buf.items[0 .. top_level_dir_no_trailing_slash.len + "/package.json".len :0];
+        const original_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
 
         var workspace_names = Package.WorkspaceMap.init(ctx.allocator);
+        var workspace_package_json_cache: WorkspacePackageJSONCache = .{
+            .map = .{},
+        };
+
+        var workspace_name_hash: ?PackageNameHash = null;
 
         // Step 1. Find the nearest package.json directory
         //
         // We will walk up from the cwd, trying to find the nearest package.json file.
-        const package_json_file = brk: {
-            var this_cwd = original_cwd;
+        const root_package_json_file = root_package_json_file: {
+            var this_cwd: string = original_cwd;
             var created_package_json = false;
             const child_json = child: {
                 // if we are only doing `bun install` (no args), then we can open as read_only
@@ -6973,19 +7248,19 @@ pub const PackageManager = struct {
                 const need_write = subcommand != .install or cli.positionals.len > 1;
 
                 while (true) {
-                    const this_cwd_without_trailing_slash = strings.withoutTrailingSlash(this_cwd);
-                    var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-                    @memcpy(buf2[0..this_cwd_without_trailing_slash.len], this_cwd_without_trailing_slash);
-                    buf2[this_cwd_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-                    buf2[this_cwd_without_trailing_slash.len + "/package.json".len] = 0;
+                    var package_json_path_buf: bun.PathBuffer = undefined;
+                    @memcpy(package_json_path_buf[0..this_cwd.len], this_cwd);
+                    package_json_path_buf[this_cwd.len..package_json_path_buf.len][0.."/package.json".len].* = "/package.json".*;
+                    package_json_path_buf[this_cwd.len + "/package.json".len] = 0;
+                    const package_json_path = package_json_path_buf[0 .. this_cwd.len + "/package.json".len :0];
 
                     break :child std.fs.cwd().openFileZ(
-                        buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len :0].ptr,
+                        package_json_path,
                         .{ .mode = if (need_write) .read_write else .read_only },
                     ) catch |err| switch (err) {
                         error.FileNotFound => {
                             if (std.fs.path.dirname(this_cwd)) |parent| {
-                                this_cwd = parent;
+                                this_cwd = strings.withoutTrailingSlash(parent);
                                 continue;
                             } else {
                                 break;
@@ -6993,7 +7268,7 @@ pub const PackageManager = struct {
                         },
                         error.AccessDenied => {
                             Output.err("EACCES", "Permission denied while opening \"{s}\"", .{
-                                buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len],
+                                package_json_path,
                             });
                             if (need_write) {
                                 Output.note("package.json must be writable to add packages", .{});
@@ -7004,7 +7279,7 @@ pub const PackageManager = struct {
                         },
                         else => {
                             Output.err(err, "could not open \"{s}\"", .{
-                                buf2[0 .. this_cwd_without_trailing_slash.len + "/package.json".len],
+                                package_json_path,
                             });
                             return err;
                         },
@@ -7027,20 +7302,27 @@ pub const PackageManager = struct {
                 return error.MissingPackageJSON;
             };
 
-            const child_cwd = this_cwd;
+            bun.assert(strings.eqlLong(original_package_json_path_buf.items[0..this_cwd.len], this_cwd, true));
+            original_package_json_path_buf.items.len = this_cwd.len;
+            original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
+            original_package_json_path_buf.appendAssumeCapacity(0);
+
+            original_package_json_path = original_package_json_path_buf.items[0 .. this_cwd.len + "/package.json".len :0];
+            const child_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
+
             // Check if this is a workspace; if so, use root package
             var found = false;
             if (comptime subcommand != .link) {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
-                        var buf2: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-                        @memcpy(buf2[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
-                        buf2[parent_without_trailing_slash.len..buf2.len][0.."/package.json".len].* = "/package.json".*;
-                        buf2[parent_without_trailing_slash.len + "/package.json".len] = 0;
+                        var parent_path_buf: bun.PathBuffer = undefined;
+                        @memcpy(parent_path_buf[0..parent_without_trailing_slash.len], parent_without_trailing_slash);
+                        parent_path_buf[parent_without_trailing_slash.len..parent_path_buf.len][0.."/package.json".len].* = "/package.json".*;
+                        parent_path_buf[parent_without_trailing_slash.len + "/package.json".len] = 0;
 
                         const json_file = std.fs.cwd().openFileZ(
-                            buf2[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr,
+                            parent_path_buf[0 .. parent_without_trailing_slash.len + "/package.json".len :0].ptr,
                             .{ .mode = .read_write },
                         ) catch {
                             continue;
@@ -7053,7 +7335,7 @@ pub const PackageManager = struct {
                         const json_path = try bun.getFdPath(json_file.handle, &package_json_cwd_buf);
                         const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                         initializeStore();
-                        const json = try json_parser.ParseJSONUTF8(&json_source, ctx.log, ctx.allocator);
+                        const json = try json_parser.ParsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
                         if (json.asProperty("workspaces")) |prop| {
                             const json_array = switch (prop.expr.data) {
                                 .e_array => |arr| arr,
@@ -7065,29 +7347,41 @@ pub const PackageManager = struct {
                             };
                             var log = logger.Log.init(ctx.allocator);
                             defer log.deinit();
-                            const workspace_packages_count = Package.processWorkspaceNamesArray(
+                            _ = Package.processWorkspaceNamesArray(
                                 &workspace_names,
                                 ctx.allocator,
+                                &workspace_package_json_cache,
                                 &log,
                                 json_array,
                                 &json_source,
                                 prop.loc,
                                 null,
                             ) catch break;
-                            _ = workspace_packages_count;
-                            for (workspace_names.keys()) |path| {
-                                if (strings.eql(child_cwd, path)) {
+
+                            for (workspace_names.keys(), workspace_names.values()) |path, entry| {
+                                const child_path = if (std.fs.path.isAbsolute(path))
+                                    child_cwd
+                                else
+                                    bun.path.relativeNormalized(json_source.path.name.dir, child_cwd, .auto, true);
+
+                                const maybe_workspace_path = if (comptime Environment.isWindows) brk: {
+                                    @memcpy(parent_path_buf[0..child_path.len], child_path);
+                                    bun.path.dangerouslyConvertPathToPosixInPlace(u8, parent_path_buf[0..child_path.len]);
+                                    break :brk parent_path_buf[0..child_path.len];
+                                } else child_path;
+
+                                if (strings.eqlLong(maybe_workspace_path, path, true)) {
                                     fs.top_level_dir = parent;
-                                    if (comptime subcommand == .install) {
-                                        found = true;
-                                        child_json.close();
+                                    found = true;
+                                    child_json.close();
+                                    if (comptime Environment.isWindows) {
                                         try json_file.seekTo(0);
-                                        break :brk json_file;
-                                    } else {
-                                        break :brk child_json;
                                     }
+                                    workspace_name_hash = String.Builder.stringHash(entry.name);
+                                    break :root_package_json_file json_file;
                                 }
                             }
+
                             break;
                         }
                     }
@@ -7095,16 +7389,16 @@ pub const PackageManager = struct {
             }
 
             fs.top_level_dir = child_cwd;
-            break :brk child_json;
+            break :root_package_json_file child_json;
         };
 
         try bun.sys.chdir(fs.top_level_dir).unwrap();
         try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
-        cwd_buf[fs.top_level_dir.len] = '/';
+        cwd_buf[fs.top_level_dir.len] = std.fs.path.sep;
         cwd_buf[fs.top_level_dir.len + 1] = 0;
         fs.top_level_dir = cwd_buf[0 .. fs.top_level_dir.len + 1];
-        package_json_cwd = try bun.getFdPath(package_json_file.handle, &package_json_cwd_buf);
+        package_json_cwd = try bun.getFdPath(root_package_json_file.handle, &package_json_cwd_buf);
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
 
@@ -7146,18 +7440,6 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
-        var workspaces = std.StringArrayHashMap(Semver.Version).init(ctx.allocator);
-        for (workspace_names.values()) |entry| {
-            if (entry.version) |version_string| {
-                const sliced_version = SlicedString.init(version_string, version_string);
-                const result = Semver.Version.parse(sliced_version);
-                if (result.valid and result.wildcard == .none) {
-                    try workspaces.put(entry.name, result.version.min());
-                    continue;
-                }
-            }
-        }
-
         workspace_names.map.deinit();
 
         var manager = &instance;
@@ -7176,13 +7458,16 @@ pub const PackageManager = struct {
             }),
             .resolve_tasks = .{},
             .lockfile = undefined,
-            .root_package_json_file = package_json_file,
-            .workspaces = workspaces,
+            .root_package_json_file = root_package_json_file,
             // .progress
             .event_loop = .{
                 .mini = JSC.MiniEventLoop.init(bun.default_allocator),
             },
+            .original_package_json_path = original_package_json_path,
+            .workspace_package_json_cache = workspace_package_json_cache,
+            .workspace_name_hash = workspace_name_hash,
         };
+        manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(&manager.event_loop));
         manager.lockfile = try ctx.allocator.create(Lockfile);
         JSC.MiniEventLoop.global = &manager.event_loop.mini;
         if (!manager.options.enable.cache) {
@@ -7221,7 +7506,7 @@ pub const PackageManager = struct {
                 }
             }
 
-            break :brk @as(u32, @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0)))));
+            break :brk @truncate(@as(u64, @intCast(@max(std.time.timestamp(), 0))));
         };
         return manager;
     }
@@ -7254,6 +7539,11 @@ pub const PackageManager = struct {
         );
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
+        const top_level_dir_no_trailing_slash = strings.withoutTrailingSlash(Fs.FileSystem.instance.top_level_dir);
+        var original_package_json_path = allocator.allocSentinel(u8, top_level_dir_no_trailing_slash.len + "/package.json".len, 0) catch bun.outOfMemory();
+        @memcpy(original_package_json_path[0..top_level_dir_no_trailing_slash.len], top_level_dir_no_trailing_slash);
+        @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
+
         manager.* = PackageManager{
             .options = .{
                 .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
@@ -7272,7 +7562,7 @@ pub const PackageManager = struct {
             .event_loop = .{
                 .js = JSC.VirtualMachine.get().eventLoop(),
             },
-            .workspaces = std.StringArrayHashMap(Semver.Version).init(allocator),
+            .original_package_json_path = original_package_json_path[0..original_package_json_path.len :0],
         };
         manager.lockfile = try allocator.create(Lockfile);
 
@@ -7325,7 +7615,7 @@ pub const PackageManager = struct {
         ) -| std.time.s_per_day;
 
         if (root_dir.entries.hasComptimeQuery("bun.lockb")) {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             var parts = [_]string{
                 "./bun.lockb",
             };
@@ -7370,15 +7660,35 @@ pub const PackageManager = struct {
     }
 
     pub inline fn update(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .update, .update);
+        try updatePackageJSONAndInstallCatchError(ctx, .update, .update);
     }
 
     pub inline fn add(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .add, .add);
+        try updatePackageJSONAndInstallCatchError(ctx, .add, .add);
     }
 
     pub inline fn remove(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstall(ctx, .remove, .remove);
+        try updatePackageJSONAndInstallCatchError(ctx, .remove, .remove);
+    }
+
+    pub fn updatePackageJSONAndInstallCatchError(
+        ctx: Command.Context,
+        comptime op: Lockfile.Package.Diff.Op,
+        comptime subcommand: Subcommand,
+    ) !void {
+        updatePackageJSONAndInstall(ctx, op, subcommand) catch |err| {
+            switch (err) {
+                error.InstallFailed,
+                error.InvalidPackageJSON,
+                => {
+                    const log = &bun.CLI.Cli.log_;
+                    log.printForLogLevel(bun.Output.errorWriter()) catch {};
+                    bun.Global.exit(1);
+                    return;
+                },
+                else => return err,
+            }
+        };
     }
 
     pub inline fn link(ctx: Command.Context) !void {
@@ -7405,21 +7715,13 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
-                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
-                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
-                    current_package_json_buf,
-                    0,
-                );
-                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
-
-                const package_json_source = logger.Source.initPathString(
-                    package_json_cwd,
-                    current_package_json_buf[0..current_package_json_contents_len],
-                );
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                    Output.errGeneric("failed to read \"{s}\" for linking: {s}", .{ manager.original_package_json_path, @errorName(err) });
+                    Global.crash();
+                };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parseMain(&lockfile, ctx.allocator, manager.log, package_json_source, Features.folder);
+                try package.parse(&lockfile, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -7581,21 +7883,13 @@ pub const PackageManager = struct {
 
             // Step 1. parse the nearest package.json file
             {
-                const current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
-                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
-                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
-                    current_package_json_buf,
-                    0,
-                );
-                if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
-
-                const package_json_source = logger.Source.initPathString(
-                    package_json_cwd,
-                    current_package_json_buf[0..current_package_json_contents_len],
-                );
+                const package_json_source = bun.sys.File.toSource(manager.original_package_json_path, ctx.allocator).unwrap() catch |err| {
+                    Output.errGeneric("failed to read \"{s}\" for unlinking: {s}", .{ manager.original_package_json_path, @errorName(err) });
+                    Global.crash();
+                };
                 lockfile.initEmpty(ctx.allocator);
 
-                try package.parseMain(&lockfile, ctx.allocator, manager.log, package_json_source, Features.folder);
+                try package.parse(&lockfile, ctx.allocator, manager.log, package_json_source, void, {}, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
                     if (manager.options.log_level != .silent) {
@@ -8035,8 +8329,8 @@ pub const PackageManager = struct {
             // }
 
             if (args.option("--cwd")) |cwd_| {
-                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buf: bun.PathBuffer = undefined;
+                var buf2: bun.PathBuffer = undefined;
                 var final_path: [:0]u8 = undefined;
                 if (cwd_.len > 0 and cwd_[0] == '.') {
                     const cwd = try bun.getcwd(&buf);
@@ -8049,7 +8343,10 @@ pub const PackageManager = struct {
                     buf[cwd_.len] = 0;
                     final_path = buf[0..cwd_.len :0];
                 }
-                try bun.sys.chdir(final_path).unwrap();
+                bun.sys.chdir(final_path).unwrap() catch |err| {
+                    Output.errGeneric("failed to change directory to \"{s}\": {s}\n", .{ final_path, @errorName(err) });
+                    Global.crash();
+                };
             }
 
             const specified_backend: ?PackageInstall.Method = brk: {
@@ -8273,12 +8570,6 @@ pub const PackageManager = struct {
         defer update_requests.deinit(manager.allocator);
 
         if (manager.options.positionals.len <= 1) {
-            const examples_to_print: [3]string = undefined;
-            _ = examples_to_print;
-
-            const off = @as(u64, @intCast(std.time.milliTimestamp()));
-            _ = off;
-
             switch (op) {
                 .add => {
                     Output.errGeneric("no package specified to add", .{});
@@ -8302,7 +8593,6 @@ pub const PackageManager = struct {
         try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
             ctx,
             updates,
-            false,
             op,
             log_level,
         );
@@ -8312,69 +8602,67 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         ctx: Command.Context,
         updates: []UpdateRequest,
-        auto_free: bool,
         comptime op: Lockfile.Package.Diff.Op,
         comptime log_level: Options.LogLevel,
     ) !void {
-        if (ctx.log.errors > 0) {
+        if (manager.log.errors > 0) {
             if (comptime log_level != .silent) {
                 switch (Output.enable_ansi_colors) {
                     inline else => |enable_ansi_colors| {
-                        ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
                     },
                 }
             }
             Global.crash();
         }
 
-        const current_package_json_stat_size = try manager.root_package_json_file.getEndPos();
-        var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat_size + 64);
-        const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
-            current_package_json_buf,
-            0,
-        );
-        if (comptime Environment.isWindows) try manager.root_package_json_file.seekTo(0);
-
-        const package_json_source = logger.Source.initPathString(
-            package_json_cwd,
-            current_package_json_buf[0..current_package_json_contents_len],
-        );
+        var current_package_json = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            manager.original_package_json_path,
+            .{
+                .always_decode_escape_sequences = false,
+            },
+        )) {
+            .parse_err => |err| {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        };
 
         // If there originally was a newline at the end of their package.json, preserve it
         // so that we don't cause unnecessary diffs in their git history.
         // https://github.com/oven-sh/bun/issues/1375
-        const preserve_trailing_newline_at_eof_for_package_json = current_package_json_contents_len > 0 and
-            current_package_json_buf[current_package_json_contents_len - 1] == '\n';
-
-        initializeStore();
-        var current_package_json = json_parser.ParseJSONUTF8(&package_json_source, ctx.log, manager.allocator) catch |err| {
-            switch (Output.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                },
-            }
-
-            if (err == error.ParserError and ctx.log.errors > 0) {
-                Output.prettyErrorln("error: Failed to parse package.json", .{});
-                Global.crash();
-            }
-
-            Output.panic("<r><red>{s}<r> parsing package.json<r>", .{
-                @errorName(err),
-            });
-        };
+        const preserve_trailing_newline_at_eof_for_package_json = current_package_json.source.contents.len > 0 and
+            current_package_json.source.contents[current_package_json.source.contents.len - 1] == '\n';
 
         if (op == .remove) {
-            if (current_package_json.data != .e_object) {
+            if (current_package_json.root.data != .e_object) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is not an Object {{}}, so there's nothing to remove!", .{});
                 Global.crash();
-            } else if (current_package_json.data.e_object.properties.len == 0) {
+            } else if (current_package_json.root.data.e_object.properties.len == 0) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
                 Global.crash();
-            } else if (current_package_json.asProperty("devDependencies") == null and
-                current_package_json.asProperty("dependencies") == null and
-                current_package_json.asProperty("optionalDependencies") == null and
-                current_package_json.asProperty("peerDependencies") == null)
+            } else if (current_package_json.root.asProperty("devDependencies") == null and
+                current_package_json.root.asProperty("dependencies") == null and
+                current_package_json.root.asProperty("optionalDependencies") == null and
+                current_package_json.root.asProperty("peerDependencies") == null)
             {
                 Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to remove!", .{});
                 Global.exit(0);
@@ -8395,7 +8683,7 @@ pub const PackageManager = struct {
                 // they can even put it multiple times and we will just remove all of them
                 for (updates) |request| {
                     inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
-                        if (current_package_json.asProperty(list)) |query| {
+                        if (current_package_json.root.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 var dependencies = query.expr.data.e_object.properties.slice();
                                 var i: usize = 0;
@@ -8422,10 +8710,10 @@ pub const PackageManager = struct {
                                     // If the dependencies list is now empty, remove it from the package.json
                                     // since we're swapRemove, we have to re-sort it
                                     if (query.expr.data.e_object.properties.len == 0) {
-                                        var arraylist = current_package_json.data.e_object.properties.list();
+                                        var arraylist = current_package_json.root.data.e_object.properties.list();
                                         _ = arraylist.swapRemove(query.i);
-                                        current_package_json.data.e_object.properties.update(arraylist);
-                                        current_package_json.data.e_object.packageJSONSort();
+                                        current_package_json.root.data.e_object.properties.update(arraylist);
+                                        current_package_json.root.data.e_object.packageJSONSort();
                                     } else {
                                         var obj = query.expr.data.e_object;
                                         obj.alphabetizeProperties();
@@ -8440,9 +8728,9 @@ pub const PackageManager = struct {
             },
             .link, .add => {
                 try PackageJSONEditor.edit(
-                    ctx.allocator,
+                    manager.allocator,
                     updates,
-                    &current_package_json,
+                    &current_package_json.root,
                     dependency_list,
                     .{
                         .exact_versions = manager.options.enable.exact_versions,
@@ -8457,12 +8745,12 @@ pub const PackageManager = struct {
             else => {},
         }
 
-        var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
-        try buffer_writer.buffer.list.ensureTotalCapacity(ctx.allocator, current_package_json_buf.len + 1);
+        var buffer_writer = try JSPrinter.BufferWriter.init(manager.allocator);
+        try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, current_package_json.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var written = JSPrinter.printJSON(@TypeOf(&package_json_writer), &package_json_writer, current_package_json, &package_json_source) catch |err| {
+        var written = JSPrinter.printJSON(@TypeOf(&package_json_writer), &package_json_writer, current_package_json.root, &current_package_json.source) catch |err| {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
         };
@@ -8477,14 +8765,40 @@ pub const PackageManager = struct {
         // The Smarter™ approach is you resolve ahead of time and write to disk once!
         // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
         // Concurrent network requests are faster than doing one and then waiting until the next batch
-        var new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+        var new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
+        current_package_json.source.contents = new_package_json_source;
 
-        // Do not free the old package.json AST nodes
-        const old_ast_nodes = JSAst.Expr.Data.Store.toOwnedSlice();
-        // haha unless
-        defer if (auto_free) bun.default_allocator.free(old_ast_nodes);
+        // may or may not be the package json we are editing
+        const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
+        var root_package_json_path_buf: bun.PathBuffer = undefined;
+        @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+        @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
+        const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
 
-        try manager.installWithManager(ctx, new_package_json_source, log_level);
+        const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
+            .parse_err => |err| {
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| {
+                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                    },
+                }
+                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                    root_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .read_err => |err| {
+                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                    manager.original_package_json_path,
+                    @errorName(err),
+                });
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        };
+
+        try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
 
         if (op == .update or op == .add or op == .link) {
             for (manager.package_json_updates) |request| {
@@ -8498,24 +8812,23 @@ pub const PackageManager = struct {
 
             // Now, we _re_ parse our in-memory edited package.json
             // so we can commit the version we changed from the lockfile
-            current_package_json = json_parser.ParseJSONUTF8(&source, ctx.log, manager.allocator) catch |err| {
-                Output.prettyErrorln("<red>error<r><d>:<r> package.json failed to parse due to error {s}", .{@errorName(err)});
-                Global.exit(1);
-                return;
+            var new_package_json = json_parser.ParsePackageJSONUTF8(&source, manager.log, manager.allocator) catch |err| {
+                Output.prettyErrorln("package.json failed to parse due to error {s}", .{@errorName(err)});
+                Global.crash();
             };
 
             try PackageJSONEditor.edit(
-                ctx.allocator,
+                manager.allocator,
                 updates,
-                &current_package_json,
+                &new_package_json,
                 dependency_list,
                 .{
                     .exact_versions = manager.options.enable.exact_versions,
                     .add_trusted_dependencies = manager.options.do.trust_dependencies_from_args,
                 },
             );
-            var buffer_writer_two = try JSPrinter.BufferWriter.init(ctx.allocator);
-            try buffer_writer_two.buffer.list.ensureTotalCapacity(ctx.allocator, new_package_json_source.len + 1);
+            var buffer_writer_two = try JSPrinter.BufferWriter.init(manager.allocator);
+            try buffer_writer_two.buffer.list.ensureTotalCapacity(manager.allocator, source.contents.len + 1);
             buffer_writer_two.append_newline =
                 preserve_trailing_newline_at_eof_for_package_json;
             var package_json_writer_two = JSPrinter.BufferPrinter.init(buffer_writer_two);
@@ -8523,22 +8836,24 @@ pub const PackageManager = struct {
             written = JSPrinter.printJSON(
                 @TypeOf(&package_json_writer_two),
                 &package_json_writer_two,
-                current_package_json,
+                new_package_json,
                 &source,
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 Global.crash();
             };
 
-            new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
+            new_package_json_source = try manager.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
         }
 
         if (manager.options.do.write_package_json) {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
-            try manager.root_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.os.ftruncate(manager.root_package_json_file.handle, new_package_json_source.len) catch {};
-            manager.root_package_json_file.close();
+            const workspace_package_json_file = (try bun.sys.File.openat(bun.invalid_fd, manager.original_package_json_path, std.os.O.RDWR, 0).unwrap()).handle.asFile();
+
+            try workspace_package_json_file.pwriteAll(new_package_json_source, 0);
+            std.os.ftruncate(workspace_package_json_file.handle, new_package_json_source.len) catch {};
+            workspace_package_json_file.close();
 
             if (op == .remove) {
                 if (!any_changes) {
@@ -8548,7 +8863,7 @@ pub const PackageManager = struct {
 
                 var cwd = std.fs.cwd();
                 // This is not exactly correct
-                var node_modules_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var node_modules_buf: bun.PathBuffer = undefined;
                 bun.copy(u8, &node_modules_buf, "node_modules" ++ std.fs.path.sep_str);
                 const offset_buf = node_modules_buf["node_modules/".len..];
                 const name_hashes = manager.lockfile.packages.items(.name_hash);
@@ -8696,8 +9011,8 @@ pub const PackageManager = struct {
         resolutions: []Resolution,
         node: *Progress.Node,
         global_bin_dir: std.fs.Dir,
-        destination_dir_subpath_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
-        folder_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+        destination_dir_subpath_buf: bun.PathBuffer = undefined,
+        folder_path_buf: bun.PathBuffer = undefined,
         successfully_installed: Bitset,
         tree_iterator: *Lockfile.Tree.Iterator,
         command_ctx: Command.Context,
@@ -9231,7 +9546,7 @@ pub const PackageManager = struct {
                 },
                 else => {
                     if (comptime Environment.allow_assert) {
-                        @panic("bad");
+                        @panic("Internal assertion failure: unexpected resolution tag");
                     }
                     this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
@@ -10233,7 +10548,7 @@ pub const PackageManager = struct {
 
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
-        var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var out_buffer: bun.PathBuffer = undefined;
         const result = try bun.getFdPath(manager.options.global_bin_dir.fd, &out_buffer);
         out_buffer[result.len] = 0;
         const result_: [:0]u8 = out_buffer[0..result.len :0];
@@ -10309,12 +10624,20 @@ pub const PackageManager = struct {
         package_json_contents: string,
         comptime log_level: Options.LogLevel,
     ) !void {
-        // sleep off for maximum network throughput
+
+        // Start resolving DNS for the default registry immediately.
+        if (manager.options.scope.url.hostname.len > 0) {
+            var hostname_stack = std.heap.stackFallback(512, ctx.allocator);
+            const allocator = hostname_stack.get();
+            const hostname = try allocator.dupeZ(u8, manager.options.scope.url.hostname);
+            defer allocator.free(hostname);
+            bun.dns.internal.prefetch(manager.event_loop.loop(), hostname);
+        }
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
-                ctx.allocator,
-                ctx.log,
+                manager.allocator,
+                manager.log,
                 manager.options.lockfile_path,
             )
         else
@@ -10386,22 +10709,24 @@ pub const PackageManager = struct {
                     if (needs_new_lockfile) break :differ;
 
                     var lockfile: Lockfile = undefined;
-                    lockfile.initEmpty(ctx.allocator);
+                    lockfile.initEmpty(manager.allocator);
                     var maybe_root = Lockfile.Package{};
 
-                    try maybe_root.parseMain(
+                    try maybe_root.parse(
                         &lockfile,
-                        ctx.allocator,
-                        ctx.log,
+                        manager.allocator,
+                        manager.log,
                         package_json_source,
+                        void,
+                        {},
                         Features.main,
                     );
                     const mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
                     @memset(mapping, invalid_package_id);
 
                     manager.summary = try Package.Diff.generate(
-                        ctx.allocator,
-                        ctx.log,
+                        manager.allocator,
+                        manager.log,
                         manager.lockfile,
                         &lockfile,
                         &root,
@@ -10423,8 +10748,10 @@ pub const PackageManager = struct {
                             new_dep.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                         }
 
-                        lockfile.overrides.count(&lockfile, builder);
+                        for (lockfile.workspace_paths.values()) |path| builder.count(path.slice(lockfile.buffers.string_bytes.items));
+                        for (lockfile.workspace_versions.values()) |version| version.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
+                        lockfile.overrides.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
 
                         const off = @as(u32, @truncate(manager.lockfile.buffers.dependencies.items.len));
@@ -10486,6 +10813,39 @@ pub const PackageManager = struct {
                             }
                         }
 
+                        manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
+                            lockfile.buffers.string_bytes.items,
+                            *Lockfile.StringBuilder,
+                            builder,
+                        );
+
+                        // Update workspace paths
+                        try manager.lockfile.workspace_paths.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_paths.entries.len);
+                        {
+                            manager.lockfile.workspace_paths.clearRetainingCapacity();
+                            var iter = lockfile.workspace_paths.iterator();
+                            while (iter.next()) |entry| {
+                                // The string offsets will be wrong so fix them
+                                const path = entry.value_ptr.slice(lockfile.buffers.string_bytes.items);
+                                const str = builder.append(String, path);
+                                manager.lockfile.workspace_paths.putAssumeCapacity(entry.key_ptr.*, str);
+                            }
+                        }
+
+                        // Update workspace versions
+                        try manager.lockfile.workspace_versions.ensureTotalCapacity(manager.lockfile.allocator, lockfile.workspace_versions.entries.len);
+                        {
+                            manager.lockfile.workspace_versions.clearRetainingCapacity();
+                            var iter = lockfile.workspace_versions.iterator();
+                            while (iter.next()) |entry| {
+                                // Copy version string offsets
+                                const version = entry.value_ptr.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                                manager.lockfile.workspace_versions.putAssumeCapacity(entry.key_ptr.*, version);
+                            }
+                        }
+
+                        builder.clamp();
+
                         if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
                             for (manager.lockfile.buffers.dependencies.items, 0..) |*dependency, dependency_i| {
                                 if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
@@ -10499,14 +10859,6 @@ pub const PackageManager = struct {
                                 }
                             }
                         }
-
-                        manager.lockfile.packages.items(.scripts)[0] = maybe_root.scripts.clone(
-                            lockfile.buffers.string_bytes.items,
-                            *Lockfile.StringBuilder,
-                            builder,
-                        );
-
-                        builder.clamp();
 
                         // Split this into two passes because the below may allocate memory or invalidate pointers
                         if (manager.summary.add > 0 or manager.summary.update > 0) {
@@ -10539,7 +10891,7 @@ pub const PackageManager = struct {
 
         if (needs_new_lockfile) {
             root = .{};
-            manager.lockfile.initEmpty(ctx.allocator);
+            manager.lockfile.initEmpty(manager.allocator);
 
             if (manager.options.enable.frozen_lockfile and load_lockfile_result != .not_found) {
                 if (comptime log_level != .silent) {
@@ -10548,11 +10900,13 @@ pub const PackageManager = struct {
                 Global.crash();
             }
 
-            try root.parseMain(
+            try root.parse(
                 manager.lockfile,
-                ctx.allocator,
-                ctx.log,
+                manager.allocator,
+                manager.log,
                 package_json_source,
+                void,
+                {},
                 Features.main,
             );
 
@@ -10579,7 +10933,7 @@ pub const PackageManager = struct {
             if (comptime log_level.showProgress()) {
                 manager.startProgressBar();
             } else if (comptime log_level != .silent) {
-                Output.prettyErrorln(" Resolving dependencies", .{});
+                Output.prettyErrorln("Resolving dependencies", .{});
                 Output.flush();
             }
 
@@ -10659,7 +11013,7 @@ pub const PackageManager = struct {
             if (comptime log_level.showProgress()) {
                 manager.endProgressBar();
             } else if (comptime log_level != .silent) {
-                Output.prettyErrorln(" Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
+                Output.prettyErrorln("Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
                 Output.flush();
             }
         }
@@ -10808,7 +11162,7 @@ pub const PackageManager = struct {
                             break :brk;
                         }
 
-                        if (log_level != .silent) Output.prettyErrorln("\n <red>error: {s} deleting empty lockfile", .{@errorName(err)});
+                        if (log_level != .silent) Output.prettyErrorln("\n<red>error: {s} deleting empty lockfile", .{@errorName(err)});
                         break :save;
                     };
                 }
@@ -10849,7 +11203,7 @@ pub const PackageManager = struct {
                 manager.progress.root.end();
                 manager.progress = .{};
             } else if (comptime log_level != .silent) {
-                Output.prettyErrorln(" Saved lockfile", .{});
+                Output.prettyErrorln("Saved lockfile", .{});
                 Output.flush();
             }
         }
@@ -10868,7 +11222,7 @@ pub const PackageManager = struct {
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.progress.refresh();
             } else if (comptime log_level != .silent) {
-                Output.prettyErrorln(" Saved yarn.lock", .{});
+                Output.prettyErrorln("Saved yarn.lock", .{});
                 Output.flush();
             }
 
@@ -10918,7 +11272,7 @@ pub const PackageManager = struct {
 
                 switch (Output.enable_ansi_colors) {
                     inline else => |enable_ansi_colors| {
-                        try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), enable_ansi_colors);
+                        try Lockfile.Printer.Tree.print(&printer, Output.WriterType, Output.writer(), enable_ansi_colors, log_level);
                     },
                 }
 
@@ -10937,22 +11291,22 @@ pub const PackageManager = struct {
                             @truncate(manager.package_json_updates.len),
                         ),
                     );
-                    Output.pretty(" <green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
+                    Output.pretty("<green>{d}<r> package{s}<r> installed ", .{ pkgs_installed, if (pkgs_installed == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     printBlockedPackagesInfo(install_summary);
 
                     if (manager.summary.remove > 0) {
-                        Output.pretty("  Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
+                        Output.pretty("Removed: <cyan>{d}<r>\n", .{manager.summary.remove});
                     }
                 } else if (manager.summary.remove > 0) {
                     if (manager.to_remove.len > 0) {
                         for (manager.to_remove) |request| {
-                            Output.prettyln(" <r><red>-<r> {s}", .{request.name});
+                            Output.prettyln("<r><red>-<r> {s}", .{request.name});
                         }
                     }
 
-                    Output.pretty(" <r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+                    Output.pretty("<r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
                     Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
                     printed_timestamp = true;
                     printBlockedPackagesInfo(install_summary);
@@ -10969,7 +11323,7 @@ pub const PackageManager = struct {
                         printed_timestamp = true;
                         printBlockedPackagesInfo(install_summary);
                     } else {
-                        Output.pretty("<r> <green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
+                        Output.pretty("<r><green>Done<r>! Checked {d} package{s}<r> <d>(no changes)<r> ", .{
                             install_summary.skipped,
                             if (install_summary.skipped == 1) "" else "s",
                         });
@@ -11016,7 +11370,7 @@ pub const PackageManager = struct {
         }
 
         if (packages_count > 0) {
-            Output.prettyln("\n\n<d> Blocked {d} postinstall{s}. Run `bun pm untrusted` for details.<r>\n", .{
+            Output.prettyln("\n\n<d>Blocked {d} postinstall{s}. Run `bun pm untrusted` for details.<r>\n", .{
                 scripts_count,
                 if (scripts_count > 1) "s" else "",
             });
@@ -11095,3 +11449,73 @@ pub const PackageManifestError = error{
 };
 
 pub const LifecycleScriptSubprocess = @import("./lifecycle_script_runner.zig").LifecycleScriptSubprocess;
+
+pub const bun_install_js_bindings = struct {
+    const JSValue = JSC.JSValue;
+    const ZigString = JSC.ZigString;
+    const JSGlobalObject = JSC.JSGlobalObject;
+
+    pub fn generate(global: *JSGlobalObject) JSValue {
+        const obj = JSValue.createEmptyObject(global, 2);
+        const parseLockfile = ZigString.static("parseLockfile");
+        obj.put(global, parseLockfile, JSC.createCallback(global, parseLockfile, 1, jsParseLockfile));
+        return obj;
+    }
+
+    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        const allocator = bun.default_allocator;
+        var log = logger.Log.init(allocator);
+        defer log.deinit();
+
+        const args = callFrame.arguments(1).slice();
+        const cwd = args[0].toSliceOrNull(globalObject) orelse return .zero;
+        defer cwd.deinit();
+
+        const lockfile_path = Path.joinAbsStringZ(cwd.slice(), &[_]string{"bun.lockb"}, .auto);
+
+        var lockfile: Lockfile = undefined;
+        lockfile.initEmpty(allocator);
+
+        const load_result: Lockfile.LoadFromDiskResult = lockfile.loadFromDisk(allocator, &log, lockfile_path);
+
+        switch (load_result) {
+            .err => |err| {
+                globalObject.throw("failed to load lockfile: {s}, \"{s}\"", .{ @errorName(err.value), lockfile_path });
+                return .zero;
+            },
+            .not_found => {
+                globalObject.throw("lockfile not found: \"{s}\"", .{lockfile_path});
+                return .zero;
+            },
+            .ok => {},
+        }
+
+        var buffer = bun.MutableString.initEmpty(allocator);
+        defer buffer.deinit();
+
+        var buffered_writer = buffer.bufferedWriter();
+
+        std.json.stringify(
+            lockfile,
+            .{
+                .whitespace = .indent_2,
+                .emit_null_optional_fields = true,
+                .emit_nonportable_numbers_as_strings = true,
+            },
+            buffered_writer.writer(),
+        ) catch |err| {
+            globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
+            return .zero;
+        };
+
+        buffered_writer.flush() catch |err| {
+            globalObject.throw("failed to print lockfile as JSON: {s}", .{@errorName(err)});
+            return .zero;
+        };
+
+        var str = bun.String.createUTF8(buffer.list.items);
+        defer str.deref();
+
+        return str.toJSByParseJSON(globalObject);
+    }
+};

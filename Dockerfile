@@ -24,7 +24,7 @@ ARG ZIG_OPTIMIZE=ReleaseFast
 ARG CMAKE_BUILD_TYPE=Release
 
 ARG NODE_VERSION="20"
-ARG LLVM_VERSION="17"
+ARG LLVM_VERSION="16"
 ARG ZIG_VERSION="0.12.0-dev.1828+225fe6ddb"
 
 ARG SCCACHE_BUCKET
@@ -34,7 +34,7 @@ ARG SCCACHE_ENDPOINT
 ARG AWS_ACCESS_KEY_ID
 ARG AWS_SECRET_ACCESS_KEY
 
-FROM bitnami/minideb:bookworm as bun-base
+FROM bitnami/minideb:bullseye as bun-base
 
 ARG BUN_DOWNLOAD_URL_BASE
 ARG DEBIAN_FRONTEND
@@ -53,8 +53,10 @@ ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
 
 ENV CXX=clang++-${LLVM_VERSION}
 ENV CC=clang-${LLVM_VERSION}
-ENV AR=/usr/bin/llvm-ar
+ENV AR=/usr/bin/llvm-ar-${LLVM_VERSION}
 ENV LD=lld-${LLVM_VERSION}
+ENV LC_CTYPE=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
 ENV SCCACHE_REGION=${SCCACHE_REGION}
@@ -67,11 +69,13 @@ RUN install_packages \
   ca-certificates \
   curl \
   gnupg \
-  && echo "deb https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list \
-  && echo "deb-src https://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list \
+  && echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list \
+  && echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list \
   && curl -fsSL "https://apt.llvm.org/llvm-snapshot.gpg.key" | apt-key add - \
   && echo "deb https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
   && curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" | apt-key add - \
+  && echo "deb https://apt.kitware.com/ubuntu/ focal main" > /etc/apt/sources.list.d/kitware.list \
+  && curl -fsSL "https://apt.kitware.com/keys/kitware-archive-latest.asc" | apt-key add - \
   && install_packages \
   wget \
   bash \
@@ -415,6 +419,7 @@ COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 COPY src/runtime ${BUN_DIR}/src/runtime
 COPY src/runtime.js src/runtime.bun.js ${BUN_DIR}/src/
 COPY packages/bun-error ${BUN_DIR}/packages/bun-error
+COPY packages/bun-types ${BUN_DIR}/packages/bun-types
 COPY src/fallback.ts ${BUN_DIR}/src/fallback.ts
 COPY src/api ${BUN_DIR}/src/api
 
@@ -452,7 +457,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   mkdir -p build \
   && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
@@ -518,7 +523,7 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -581,7 +586,7 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \

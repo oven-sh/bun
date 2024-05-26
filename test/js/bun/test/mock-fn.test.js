@@ -90,6 +90,32 @@ describe("mock()", () => {
     expect(func).toHaveBeenCalled();
   });
 
+  test("toHaveReturned()", () => {
+    const func = jest.fn(() => "the jedi");
+    expect(func).not.toHaveReturned();
+    func();
+    expect(func).toHaveReturned();
+    expect(func).toHaveReturnedTimes(1);
+    expect(func.mock.calls).toHaveLength(1);
+    expect(func.mock.calls[0]).toBeEmpty();
+    func();
+    expect(func).toHaveReturnedTimes(2);
+    const func2 = jest.fn(() => {
+      throw new Error("the jedi");
+    });
+    expect(func2).not.toHaveReturned();
+    try {
+      func2();
+    } catch (e) {}
+
+    expect(func2).not.toHaveReturned();
+    try {
+      expect(func2).toHaveReturned();
+    } catch (e) {
+      expect(e.message).toContain("Function threw an exception");
+    }
+  });
+
   test("passes this value", () => {
     const fn = jest.fn(function hey() {
       "use strict";

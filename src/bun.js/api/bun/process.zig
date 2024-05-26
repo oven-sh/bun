@@ -178,6 +178,15 @@ pub const Process = struct {
             .event_loop = JSC.EventLoopHandle.init(event_loop),
             .sync = sync_,
             .poller = .{ .detached = {} },
+            .status = brk: {
+                if (posix.has_exited) {
+                    var rusage = std.mem.zeroes(Rusage);
+                    const waitpid_result = PosixSpawn.wait4(posix.pid, 0, &rusage);
+                    break :brk Status.from(posix.pid, &waitpid_result) orelse Status{ .running = {} };
+                }
+
+                break :brk Status{ .running = {} };
+            },
         });
     }
 
@@ -283,9 +292,28 @@ pub const Process = struct {
         this.onExit(status, &rusage_result);
     }
 
-    pub fn watch(this: *Process, vm: anytype) JSC.Maybe(void) {
-        _ = vm; // autofix
+    pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
+        if (this.hasExited()) {
+            this.onExit(this.status, &std.mem.zeroes(Rusage));
+            return .{ .result = true };
+        }
 
+        switch (this.watch()) {
+            .err => |err| {
+                if (comptime Environment.isPosix) {
+                    if (err.getErrno() == .SRCH) {
+                        this.wait(true);
+                        return .{ .result = this.hasExited() };
+                    }
+                }
+
+                return .{ .err = err };
+            },
+            .result => return .{ .result = this.hasExited() },
+        }
+    }
+
+    pub fn watch(this: *Process) JSC.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
             return JSC.Maybe(void){ .result = {} };
@@ -319,10 +347,6 @@ pub const Process = struct {
             },
             .err => |err| {
                 this.poller.fd.disableKeepingProcessAlive(this.event_loop);
-
-                if (err.getErrno() != .SRCH) {
-                    @panic("This shouldn't happen");
-                }
 
                 return .{ .err = err };
             },
@@ -361,19 +385,19 @@ pub const Process = struct {
 
         bun.windows.libuv.log("Process.onExit({d}) code: {d}, signal: {?}", .{ process.pid, exit_code, signal_code });
 
-        if (exit_code >= 0) {
-            this.close();
-            this.onExit(
-                .{
-                    .exited = .{ .code = exit_code, .signal = signal_code orelse @enumFromInt(0) },
-                },
-                &rusage,
-            );
-        } else if (signal_code) |sig| {
+        if (signal_code) |sig| {
             this.close();
 
             this.onExit(
                 .{ .signaled = sig },
+                &rusage,
+            );
+        } else if (exit_code >= 0) {
+            this.close();
+            this.onExit(
+                .{
+                    .exited = .{ .code = exit_code, .signal = @enumFromInt(0) },
+                },
                 &rusage,
             );
         } else {
@@ -551,7 +575,10 @@ pub const Status = union(enum) {
 
         if (exit_code != null) {
             return .{
-                .exited = .{ .code = exit_code.?, .signal = @enumFromInt(signal orelse 0) },
+                .exited = .{
+                    .code = exit_code.?,
+                    .signal = @enumFromInt(signal orelse 0),
+                },
             };
         } else if (signal != null) {
             return .{
@@ -1052,6 +1079,9 @@ pub const PosixSpawnResult = struct {
 
     memfds: [3]bool = .{ false, false, false },
 
+    // ESRCH can happen when requesting the pidfd
+    has_exited: bool = false,
+
     pub fn close(this: *WindowsSpawnResult) void {
         for (this.extra_pipes.items) |fd| {
             _ = bun.sys.close(fd);
@@ -1115,9 +1145,18 @@ pub const PosixSpawnResult = struct {
                         }
                     }
 
-                    if (err == .NOSYS) {
+                    // No such process can happen if it exited between the time we got the pid and called pidfd_open
+                    // Until we switch to clone3, this needs to be handled separately.
+                    if (err == .SRCH) {
+                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
+                    }
+
+                    // seccomp filters can be used to block this system call or pidfd's altogether
+                    // https://github.com/moby/moby/issues/42680
+                    // so let's treat a bunch of these as actually meaning we should use the waiter thread fallback instead.
+                    if (err == .NOSYS or err == .OPNOTSUPP or err == .PERM or err == .ACCES or err == .INVAL) {
                         WaiterThread.setShouldUseWaiterThread();
-                        return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
+                        return .{ .err = bun.sys.Error.fromCode(err, .pidfd_open) };
                     }
 
                     var status: u32 = 0;
@@ -1414,9 +1453,19 @@ pub fn spawnProcessPosix(
         argv,
         envp,
     );
+    var failed_after_spawn = false;
+    defer {
+        if (failed_after_spawn) {
+            for (to_close_on_error.items) |fd| {
+                _ = bun.sys.close(fd);
+            }
+            to_close_on_error.clearAndFree();
+        }
+    }
 
     switch (spawn_result) {
         .err => {
+            failed_after_spawn = true;
             return .{ .err = spawn_result.err };
         },
         .result => |pid| {
@@ -1429,7 +1478,18 @@ pub fn spawnProcessPosix(
                     .result => |pidfd| {
                         spawned.pidfd = pidfd;
                     },
-                    .err => {},
+                    .err => |err| {
+                        // we intentionally do not clean up any of the file descriptors in this case
+                        // you could have data sitting in stdout, just waiting.
+                        if (err.getErrno() == .SRCH) {
+                            spawned.has_exited = true;
+
+                            // a real error occurred. one we should not assume means pidfd_open is blocked.
+                        } else if (!WaiterThread.shouldUseWaiterThread()) {
+                            failed_after_spawn = true;
+                            return .{ .err = err };
+                        }
+                    },
                 }
             }
 
@@ -1611,7 +1671,7 @@ pub fn spawnProcessWindows(
     uv_process_options.stdio_count = @intCast(stdio_containers.items.len);
 
     uv_process_options.exit_cb = &Process.onExitUV;
-    var process = Process.new(.{
+    const process = Process.new(.{
         .event_loop = options.windows.loop,
         .pid = 0,
     });
@@ -1699,24 +1759,28 @@ pub const sync = struct {
         cwd: []const u8 = "",
         detached: bool = false,
 
-        argv: []const []const u8 = &.{},
+        argv: []const []const u8,
+        /// null = inherit parent env
         envp: ?[*:null]?[*:0]const u8,
 
         use_execve_on_macos: bool = false,
         argv0: ?[*:0]const u8 = null,
 
-        windows: if (Environment.isWindows) WindowsSpawnOptions.WindowsOptions else void = if (Environment.isWindows) .{} else undefined,
+        windows: if (Environment.isWindows) WindowsSpawnOptions.WindowsOptions else void = if (Environment.isWindows) .{},
 
-        pub const Stdio = union(enum) {
-            inherit: void,
-            ignore: void,
-            buffer: if (Environment.isWindows) *uv.Pipe else void,
+        pub const Stdio = enum {
+            inherit,
+            ignore,
+            buffer,
 
             pub fn toStdio(this: *const Stdio) SpawnOptions.Stdio {
                 return switch (this.*) {
-                    .inherit => .{ .inherit = this.inherit },
-                    .ignore => .{ .ignore = this.ignore },
-                    .buffer => .{ .buffer = this.buffer },
+                    .inherit => .inherit,
+                    .ignore => .ignore,
+                    .buffer => .{
+                        .buffer = if (Environment.isWindows)
+                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
+                    },
                 };
             }
         };
@@ -1745,6 +1809,11 @@ pub const sync = struct {
 
         pub fn isOK(this: *const Result) bool {
             return this.status.isOK();
+        }
+
+        pub fn deinit(this: *const Result) void {
+            this.stderr.deinit();
+            this.stdout.deinit();
         }
     };
 

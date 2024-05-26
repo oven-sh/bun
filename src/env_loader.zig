@@ -166,7 +166,7 @@ pub const Loader = struct {
                     }
                     //strips .
                     if (host[0] == '.') {
-                        host = host[1.. :0];
+                        host = host[1..];
                     }
                     //hostname ends with suffix
                     if (strings.endsWith(url.hostname, host)) {
@@ -193,7 +193,7 @@ pub const Loader = struct {
 
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const ccache_path = bun.which(
             &buf,
             this.get("PATH") orelse return,
@@ -238,6 +238,28 @@ pub const Loader = struct {
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);
         return true;
+    }
+
+    pub fn getAs(this: *const Loader, comptime T: type, key: string) ?T {
+        const value = this.get(key) orelse return null;
+        switch (comptime T) {
+            bool => {
+                if (strings.eqlComptime(value, "")) return false;
+                if (strings.eqlComptime(value, "0")) return false;
+                if (strings.eqlComptime(value, "NO")) return false;
+                if (strings.eqlComptime(value, "OFF")) return false;
+                if (strings.eqlComptime(value, "false")) return false;
+
+                return true;
+            },
+            else => @compileError("Implement getAs for this type"),
+        }
+    }
+
+    pub var has_no_clear_screen_cli_flag: ?bool = null;
+    /// Returns whether the `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` env var is set to something truthy
+    pub fn hasSetNoClearTerminalOnReload(this: *const Loader, default_value: bool) bool {
+        return (has_no_clear_screen_cli_flag orelse this.getAs(bool, "BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD")) orelse default_value;
     }
 
     pub fn get(this: *const Loader, key: string) ?string {

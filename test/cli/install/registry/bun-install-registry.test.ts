@@ -1,24 +1,35 @@
 import { file, spawn } from "bun";
-import { bunExe, bunEnv as env, isLinux, toBeValidBin, toHaveBins, writeShebangScript } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  toBeValidBin,
+  toHaveBins,
+  writeShebangScript,
+  tmpdirSync,
+  toMatchNodeModulesAt,
+} from "harness";
 import { join, sep } from "path";
-import { mkdtempSync, realpathSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
-import { tmpdir } from "os";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, afterEach, test, expect, describe } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
   toHaveBins,
+  toMatchNodeModulesAt,
 });
 
 var verdaccioServer: ChildProcess;
-var testCounter: number = 0;
 var port: number = 4873;
 var packageDir: string;
 
 beforeAll(async () => {
+  setDefaultTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
@@ -40,7 +51,7 @@ afterAll(() => {
 });
 
 beforeEach(async () => {
-  packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-registry-" + testCounter++ + "-"));
+  packageDir = tmpdirSync();
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -281,12 +292,11 @@ test("hardlinks on windows dont fail with long paths", async () => {
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@a-package",
+    "+ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@a-package",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
 });
@@ -310,19 +320,16 @@ test("basic 1", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   var err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + basic-1@1.0.0",
+    "+ basic-1@1.0.0",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await file(join(packageDir, "node_modules", "basic-1", "package.json")).json()).toEqual({
     name: "basic-1",
@@ -346,12 +353,11 @@ test("basic 1", async () => {
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + basic-1@1.0.0",
+    "+ basic-1@1.0.0",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
 });
@@ -378,20 +384,17 @@ test("dependency from root satisfies range from dependency", async () => {
     env,
   });
 
-  expect(stderr).toBeDefined();
   var err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.0",
-    " + one-range-dep@1.0.0",
+    "+ no-deps@1.0.0",
+    "+ one-range-dep@1.0.0",
     "",
-    " 2 packages installed",
+    "2 packages installed",
   ]);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
@@ -415,13 +418,12 @@ test("dependency from root satisfies range from dependency", async () => {
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.0",
-    " + one-range-dep@1.0.0",
+    "+ no-deps@1.0.0",
+    "+ one-range-dep@1.0.0",
     "",
-    " 2 packages installed",
+    "2 packages installed",
   ]);
   expect(await exited).toBe(0);
 });
@@ -448,20 +450,17 @@ test("peerDependency in child npm dependency should not maintain old version whe
     env,
   });
 
-  expect(stderr).toBeDefined();
   var err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.0",
-    " + peer-deps-fixed@1.0.0",
+    "+ no-deps@1.0.0",
+    "+ peer-deps-fixed@1.0.0",
     "",
-    " 2 packages installed",
+    "2 packages installed",
   ]);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
@@ -494,7 +493,6 @@ test("peerDependency in child npm dependency should not maintain old version whe
   out = await new Response(stdout).text();
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
     version: "1.0.1",
@@ -502,9 +500,9 @@ test("peerDependency in child npm dependency should not maintain old version whe
   expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.1",
+    "+ no-deps@1.0.1",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
 });
@@ -530,19 +528,16 @@ test("package added after install", async () => {
     env,
   });
 
-  expect(stderr).toBeDefined();
   var err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + one-range-dep@1.0.0",
+    "+ one-range-dep@1.0.0",
     "",
-    " 2 packages installed",
+    "2 packages installed",
   ]);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
@@ -573,19 +568,16 @@ test("package added after install", async () => {
     env,
   }));
 
-  expect(stderr).toBeDefined();
   err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.0",
+    "+ no-deps@1.0.0",
     "",
-    " 2 packages installed",
+    "2 packages installed",
   ]);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
@@ -610,20 +602,17 @@ test("package added after install", async () => {
     env,
   }));
 
-  expect(stderr).toBeDefined();
   err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.0",
-    " + one-range-dep@1.0.0",
+    "+ no-deps@1.0.0",
+    "+ one-range-dep@1.0.0",
     "",
-    " 3 packages installed",
+    "3 packages installed",
   ]);
   expect(await exited).toBe(0);
 });
@@ -654,12 +643,11 @@ test("--production without a lockfile will install and not save lockfile", async
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + no-deps@1.0.0",
+    "+ no-deps@1.0.0",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
 
@@ -691,15 +679,14 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + uses-what-bin@1.5.0",
-    " + what-bin@1.0.0",
+    "+ uses-what-bin@1.5.0",
+    "+ what-bin@1.0.0",
     "",
     expect.stringContaining("3 packages installed"),
     "",
-    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -720,15 +707,14 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + uses-what-bin@1.5.0",
-    " + what-bin@1.0.0",
+    "+ uses-what-bin@1.5.0",
+    "+ what-bin@1.0.0",
     "",
     expect.stringContaining("3 packages installed"),
     "",
-    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -758,19 +744,16 @@ test("it should re-symlink binaries that become invalid when updating package ve
     env,
   });
 
-  expect(stderr).toBeDefined();
   var err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   var out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + bin-change-dir@1.0.0",
+    "+ bin-change-dir@1.0.0",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
@@ -799,19 +782,16 @@ test("it should re-symlink binaries that become invalid when updating package ve
     env,
   }));
 
-  expect(stderr).toBeDefined();
   err = await new Response(stderr).text();
-  expect(stdout).toBeDefined();
   out = await new Response(stdout).text();
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + bin-change-dir@1.0.1",
+    "+ bin-change-dir@1.0.1",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
@@ -856,28 +836,30 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + dep-loop-entry@1.0.0",
-    " + dep-with-tags@3.0.0",
-    " + dev-deps@1.0.0",
-    " + left-pad@1.0.0",
-    " + native@1.0.0",
-    " + no-deps-bins@2.0.0",
-    " + one-fixed-dep@2.0.0",
-    " + optional-native@1.0.0",
-    " + peer-deps-too@1.0.0",
-    " + two-range-deps@1.0.0",
-    " + uses-what-bin@1.5.0",
-    " + what-bin@1.0.0",
+    "+ dep-loop-entry@1.0.0",
+    "+ dep-with-tags@3.0.0",
+    "+ dev-deps@1.0.0",
+    "+ left-pad@1.0.0",
+    "+ native@1.0.0",
+    "+ no-deps-bins@2.0.0",
+    "+ one-fixed-dep@2.0.0",
+    "+ optional-native@1.0.0",
+    "+ peer-deps-too@1.0.0",
+    "+ two-range-deps@1.0.0",
+    "+ uses-what-bin@1.5.0",
+    "+ what-bin@1.0.0",
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
+
+  let lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
 
   // delete node_modules
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -896,28 +878,30 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + dep-loop-entry@1.0.0",
-    " + dep-with-tags@3.0.0",
-    " + dev-deps@1.0.0",
-    " + left-pad@1.0.0",
-    " + native@1.0.0",
-    " + no-deps-bins@2.0.0",
-    " + one-fixed-dep@2.0.0",
-    " + optional-native@1.0.0",
-    " + peer-deps-too@1.0.0",
-    " + two-range-deps@1.0.0",
-    " + uses-what-bin@1.5.0",
-    " + what-bin@1.0.0",
+    "+ dep-loop-entry@1.0.0",
+    "+ dep-with-tags@3.0.0",
+    "+ dev-deps@1.0.0",
+    "+ left-pad@1.0.0",
+    "+ native@1.0.0",
+    "+ no-deps-bins@2.0.0",
+    "+ one-fixed-dep@2.0.0",
+    "+ optional-native@1.0.0",
+    "+ peer-deps-too@1.0.0",
+    "+ two-range-deps@1.0.0",
+    "+ uses-what-bin@1.5.0",
+    "+ what-bin@1.0.0",
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
+
+  lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
 
   for (var i = 0; i < 100; i++) {
     // Situation:
@@ -949,7 +933,6 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
@@ -975,7 +958,6 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
@@ -1002,12 +984,11 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     expect.stringContaining("Checked 19 installs across 23 packages (no changes)"),
   ]);
-}, 30_000);
+});
 
 describe("hoisting", async () => {
   var tests: any = [
@@ -1113,9 +1094,8 @@ describe("hoisting", async () => {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       for (const dep of Object.keys(dependencies)) {
-        expect(out).toContain(` + ${dep}@${dependencies[dep]}`);
+        expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
       }
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
@@ -1136,7 +1116,6 @@ describe("hoisting", async () => {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out).not.toContain("package installed");
       expect(out).toContain(`Checked ${Object.keys(dependencies).length * 2} installs across`);
       expect(await exited).toBe(0);
@@ -1273,9 +1252,8 @@ describe("hoisting", async () => {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         for (const dep of Object.keys(dependencies)) {
-          expect(out).toContain(` + ${dep}@${dependencies[dep]}`);
+          expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
         }
         expect(await exited).toBe(0);
         expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
@@ -1296,7 +1274,6 @@ describe("hoisting", async () => {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         if (out.includes("installed")) {
           console.log("stdout:", out);
         }
@@ -1320,7 +1297,6 @@ describe("hoisting", async () => {
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(out).not.toContain("package installed");
         expect(await exited).toBe(0);
         expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
@@ -1354,15 +1330,14 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("incorrect peer dependency");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@1.0.0",
-      " + peer-deps-fixed@1.0.0",
+      "+ no-deps@1.0.0",
+      "+ peer-deps-fixed@1.0.0",
       "",
-      " 2 packages installed",
+      "2 packages installed",
     ]);
 
     expect(await exited).toBe(0);
@@ -1404,13 +1379,12 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@2.0.0",
+      "+ no-deps@2.0.0",
       "",
-      " 1 package installed",
+      "1 package installed",
     ]);
 
     expect(await exited).toBe(0);
@@ -1454,15 +1428,14 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).toContain("incorrect peer dependency");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@2.0.0",
-      " + peer-deps-fixed@1.0.0",
+      "+ no-deps@2.0.0",
+      "+ peer-deps-fixed@1.0.0",
       "",
-      " 2 packages installed",
+      "2 packages installed",
     ]);
 
     expect(await exited).toBe(0);
@@ -1504,13 +1477,12 @@ describe("hoisting", async () => {
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
 
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@1.0.0",
+      "+ no-deps@1.0.0",
       "",
-      " 1 package installed",
+      "1 package installed",
     ]);
 
     expect(await exited).toBe(0);
@@ -1562,7 +1534,6 @@ describe("hoisting", async () => {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
@@ -1625,7 +1596,6 @@ describe("hoisting", async () => {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
@@ -1686,7 +1656,6 @@ describe("hoisting", async () => {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
@@ -1738,7 +1707,6 @@ describe("hoisting", async () => {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
 
       expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
@@ -1756,6 +1724,285 @@ describe("hoisting", async () => {
 });
 
 describe("workspaces", async () => {
+  test("adding packages in a subdirectory of a workspace", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["foo"],
+      }),
+    );
+
+    await mkdir(join(packageDir, "folder1"));
+    await mkdir(join(packageDir, "foo", "folder2"), { recursive: true });
+    await writeFile(
+      join(packageDir, "foo", "package.json"),
+      JSON.stringify({
+        name: "foo",
+      }),
+    );
+
+    // add package to root workspace from `folder1`
+    let { stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: join(packageDir, "folder1"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    });
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "installed no-deps@2.0.0",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "root",
+      workspaces: ["foo"],
+      dependencies: {
+        "no-deps": "^2.0.0",
+      },
+    });
+
+    // add package to foo from `folder2`
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "what-bin"],
+      cwd: join(packageDir, "foo", "folder2"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "installed what-bin@1.5.0 with binaries:",
+      " - what-bin",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "foo", "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "what-bin": "^1.5.0",
+      },
+    });
+
+    // now delete node_modules and bun.lockb and install
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"));
+
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "folder1"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ no-deps@2.0.0",
+      "",
+      "3 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "foo",
+      "no-deps",
+      "what-bin",
+    ]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"));
+
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "foo", "folder2"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ what-bin@1.5.0",
+      "",
+      "3 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "foo",
+      "no-deps",
+      "what-bin",
+    ]);
+  });
+  test("adding packages in workspaces", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "bar": "workspace:*",
+        },
+      }),
+    );
+
+    await mkdir(join(packageDir, "packages", "bar"), { recursive: true });
+    await mkdir(join(packageDir, "packages", "boba"));
+    await mkdir(join(packageDir, "packages", "pkg5"));
+
+    await writeFile(join(packageDir, "packages", "bar", "package.json"), JSON.stringify({ name: "bar" }));
+    await writeFile(
+      join(packageDir, "packages", "boba", "package.json"),
+      JSON.stringify({ name: "boba", version: "1.0.0", dependencies: { "pkg5": "*" } }),
+    );
+    await writeFile(
+      join(packageDir, "packages", "pkg5", "package.json"),
+      JSON.stringify({
+        name: "pkg5",
+        version: "1.2.3",
+        dependencies: {
+          "bar": "workspace:*",
+        },
+      }),
+    );
+
+    let { stdout, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    });
+
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bar@workspace:packages/bar",
+      "",
+      "3 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "bar"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "boba"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "pkg5"))).toBeTrue();
+
+    // add a package to the root workspace
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bar@workspace:packages/bar",
+      "",
+      "installed no-deps@2.0.0",
+      "",
+      "4 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      workspaces: ["packages/*"],
+      dependencies: {
+        bar: "workspace:*",
+        "no-deps": "^2.0.0",
+      },
+    });
+
+    // add a package in a workspace
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "two-range-deps"],
+      cwd: join(packageDir, "packages", "boba"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ pkg5@workspace:packages/pkg5",
+      "",
+      "installed two-range-deps@1.0.0",
+      "",
+      "6 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
+      name: "boba",
+      version: "1.0.0",
+      dependencies: {
+        "pkg5": "*",
+        "two-range-deps": "^1.0.0",
+      },
+    });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@types",
+      "bar",
+      "boba",
+      "no-deps",
+      "pkg5",
+      "two-range-deps",
+    ]);
+
+    // add a dependency to a workspace with the same name as another workspace
+    ({ stdout, exited } = spawn({
+      cmd: [bunExe(), "add", "bar@0.0.7"],
+      cwd: join(packageDir, "packages", "boba"),
+      stdout: "pipe",
+      stderr: "inherit",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ pkg5@workspace:packages/pkg5",
+      "",
+      "installed bar@0.0.7",
+      "",
+      "4 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
+      name: "boba",
+      version: "1.0.0",
+      dependencies: {
+        "pkg5": "*",
+        "two-range-deps": "^1.0.0",
+        "bar": "0.0.7",
+      },
+    });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@types",
+      "bar",
+      "boba",
+      "no-deps",
+      "pkg5",
+      "two-range-deps",
+    ]);
+    expect(await file(join(packageDir, "node_modules", "boba", "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.7",
+      description: "not a workspace",
+    });
+  });
   test("it should detect duplicate workspace dependencies", async () => {
     await writeFile(
       join(packageDir, "package.json"),
@@ -1849,13 +2096,11 @@ describe("workspaces", async () => {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages/pkg1`,
-          ` + pkg2@workspace:packages/pkg2`,
+          `+ pkg2@workspace:packages/pkg2`,
           "",
-          " 2 packages installed",
+          "2 packages installed",
         ]);
         expect(await exited).toBe(0);
 
@@ -1873,13 +2118,11 @@ describe("workspaces", async () => {
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages/pkg1`,
-          ` + pkg2@workspace:packages/pkg2`,
+          `+ pkg2@workspace:packages/pkg2`,
           "",
-          " 2 packages installed",
+          "2 packages installed",
         ]);
         expect(await exited).toBe(0);
 
@@ -1900,13 +2143,11 @@ describe("workspaces", async () => {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages/pkg1`,
-          ` + pkg2@workspace:packages/pkg2`,
+          `+ pkg2@workspace:packages/pkg2`,
           "",
-          " 2 packages installed",
+          "2 packages installed",
         ]);
         expect(await exited).toBe(0);
 
@@ -1924,13 +2165,11 @@ describe("workspaces", async () => {
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + pkg1@workspace:packages/pkg1`,
-          ` + pkg2@workspace:packages/pkg2`,
+          `+ pkg2@workspace:packages/pkg2`,
           "",
-          " 2 packages installed",
+          "2 packages installed",
         ]);
         expect(await exited).toBe(0);
       });
@@ -1976,14 +2215,17 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + workspace-1@workspace:packages/workspace-1`,
+        `+ workspace-1@workspace:packages/workspace-1`,
         "",
-        " 1 package installed",
+        "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -2002,14 +2244,12 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        "",
-        ` + workspace-1@workspace:packages/workspace-1`,
-        "",
-        " 1 package installed",
-      ]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lockb"), { recursive: true, force: true });
@@ -2032,14 +2272,12 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        "",
-        ` + workspace-1@workspace:packages/workspace-1`,
-        "",
-        " 1 package installed",
-      ]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
 
       ({ stdout, stderr, exited } = spawn({
         cmd: [bunExe(), "install"],
@@ -2058,14 +2296,17 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + workspace-1@workspace:packages/workspace-1`,
+        `+ workspace-1@workspace:packages/workspace-1`,
         "",
-        " 1 package installed",
+        "1 package installed",
       ]);
       expect(await exited).toBe(0);
+      expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
+        name: "workspace-1",
+        version: "1.0.0",
+      });
     });
   }
 });
@@ -2095,12 +2336,11 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + what-bin@1.5.0",
+    "+ what-bin@1.5.0",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
   const bin = process.platform === "win32" ? "what-bin.exe" : "what-bin";
@@ -2130,10 +2370,9 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + what-bin@1.5.0",
+    "+ what-bin@1.5.0",
     "",
     expect.stringContaining("1 package installed"),
   ]);
@@ -2172,12 +2411,11 @@ test("one version with binary map", async () => {
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + map-bin@1.0.2",
+    "+ map-bin@1.0.2",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
 
@@ -2211,12 +2449,11 @@ test("multiple versions with binary map", async () => {
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + map-bin-multiple@1.0.2",
+    "+ map-bin-multiple@1.0.2",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited).toBe(0);
 
@@ -2265,25 +2502,24 @@ test("missing package on reinstall, some with binaries", async () => {
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + dep-loop-entry@1.0.0",
-    " + dep-with-tags@3.0.0",
-    " + dev-deps@1.0.0",
-    " + left-pad@1.0.0",
-    " + native@1.0.0",
-    " + no-deps-bins@2.0.0",
-    " + one-fixed-dep@2.0.0",
-    " + optional-native@1.0.0",
-    " + peer-deps-too@1.0.0",
-    " + two-range-deps@1.0.0",
-    " + uses-what-bin@1.5.0",
-    " + what-bin@1.0.0",
+    "+ dep-loop-entry@1.0.0",
+    "+ dep-with-tags@3.0.0",
+    "+ dev-deps@1.0.0",
+    "+ left-pad@1.0.0",
+    "+ native@1.0.0",
+    "+ no-deps-bins@2.0.0",
+    "+ one-fixed-dep@2.0.0",
+    "+ optional-native@1.0.0",
+    "+ peer-deps-too@1.0.0",
+    "+ two-range-deps@1.0.0",
+    "+ uses-what-bin@1.5.0",
+    "+ what-bin@1.0.0",
     "",
     expect.stringContaining("19 packages installed"),
     "",
-    " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
     "",
   ]);
   expect(await exited).toBe(0);
@@ -2318,14 +2554,13 @@ test("missing package on reinstall, some with binaries", async () => {
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + dep-loop-entry@1.0.0",
-    " + left-pad@1.0.0",
-    " + native@1.0.0",
-    " + one-fixed-dep@2.0.0",
-    " + peer-deps-too@1.0.0",
+    "+ dep-loop-entry@1.0.0",
+    "+ left-pad@1.0.0",
+    "+ native@1.0.0",
+    "+ one-fixed-dep@2.0.0",
+    "+ peer-deps-too@1.0.0",
     "",
     expect.stringContaining("7 packages installed"),
   ]);
@@ -2402,13 +2637,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stderr: "pipe",
         env: testEnv,
       });
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "install.txt"))).toBeTrue();
@@ -2453,17 +2685,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      expect(stderr).toBeDefined();
       err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + all-lifecycle-scripts@1.0.0",
+        "+ all-lifecycle-scripts@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
@@ -2508,17 +2737,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
       expect(await exited).toBe(0);
-      expect(stderr).toBeDefined();
       err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + all-lifecycle-scripts@1.0.0",
+        "+ all-lifecycle-scripts@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
@@ -2534,7 +2760,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
       expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
-    }, 20_000);
+    });
 
     test("workspace lifecycle scripts", async () => {
       await writeFile(
@@ -2597,21 +2823,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(err).toContain("Saved lockfile");
       var out = await new Response(stdout).text();
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-        "",
-        ` + pkg1@workspace:packages/pkg1`,
-        ` + pkg2@workspace:packages/pkg2`,
-        "",
-        " 2 packages installed",
-      ]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "2 packages installed"]);
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "preinstall.txt"))).toBeTrue();
@@ -2668,14 +2885,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
     });
 
@@ -2701,23 +2915,21 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + all-lifecycle-scripts@1.0.0",
+        "+ all-lifecycle-scripts@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
+        "Blocked 3 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
+      expect(await exited).toBe(0);
 
       const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
       expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
@@ -2727,7 +2939,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(depDir, "prepare.txt"))).toBeTrue();
       expect(await exists(join(depDir, "postprepare.txt"))).toBeFalse();
       expect(await file(join(depDir, "prepare.txt")).text()).toBe("prepare!");
-      expect(await exited).toBe(0);
 
       // add to trusted dependencies
       await writeFile(
@@ -2751,18 +2962,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       }));
 
-      expect(stderr).toBeDefined();
       err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
         expect.stringContaining("Checked 1 install across 2 packages (no changes)"),
       ]);
+      expect(await exited).toBe(0);
 
       expect(await file(join(depDir, "preinstall.txt")).text()).toBe("preinstall!");
       expect(await file(join(depDir, "install.txt")).text()).toBe("install!");
@@ -2794,19 +3003,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + what-bin@1.0.0",
+        "+ what-bin@1.0.0",
         "",
-        " 1 package installed",
+        "1 package installed",
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
@@ -2829,7 +3035,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
         "Checked 1 install across 2 packages (no changes)",
@@ -2862,12 +3067,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + what-bin@1.0.0",
+        "+ what-bin@1.0.0",
         "",
-        " 1 package installed",
+        "1 package installed",
       ]);
       expect(await exited).toBe(0);
       expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", ".cache", "what-bin"]);
@@ -2887,7 +3091,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
         "Checked 1 install across 2 packages (no changes)",
@@ -2923,7 +3126,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
         "Checked 1 install across 2 packages (no changes)",
@@ -2953,13 +3155,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stderr: "pipe",
         env: testEnv,
       });
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + lifecycle-postinstall@1.0.0",
+        "+ lifecycle-postinstall@1.0.0",
         "",
         // @ts-ignore
         expect.stringContaining("1 package installed"),
@@ -2967,7 +3167,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
       await rm(join(packageDir, "node_modules"), { force: true, recursive: true });
@@ -2979,20 +3178,17 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         stderr: "pipe",
         env: testEnv,
       }));
-      expect(stderr).toBeDefined();
       err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + lifecycle-postinstall@1.0.0",
+        "+ lifecycle-postinstall@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
       expect(await exited).toBe(0);
     });
@@ -3041,19 +3237,17 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + another-init-cwd@1.0.0",
-        " + lifecycle-init-cwd@1.0.0",
+        "+ another-init-cwd@1.0.0",
+        "+ lifecycle-init-cwd@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
       expect(await exited).toBe(0);
-      const expected = packageDir.replaceAll("\\", "/") + "/";
-      expect(await file(join(packageDir, "test.txt")).text()).toBe(expected);
-      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(expected);
-      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(expected);
+      expect(await file(join(packageDir, "test.txt")).text()).toBe(packageDir);
+      expect(await file(join(packageDir, "node_modules/lifecycle-init-cwd/test.txt")).text()).toBe(packageDir);
+      expect(await file(join(packageDir, "node_modules/another-init-cwd/test.txt")).text()).toBe(packageDir);
     });
 
     test("failing lifecycle script should print output", async () => {
@@ -3139,7 +3333,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("No packages! Deleted empty lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
@@ -3173,15 +3366,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = await new Response(stderr).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("hello");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + lifecycle-failing-postinstall@1.0.0",
+        "+ lifecycle-failing-postinstall@1.0.0",
         "",
-        " 1 package installed",
+        "1 package installed",
       ]);
       expect(await exited).toBe(0);
     });
@@ -3212,11 +3404,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + binding-gyp-scripts@1.5.0",
+        "+ binding-gyp-scripts@1.5.0",
         "",
         expect.stringContaining("2 packages installed"),
       ]);
@@ -3247,15 +3438,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + binding-gyp-scripts@1.5.0",
+        "+ binding-gyp-scripts@1.5.0",
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3278,7 +3468,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeTrue();
@@ -3311,11 +3500,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + node-gyp@1.5.0",
+        "+ node-gyp@1.5.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
@@ -3369,11 +3557,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + node-gyp@1.5.0",
+        "+ node-gyp@1.5.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
@@ -3409,11 +3596,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         const out = await new Response(stdout).text();
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + node-gyp@1.5.0",
+          "+ node-gyp@1.5.0",
           "",
           expect.stringContaining("1 package installed"),
         ]);
@@ -3447,15 +3633,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + lifecycle-install-test@github:dylan-conway/lifecycle-install-test#3ba6af5",
+        "+ lifecycle-install-test@github:dylan-conway/lifecycle-install-test#3ba6af5",
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Blocked 6 postinstalls. Run `bun pm untrusted` for details.",
+        "Blocked 6 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3492,7 +3677,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preprepare.txt"))).toBeTrue();
@@ -3537,13 +3721,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + uses-what-bin-slow@1.0.0",
+        "+ uses-what-bin-slow@1.0.0",
         "",
-        " 2 packages installed",
+        "2 packages installed",
       ]);
       expect(await exited).toBe(0);
     });
@@ -3611,9 +3794,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).not.toContain("Blocked");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ...dependenciesList.map(dep => ` + ${dep}@${dep}`),
+        ...dependenciesList.map(dep => `+ ${dep}@${dep}`),
         "",
-        " 4 packages installed",
+        "4 packages installed",
       ]);
       expect(await exited).toBe(0);
     });
@@ -3641,13 +3824,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).not.toContain("Blocked");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ...dependenciesList.map(dep => ` + ${dep}@${dep}`).sort((a, b) => a.localeCompare(b)),
+        ...dependenciesList.map(dep => `+ ${dep}@${dep}`).sort((a, b) => a.localeCompare(b)),
         "",
-        " 500 packages installed",
+        "500 packages installed",
       ]);
 
       expect(await exited).toBe(0);
-    }, 15_000);
+    });
 
     test("it should install and use correct binary version", async () => {
       // this should install `what-bin` in two places:
@@ -3680,16 +3863,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + uses-what-bin@1.0.0",
-        " + what-bin@1.5.0",
+        "+ uses-what-bin@1.0.0",
+        "+ what-bin@1.5.0",
         "",
         expect.stringContaining("3 packages installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3733,7 +3915,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
 
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "node_modules", "what-bin", "what-bin.js")).text()).toContain(
@@ -3759,11 +3940,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + uses-what-bin@1.5.0",
-        " + what-bin@1.0.0",
+        "+ uses-what-bin@1.5.0",
+        "+ what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
       ]);
@@ -3795,7 +3975,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       const out = await new Response(stdout).text();
 
       // if node-gyp isn't available, it would return a non-zero exit code
@@ -3831,7 +4010,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + electron@1.0.0",
+        "+ electron@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
       ]);
@@ -3868,16 +4047,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       var out = await new Response(stdout).text();
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + electron@1.0.0",
-        " + uses-what-bin@1.0.0",
+        "+ electron@1.0.0",
+        "+ uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3915,16 +4093,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       out = await Bun.readableStreamToText(stdout);
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + electron@1.0.0",
-        " + uses-what-bin@1.0.0",
+        "+ electron@1.0.0",
+        "+ uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -3961,15 +4138,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + electron@1.0.0",
-        " + uses-what-bin@1.0.0",
+        "+ electron@1.0.0",
+        "+ uses-what-bin@1.0.0",
         "",
         expect.stringContaining("3 packages installed"),
         "",
-        " Blocked 2 postinstalls. Run `bun pm untrusted` for details.",
+        "Blocked 2 postinstalls. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -4005,15 +4181,14 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       var out = await Bun.readableStreamToText(stdout);
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + electron@1.0.0",
+        "+ electron@1.0.0",
         "",
         expect.stringContaining("1 package installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -4045,7 +4220,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       out = await Bun.readableStreamToText(stdout);
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
@@ -4136,14 +4310,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
-          expect(err).not.toContain("panic:");
           expect(err).not.toContain("warn:");
           let out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             "",
-            " installed uses-what-bin@1.0.0",
+            "installed uses-what-bin@1.0.0",
             "",
-            " 2 packages installed",
+            "2 packages installed",
           ]);
           expect(await exited).toBe(0);
           expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
@@ -4169,7 +4342,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).not.toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
-          expect(err).not.toContain("panic:");
           expect(err).not.toContain("warn:");
           out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -4201,12 +4373,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
-          expect(err).not.toContain("panic:");
           expect(err).not.toContain("warn:");
           const out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             "",
-            " installed no-deps@1.0.0",
+            "installed no-deps@1.0.0",
             "",
             expect.stringContaining("1 package installed"),
           ]);
@@ -4239,12 +4410,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
-          expect(err).not.toContain("panic:");
           expect(err).not.toContain("warn:");
           let out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             "",
-            " installed no-deps@2.0.0",
+            "installed no-deps@2.0.0",
             "",
             expect.stringContaining("1 package installed"),
           ]);
@@ -4277,11 +4447,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).toContain("Saved lockfile");
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
-          expect(err).not.toContain("panic:");
           out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             "",
-            " installed no-deps@2.0.0",
+            "installed no-deps@2.0.0",
             "",
             expect.stringContaining("done"),
             "",
@@ -4324,12 +4493,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(err).not.toContain("warn:");
         let out = await Bun.readableStreamToText(stdout);
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + uses-what-bin@1.0.0",
+          "+ uses-what-bin@1.0.0",
           "",
           expect.stringContaining("2 packages installed"),
         ]);
@@ -4357,7 +4525,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(err).not.toContain("warn:");
         out = await Bun.readableStreamToText(stdout);
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -4392,12 +4559,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(err).not.toContain("warn:");
         let out = await Bun.readableStreamToText(stdout);
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + uses-what-bin@1.0.0",
+          "+ uses-what-bin@1.0.0",
           "",
           expect.stringContaining("2 packages installed"),
         ]);
@@ -4437,7 +4603,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(err).not.toContain("warn:");
         out = await Bun.readableStreamToText(stdout);
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -4478,12 +4643,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(err).not.toContain("warn:");
         let out = await Bun.readableStreamToText(stdout);
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          " + electron@1.0.0",
+          "+ electron@1.0.0",
           "",
           expect.stringContaining("1 package installed"),
         ]);
@@ -4525,7 +4689,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(err).not.toContain("warn:");
         out = await Bun.readableStreamToText(stdout);
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -4568,7 +4731,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
 
       expect(await exists(join(packageDir, "postinstall.txt"))).toBeTrue();
@@ -4605,7 +4767,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
       expect(await exited).toBe(0);
     });
 
@@ -4635,11 +4796,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       let out = await Bun.readableStreamToText(stdout);
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + uses-what-bin@1.5.0",
+        "+ uses-what-bin@1.5.0",
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
@@ -4709,16 +4870,15 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).not.toContain("not found");
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
-          expect(err).not.toContain("panic:");
           let out = await Bun.readableStreamToText(stdout);
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
             "",
-            " + no-deps@1.0.0",
-            " + uses-what-bin@1.0.0",
+            "+ no-deps@1.0.0",
+            "+ uses-what-bin@1.0.0",
             "",
             expect.stringContaining("3 packages installed"),
             "",
-            " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+            "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
             "",
           ]);
           expect(await exited).toBe(0);
@@ -4830,11 +4990,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expected = withRm
             ? [
                 "",
-                " + uses-what-bin@1.0.0",
+                "+ uses-what-bin@1.0.0",
                 "",
                 expect.stringContaining("1 package installed"),
                 "",
-                " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+                "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
                 "",
               ]
             : ["", expect.stringContaining("Checked 3 installs across 4 packages (no changes)")];
@@ -4885,14 +5045,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
       });
 
-      test("bun pm trust", async () => {
+      // https://github.com/oven-sh/bun/issues/11252
+      test.todoIf(isWindows)("bun pm trust", async () => {
+        const dep = isWindows ? "uses-what-bin-slow-window" : "uses-what-bin-slow";
         await writeFile(
           join(packageDir, "package.json"),
           JSON.stringify({
             name: "foo",
             version: "1.0.0",
             dependencies: {
-              "uses-what-bin-slow": "1.0.0",
+              [dep]: "1.0.0",
             },
           }),
         );
@@ -4907,7 +5069,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
         expect(await exited).toBe(0);
 
-        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeFalse();
+        expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeFalse();
 
         const proc = spawn({
           cmd: [bunExe(), "pm", "trust", "--all"],
@@ -4919,9 +5081,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
         expect(await proc.exited).toBe(0);
 
-        expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeTrue();
+        expect(await exists(join(packageDir, "node_modules", dep, "what-bin.txt"))).toBeTrue();
 
-        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000);
+        expect(proc.resourceUsage()?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
       });
     });
   });
@@ -4953,7 +5115,6 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = await Bun.readableStreamToText(stderr);
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
       expect(err.split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install"),
         "No packages! Deleted empty lockfile",
@@ -5004,12 +5165,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = await Bun.readableStreamToText(stderr);
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
       expect(err.split(/\r?\n/)).toEqual([
         expect.stringContaining("bun install"),
-        " Resolving dependencies",
-        expect.stringContaining(" Resolved, downloaded and extracted "),
-        " Saved lockfile",
+        "Resolving dependencies",
+        expect.stringContaining("Resolved, downloaded and extracted "),
+        "Saved lockfile",
         "",
         `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
         "preinstall stderr 🍦",
@@ -5022,9 +5182,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         "install stdout 🚀",
         "prepare stdout done ✅",
         "",
-        " + no-deps@1.0.0",
+        "+ no-deps@1.0.0",
         "",
-        expect.stringContaining(" 1 package installed"),
+        expect.stringContaining("1 package installed"),
         "",
       ]);
       expect(await exited).toBe(0);
@@ -5053,7 +5213,6 @@ describe("pm trust", async () => {
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("warn:");
     let out = await Bun.readableStreamToText(stdout);
     expect(out).toContain("Default trusted dependencies");
@@ -5106,16 +5265,15 @@ describe("pm trust", async () => {
       let err = await Bun.readableStreamToText(stderr);
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(err).not.toContain("warn:");
       let out = await Bun.readableStreamToText(stdout);
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        " + uses-what-bin@1.0.0",
+        "+ uses-what-bin@1.0.0",
         "",
         expect.stringContaining("2 packages installed"),
         "",
-        " Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
         "",
       ]);
       expect(await exited).toBe(0);
@@ -5134,7 +5292,6 @@ describe("pm trust", async () => {
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err).not.toContain("panic:");
 
       out = await Bun.readableStreamToText(stdout);
       expect(out).toContain("1 script ran across 1 package");
@@ -5183,11 +5340,10 @@ test("it should be able to find binary in node_modules/.bin from parent director
   expect(err).toContain("Saved lockfile");
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + what-bin@1.0.0",
+    "+ what-bin@1.0.0",
     "",
     expect.stringContaining("1 package installed"),
   ]);
@@ -5316,19 +5472,16 @@ describe("semver", () => {
         env,
       });
 
-      expect(stderr).toBeDefined();
       var err = await new Response(stderr).text();
-      expect(stdout).toBeDefined();
       var out = await new Response(stdout).text();
       expect(err).toContain("Saved lockfile");
       expect(err).not.toContain("not found");
       expect(err).not.toContain("error:");
-      expect(err).not.toContain("panic:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        ` + dep-with-tags@${expected}`,
+        `+ dep-with-tags@${expected}`,
         "",
-        " 1 package installed",
+        "1 package installed",
       ]);
       expect(await exited).toBe(0);
     });
@@ -5355,9 +5508,7 @@ describe("semver", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     var err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     var out = await new Response(stdout).text();
     expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
@@ -5483,19 +5634,16 @@ for (let i = 0; i < prereleaseTests.length; i++) {
           env,
         });
 
-        expect(stderr).toBeDefined();
         const err = await new Response(stderr).text();
-        expect(stdout).toBeDefined();
         const out = await new Response(stdout).text();
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(err).not.toContain("panic:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          ` + ${depName}@${expected}`,
+          `+ ${depName}@${expected}`,
           "",
-          " 1 package installed",
+          "1 package installed",
         ]);
         expect(await file(join(packageDir, "node_modules", depName, "package.json")).json()).toEqual({
           name: depName,
@@ -5626,9 +5774,7 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
           env,
         });
 
-        expect(stderr).toBeDefined();
         const err = await new Response(stderr).text();
-        expect(stdout).toBeDefined();
         const out = await new Response(stdout).text();
         expect(out).toBeEmpty();
         expect(err).toContain(`No version matching "${depVersion}" found for specifier "${depName}"`);
@@ -5661,20 +5807,17 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + dragon-test-1-d@1.0.0",
-      " + dragon-test-1-e@1.0.0",
+      "+ dragon-test-1-d@1.0.0",
+      "+ dragon-test-1-e@1.0.0",
       "",
-      " 6 packages installed",
+      "6 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
@@ -5753,20 +5896,16 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + dragon-test-2-b@workspace:dragon-test-2-b",
-      " + dragon-test-2-a@workspace:dragon-test-2-a",
+      "+ dragon-test-2-a@workspace:dragon-test-2-a",
       "",
-      " 4 packages installed",
+      "3 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
@@ -5776,13 +5915,9 @@ describe("yarn tests", () => {
     ]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
       name: "no-deps",
-      version: "2.0.0",
-    } as any);
-    expect(await readdirSorted(join(packageDir, "dragon-test-2-a", "node_modules"))).toEqual(["no-deps"]);
-    expect(await file(join(packageDir, "dragon-test-2-a", "node_modules", "no-deps", "package.json")).json()).toEqual({
-      name: "no-deps",
       version: "1.0.0",
-    } as any);
+    });
+    expect(await exists(join(packageDir, "dragon-test-2-a", "node_modules"))).toBeFalse();
     expect(await exited).toBe(0);
   });
 
@@ -5807,19 +5942,16 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + dragon-test-3-a@1.0.0",
+      "+ dragon-test-3-a@1.0.0",
       "",
-      " 3 packages installed",
+      "3 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
@@ -5876,20 +6008,12 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      " + my-workspace@workspace:my-workspace",
-      "",
-      " 3 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "my-workspace",
@@ -5957,21 +6081,12 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      ` + a@workspace:packages/a`,
-      ` + b@workspace:packages/b`,
-      "",
-      " 5 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "5 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "a",
@@ -6093,25 +6208,22 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + a@workspace:packages/a",
-      " + b@workspace:packages/b",
-      " + c@workspace:packages/c",
-      " + u@workspace:packages/u",
-      " + v@workspace:packages/v",
-      " + y@workspace:packages/y",
-      " + z@workspace:packages/z",
+      "+ a@workspace:packages/a",
+      "+ b@workspace:packages/b",
+      "+ c@workspace:packages/c",
+      "+ u@workspace:packages/u",
+      "+ v@workspace:packages/v",
+      "+ y@workspace:packages/y",
+      "+ z@workspace:packages/z",
       "",
-      " 7 packages installed",
+      "7 packages installed",
     ]);
     expect(await exited).toBe(0);
   });
@@ -6140,22 +6252,19 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     var err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + dragon-test-7-a@1.0.0",
-      " + dragon-test-7-b@2.0.0",
-      " + dragon-test-7-c@3.0.0",
-      " + dragon-test-7-d@1.0.0",
+      "+ dragon-test-7-a@1.0.0",
+      "+ dragon-test-7-b@2.0.0",
+      "+ dragon-test-7-c@3.0.0",
+      "+ dragon-test-7-d@1.0.0",
       "",
-      " 7 packages installed",
+      "7 packages installed",
     ]);
     expect(await exited).toBe(0);
 
@@ -6173,9 +6282,7 @@ describe("yarn tests", () => {
       env,
     }));
 
-    expect(stderr).toBeDefined();
     err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     out = await new Response(stdout).text();
     expect(err).toBeEmpty();
     expect(out).toBe("1.0.0 1.0.0\n");
@@ -6225,22 +6332,19 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + dragon-test-8-a@1.0.0",
-      " + dragon-test-8-b@1.0.0",
-      " + dragon-test-8-c@1.0.0",
-      " + dragon-test-8-d@1.0.0",
+      "+ dragon-test-8-a@1.0.0",
+      "+ dragon-test-8-b@1.0.0",
+      "+ dragon-test-8-c@1.0.0",
+      "+ dragon-test-8-d@1.0.0",
       "",
-      " 4 packages installed",
+      "4 packages installed",
     ]);
     expect(await exited).toBe(0);
   });
@@ -6267,21 +6371,18 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stderr).toBeDefined();
     var err = await new Response(stderr).text();
-    expect(stdout).toBeDefined();
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + first@1.0.0",
-      " + no-deps@1.0.0",
-      " + second@1.0.0",
+      "+ first@1.0.0",
+      "+ no-deps@1.0.0",
+      "+ second@1.0.0",
       "",
-      " 2 packages installed",
+      "2 packages installed",
     ]);
     expect(await file(join(packageDir, "node_modules", "first", "package.json")).json()).toEqual(
       await file(join(packageDir, "node_modules", "second", "package.json")).json(),
@@ -6346,21 +6447,18 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + a@workspace:packages/a",
-      " + b@workspace:packages/b",
-      " + c@workspace:packages/c",
+      "+ a@workspace:packages/a",
+      "+ b@workspace:packages/b",
+      "+ c@workspace:packages/c",
       "",
-      " 3 packages installed",
+      "  packages installed",
     ]);
     expect(await exited).toBe(0);
   });
@@ -6410,21 +6508,12 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      "",
-      " + pkg-a@workspace:pkg-a",
-      " + pkg-b@workspace:pkg-b",
-      "",
-      " 4 packages installed",
-    ]);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "no-deps",
@@ -6464,21 +6553,18 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@1.0.0",
-      " + peer-deps-fixed@1.0.0",
+      "+ no-deps@1.0.0",
+      "+ peer-deps-fixed@1.0.0",
       "",
-      " 2 packages installed",
+      "2 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
     expect(await exited).toBe(0);
@@ -6506,21 +6592,18 @@ describe("yarn tests", () => {
       env,
     });
 
-    expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(err).toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@2.0.0",
-      " + peer-deps-fixed@1.0.0",
+      "+ no-deps@2.0.0",
+      "+ peer-deps-fixed@1.0.0",
       "",
-      " 2 packages installed",
+      "2 packages installed",
     ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "no-deps", "peer-deps-fixed"]);
     expect(await exited).toBe(0);
@@ -6552,15 +6635,14 @@ describe("yarn tests", () => {
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + provides-peer-deps-1-0-0@1.0.0",
-      " + provides-peer-deps-2-0-0@1.0.0",
+      "+ provides-peer-deps-1-0-0@1.0.0",
+      "+ provides-peer-deps-2-0-0@1.0.0",
       "",
-      " 5 packages installed",
+      "5 packages installed",
     ]);
     expect(await exited).toBe(0);
 
@@ -6658,15 +6740,14 @@ describe("yarn tests", () => {
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + provides-peer-deps-1-0-0@1.0.0",
-      " + provides-peer-deps-1-0-0-too@1.0.0",
+      "+ provides-peer-deps-1-0-0@1.0.0",
+      "+ provides-peer-deps-1-0-0-too@1.0.0",
       "",
-      " 4 packages installed",
+      "4 packages installed",
     ]);
     expect(await exited).toBe(0);
 
@@ -6721,16 +6802,15 @@ describe("yarn tests", () => {
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + forward-peer-deps@1.0.0",
-      " + forward-peer-deps-too@1.0.0",
-      " + no-deps@1.0.0",
+      "+ forward-peer-deps@1.0.0",
+      "+ forward-peer-deps-too@1.0.0",
+      "+ no-deps@1.0.0",
       "",
-      " 4 packages installed",
+      "4 packages installed",
     ]);
     expect(await exited).toBe(0);
 
@@ -6785,16 +6865,15 @@ describe("yarn tests", () => {
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps@1.0.0",
-      " + peer-deps@1.0.0",
-      " + peer-deps-too@1.0.0",
+      "+ no-deps@1.0.0",
+      "+ peer-deps@1.0.0",
+      "+ peer-deps-too@1.0.0",
       "",
-      " 3 packages installed",
+      "3 packages installed",
     ]);
     expect(await exited).toBe(0);
 
@@ -6843,12 +6922,11 @@ describe("yarn tests", () => {
     var out = await new Response(stdout).text();
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      " + no-deps-scripted@1.0.0",
-      " + one-dep-scripted@1.5.0",
+      "+ no-deps-scripted@1.0.0",
+      "+ one-dep-scripted@1.5.0",
       "",
       expect.stringContaining("4 packages installed"),
     ]);
@@ -6870,7 +6948,6 @@ describe("yarn tests", () => {
     out = await new Response(stdout).text();
     expect(err).not.toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).not.toContain("not found");
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);

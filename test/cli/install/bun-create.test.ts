@@ -1,14 +1,13 @@
 import { spawn, spawnSync } from "bun";
-import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunExe, bunEnv as env } from "harness";
-import { mkdtemp, realpath, rm, mkdir, stat, exists } from "fs/promises";
-import { tmpdir } from "os";
+import { beforeEach, expect, it, describe } from "bun:test";
+import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { mkdir, stat, exists } from "fs/promises";
 import { join } from "path";
 
 let x_dir: string;
 
 beforeEach(async () => {
-  x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test")));
+  x_dir = tmpdirSync();
 });
 
 describe("should not crash", async () => {

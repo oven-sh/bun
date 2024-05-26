@@ -93,6 +93,20 @@ pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Ver
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
+const IGNORED_PATHS: []const []const u8 = &.{
+    "node_modules",
+    ".git",
+    "CMakeFiles",
+};
+fn ignoredWorkspacePaths(path: []const u8) bool {
+    inline for (IGNORED_PATHS) |ignored| {
+        if (bun.strings.eqlComptime(path, ignored)) return true;
+    }
+    return false;
+}
+
+const GlobWalker = bun.glob.GlobWalker_(ignoredWorkspacePaths, bun.glob.SyscallAccessor, false);
+
 // Serialized data
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
@@ -305,6 +319,9 @@ pub const Tree = struct {
         depth: usize,
     };
 
+    // max number of node_modules folders
+    pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
+
     pub const Iterator = struct {
         trees: []const Tree,
         dependency_ids: []const DependencyID,
@@ -316,8 +333,7 @@ pub const Tree = struct {
         last_parent: Id = invalid_id,
         string_buf: string,
 
-        // max number of node_modules folders
-        depth_stack: [(bun.MAX_PATH_BYTES / "node_modules".len) + 1]Id = undefined,
+        depth_stack: [max_depth]Id = undefined,
 
         pub fn init(lockfile: *const Lockfile) Iterator {
             var iter = Iterator{
@@ -356,41 +372,18 @@ pub const Tree = struct {
             }
 
             const tree = this.trees[this.tree_id];
-            var depth: usize = 0;
 
-            {
-                var parent_id = tree.id;
-                var path_written: usize = "node_modules".len;
-                this.depth_stack[0] = 0;
-
-                if (tree.id > 0) {
-                    var depth_buf_len: usize = 1;
-                    while (parent_id > 0 and parent_id < @as(Id, @intCast(this.trees.len))) {
-                        this.depth_stack[depth_buf_len] = parent_id;
-                        parent_id = this.trees[parent_id].parent;
-                        depth_buf_len += 1;
-                    }
-                    depth_buf_len -= 1;
-                    depth = depth_buf_len;
-                    while (depth_buf_len > 0) : (depth_buf_len -= 1) {
-                        this.path_buf[path_written] = std.fs.path.sep;
-                        path_written += 1;
-
-                        const tree_id = this.depth_stack[depth_buf_len];
-                        const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(this.string_buf);
-                        @memcpy(this.path_buf[path_written..][0..name.len], name);
-                        path_written += name.len;
-
-                        @memcpy(this.path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
-                        path_written += "/node_modules".len;
-                    }
-                }
-                this.path_buf[path_written] = 0;
-                this.path_buf_len = path_written;
-            }
+            const relative_path, const depth = tree.relativePathAndDepth(
+                this.trees,
+                this.dependencies,
+                this.string_buf,
+                &this.path_buf,
+                &this.depth_stack,
+            );
 
             this.tree_id += 1;
-            const relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
+            this.path_buf_len = relative_path.len;
+
             return .{
                 .relative_path = relative_path,
                 .dependencies = tree.dependencies.get(this.dependency_ids),
@@ -399,6 +392,50 @@ pub const Tree = struct {
             };
         }
     };
+
+    /// Returns relative path and the depth of the tree
+    pub fn relativePathAndDepth(
+        tree: *const Tree,
+        trees: []const Tree,
+        dependencies: []const Dependency,
+        string_buf: string,
+        path_buf: *bun.PathBuffer,
+        depth_buf: *[max_depth]Id,
+    ) struct { stringZ, usize } {
+        var depth: usize = 0;
+
+        var parent_id = tree.id;
+        var path_written: usize = "node_modules".len;
+
+        depth_buf[0] = 0;
+
+        if (tree.id > 0) {
+            var depth_buf_len: usize = 1;
+            while (parent_id > 0 and parent_id < trees.len) {
+                depth_buf[depth_buf_len] = parent_id;
+                parent_id = trees[parent_id].parent;
+                depth_buf_len += 1;
+            }
+            depth_buf_len -= 1;
+            depth = depth_buf_len;
+            while (depth_buf_len > 0) : (depth_buf_len -= 1) {
+                path_buf[path_written] = std.fs.path.sep;
+                path_written += 1;
+
+                const id = depth_buf[depth_buf_len];
+                const name = dependencies[trees[id].dependency_id].name.slice(string_buf);
+                @memcpy(path_buf[path_written..][0..name.len], name);
+                path_written += name.len;
+
+                @memcpy(path_buf[path_written..][0.."/node_modules".len], std.fs.path.sep_str ++ "node_modules");
+                path_written += "/node_modules".len;
+            }
+        }
+        path_buf[path_written] = 0;
+        const rel = path_buf[0..path_written :0];
+
+        return .{ rel, depth };
+    }
 
     const Builder = struct {
         allocator: Allocator,
@@ -409,7 +446,7 @@ pub const Tree = struct {
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: Lockfile.TreeFiller,
         log: *logger.Log,
-        old_lockfile: *Lockfile,
+        lockfile: *Lockfile,
         prefer_dev_dependencies: bool = false,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
@@ -417,15 +454,15 @@ pub const Tree = struct {
         }
 
         pub fn buf(this: *const Builder) []const u8 {
-            return this.old_lockfile.buffers.string_bytes.items;
+            return this.lockfile.buffers.string_bytes.items;
         }
 
         pub fn packageName(this: *Builder, id: PackageID) String.Formatter {
-            return this.old_lockfile.packages.items(.name)[id].fmt(this.old_lockfile.buffers.string_bytes.items);
+            return this.lockfile.packages.items(.name)[id].fmt(this.lockfile.buffers.string_bytes.items);
         }
 
         pub fn packageVersion(this: *Builder, id: PackageID) Resolution.Formatter {
-            return this.old_lockfile.packages.items(.resolution)[id].fmt(this.old_lockfile.buffers.string_bytes.items, .auto);
+            return this.lockfile.packages.items(.resolution)[id].fmt(this.lockfile.buffers.string_bytes.items, .auto);
         }
 
         pub const Entry = struct {
@@ -503,6 +540,7 @@ pub const Tree = struct {
             if (pid >= max_package_id) continue;
 
             const dependency = builder.dependencies[dep_id];
+
             // Do not hoist aliased packages
             const destination = if (dependency.name_hash != name_hashes[pid])
                 next.id
@@ -560,7 +598,7 @@ pub const Tree = struct {
             if (comptime as_defined) {
                 if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
-                        return hoisted; // 2
+                        return hoisted; // 1
                     }
 
                     return dependency_loop; // 3
@@ -859,14 +897,34 @@ pub fn cleanWithLogger(
 
     // Don't allow invalid memory to happen
     if (updates.len > 0) {
+        const string_buf = new.buffers.string_bytes.items;
         const slice = new.packages.slice();
         const names = slice.items(.name);
+        const name_hashes = slice.items(.name_hash);
         const resolutions = slice.items(.resolution);
-        const dep_list = slice.items(.dependencies)[0];
-        const res_list = slice.items(.resolutions)[0];
+        const metas = slice.items(.meta);
+
+        // updates might be applied to the root package.json or one
+        // of the workspace package.json files.
+        const package_id_to_update = if (PackageManager.instance.workspace_name_hash) |workspace_name_hash| brk: {
+            for (resolutions, name_hashes, metas) |*res, name_hash, meta| {
+                if (res.tag == .workspace and name_hash == workspace_name_hash) {
+                    break :brk meta.id;
+                }
+            }
+
+            if (comptime Environment.allow_assert) {
+                @panic("failed to find workspace package for `bun add/remove`");
+            }
+
+            // should not hit this, default to root just in case
+            break :brk 0;
+        } else 0; // root
+
+        const dep_list = slice.items(.dependencies)[package_id_to_update];
+        const res_list = slice.items(.resolutions)[package_id_to_update];
         const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
-        const string_buf = new.buffers.string_bytes.items;
 
         for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
@@ -957,7 +1015,7 @@ const Cloner = struct {
         }
 
         if (this.lockfile.buffers.dependencies.items.len > 0)
-            try this.hoist();
+            try this.hoist(this.lockfile);
 
         // capacity is used for calculating byte size
         // so we need to make sure it's exact
@@ -965,20 +1023,20 @@ const Cloner = struct {
             this.lockfile.packages.shrinkAndFree(this.lockfile.allocator, this.lockfile.packages.len);
     }
 
-    fn hoist(this: *Cloner) anyerror!void {
-        if (this.lockfile.packages.len == 0) return;
+    fn hoist(this: *Cloner, lockfile: *Lockfile) anyerror!void {
+        if (lockfile.packages.len == 0) return;
 
-        const allocator = this.lockfile.allocator;
-        var slice = this.lockfile.packages.slice();
+        const allocator = lockfile.allocator;
+        var slice = lockfile.packages.slice();
         var builder = Tree.Builder{
             .name_hashes = slice.items(.name_hash),
             .queue = TreeFiller.init(allocator),
             .resolution_lists = slice.items(.resolutions),
-            .resolutions = this.lockfile.buffers.resolutions.items,
+            .resolutions = lockfile.buffers.resolutions.items,
             .allocator = allocator,
-            .dependencies = this.lockfile.buffers.dependencies.items,
+            .dependencies = lockfile.buffers.dependencies.items,
             .log = this.log,
-            .old_lockfile = this.old,
+            .lockfile = lockfile,
             .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
         };
 
@@ -988,10 +1046,10 @@ const Cloner = struct {
             try builder.list.items(.tree)[item.tree_id].processSubtree(item.dependency_id, &builder);
         }
 
-        this.lockfile.buffers.hoisted_dependencies = try builder.clean();
+        lockfile.buffers.hoisted_dependencies = try builder.clean();
         {
             const final = builder.list.items(.tree);
-            this.lockfile.buffers.trees = .{
+            lockfile.buffers.trees = .{
                 .items = final,
                 .capacity = final.len,
             };
@@ -1027,8 +1085,8 @@ pub const Printer = struct {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
 
-        var lockfile_path_buf1: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_path_buf1: bun.PathBuffer = undefined;
+        var lockfile_path_buf2: bun.PathBuffer = undefined;
 
         var lockfile_path: stringZ = "";
 
@@ -1140,99 +1198,235 @@ pub const Printer = struct {
     }
 
     pub const Tree = struct {
-        /// - Prints an empty newline with no diffs
-        /// - Prints a leading and trailing blank newline with diffs
-        pub fn print(
-            this: *Printer,
+        fn printInstalledWorkspaceSection(
+            this: *const Printer,
             comptime Writer: type,
             writer: Writer,
             comptime enable_ansi_colors: bool,
+            workspace_package_id: PackageID,
+            installed: *const Bitset,
+            comptime print_section_header: enum(u1) { print_section_header, dont_print_section_header },
+            printed_new_install: *bool,
+            id_map: ?[]DependencyID,
         ) !void {
-            var visited = try Bitset.initEmpty(
-                this.lockfile.allocator,
-                this.lockfile.packages.len,
-            );
+            const lockfile = this.lockfile;
+            const packages_slice = lockfile.packages.slice();
+            const resolutions = lockfile.buffers.resolutions.items;
+            const dependencies = lockfile.buffers.dependencies.items;
+            const workspace_res = packages_slice.items(.resolution)[workspace_package_id];
+            const names = packages_slice.items(.name);
+            bun.assert(workspace_res.tag == .workspace or workspace_res.tag == .root);
+            const resolutions_list = packages_slice.items(.resolutions);
 
+            var printed_section_header = false;
+            for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                    .@"return" => return,
+                    .yes => {},
+                    .no => continue,
+                }
+
+                const dep = dependencies[dep_id];
+                const package_id = resolutions[dep_id];
+
+                printed_new_install.* = true;
+
+                if (comptime print_section_header == .print_section_header) {
+                    if (!printed_section_header) {
+                        printed_section_header = true;
+                        const workspace_name = names[workspace_package_id].slice(lockfile.buffers.string_bytes.items);
+                        try writer.print(comptime Output.prettyFmt("<r>\n<cyan>{s}<r><d>:<r>\n", enable_ansi_colors), .{
+                            workspace_name,
+                        });
+                    }
+                }
+
+                try printInstalledPackage(this, &dep, package_id, enable_ansi_colors, Writer, writer);
+            }
+        }
+
+        const ShouldPrintPackageInstallResult = enum {
+            yes,
+            no,
+            @"return",
+        };
+        fn shouldPrintPackageInstall(
+            this: *const Printer,
+            dep_id: DependencyID,
+            installed: *const Bitset,
+            id_map: ?[]DependencyID,
+        ) ShouldPrintPackageInstallResult {
+            const dependencies = this.lockfile.buffers.dependencies.items;
+            const resolutions = this.lockfile.buffers.resolutions.items;
+            const dependency = dependencies[dep_id];
+            const package_id = resolutions[dep_id];
+
+            if (dependency.behavior.isPeer() or dependency.behavior.isWorkspaceOnly() or package_id >= this.lockfile.packages.len) return .no;
+
+            if (id_map) |map| {
+                for (this.updates, map) |update, *update_dependency_id| {
+                    if (update.failed) return .@"return";
+                    if (update.matches(dependency, this.lockfile.buffers.string_bytes.items)) {
+                        if (update_dependency_id.* == invalid_package_id) {
+                            update_dependency_id.* = dep_id;
+                        }
+
+                        return .no;
+                    }
+                }
+            }
+
+            if (!installed.isSet(package_id)) return .no;
+
+            return .yes;
+        }
+
+        fn printInstalledPackage(
+            this: *const Printer,
+            dependency: *const Dependency,
+            package_id: PackageID,
+            comptime enable_ansi_colors: bool,
+            comptime Writer: type,
+            writer: Writer,
+        ) !void {
+            const string_buf = this.lockfile.buffers.string_bytes.items;
+            const packages_slice = this.lockfile.packages.slice();
+            const resolved = packages_slice.items(.resolution);
+            const dependency_name = dependency.name.slice(string_buf);
+            if (PackageManager.instance.formatLaterVersionInCache(dependency_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
+                const fmt = comptime brk: {
+                    if (enable_ansi_colors) {
+                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                    } else {
+                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                    }
+                };
+                try writer.print(
+                    fmt,
+                    .{
+                        dependency_name,
+                        resolved[package_id].fmt(string_buf, .posix),
+                        later_version_fmt,
+                    },
+                );
+            } else {
+                const fmt = comptime brk: {
+                    if (enable_ansi_colors) {
+                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                    } else {
+                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                    }
+                };
+
+                try writer.print(
+                    fmt,
+                    .{
+                        dependency_name,
+                        resolved[package_id].fmt(string_buf, .posix),
+                    },
+                );
+            }
+        }
+
+        /// - Prints an empty newline with no diffs
+        /// - Prints a leading and trailing blank newline with diffs
+        pub fn print(
+            this: *const Printer,
+            comptime Writer: type,
+            writer: Writer,
+            comptime enable_ansi_colors: bool,
+            comptime log_level: PackageManager.Options.LogLevel,
+        ) !void {
+            try writer.writeAll("\n");
+            const allocator = this.lockfile.allocator;
             var slice = this.lockfile.packages.slice();
             const bins: []const Bin = slice.items(.bin);
             const resolved: []const Resolution = slice.items(.resolution);
             if (resolved.len == 0) return;
+            const string_buf = this.lockfile.buffers.string_bytes.items;
             const resolutions_list = slice.items(.resolutions);
             const resolutions_buffer: []const PackageID = this.lockfile.buffers.resolutions.items;
             const dependencies_buffer: []const Dependency = this.lockfile.buffers.dependencies.items;
-            const string_buf = this.lockfile.buffers.string_bytes.items;
+            if (dependencies_buffer.len == 0) return;
             const id_map = try default_allocator.alloc(DependencyID, this.updates.len);
             @memset(id_map, invalid_package_id);
             defer if (id_map.len > 0) default_allocator.free(id_map);
 
-            visited.set(0);
             const end = @as(PackageID, @truncate(resolved.len));
 
-            try writer.writeAll("\n");
-
             var had_printed_new_install = false;
-            if (this.successfully_installed) |installed| {
-                var dep_id = resolutions_list[0].off;
-                const dep_end = dep_id + resolutions_list[0].len;
-                outer: while (dep_id < dep_end) : (dep_id += 1) {
-                    const dependency = dependencies_buffer[dep_id];
-                    if (dependency.behavior.isPeer()) continue;
-                    const package_id = resolutions_buffer[dep_id];
-                    if (package_id >= end) continue;
-                    const package_name = dependency.name.slice(string_buf);
+            if (this.successfully_installed) |*installed| {
+                if (comptime log_level.isVerbose()) {
+                    var workspaces_to_print: std.ArrayListUnmanaged(DependencyID) = .{};
+                    defer workspaces_to_print.deinit(allocator);
 
-                    if (this.updates.len > 0) {
-                        for (this.updates, id_map) |update, *dependency_id| {
-                            if (update.failed) return;
-                            if (update.matches(dependency, string_buf)) {
-                                if (dependency_id.* == invalid_package_id) {
-                                    dependency_id.* = @as(DependencyID, @truncate(dep_id));
-                                }
+                    for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
+                        const dep = dependencies_buffer[dep_id];
+                        if (dep.behavior.isWorkspace()) {
+                            workspaces_to_print.append(allocator, @intCast(dep_id)) catch bun.outOfMemory();
+                        }
+                    }
 
-                                continue :outer;
+                    var found_workspace_to_print = false;
+                    for (workspaces_to_print.items) |workspace_dep_id| {
+                        const workspace_package_id = resolutions_buffer[workspace_dep_id];
+                        for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+                            switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                                .yes => found_workspace_to_print = true,
+                                else => {},
                             }
                         }
                     }
 
-                    if (!installed.isSet(package_id)) continue;
+                    try printInstalledWorkspaceSection(
+                        this,
+                        Writer,
+                        writer,
+                        enable_ansi_colors,
+                        0,
+                        installed,
+                        .dont_print_section_header,
+                        &had_printed_new_install,
+                        null,
+                    );
 
-                    if (!had_printed_new_install) {
-                        had_printed_new_install = true;
-                    }
-
-                    if (PackageManager.instance.formatLaterVersionInCache(package_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
-                        const fmt = comptime brk: {
-                            if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
-                            } else {
-                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
-                            }
-                        };
-                        try writer.print(
-                            fmt,
-                            .{
-                                package_name,
-                                resolved[package_id].fmt(string_buf, .posix),
-                                later_version_fmt,
-                            },
-                        );
-                    } else {
-                        const fmt = comptime brk: {
-                            if (enable_ansi_colors) {
-                                break :brk Output.prettyFmt("<r> <green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                            } else {
-                                break :brk Output.prettyFmt("<r> + {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                            }
-                        };
-
-                        try writer.print(
-                            fmt,
-                            .{
-                                package_name,
-                                resolved[package_id].fmt(string_buf, .posix),
-                            },
+                    for (workspaces_to_print.items) |workspace_dep_id| {
+                        try printInstalledWorkspaceSection(
+                            this,
+                            Writer,
+                            writer,
+                            enable_ansi_colors,
+                            resolutions_buffer[workspace_dep_id],
+                            installed,
+                            .print_section_header,
+                            &had_printed_new_install,
+                            null,
                         );
                     }
+                } else {
+                    // just print installed packages for the current workspace
+                    var workspace_package_id: DependencyID = 0;
+                    if (PackageManager.instance.workspace_name_hash) |workspace_name_hash| {
+                        for (resolutions_list[0].begin()..resolutions_list[0].end()) |dep_id| {
+                            const dep = dependencies_buffer[dep_id];
+                            if (dep.behavior.isWorkspace() and dep.name_hash == workspace_name_hash) {
+                                workspace_package_id = resolutions_buffer[dep_id];
+                                break;
+                            }
+                        }
+                    }
+
+                    try printInstalledWorkspaceSection(
+                        this,
+                        Writer,
+                        writer,
+                        enable_ansi_colors,
+                        workspace_package_id,
+                        installed,
+                        .dont_print_section_header,
+                        &had_printed_new_install,
+                        id_map,
+                    );
                 }
             } else {
                 outer: for (dependencies_buffer, resolutions_buffer, 0..) |dependency, package_id, dep_id| {
@@ -1269,6 +1463,7 @@ pub const Printer = struct {
 
             if (bun.Environment.allow_assert) had_printed_new_install = false;
 
+            var printed_installed_update_request = false;
             for (id_map) |dependency_id| {
                 if (dependency_id == invalid_package_id) continue;
                 if (bun.Environment.allow_assert) had_printed_new_install = true;
@@ -1281,7 +1476,9 @@ pub const Printer = struct {
 
                 switch (bin.tag) {
                     .none, .dir => {
-                        const fmt = comptime Output.prettyFmt("<r> <green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                        printed_installed_update_request = true;
+
+                        const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
 
                         try writer.print(
                             fmt,
@@ -1292,6 +1489,8 @@ pub const Printer = struct {
                         );
                     },
                     .map, .file, .named_file => {
+                        printed_installed_update_request = true;
+
                         var iterator = Bin.NamesIterator{
                             .bin = bin,
                             .package_name = name,
@@ -1299,7 +1498,7 @@ pub const Printer = struct {
                             .extern_string_buf = this.lockfile.buffers.extern_strings.items,
                         };
 
-                        const fmt = comptime Output.prettyFmt("<r> <green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                        const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
 
                         try writer.print(
                             fmt,
@@ -1311,7 +1510,7 @@ pub const Printer = struct {
 
                         while (iterator.next() catch null) |bin_name| {
                             try writer.print(
-                                comptime Output.prettyFmt("<r>  <d>- <r><b>{s}<r>\n", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors),
                                 .{
                                     bin_name,
                                 },
@@ -1321,10 +1520,7 @@ pub const Printer = struct {
                 }
             }
 
-            // updates.len > 0 is a simpler check than to keep track of a boolean
-            // this assert ensures it is accurate.
-
-            if (this.updates.len > 0) {
+            if (printed_installed_update_request) {
                 try writer.writeAll("\n");
             }
         }
@@ -1718,6 +1914,8 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .trusted_dependencies = null,
         .workspace_paths = .{},
         .workspace_versions = .{},
+        .overrides = .{},
+        .meta_hash = zero_hash,
     };
 }
 
@@ -1745,8 +1943,8 @@ pub fn getPackageID(
                 return id;
             }
 
-            if (npm_version) |range| {
-                if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+            if (resolutions[id].tag == .npm and npm_version != null) {
+                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
         .PackageIDMultiple => |ids| {
@@ -1757,8 +1955,8 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (npm_version) |range| {
-                    if (range.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
+                if (resolutions[id].tag == .npm and npm_version != null) {
+                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1860,16 +2058,30 @@ pub const StringBuilder = struct {
     lockfile: *Lockfile,
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
+        this.assertNotAllocated();
+
         if (String.canInline(slice)) return;
         this._countWithHash(slice, String.Builder.stringHash(slice));
     }
 
     pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+        this.assertNotAllocated();
+
         if (String.canInline(slice)) return;
         this._countWithHash(slice, hash);
     }
 
+    inline fn assertNotAllocated(this: *const StringBuilder) void {
+        if (comptime Environment.allow_assert) {
+            if (this.ptr != null) {
+                Output.panic("StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before allocating.", .{});
+            }
+        }
+    }
+
     inline fn _countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
+        this.assertNotAllocated();
+
         if (!this.lockfile.string_pool.contains(hash)) {
             this.cap += slice.len;
         }
@@ -1880,7 +2092,11 @@ pub const StringBuilder = struct {
     }
 
     pub fn clamp(this: *StringBuilder) void {
-        if (comptime Environment.allow_assert) assert(this.cap >= this.len);
+        if (comptime Environment.allow_assert) {
+            assert(this.cap >= this.len);
+            // assert that no other builder was allocated while this builder was being used
+            assert(this.lockfile.buffers.string_bytes.items.len == this.off + this.cap);
+        }
 
         const excess = this.cap - this.len;
 
@@ -2675,7 +2891,7 @@ pub const Package = extern struct {
                 };
 
                 initializeStore();
-                break :brk try json_parser.ParseJSONUTF8(
+                break :brk try json_parser.ParsePackageJSONUTF8(
                     &json_src,
                     log,
                     allocator,
@@ -3213,11 +3429,10 @@ pub const Package = extern struct {
             id_mapping: ?[]PackageID,
         ) !Summary {
             var summary = Summary{};
-            const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
+            var to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
-            var skipped_workspaces: usize = 0;
 
             if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
                 summary.overrides_changed = true;
@@ -3360,11 +3575,6 @@ pub const Package = extern struct {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
-                    if (PackageManager.instance.workspaces.contains(from_lockfile.str(&from_dep.name))) {
-                        skipped_workspaces += 1;
-                        continue;
-                    }
-
                     // We found a removed dependency!
                     // We don't need to remove it
                     // It will be cleaned up later
@@ -3389,19 +3599,33 @@ pub const Package = extern struct {
 
                     if (id_mapping) |mapping| {
                         const version = to_deps[to_i].version;
-                        if (switch (version.tag) {
+                        const update_mapping = switch (version.tag) {
                             .workspace => if (to_lockfile.workspace_paths.getPtr(from_dep.name_hash)) |path_ptr| brk: {
                                 const path = to_lockfile.str(path_ptr);
-                                var local_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                const package_json_path = Path.joinZBuf(
-                                    &local_buf,
-                                    &[_]string{ path, "package.json" },
-                                    .auto,
-                                );
-                                const source = try bun.sys.File.toSource(package_json_path, allocator).unwrap();
+                                var local_buf: bun.PathBuffer = undefined;
+                                const package_json_path = Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &local_buf, &.{ path, "package.json" }, .auto);
+
+                                const source = bun.sys.File.toSource(package_json_path, allocator).unwrap() catch {
+                                    // Can't guarantee this workspace still exists
+                                    break :brk false;
+                                };
 
                                 var workspace = Package{};
-                                try workspace.parseMain(to_lockfile, allocator, log, source, Features.workspace);
+
+                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{}).unwrap() catch break :brk false;
+
+                                try workspace.parseWithJSON(
+                                    to_lockfile,
+                                    allocator,
+                                    log,
+                                    source,
+                                    json.root,
+                                    void,
+                                    {},
+                                    Features.workspace,
+                                );
+
+                                to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
 
                                 var from_pkg = from_lockfile.packages.get(from_resolutions[i]);
                                 const diff = try generate(
@@ -3427,7 +3651,9 @@ pub const Package = extern struct {
                                 break :brk !diff.hasDiffs();
                             } else false,
                             else => true,
-                        }) {
+                        };
+
+                        if (update_mapping) {
                             mapping[to_i] = @truncate(i);
                             continue;
                         }
@@ -3443,7 +3669,7 @@ pub const Package = extern struct {
             // Use saturating arithmetic here because a migrated
             // package-lock.json could be out of sync with the package.json, so the
             // number of from_deps could be greater than to_deps.
-            summary.add = @truncate((to_deps.len + skipped_workspaces) -| (from_deps.len -| summary.remove));
+            summary.add = @truncate((to_deps.len) -| (from_deps.len -| summary.remove));
 
             inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(
@@ -3467,17 +3693,6 @@ pub const Package = extern struct {
         return hasher.final();
     }
 
-    pub fn parseMain(
-        package: *Lockfile.Package,
-        lockfile: *Lockfile,
-        allocator: Allocator,
-        log: *logger.Log,
-        source: logger.Source,
-        comptime features: Features,
-    ) !void {
-        return package.parse(lockfile, allocator, log, source, void, {}, features);
-    }
-
     pub fn parse(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
@@ -3489,7 +3704,7 @@ pub const Package = extern struct {
         comptime features: Features,
     ) !void {
         initializeStore();
-        const json = json_parser.ParseJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
+        const json = json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator) catch |err| {
             switch (Output.enable_ansi_colors) {
                 inline else => |enable_ansi_colors| {
                     log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
@@ -3586,14 +3801,13 @@ pub const Package = extern struct {
         if (comptime tag == null) {
             workspace_path = lockfile.workspace_paths.get(name_hash);
             workspace_version = lockfile.workspace_versions.get(name_hash);
-
-            if (workspace_path == null or workspace_version == null) {
-                if (PackageManager.instance.workspaces.get(lockfile.str(&external_alias.value))) |_workspace_version| {
-                    workspace_path = external_alias.value;
-                    workspace_version = _workspace_version;
-                }
-            }
         }
+
+        if (comptime tag != null) {
+            bun.assert(dependency_version.tag != .npm and dependency_version.tag != .dist_tag);
+        }
+
+        var found_workspace = false;
 
         switch (dependency_version.tag) {
             .folder => {
@@ -3611,115 +3825,126 @@ pub const Package = extern struct {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder.append(String, if (relative.len == 0) "." else relative);
             },
-            .npm => if (comptime tag != null)
-                unreachable
-            else if (workspace_version) |ver| {
-                if (dependency_version.value.npm.version.satisfies(ver, buf, buf)) {
-                    for (package_dependencies[0..dependencies_count]) |dep| {
-                        // `dependencies` & `workspaces` defined within the same `package.json`
-                        if (dep.version.tag == .workspace and dep.name_hash == name_hash) {
-                            return null;
+            .npm => {
+                const npm = dependency_version.value.npm;
+                if (workspace_version != null) {
+                    if (npm.version.satisfies(workspace_version.?, buf, buf)) {
+                        const path = workspace_path.?.sliced(buf);
+                        if (Dependency.parseWithTag(
+                            allocator,
+                            external_alias.value,
+                            external_alias.hash,
+                            path.slice,
+                            .workspace,
+                            &path,
+                            log,
+                        )) |dep| {
+                            found_workspace = true;
+                            dependency_version = dep;
                         }
-                    }
-
-                    const path = workspace_path.?.sliced(buf);
-                    if (Dependency.parseWithTag(
-                        allocator,
-                        external_alias.value,
-                        external_alias.hash,
-                        path.slice,
-                        .workspace,
-                        &path,
-                        log,
-                    )) |dep| {
-                        dependency_version = dep;
+                    } else {
+                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                        for (package_dependencies[0..dependencies_count]) |*dep| {
+                            if (dep.name_hash == name_hash and dep.version.tag == .workspace) {
+                                dep.* = .{
+                                    .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
+                                    .name = external_alias.value,
+                                    .name_hash = external_alias.hash,
+                                    .version = dependency_version,
+                                };
+                                return null;
+                            }
+                        }
                     }
                 }
             },
-            .workspace => if (workspace_path) |path| {
-                if (workspace_range) |range| {
-                    if (workspace_version) |ver| {
-                        if (range.satisfies(ver, buf, buf)) {
-                            dependency_version.literal = path;
-                            dependency_version.value.workspace = path;
+            .workspace => {
+                if (workspace_path) |path| {
+                    if (workspace_range) |range| {
+                        if (workspace_version) |ver| {
+                            if (range.satisfies(ver, buf, buf)) {
+                                dependency_version.literal = path;
+                                dependency_version.value.workspace = path;
+                            }
                         }
+                    } else {
+                        dependency_version.literal = path;
+                        dependency_version.value.workspace = path;
                     }
                 } else {
+                    const workspace = dependency_version.value.workspace.slice(buf);
+                    const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
+                        var buf2: bun.PathBuffer = undefined;
+                        break :brk Path.relativePlatform(
+                            FileSystem.instance.top_level_dir,
+                            Path.joinAbsStringBuf(
+                                FileSystem.instance.top_level_dir,
+                                &buf2,
+                                &[_]string{
+                                    source.path.name.dir,
+                                    workspace,
+                                },
+                                .auto,
+                            ),
+                            .posix,
+                            false,
+                        );
+                    });
+                    if (comptime Environment.allow_assert) {
+                        assert(path.len() > 0);
+                        assert(!std.fs.path.isAbsolute(path.slice(buf)));
+                    }
                     dependency_version.literal = path;
                     dependency_version.value.workspace = path;
-                }
-            } else {
-                const workspace = dependency_version.value.workspace.slice(buf);
-                const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
-                    var buf2: bun.PathBuffer = undefined;
-                    break :brk Path.relativePlatform(
-                        FileSystem.instance.top_level_dir,
-                        Path.joinAbsStringBuf(
-                            FileSystem.instance.top_level_dir,
-                            &buf2,
-                            &[_]string{
-                                source.path.name.dir,
-                                workspace,
-                            },
-                            .auto,
-                        ),
-                        .posix,
-                        false,
-                    );
-                });
-                if (comptime Environment.allow_assert) {
-                    assert(path.len() > 0);
-                    assert(!std.fs.path.isAbsolute(path.slice(buf)));
-                }
-                dependency_version.literal = path;
-                dependency_version.value.workspace = path;
 
-                const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
+                    const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
+                    const found_matching_workspace = workspace_entry.found_existing;
 
-                if (workspace_version) |ver| {
-                    try lockfile.workspace_versions.put(allocator, name_hash, ver);
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (switch (package_dep.version.tag) {
-                            // `dependencies` & `workspaces` defined within the same `package.json`
-                            .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
-                                package_dep.version.value.npm.version.satisfies(ver, buf, buf),
-                            // `workspace:*`
-                            .workspace => found_matching_workspace and
-                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
-                            else => false,
-                        }) {
-                            package_dep.version = dependency_version;
-                            workspace_entry.value_ptr.* = path;
-                            return null;
+                    if (workspace_version) |ver| {
+                        try lockfile.workspace_versions.put(allocator, name_hash, ver);
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (switch (package_dep.version.tag) {
+                                // `dependencies` & `workspaces` defined within the same `package.json`
+                                .npm => String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash and
+                                    package_dep.version.value.npm.version.satisfies(ver, buf, buf),
+                                // `workspace:*`
+                                .workspace => found_matching_workspace and
+                                    String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash,
+                                else => false,
+                            }) {
+                                package_dep.version = dependency_version;
+                                workspace_entry.value_ptr.* = path;
+                                return null;
+                            }
                         }
-                    }
-                } else if (workspace_entry.found_existing) {
-                    for (package_dependencies[0..dependencies_count]) |*package_dep| {
-                        if (package_dep.version.tag == .workspace and
-                            String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
-                        {
-                            package_dep.version = dependency_version;
-                            return null;
+                    } else if (workspace_entry.found_existing) {
+                        for (package_dependencies[0..dependencies_count]) |*package_dep| {
+                            if (package_dep.version.tag == .workspace and
+                                String.Builder.stringHash(package_dep.realname().slice(buf)) == name_hash)
+                            {
+                                package_dep.version = dependency_version;
+                                return null;
+                            }
                         }
+                        return error.InstallFailed;
                     }
-                    return error.InstallFailed;
-                }
 
-                workspace_entry.value_ptr.* = path;
+                    workspace_entry.value_ptr.* = path;
+                }
             },
             else => {},
         }
 
         const this_dep = Dependency{
-            .behavior = if (in_workspace) group.behavior.setWorkspace(in_workspace) else group.behavior,
+            .behavior = if (in_workspace) group.behavior.setWorkspace(true) else group.behavior,
             .name = external_alias.value,
             .name_hash = external_alias.hash,
             .version = dependency_version,
         };
 
-        // `peerDependencies` may be specified on existing dependencies
-        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
+        // `peerDependencies` may be specified on existing dependencies. Packages in `workspaces` are deduplicated when
+        // the array is processed
+        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer() and !group.behavior.isWorkspace()) {
             const entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_alias.hash);
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
@@ -3785,10 +4010,6 @@ pub const Package = extern struct {
         }
 
         pub fn insert(self: *WorkspaceMap, key: string, value: Entry) !void {
-            if (comptime Environment.allow_assert) {
-                assert(!strings.containsChar(key, std.fs.path.sep_windows));
-            }
-
             if (comptime Environment.isDebug) {
                 if (!bun.sys.exists(key)) {
                     Output.debugWarn("WorkspaceMap.insert: key {s} does not exist", .{key});
@@ -3803,7 +4024,7 @@ pub const Package = extern struct {
             }
 
             entry.value_ptr.* = .{
-                .name = try self.map.allocator.dupe(u8, value.name),
+                .name = value.name,
                 .version = value.version,
                 .name_loc = value.name_loc,
             };
@@ -3834,51 +4055,35 @@ pub const Package = extern struct {
 
     fn processWorkspaceName(
         allocator: std.mem.Allocator,
-        workspace_allocator: std.mem.Allocator,
-        dir: std.fs.Dir,
-        path: []const u8,
-        path_buf: *[bun.MAX_PATH_BYTES]u8,
-        name_to_copy: *[1024]u8,
+        json_cache: *PackageManager.WorkspacePackageJSONCache,
+        abs_package_json_path: [:0]const u8,
         log: *logger.Log,
     ) !WorkspaceEntry {
-        const path_to_use = if (path.len == 0) "package.json" else brk: {
-            const paths = [_]string{ path, "package.json" };
-            break :brk bun.path.joinStringBuf(path_buf, &paths, .posix);
-        };
+        const workspace_json = try json_cache.getWithPath(allocator, log, abs_package_json_path, .{
+            .init_reset_store = false,
+        }).unwrap();
 
-        // TODO: windows
-        var workspace_file = dir.openFile(path_to_use, .{ .mode = .read_only }) catch |err| {
-            debug("processWorkspaceName({s}) = {} ", .{ path_to_use, err });
-            return err;
-        };
+        const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;
+        const name = name_expr.asStringCloned(allocator) orelse return error.MissingPackageName;
 
-        defer workspace_file.close();
-
-        const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
-        defer workspace_allocator.free(workspace_bytes);
-        const workspace_source = logger.Source.initPathString(path, workspace_bytes);
-
-        var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
-
-        _ = try workspace_json.parseExpr();
-        if (!workspace_json.has_found_name) {
-            return error.MissingPackageName;
-        }
-        @memcpy(name_to_copy[0..workspace_json.found_name.len], workspace_json.found_name);
         var entry = WorkspaceEntry{
-            .name = name_to_copy[0..workspace_json.found_name.len],
-            .name_loc = workspace_json.name_loc,
+            .name = name,
+            .name_loc = name_expr.loc,
         };
-        debug("processWorkspaceName({s}) = {s}", .{ path_to_use, entry.name });
-        if (workspace_json.has_found_version) {
-            entry.version = try allocator.dupe(u8, workspace_json.found_version);
+        debug("processWorkspaceName({s}) = {s}", .{ abs_package_json_path, entry.name });
+        if (workspace_json.root.get("version")) |version_expr| {
+            if (version_expr.asStringCloned(allocator)) |version| {
+                entry.version = version;
+            }
         }
+
         return entry;
     }
 
     pub fn processWorkspaceNamesArray(
         workspace_names: *WorkspaceMap,
         allocator: Allocator,
+        json_cache: *PackageManager.WorkspacePackageJSONCache,
         log: *logger.Log,
         arr: *JSAst.E.Array,
         source: *const logger.Source,
@@ -3887,21 +4092,17 @@ pub const Package = extern struct {
     ) !u32 {
         if (arr.items.len == 0) return 0;
 
-        var fallback = std.heap.stackFallback(1024, allocator);
-        const workspace_allocator = fallback.get();
-        const workspace_name_buf = allocator.create([1024]u8) catch unreachable;
-        defer allocator.destroy(workspace_name_buf);
-
         const orig_msgs_len = log.msgs.items.len;
 
-        var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
-        defer asterisked_workspace_paths.deinit();
-        const filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
-        defer allocator.destroy(filepath_buf);
+        var workspace_globs = std.ArrayList(string).init(allocator);
+        defer workspace_globs.deinit();
+        const filepath_bufOS = allocator.create(bun.PathBuffer) catch unreachable;
+        const filepath_buf = std.mem.asBytes(filepath_bufOS);
+        defer allocator.destroy(filepath_bufOS);
 
         for (arr.slice()) |item| {
-            defer fallback.fixed_buffer_allocator.reset();
-            var input_path = item.asString(allocator) orelse {
+            // TODO: when does this get deallocated?
+            const input_path = item.asStringZ(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
                     \\Workspaces expects an array of strings, like:
                     \\  <r><green>"workspaces"<r>: [
@@ -3911,48 +4112,26 @@ pub const Package = extern struct {
                 return error.InvalidPackageJSON;
             };
 
-            if (strings.containsChar(input_path, '*')) {
-                if (strings.contains(input_path, "**")) {
-                    log.addError(source, item.loc,
-                        \\TODO multi level globs. For now, try something like "packages/*"
-                    ) catch {};
-                    continue;
-                }
-
-                const without_trailing_slash = strings.withoutTrailingSlash(input_path);
-
-                if (!strings.endsWithComptime(without_trailing_slash, "/*") and !strings.eqlComptime(without_trailing_slash, "*")) {
-                    log.addError(source, item.loc,
-                        \\TODO glob star * in the middle of a path. For now, try something like "packages/*", at the end of the path.
-                    ) catch {};
-                    continue;
-                }
-
-                asterisked_workspace_paths.append(without_trailing_slash) catch unreachable;
+            if (bun.glob.detectGlobSyntax(input_path)) {
+                workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
-            } else if (strings.containsAny(input_path, "!{}[]")) {
-                log.addError(source, item.loc,
-                    \\TODO fancy glob patterns. For now, try something like "packages/*"
-                ) catch {};
-                continue;
-            } else if (string_builder == null) {
-                input_path = Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{input_path}, .auto);
-                if (comptime Environment.isWindows) {
-                    input_path = Path.normalizeString(input_path, true, .posix);
-                }
             }
+
+            const abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
+                source.path.name.dir,
+                filepath_buf,
+                &.{ input_path, "package.json" },
+                .auto,
+            );
 
             const workspace_entry = processWorkspaceName(
                 allocator,
-                workspace_allocator,
-                std.fs.cwd(),
-                input_path,
-                filepath_buf,
-                workspace_name_buf,
+                json_cache,
+                abs_package_json_path,
                 log,
             ) catch |err| {
                 switch (err) {
-                    error.FileNotFound => {
+                    error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(
                             source,
                             item.loc,
@@ -3985,108 +4164,104 @@ pub const Package = extern struct {
 
             if (workspace_entry.name.len == 0) continue;
 
+            const rel_input_path = Path.relativePlatform(
+                source.path.name.dir,
+                strings.withoutSuffixComptime(abs_package_json_path, std.fs.path.sep_str ++ "package.json"),
+                .auto,
+                true,
+            );
+            if (comptime Environment.isWindows) {
+                Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel_input_path));
+            }
+
             if (string_builder) |builder| {
                 builder.count(workspace_entry.name);
-                builder.count(input_path);
+                builder.count(rel_input_path);
                 builder.cap += bun.MAX_PATH_BYTES;
                 if (workspace_entry.version) |version_string| {
                     builder.count(version_string);
                 }
             }
 
-            try workspace_names.insert(input_path, .{
+            try workspace_names.insert(rel_input_path, .{
                 .name = workspace_entry.name,
                 .name_loc = workspace_entry.name_loc,
                 .version = workspace_entry.version,
             });
         }
 
-        if (asterisked_workspace_paths.items.len > 0) {
-            for (asterisked_workspace_paths.items) |user_path| {
-                var dir_prefix = if (string_builder) |_|
-                    strings.withoutLeadingSlash(user_path)
-                else
-                    Path.joinAbsStringBuf(source.path.name.dir, filepath_buf, &[_]string{user_path}, .auto);
+        if (workspace_globs.items.len > 0) {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+            for (workspace_globs.items) |user_pattern| {
+                defer _ = arena.reset(.retain_capacity);
 
-                dir_prefix = dir_prefix[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
-                if (dir_prefix.len == 0 or
-                    strings.eqlComptime(dir_prefix, ".") or
-                    strings.eqlComptime(dir_prefix, &.{ '.', std.fs.path.sep }))
-                {
-                    if (comptime Environment.isWindows)
-                        dir_prefix = Fs.FileSystem.instance.top_level_dir
-                    else
-                        dir_prefix = ".";
+                const glob_pattern = if (user_pattern.len == 0) "package.json" else brk: {
+                    const parts = [_][]const u8{ user_pattern, "package.json" };
+                    break :brk arena.allocator().dupe(u8, bun.path.join(parts, .auto)) catch bun.outOfMemory();
+                };
+
+                var walker: GlobWalker = .{};
+                var cwd = bun.path.dirname(source.path.textZ(), .auto);
+                cwd = if (bun.strings.eql(cwd, "")) bun.fs.FileSystem.instance.top_level_dir else cwd;
+                if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |e| {
+                    log.addErrorFmt(
+                        source,
+                        loc,
+                        allocator,
+                        "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        .{ user_pattern, @tagName(e.getErrno()) },
+                    ) catch {};
+                    return error.GlobError;
+                }
+                defer walker.deinit(false);
+
+                var iter: GlobWalker.Iterator = .{
+                    .walker = &walker,
+                };
+                defer iter.deinit();
+                if ((try iter.init()).asErr()) |e| {
+                    log.addErrorFmt(
+                        source,
+                        loc,
+                        allocator,
+                        "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                        .{ user_pattern, @tagName(e.getErrno()) },
+                    ) catch {};
+                    return error.GlobError;
                 }
 
-                const entries_option = FileSystem.instance.fs.readDirectory(
-                    dir_prefix,
-                    null,
-                    0,
-                    true,
-                ) catch |err| switch (err) {
-                    error.ENOENT => {
-                        log.addWarningFmt(
+                while (switch (try iter.next()) {
+                    .result => |r| r,
+                    .err => |e| {
+                        log.addErrorFmt(
                             source,
                             loc,
                             allocator,
-                            "workspaces directory prefix not found \"{s}\"",
-                            .{dir_prefix},
+                            "Failed to run workspace pattern <b>{s}<r> due to error <b>{s}<r>",
+                            .{ user_pattern, @tagName(e.getErrno()) },
                         ) catch {};
-                        continue;
+                        return error.GlobError;
                     },
-                    error.ENOTDIR => {
-                        log.addWarningFmt(
-                            source,
-                            loc,
-                            allocator,
-                            "workspaces directory prefix is not a directory \"{s}\"",
-                            .{dir_prefix},
-                        ) catch {};
-                        continue;
-                    },
-                    else => continue,
-                };
-                if (entries_option.* != .entries) continue;
-                var entries = entries_option.entries.data.iterator();
-                const skipped_names = &[_][]const u8{ "node_modules", ".git" };
+                }) |matched_path| {
+                    const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
+                    debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 
-                while (entries.next()) |entry_iter| {
-                    const name = entry_iter.key_ptr.*;
-                    if (strings.eqlAnyComptime(name, skipped_names))
-                        continue;
-                    var entry: *FileSystem.Entry = entry_iter.value_ptr.*;
-                    if (entry.kind(&Fs.FileSystem.instance.fs, true) != .dir) continue;
-
-                    var parts = [2]string{ entry.dir, entry.base() };
-                    const entry_path = Path.joinAbsStringBufZ(
-                        Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                    const abs_package_json_path = Path.joinAbsStringBufZ(
+                        cwd,
                         filepath_buf,
-                        &parts,
+                        &.{ entry_dir, "package.json" },
                         .auto,
                     );
-
-                    if (entry.cache.fd == .zero) {
-                        entry.cache.fd = bun.toFD(bun.sys.open(
-                            entry_path,
-                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.RDONLY,
-                            0,
-                        ).unwrap() catch continue);
-                    }
-
-                    const dir_fd = entry.cache.fd;
-                    assert(dir_fd != bun.invalid_fd); // kind() should've opened
-                    defer fallback.fixed_buffer_allocator.reset();
+                    const abs_workspace_dir_path: string = strings.withoutSuffixComptime(abs_package_json_path, "package.json");
 
                     const workspace_entry = processWorkspaceName(
                         allocator,
-                        workspace_allocator,
-                        dir_fd.asDir(),
-                        "",
-                        filepath_buf,
-                        workspace_name_buf,
+                        json_cache,
+                        abs_package_json_path,
                         log,
                     ) catch |err| {
+                        const entry_base: []const u8 = Path.basename(matched_path);
                         switch (err) {
                             error.FileNotFound, error.PermissionDenied => continue,
                             error.MissingPackageName => {
@@ -4095,7 +4270,7 @@ pub const Package = extern struct {
                                     logger.Loc.Empty,
                                     allocator,
                                     "Missing \"name\" from package.json in {s}" ++ std.fs.path.sep_str ++ "{s}",
-                                    .{ entry.dir, entry.base() },
+                                    .{ entry_dir, entry_base },
                                 ) catch {};
                             },
                             else => {
@@ -4104,7 +4279,7 @@ pub const Package = extern struct {
                                     logger.Loc.Empty,
                                     allocator,
                                     "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                                    .{ @errorName(err), entry.dir, entry.base() },
+                                    .{ @errorName(err), entry_dir, entry_base },
                                 ) catch {};
                             },
                         }
@@ -4114,24 +4289,24 @@ pub const Package = extern struct {
 
                     if (workspace_entry.name.len == 0) continue;
 
-                    const workspace_path: string = if (string_builder) |builder| brk: {
+                    const workspace_path: string = Path.relativePlatform(
+                        source.path.name.dir,
+                        abs_workspace_dir_path,
+                        .auto,
+                        true,
+                    );
+                    if (comptime Environment.isWindows) {
+                        Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(workspace_path));
+                    }
+
+                    if (string_builder) |builder| {
                         builder.count(workspace_entry.name);
-                        const relative = Path.relativePlatform(
-                            Fs.FileSystem.instance.top_level_dir,
-                            bun.span(entry_path),
-                            .posix,
-                            true,
-                        );
-                        builder.count(relative);
+                        builder.count(workspace_path);
                         builder.cap += bun.MAX_PATH_BYTES;
-                        break :brk relative;
-                    } else brk: {
-                        // entry_path is contained in filepath_buf so it is safe to constCast and
-                        // replace path separators
-                        const entry_slice = bun.span(entry_path);
-                        Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(entry_slice));
-                        break :brk entry_slice;
-                    };
+                        if (workspace_entry.version) |version| {
+                            builder.count(version);
+                        }
+                    }
 
                     try workspace_names.insert(workspace_path, .{
                         .name = workspace_entry.name,
@@ -4158,10 +4333,10 @@ pub const Package = extern struct {
             .values = workspace_names.values(),
         });
 
-        return @as(u32, @truncate(workspace_names.count()));
+        return @truncate(workspace_names.count());
     }
 
-    fn parseWithJSON(
+    pub fn parseWithJSON(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
         allocator: Allocator,
@@ -4231,13 +4406,18 @@ pub const Package = extern struct {
 
         const dependency_groups = comptime brk: {
             var out_groups: [
-                @as(usize, @intFromBool(features.dependencies)) +
+                @as(usize, @intFromBool(features.workspaces)) +
+                    @as(usize, @intFromBool(features.dependencies)) +
                     @as(usize, @intFromBool(features.dev_dependencies)) +
                     @as(usize, @intFromBool(features.optional_dependencies)) +
-                    @as(usize, @intFromBool(features.peer_dependencies)) +
-                    @as(usize, @intFromBool(features.workspaces))
+                    @as(usize, @intFromBool(features.peer_dependencies))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
+
+            if (features.workspaces) {
+                out_groups[out_group_i] = DependencyGroup.workspaces;
+                out_group_i += 1;
+            }
 
             if (features.dependencies) {
                 out_groups[out_group_i] = DependencyGroup.dependencies;
@@ -4255,11 +4435,6 @@ pub const Package = extern struct {
 
             if (features.peer_dependencies) {
                 out_groups[out_group_i] = DependencyGroup.peer;
-                out_group_i += 1;
-            }
-
-            if (features.workspaces) {
-                out_groups[out_group_i] = DependencyGroup.workspaces;
                 out_group_i += 1;
             }
 
@@ -4307,6 +4482,7 @@ pub const Package = extern struct {
                         total_dependencies_count += try processWorkspaceNamesArray(
                             &workspace_names,
                             allocator,
+                            &PackageManager.instance.workspace_package_json_cache,
                             log,
                             arr,
                             &source,
@@ -4330,6 +4506,7 @@ pub const Package = extern struct {
                                     total_dependencies_count += try processWorkspaceNamesArray(
                                         &workspace_names,
                                         allocator,
+                                        &PackageManager.instance.workspace_package_json_cache,
                                         log,
                                         packages_query.data.e_array,
                                         &source,
@@ -4412,7 +4589,7 @@ pub const Package = extern struct {
                                 , .{}) catch {};
                                 return error.InvalidPackageJSON;
                             };
-                            lockfile.trusted_dependencies.?.putAssumeCapacity(@as(u32, @truncate(String.Builder.stringHash(name))), {});
+                            lockfile.trusted_dependencies.?.putAssumeCapacity(@as(TruncatedPackageNameHash, @truncate(String.Builder.stringHash(name))), {});
                         }
                     },
                     else => {
@@ -4562,7 +4739,7 @@ pub const Package = extern struct {
         }
 
         total_dependencies_count = 0;
-        const in_workspace = lockfile.workspace_paths.contains(@as(u32, @truncate(package.name_hash)));
+        const in_workspace = lockfile.workspace_paths.contains(package.name_hash);
 
         inline for (dependency_groups) |group| {
             if (group.behavior.isWorkspace()) {
@@ -4963,8 +5140,14 @@ pub const Package = extern struct {
                     @memcpy(bytes, stream.buffer[stream.pos..][0..bytes.len]);
                     stream.pos = end_pos;
                     if (comptime strings.eqlComptime(field.name, "meta")) {
-                        if (value.len != 0 and value[0].needsUpdate()) {
-                            needs_update = true;
+                        // need to check if any values were created from an older version of bun
+                        // (currently just `has_install_script`). If any are found, the values need
+                        // to be updated before saving the lockfile.
+                        for (value) |*meta| {
+                            if (meta.needsUpdate()) {
+                                needs_update = true;
+                                break;
+                            }
                         }
                     }
                 } else if (comptime strings.eqlComptime(field.name, "scripts")) {
@@ -5911,12 +6094,20 @@ pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {
     return default_trusted_dependencies.has(name);
 }
 
-pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependency, res: ?PackageID) !void {
+pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: DependencyID, dep: Dependency, res: PackageID) !void {
     const sb = this.buffers.string_bytes.items;
     var buf: [2048]u8 = undefined;
 
     try w.beginObject();
     defer w.endObject() catch {};
+
+    try w.objectField("name");
+    try w.write(dep.name.slice(sb));
+
+    if (dep.version.tag == .npm and dep.version.value.npm.is_alias) {
+        try w.objectField("is_alias");
+        try w.write(true);
+    }
 
     try w.objectField("literal");
     try w.write(dep.version.literal.slice(sb));
@@ -5934,7 +6125,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version}));
+            try w.write(try std.fmt.bufPrint(&buf, "{}", .{info.version.fmt(sb)}));
         },
         .dist_tag => {
             try w.beginObject();
@@ -6006,12 +6197,25 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep: Dependenc
         },
     }
 
-    try w.objectField("resolved_id");
-    try w.write(if (res) |r| if (r == invalid_package_id) null else r else null);
+    try w.objectField("package_id");
+    try w.write(if (res == invalid_package_id) null else res);
 
-    const behavior = try std.fmt.bufPrint(&buf, "{}", .{dep.behavior});
     try w.objectField("behavior");
-    try w.write(behavior);
+    {
+        try w.beginObject();
+        defer w.endObject() catch {};
+
+        const fields = @typeInfo(Behavior).Struct.fields;
+        inline for (fields[1 .. fields.len - 1]) |field| {
+            if (@field(dep.behavior, field.name)) {
+                try w.objectField(field.name);
+                try w.write(true);
+            }
+        }
+    }
+
+    try w.objectField("id");
+    try w.write(dep_id);
 }
 
 pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
@@ -6052,6 +6256,84 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         }
     }
     {
+        try w.objectField("trees");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        const trees = this.buffers.trees.items;
+        const string_buf = this.buffers.string_bytes.items;
+        const dependencies = this.buffers.dependencies.items;
+        const hoisted_deps = this.buffers.hoisted_dependencies.items;
+        const resolutions = this.buffers.resolutions.items;
+        var depth_buf: [Tree.max_depth]Tree.Id = undefined;
+        var path_buf: bun.PathBuffer = undefined;
+        @memcpy(path_buf[0.."node_modules".len], "node_modules");
+
+        for (0..this.buffers.trees.items.len) |tree_id| {
+            try w.beginObject();
+            defer w.endObject() catch {};
+
+            const tree = this.buffers.trees.items[tree_id];
+
+            try w.objectField("id");
+            try w.write(tree_id);
+
+            const relative_path, const depth = tree.relativePathAndDepth(
+                trees,
+                dependencies,
+                string_buf,
+                &path_buf,
+                &depth_buf,
+            );
+
+            try w.objectField("path");
+            const formatted = try std.fmt.bufPrint(&buf, "{}", .{bun.fmt.fmtPath(u8, relative_path, .{ .path_sep = .posix })});
+            try w.write(formatted);
+
+            try w.objectField("depth");
+            try w.write(depth);
+
+            try w.objectField("dependencies");
+            {
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                for (tree.dependencies.get(hoisted_deps)) |tree_dep_id| {
+                    const dep = dependencies[tree_dep_id];
+                    const package_id = resolutions[tree_dep_id];
+
+                    try w.objectField(dep.name.slice(sb));
+                    {
+                        try w.beginObject();
+                        defer w.endObject() catch {};
+
+                        try w.objectField("id");
+                        try w.write(tree_dep_id);
+
+                        try w.objectField("package_id");
+                        try w.write(package_id);
+                    }
+                }
+            }
+        }
+    }
+
+    {
+        try w.objectField("dependencies");
+        try w.beginArray();
+        defer w.endArray() catch {};
+
+        const dependencies = this.buffers.dependencies.items;
+        const resolutions = this.buffers.resolutions.items;
+
+        for (0..dependencies.len) |dep_id| {
+            const dep = dependencies[dep_id];
+            const res = resolutions[dep_id];
+            try this.jsonStringifyDependency(w, @intCast(dep_id), dep, res);
+        }
+    }
+
+    {
         try w.objectField("packages");
         try w.beginArray();
         defer w.endArray() catch {};
@@ -6071,22 +6353,26 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.write(pkg.name_hash);
 
             try w.objectField("resolution");
-            if (pkg.resolution.tag == .uninitialized) {
-                try w.write(null);
-            } else {
-                const b = try std.fmt.bufPrint(&buf, "{s} {s}", .{ @tagName(pkg.resolution.tag), pkg.resolution.fmt(sb, .auto) });
-                try w.write(b);
+            {
+                const res = pkg.resolution;
+                try w.beginObject();
+                defer w.endObject() catch {};
+
+                try w.objectField("tag");
+                try w.write(@tagName(res.tag));
+
+                try w.objectField("value");
+                const formatted = try std.fmt.bufPrint(&buf, "{s}", .{res.fmt(sb, .posix)});
+                try w.write(formatted);
             }
 
             try w.objectField("dependencies");
             {
-                try w.beginObject();
-                defer w.endObject() catch {};
+                try w.beginArray();
+                defer w.endArray() catch {};
 
-                for (pkg.dependencies.get(this.buffers.dependencies.items), pkg.resolutions.get(this.buffers.resolutions.items)) |dep_, res| {
-                    const dep: Dependency = dep_;
-                    try w.objectField(dep.name.slice(sb));
-                    try this.jsonStringifyDependency(w, dep, res);
+                for (pkg.dependencies.off..pkg.dependencies.off + pkg.dependencies.len) |dep_id| {
+                    try w.write(dep_id);
                 }
             }
 

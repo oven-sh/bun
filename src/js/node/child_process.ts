@@ -364,13 +364,17 @@ function execFile(file, args, options, callback) {
             encodedLength += actualLen;
 
             if (encodedLength > maxBuffer) {
-              let combined = ArrayPrototypeJoin.$call(array, "") + chunk;
+              const joined = ArrayPrototypeJoin.$call(array, "");
+              let combined = joined + chunk;
               combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
-              array = [combined];
+              array.length = 1;
+              array[0] = combined;
               ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
               kill();
             } else {
-              array = [ArrayPrototypeJoin.$call(array, "") + chunk];
+              const val = ArrayPrototypeJoin.$call(array, "") + chunk;
+              array.length = 1;
+              array[0] = val;
             }
           } else {
             $arrayPush(array, chunk);
@@ -452,14 +456,11 @@ function exec(command, options, callback) {
   return execFile(opts.file, opts.options, opts.callback);
 }
 
+const kCustomPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
+
 const customPromiseExecFunction = orig => {
   return (...args) => {
-    let resolve;
-    let reject;
-    const promise = new Promise((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
+    const { resolve, reject, promise } = Promise.withResolvers();
 
     promise.child = orig(...args, (err, stdout, stderr) => {
       if (err !== null) {
@@ -475,11 +476,21 @@ const customPromiseExecFunction = orig => {
   };
 };
 
-Object.defineProperty(exec, Symbol.for("nodejs.util.promisify.custom"), {
+Object.defineProperty(exec, kCustomPromisifySymbol, {
   __proto__: null,
   configurable: true,
   value: customPromiseExecFunction(exec),
 });
+
+exec[kCustomPromisifySymbol][kCustomPromisifySymbol] = exec[kCustomPromisifySymbol];
+
+Object.defineProperty(execFile, kCustomPromisifySymbol, {
+  __proto__: null,
+  configurable: true,
+  value: customPromiseExecFunction(execFile),
+});
+
+execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromisifySymbol];
 
 /**
  * Spawns a new process synchronously using the given `file`.
@@ -991,6 +1002,12 @@ class ChildProcess extends EventEmitter {
   pid;
   channel;
 
+  [Symbol.dispose]() {
+    if (!this.killed) {
+      this.kill();
+    }
+  }
+
   get killed() {
     if (this.#handle == null) return false;
   }
@@ -1306,7 +1323,7 @@ class ChildProcess extends EventEmitter {
     this.#handle.disconnect();
   }
 
-  kill(sig) {
+  kill(sig?) {
     const signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
 
     if (this.#handle) {

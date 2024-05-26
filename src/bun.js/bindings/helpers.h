@@ -23,62 +23,6 @@ class GlobalObject;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 
-template<class CppType, typename ZigType> class Wrap {
-public:
-    Wrap() {};
-
-    Wrap(ZigType zig)
-    {
-        result = zig;
-        cpp = static_cast<CppType*>(static_cast<void*>(&zig));
-    };
-
-    Wrap(ZigType* zig) { cpp = static_cast<CppType*>(static_cast<void*>(&zig)); };
-
-    Wrap(CppType _cpp)
-    {
-        auto buffer = alignedBuffer();
-        cpp = new (buffer) CppType(_cpp);
-    };
-
-    ~Wrap() {};
-
-    unsigned char* alignedBuffer()
-    {
-        return result.bytes + alignof(CppType) - reinterpret_cast<intptr_t>(result.bytes) % alignof(CppType);
-    }
-
-    ZigType result;
-    CppType* cpp;
-
-    static ZigType wrap(CppType obj) { return *static_cast<ZigType*>(static_cast<void*>(&obj)); }
-
-    static CppType unwrap(ZigType obj) { return *static_cast<CppType*>(static_cast<void*>(&obj)); }
-
-    static CppType* unwrap(ZigType* obj) { return static_cast<CppType*>(static_cast<void*>(obj)); }
-};
-
-template<class To, class From> To cast(From v)
-{
-    return *static_cast<To*>(static_cast<void*>(v));
-}
-
-template<class To, class From> To ccast(From v)
-{
-    return *static_cast<const To*>(static_cast<const void*>(v));
-}
-
-static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count)
-{
-    JSC::MarkedArgumentBuffer args = JSC::MarkedArgumentBuffer();
-    args.ensureCapacity(count);
-    for (size_t i = 0; i < count; ++i) {
-        args.append(JSC::JSValue::decode(v[i]));
-    }
-
-    return JSC::ArgList(args);
-}
-
 namespace Zig {
 
 // 8 bit byte
@@ -246,7 +190,7 @@ static const JSC::JSValue toJSStringValueGC(ZigString str, JSC::JSGlobalObject* 
     return JSC::JSValue(toJSStringGC(str, global));
 }
 
-static const ZigString ZigStringEmpty = ZigString { nullptr, 0 };
+static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
 static const unsigned char __dot_char = '.';
 static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
 static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
@@ -261,7 +205,7 @@ static ZigString toZigString(WTF::String* str)
 {
     return str->isEmpty()
         ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->characters8() : taggedUTF16Ptr(str->characters16()),
+        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
@@ -269,7 +213,7 @@ static ZigString toZigString(WTF::StringImpl& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
@@ -277,7 +221,7 @@ static ZigString toZigString(WTF::StringView& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
@@ -285,7 +229,7 @@ static ZigString toZigString(const WTF::StringView& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
+        : ZigString { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 

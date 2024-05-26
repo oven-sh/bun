@@ -333,23 +333,23 @@ pub const BlobOrStringOrBuffer = union(enum) {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
         return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
-        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
 
@@ -532,6 +532,15 @@ pub const StringOrBuffer = union(enum) {
         };
 
         return fromJSWithEncoding(global, allocator, value, encoding);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) ?StringOrBuffer {
+        const encoding: Encoding = brk: {
+            if (!encoding_value.isCell())
+                break :brk .utf8;
+            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
+        };
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
     }
 };
 
@@ -1740,6 +1749,7 @@ pub const Stats = union(enum) {
 /// @since v12.12.0
 pub const Dirent = struct {
     name: bun.String,
+    path: bun.String,
     // not publicly exposed
     kind: Kind,
 
@@ -1758,6 +1768,10 @@ pub const Dirent = struct {
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return this.name.toJS(globalObject);
+    }
+
+    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return this.path.toJS(globalThis);
     }
 
     pub fn isBlockDevice(
@@ -1810,8 +1824,13 @@ pub const Dirent = struct {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 
-    pub fn finalize(this: *Dirent) callconv(.C) void {
+    pub fn deref(this: *const Dirent) void {
         this.name.deref();
+        this.path.deref();
+    }
+
+    pub fn finalize(this: *Dirent) callconv(.C) void {
+        this.deref();
         bun.destroy(this);
     }
 };
@@ -3490,6 +3509,13 @@ pub const Path = struct {
             buf[bufOffset] = CHAR_BACKWARD_SLASH;
         }
         return buf[0..bufSize];
+    }
+
+    pub fn normalizeT(comptime T: type, path: []const T, buf: []T) []const T {
+        return switch (Environment.os) {
+            .windows => normalizeWindowsT(T, path, buf),
+            else => normalizePosixT(T, path, buf),
+        };
     }
 
     pub inline fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {

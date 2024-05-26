@@ -1,14 +1,16 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
-import { copyFileSync, rmSync } from "fs";
+import { copyFileSync } from "fs";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { cp, rm } from "fs/promises";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
-import { tmpdir } from "node:os";
+expect.extend({ toMatchNodeModulesAt });
 
-let root = join(tmpdir(), "next-pages" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36));
+let root = tmpdirSync();
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -113,31 +115,47 @@ afterAll(() => {
   }
 });
 
-test("hot reloading works on the client (+ tailwind hmr)", async () => {
-  expect(dev_server).not.toBeUndefined();
-  expect(baseUrl).not.toBeUndefined();
-  var pid: number, exited;
-  let timeout = setTimeout(() => {
-    if (timeout && pid) {
-      process.kill?.(pid);
-      pid = 0;
+// Chrome for Testing doesn't support arm64 yet
+//
+// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
+// https://github.com/puppeteer/puppeteer/issues/7740
+const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
 
-      if (dev_server_pid) {
-        process?.kill?.(dev_server_pid);
-        dev_server_pid = undefined;
+// https://github.com/oven-sh/bun/issues/11255
+test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
+  "hot reloading works on the client (+ tailwind hmr)",
+  async () => {
+    expect(dev_server).not.toBeUndefined();
+    expect(baseUrl).not.toBeUndefined();
+
+    const lockfile = parseLockfile(root);
+    expect(lockfile).toMatchNodeModulesAt(root);
+    expect(lockfile).toMatchSnapshot();
+
+    var pid: number, exited;
+    let timeout = setTimeout(() => {
+      if (timeout && pid) {
+        process.kill?.(pid);
+        pid = 0;
+
+        if (dev_server_pid) {
+          process?.kill?.(dev_server_pid);
+          dev_server_pid = undefined;
+        }
       }
-    }
-  }, 30000).unref();
+    }, 30000).unref();
 
-  ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
-    cwd: root,
-    env: bunEnv,
-    stdio: ["ignore", "inherit", "inherit"],
-  }));
+    ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
+      cwd: root,
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+    }));
 
-  expect(await exited).toBe(0);
-  pid = 0;
-  clearTimeout(timeout);
-  // @ts-expect-error
-  timeout = undefined;
-}, 30000);
+    expect(await exited).toBe(0);
+    pid = 0;
+    clearTimeout(timeout);
+    // @ts-expect-error
+    timeout = undefined;
+  },
+  100_000,
+);

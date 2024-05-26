@@ -1,11 +1,9 @@
 import fs from "fs";
 import path from "path";
-import { test, expect, describe, beforeAll } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
-import { join } from "path";
+import { test, expect, describe, beforeAll, setDefaultTimeout } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-let cwd = join(tmpdir(), "complex-workspace-test" + Math.random().toString(36).slice(2, 8));
+let cwd = tmpdirSync();
 
 function validate(packageName: string, version: string, realPackageName?: string) {
   test(`${packageName} is ${realPackageName ? `${realPackageName}@${version}` : version}`, () => {
@@ -37,6 +35,7 @@ function mustNotExist(filePath: string) {
 }
 
 beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 });
 
@@ -63,7 +62,7 @@ test("the install succeeds", async () => {
     cwd = false as any;
     throw new Error("Failed to install");
   }
-}, 10000);
+});
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");

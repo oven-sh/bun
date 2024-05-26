@@ -140,7 +140,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
 
     /* Get and store the port once */
-    struct bsd_addr_t tmp;
+    struct bsd_addr_t tmp = {0};
     bsd_local_addr(fd, &tmp);
     udp->port = bsd_addr_get_port(&tmp);
     udp->loop = loop;

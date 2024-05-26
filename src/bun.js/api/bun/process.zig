@@ -1515,7 +1515,7 @@ pub fn spawnProcessWindows(
     var args = argv;
     var force_verbatim_arguments = false;
     const extension = std.fs.path.extension(std.mem.sliceTo(file, 0));
-    if (bun.strings.eqlComptime(extension, ".cmd") or bun.strings.eqlComptime(extension, ".bat")) {
+    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(extension, ".cmd") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(extension, ".bat")) {
         force_verbatim_arguments = true;
         file = "cmd.exe";
         const args_slice = std.mem.span(args);

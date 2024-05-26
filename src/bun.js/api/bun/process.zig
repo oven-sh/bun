@@ -1521,7 +1521,7 @@ pub fn spawnProcessWindows(
         const args_slice = std.mem.span(args);
         args = try allocator.allocSentinel(?[*:0]const u8, args_slice.len + 2, null);
         args[0..2].* = .{ file, "/c" };
-        args[2] = std.fmt.allocPrintZ(allocator, "\"{?s}\"", .{args_slice[0]});
+        args[2] = try std.fmt.allocPrintZ(allocator, "\"{?s}\"", .{args_slice[0]});
         @memcpy(args[3..], args_slice[1..]);
     }
 

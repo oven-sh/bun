@@ -14,6 +14,9 @@ import { tls as cert1, expiredTls as cert2 } from "harness";
 const CERT_LOCALHOST_IP = { ...cert1 };
 const CERT_EXPIRED = { ...cert2 };
 
+// Note: Do not use bun.sh as the example domain
+// Cloudflare sometimes blocks automated requests to it.
+// so it will cause flaky tests.
 async function createServer(cert: TLSOptions, callback: (port: number) => Promise<any>) {
   using server = Bun.serve({
     port: 0,
@@ -48,7 +51,7 @@ it("can handle multiple requests with non native checkServerIdentity", async () 
 });
 
 it("fetch with valid tls should not throw", async () => {
-  const promises = [`https://bun.sh`, `https://www.example.com`].map(async url => {
+  const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
     const result = await fetch(url, { keepalive: false }).then((res: Response) => res.blob());
     expect(result?.size).toBeGreaterThan(0);
   });
@@ -58,7 +61,7 @@ it("fetch with valid tls should not throw", async () => {
 
 it("fetch with valid tls and non-native checkServerIdentity should work", async () => {
   let count = 0;
-  const promises = [`https://bun.sh`, `https://www.example.com`].map(async url => {
+  const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
     await fetch(url, {
       keepalive: false,
       tls: {
@@ -123,7 +126,7 @@ it("fetch with invalid tls should throw", async () => {
 
 it("fetch with checkServerIdentity failing should throw", async () => {
   try {
-    await fetch(`https://bun.sh`, {
+    await fetch(`https://example.com`, {
       keepalive: false,
       tls: {
         checkServerIdentity() {

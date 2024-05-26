@@ -441,7 +441,27 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 break;
             }
 
-            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+            if (events & LIBUS_SOCKET_READABLE) {
+                while (!u->closed) {
+                    struct udp_recvbuf recvbuf;
+                    bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    if (npackets > 0) {
+                        u->on_data(u, &recvbuf, npackets);
+                    } else {
+                        if (npackets == LIBUS_SOCKET_ERROR) {
+                            // If the error was not EAGAIN, mark the error
+                            if (!bsd_would_block()) {
+                                error = 1;
+                            }
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
                 u->on_drain(u);
                 if (u->closed) {
                     break;
@@ -450,25 +470,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 // Otherwise we would receive a writable event on every tick of the event loop.
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
-            if (events & LIBUS_SOCKET_READABLE) {
-                struct udp_recvbuf recvbuf;
-                bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
-                while (1) {
-                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
-                    if (npackets > 0) {
-                        u->on_data(u, &recvbuf, npackets);
-                        if (u->closed) {
-                            break;
-                        }
-                    } else if (npackets == LIBUS_SOCKET_ERROR && bsd_would_block()) {
-                        // break receive loop when we receive EAGAIN or similar
-                        break;
-                    } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                        // close the socket on error
-                        us_udp_socket_close(u);
-                        break;
-                    }
-                }
+
+            if (error && !u->closed) {
+                us_udp_socket_close(u);
             }
             break;
         }

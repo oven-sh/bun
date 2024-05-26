@@ -156,12 +156,18 @@ void us_loop_run(struct us_loop_t *loop) {
                 int events = loop->ready_polls[loop->current_ready_poll].events;
                 const int error = events & (EPOLLERR | EPOLLHUP);
 #else
-                /* EVFILT_READ, EVFILT_TIME, EVFILT_USER are all mapped to LIBUS_SOCKET_READABLE */
-                int events = LIBUS_SOCKET_READABLE;
-                if (loop->ready_polls[loop->current_ready_poll].filter == EVFILT_WRITE) {
-                    events = LIBUS_SOCKET_WRITABLE;
-                }
-                const int error = loop->ready_polls[loop->current_ready_poll].flags & (EV_ERROR | EV_EOF);
+                const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
+                const int16_t filter = current_kevent->filter;
+                const uint16_t flags = current_kevent->flags;
+                const uint32_t fflags = current_kevent->fflags;
+
+                // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
+                // > Instead, the filter will aggregate the events into a single kevent struct
+                // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
+                int events = 0
+                    | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                    | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
+                const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
 #endif
                 /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
                 events &= us_poll_events(poll);
@@ -225,22 +231,21 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
             }
 #ifdef LIBUS_USE_EPOLL
             int events = loop->ready_polls[loop->current_ready_poll].events;
-            int error = loop->ready_polls[loop->current_ready_poll].events & (EPOLLERR | EPOLLHUP);
+            const int error = events & (EPOLLERR | EPOLLHUP);
 #else
+            const struct kevent64_s* current_kevent = &loop->ready_polls[loop->current_ready_poll];
+            const int16_t filter = current_kevent->filter;
+            const uint16_t flags = current_kevent->flags;
+            const uint32_t fflags = current_kevent->fflags;
 
-            struct kevent64_s *kev = &loop->ready_polls[loop->current_ready_poll];
-            /* EVFILT_READ, EVFILT_TIME, EVFILT_USER are all mapped to LIBUS_SOCKET_READABLE */
-            int events = LIBUS_SOCKET_READABLE;
-            if (kev->filter == EVFILT_WRITE) {
-                events = LIBUS_SOCKET_WRITABLE;
-            }
-            // see man 2 kqueue
-            int error = 0;
-            if (kev->flags & EV_ERROR) {
-                error = (int)kev->data;
-            } else if (kev->flags & EV_EOF) {
-                error = kev->fflags;
-            }
+            // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
+            // > Instead, the filter will aggregate the events into a single kevent struct
+            int events = 0
+                | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
+
+            // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
+            const int error = (flags & (EV_ERROR | EV_EOF)) ? ((int)fflags || 1) : 0;
 #endif
             /* Always filter all polls by what they actually poll for (callback polls always poll for readable) */
             events &= us_poll_events(poll);

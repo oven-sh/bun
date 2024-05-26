@@ -216,4 +216,14 @@ describe("bundler", () => {
     },
     run: { stdout: "你好" },
   });
+
+  itBundled("regression/WindowsBackslashAssertion1#9974", {
+    files: {
+      "/test/entry.ts": `
+        import { loadFonts } from "../base";
+        console.log(loadFonts);
+      `,
+    },
+    entryPointsRaw: ["test/entry.ts", "--external", "*"],
+  });
 });

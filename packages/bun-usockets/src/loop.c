@@ -442,7 +442,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             }
 
             if (events & LIBUS_SOCKET_READABLE) {
-                while (!u->closed) {
+                do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
@@ -454,11 +454,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                             if (!bsd_would_block()) {
                                 error = 1;
                             }
+                        } else {
+                            // 0 messages received, we are done
+                            // this case can happen if either:
+                            // - the total number of messages pending was not divisible by 8
+                            // - recvmsg() was used instead of recvmmsg() and there was no message to read.
                         }
 
                         break;
                     }
-                }
+                } while (!u->closed);
             }
 
             if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {

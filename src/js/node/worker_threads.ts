@@ -277,7 +277,7 @@ class Worker extends EventEmitter {
     
     // todo: deal with mistyped terminate()
     if (this.#worker.terminate() as unknown as boolean) {
-      resolve(1234); // TODO: get proper exit code somewhere
+      resolve(undefined); // this aligns with Node behavior
     }
 
     return (this.#onExitPromise = promise);

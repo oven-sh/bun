@@ -1,9 +1,15 @@
 import { buildSync } from "esbuild";
 import { rmSync, mkdirSync, cpSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { type as getOSType } from "node:os";
 
 const { pathname } = new URL("..", import.meta.url);
-process.chdir(pathname);
+
+if (getOSType() === "Windows_NT") {
+  process.chdir(pathname.substring(1))
+} else {
+  process.chdir(pathname);
+}
 
 buildSync({
   entryPoints: ["src/extension.ts", "src/web-extension.ts"],

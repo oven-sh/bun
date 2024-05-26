@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { Location, SourceMap } from "./sourcemap";
 import { EventEmitter } from "node:events";
 import { UnixSignal, randomUnixPath } from "./signal";
+import { type as getOSType } from "node:os";
 
 const capabilities: DAP.Capabilities = {
   supportsConfigurationDoneRequest: true,
@@ -489,7 +490,14 @@ export class DebugAdapter extends EventEmitter<DebugAdapterEventMap> implements 
           ...env,
         };
 
-    const url = `ws+unix://${randomUnixPath()}`;
+    let url: string;
+
+    if (getOSType() === "Windows_NT") {
+      url = `ws+unix:///${randomUnixPath()}`.replaceAll("\\", "/");
+    } else {
+      url = `ws+unix://${randomUnixPath()}`;
+    }
+
     const signal = new UnixSignal();
 
     signal.on("Signal.received", () => {

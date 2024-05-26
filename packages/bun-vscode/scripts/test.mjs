@@ -1,8 +1,14 @@
 import { readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { type as getOSType } from "node:os";
 
 const { pathname } = new URL("..", import.meta.url);
-process.chdir(pathname);
+
+if (getOSType() === "Windows_NT") {
+  process.chdir(pathname.substring(1))
+} else {
+  process.chdir(pathname);
+}
 
 let path;
 for (const filename of readdirSync("extension")) {

@@ -584,7 +584,7 @@ pub const BundleV2 = struct {
 
         const entry = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch @panic("Ran out of memory");
         if (!entry.found_existing) {
-            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch @panic("Ran out of memory");
 
             // We need to parse this
             const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
@@ -671,7 +671,8 @@ pub const BundleV2 = struct {
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
-        path.* = try path.dupeAlloc(this.graph.allocator);
+        path.* = try path.dupeAllocFixPretty(this.graph.allocator);
+        path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
@@ -2011,8 +2012,7 @@ pub const BundleV2 = struct {
                 const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                 path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
             }
-            path.assertPrettyIsValid();
-            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch @panic("Ran out of memory");
 
             var secondary_path_to_copy: ?Fs.Path = null;
             if (resolve_result.path_pair.secondary) |*secondary| {

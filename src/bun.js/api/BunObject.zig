@@ -3795,25 +3795,7 @@ pub const Timer = struct {
                 return;
             }
 
-            if (result.asAnyPromise()) |promise| {
-                switch (promise.status(globalThis.vm())) {
-                    .Rejected => {
-                        this.deinit();
-                        _ = vm.unhandledRejection(globalThis, promise.result(globalThis.vm()), promise.asValue(globalThis));
-                    },
-                    .Fulfilled => {
-                        this.deinit();
-
-                        // get the value out of the promise
-                        _ = promise.result(globalThis.vm());
-                    },
-                    .Pending => {
-                        result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);
-                    },
-                }
-            } else {
-                this.deinit();
-            }
+            this.deinit();
         }
     };
 

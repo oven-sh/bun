@@ -229,34 +229,7 @@ test("test async exceptions fail tests", () => {
     await 1;
   });
 
-  test('test throwing inside a setTimeout', async () => {
-    await new Promise((resolve, reject) => {
-      setTimeout(() => {
-        resolve();
-        throw new Error('test throwing inside an EventEmitter #FAIL004');
-      }, 0);
-    });
-  });
 
-  test('test throwing inside an async setTimeout', async () => {
-    await new Promise((resolve, reject) => {
-      setTimeout(async () => {
-        await 1;
-        resolve();
-        throw new Error('test throwing inside an EventEmitter #FAIL005');
-      }, 0);
-    });
-  });
-
-
-  test('test throwing inside an async setTimeout no await' , async () => {
-    await new Promise((resolve, reject) => {
-      setTimeout(async () => {
-        resolve();
-        throw new Error('test throwing inside an EventEmitter #FAIL006');
-      }, 0);
-    });
-  });
 
   `;
   const dir = tmpdirSync();
@@ -279,10 +252,7 @@ test("test async exceptions fail tests", () => {
   expect(str).toContain("#FAIL001");
   expect(str).toContain("#FAIL002");
   expect(str).toContain("#FAIL003");
-  expect(str).toContain("#FAIL004");
-  expect(str).toContain("#FAIL005");
-  expect(str).toContain("#FAIL006");
-  expect(str).toContain("6 fail");
+  expect(str).toContain("3 fail");
   expect(str).toContain("0 pass");
 
   expect(exitCode).toBe(1);

@@ -317,3 +317,11 @@ it("setTimeout CPU usage #7790", async () => {
   const stats = process.resourceUsage();
   expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
 });
+
+it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+});
+
+it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
+});

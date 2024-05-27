@@ -350,6 +350,8 @@ describe("Bun.semver.satisfies()", () => {
 
     testSatisfies("^1.2.3-pr.1 || >=1.2.4-alpha", "1.2.4-alpha.notready", true);
 
+    testSatisfies("^3.0.0-next.0||^3.0.0", "3.0.0-next.2", true);
+
     const notPassing = [
       "0.1.0",
       "0.10.0",

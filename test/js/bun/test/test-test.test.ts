@@ -651,7 +651,7 @@ describe("unhandled errors between tests are reported", () => {
 
       ${stage}(async () => {
         Bun.sleep(1).then(() => {
-          throw new Error('at ${stage}');
+          throw new Error('## stage ${stage} ##');
         });
         await Bun.sleep(1);
         
@@ -679,12 +679,14 @@ describe("unhandled errors between tests are reported", () => {
           .toString()
           .replaceAll(test_dir, "<dir>")
           .replaceAll("\r\n", "\n")
+          .replaceAll("\\", "/")
           .split("\n")
           .filter(a => {
             if (a.includes("(:")) return false;
+            if (a.includes("bun test v")) return false;
             return true;
           })
-          .map(a => a.trimEnd())
+          .map(a => a.trimEnd().replace(/((\d+)(\.?)\d+\s?ms)/, "xx ms"))
           .join("\n"),
       ).toMatchSnapshot();
     });

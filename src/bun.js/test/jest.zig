@@ -101,6 +101,8 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
+    unhandled_errors_between_tests: u32 = 0,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
@@ -757,7 +759,9 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    if (!promise.isHandled(vm.global.vm())) {
+                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    }
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
@@ -1203,6 +1207,7 @@ pub const DescribeScope = struct {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
         if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
+        globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
@@ -1305,17 +1310,42 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+        var deduped = false;
+        const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
+
+        if (rejection.asAnyPromise()) |promise| {
+            promise.setHandled(globalObject.vm());
+        }
+
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
+            deduped = true;
         } else {
+            if (is_unhandled and Jest.runner != null) {
+                Output.prettyErrorln(
+                    \\<r>
+                    \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
+                    \\<d>-------------------------------<r>
+                    \\
+                , .{});
+
+                Output.flush();
+            }
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
+            if (is_unhandled and Jest.runner != null) {
+                Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
+                Output.flush();
+            }
         }
 
         if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
             this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .unhandledRejection);
+        } else if (Jest.runner) |runner| {
+            if (!deduped)
+                runner.unhandled_errors_between_tests += 1;
         }
     }
 

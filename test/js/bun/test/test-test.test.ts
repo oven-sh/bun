@@ -183,20 +183,47 @@ try {
   test();
 } catch (e) {}
 
-describe("throw in describe scope doesn't enqueue tests after thrown", () => {
-  it("test enqueued before a describe scope throws is never run", () => {
-    throw new Error("This test failed");
+test("describe scope throwing doesn't block other tests from running", async () => {
+  const code = `
+  describe("throw in describe scope doesn't enqueue tests after thrown", () => {
+    it("test enqueued before a describe scope throws is never run", () => {
+      throw new Error("This test failed");
+    });
+  
+    throw "This test passed. Ignore the error message";
+  
+    it("test enqueued after a describe scope throws is never run", () => {
+      throw new Error("This test failed");
+    });
+  });
+  
+  it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
+    console.log(
+      String.fromCharCode(...[73, 32, 104, 97, 118, 101, 32, 98, 101, 101, 110, 32, 114, 101, 97, 99, 104, 101, 100, 33]),
+    );
+  });  
+`;
+
+  const dir = tmpdirSync();
+  const filepath = join(dir, "test-i-have-been-reached.test.js");
+  rmSync(filepath, {
+    force: true,
   });
 
-  throw "This test passed. Ignore the error message";
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (e) {}
+  writeFileSync(filepath, code);
 
-  it("test enqueued after a describe scope throws is never run", () => {
-    throw new Error("This test failed");
+  const { stdout, stderr, exitCode } = spawnSync([bunExe(), "test", "test-i-have-been-reached.test.js"], {
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-});
 
-it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
-  expect(true).toBe(true);
+  expect(stdout.toString()).toContain("I have been reached!");
+  expect(stderr.toString()).toContain("1 error");
 });
 
 test("test async exceptions fail tests", () => {

@@ -1036,6 +1036,9 @@ pub const TestCommand = struct {
 
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
+        vm.onUnhandledRejectionCtx = null;
+        vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
                 Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });

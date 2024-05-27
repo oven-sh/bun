@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 
@@ -638,5 +638,55 @@ describe("empty", () => {
     expect(await exited).toBe(0);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
+  }
+});
+
+describe("unhandled errors between tests are reported", () => {
+  const stages = ["beforeAll", "beforeEach", "afterEach", "afterAll", "describe"];
+
+  for (const stage of stages) {
+    test("in " + stage, () => {
+      const code = `
+      import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
+
+      ${stage}(async () => {
+        Bun.sleep(1).then(() => {
+          throw new Error('at ${stage}');
+        });
+        await Bun.sleep(1);
+        
+      });
+
+      test("my-test", () => {
+        expect(1).toBe(1);
+      });
+    `;
+
+      const test_dir = tempDirWithFiles("unhandled-" + stage, {
+        "my-test.test.js": code,
+        "package.json": "{}",
+      });
+
+      const { stderr, exited } = spawnSync({
+        cmd: [bunExe(), "test", "my-test.test.js"],
+        cwd: test_dir,
+        stdout: "inherit",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      expect(
+        stderr
+          .toString()
+          .replaceAll(test_dir, "<dir>")
+          .replaceAll("\r\n", "\n")
+          .split("\n")
+          .filter(a => {
+            if (a.includes("(:")) return false;
+            return true;
+          })
+          .map(a => a.trimEnd())
+          .join("\n"),
+      ).toMatchSnapshot();
+    });
   }
 });

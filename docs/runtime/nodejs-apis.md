@@ -53,7 +53,7 @@ Some methods are not optimized yet.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `addAbortListener` `events.getMaxListeners`
+🟢 Fully implemented.
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 

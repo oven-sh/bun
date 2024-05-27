@@ -166,6 +166,10 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-beta+build", "1.2.3-beta+otherbuild"],
       ["1.2.3+build", "1.2.3+otherbuild"],
       ["  v1.2.3+build", "1.2.3+otherbuild"],
+
+      ["1.1.1-next.0 ", "1.1.1-next.0    "],
+      ["1.1.1-next.0.a ", "1.1.1-next.0.a    "],
+      ["1.1.1-next.0.a+abc ", "1.1.1-next.0.a+jkejf    "],
     ];
 
     for (const [left, right] of tests) {

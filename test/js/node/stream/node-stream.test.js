@@ -651,7 +651,7 @@ it("should emit prefinish on current tick", done => {
     finishCalled = true;
   });
 
-  upperCaseTransform.end('hi');
+  upperCaseTransform.end("hi");
 
   expect(prefinishCalled).toBeTrue();
 

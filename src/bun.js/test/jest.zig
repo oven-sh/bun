@@ -1308,9 +1308,14 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
         var deduped = false;
         const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
+
+        if (rejection.asAnyPromise()) |promise| {
+            promise.setHandled(globalObject.vm());
+        }
+
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
             deduped = true;

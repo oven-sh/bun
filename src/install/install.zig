@@ -56,6 +56,7 @@ threadlocal var initialized_store = false;
 const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
+pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
 // these bytes are skipped
@@ -111,6 +112,7 @@ pub fn initializeMiniStore() void {
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
+const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
@@ -200,6 +202,556 @@ pub const Aligner = struct {
     }
 };
 
+const PatchTask = struct {
+    manager: *const PackageManager,
+    managerrr: *PackageManager,
+    project_dir: []const u8,
+    callback: union(enum) {
+        calc_hash: CalcPatchHash,
+        apply: ApplyPatch,
+    },
+    task: ThreadPool.Task = .{
+        .callback = runFromThreadPool,
+    },
+    next: ?*PatchTask = null,
+
+    const debug = bun.Output.scoped(.InstallPatch, false);
+
+    const Error = struct {
+        errno: bun.C.E,
+        path: ?[]const u8,
+
+        fn fromSys(e: bun.sys.Error) @This() {
+            return .{
+                .errno = e.getErrno(),
+                .path = if (e.path.len > 0) bun.default_allocator.dupe(u8, e.path) catch bun.outOfMemory() else null,
+            };
+        }
+
+        fn deinit(this: *@This()) void {
+            if (this.path) |p| bun.default_allocator.free(p);
+        }
+    };
+
+    pub fn Maybe(comptime T: type) type {
+        return bun.JSC.Node.Maybe(T, Error);
+    }
+
+    const CalcPatchHash = struct {
+        pkg_id: PackageID,
+        patchfile_path: []const u8,
+        name_and_version_hash: u64,
+
+        dependency_id: DependencyID,
+        url: string,
+
+        result: ?Maybe(u64) = null,
+    };
+
+    const ApplyPatch = struct {
+        pkg_id: PackageID,
+        patch_hash: u64,
+        name_and_version_hash: u64,
+        resolution: *const Resolution,
+        patchfilepath: []const u8,
+        pkgname: []const u8,
+
+        cache_dir: std.fs.Dir,
+        cache_dir_subpath: stringZ,
+        cache_dir_subpath_without_patch_hash: stringZ,
+
+        result: ?Maybe(void) = null,
+    };
+
+    fn deinit(this: *PatchTask) void {
+        switch (this.callback) {
+            .apply => {
+                this.manager.allocator.free(this.callback.apply.patchfilepath);
+                this.manager.allocator.free(this.callback.apply.cache_dir_subpath);
+                this.manager.allocator.free(this.callback.apply.pkgname);
+            },
+            .calc_hash => {
+                // TODO: how to deinit `this.callback.calc_hash.network_task`
+                this.manager.allocator.free(this.callback.calc_hash.patchfile_path);
+            },
+        }
+        bun.destroy(this);
+    }
+
+    fn runFromThreadPool(task: *ThreadPool.Task) void {
+        var patch_task: *PatchTask = @fieldParentPtr(PatchTask, "task", task);
+        patch_task.runFromThreadPoolImpl();
+    }
+
+    fn runFromThreadPoolImpl(this: *PatchTask) void {
+        debug("runFromThreadPoolImpl {s}", .{@tagName(this.callback)});
+        defer {
+            defer this.managerrr.wake();
+            this.managerrr.patch_task_queue.push(this);
+        }
+        switch (this.callback) {
+            .calc_hash => {
+                this.callback.calc_hash.result = this.calcHash();
+            },
+            .apply => {
+                this.callback.apply.result = this.apply();
+            },
+        }
+    }
+
+    fn runFromMainThread(this: *PatchTask, manager: *PackageManager) void {
+        debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
+        switch (this.callback) {
+            .calc_hash => this.runFromMainThreadCalcHash(manager),
+            .apply => this.runFromMainThreadApply(),
+        }
+    }
+
+    fn runFromMainThreadApply(this: *PatchTask) void {
+        defer this.deinit();
+    }
+
+    fn runFromMainThreadCalcHash(this: *PatchTask, manager: *PackageManager) void {
+        // TODO only works for npm package
+        // need to switch on version.tag and handle each case appropriately
+        defer this.deinit();
+        const calc_hash = &this.callback.calc_hash;
+        const hash = switch (calc_hash.result orelse @panic("bad")) {
+            .result => |h| h,
+            .err => @panic("TODO handle error gracefully"),
+        };
+        const pkg = manager.lockfile.packages.get(calc_hash.pkg_id);
+
+        var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
+        if (gop.found_existing) {
+            gop.value_ptr.setPatchfileHash(hash);
+            std.debug.print("GOP path: {s}\n", .{gop.value_ptr.path.slice(manager.lockfile.buffers.string_bytes.items)});
+        } else @panic("TODO this means a bug");
+
+        var out_name_and_version_hash: ?u64 = null;
+        var out_patchfile_hash: ?u64 = null;
+        manager.setPreinstallState(pkg.meta.id, manager.lockfile, .unknown);
+        switch (manager.determinePreinstallState(pkg, manager.lockfile, &out_name_and_version_hash, &out_patchfile_hash)) {
+            .done => {
+                // patched pkg in folder path, should now be handled by PackageInstall.install()
+                debug("pkg: {s} done", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+            },
+            .extract => {
+                debug("pkg: {s} extract", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+                const network_task = manager.generateNetworkTaskForTarball(
+                    // TODO: not just npm package
+                    Task.Id.forNPMPackage(
+                        manager.lockfile.str(&pkg.name),
+                        pkg.resolution.value.npm.version,
+                    ),
+                    calc_hash.url,
+                    calc_hash.dependency_id,
+                    pkg,
+                    this.callback.calc_hash.name_and_version_hash,
+                ) catch @panic("TODO zack") orelse unreachable;
+                if (manager.getPreinstallState(pkg.meta.id) == .extract) {
+                    manager.setPreinstallState(pkg.meta.id, manager.lockfile, .extracting);
+                    manager.enqueueNetworkTask(network_task);
+                }
+            },
+            .apply_patch => {
+                debug("pkg: {s} apply patch", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
+                const patch_task = PatchTask.newApplyPatchHash(
+                    manager,
+                    pkg.meta.id,
+                    hash,
+                    this.callback.calc_hash.name_and_version_hash,
+                );
+                if (manager.getPreinstallState(pkg.meta.id) == .apply_patch) {
+                    manager.setPreinstallState(pkg.meta.id, manager.lockfile, .applying_patch);
+                    manager.enqueuePatchTask(patch_task);
+                }
+            },
+            else => {},
+        }
+    }
+
+    // 1. Parse patch file
+    // 2. Create temp dir to do all the modifications
+    // 3. Copy un-patched pkg into temp dir
+    // 4. Apply patches to pkg in temp dir
+    // 5. rename() newly patched pkg to cache
+    fn apply(this: *PatchTask) Maybe(void) {
+        bun.assert(this.callback == .apply);
+
+        const strbuf: []const u8 = this.manager.lockfile.buffers.string_bytes.items;
+
+        const patch: *const ApplyPatch = &this.callback.apply;
+        const dir = this.project_dir;
+        const patchfile_path = patch.patchfilepath;
+
+        // 1. Parse the patch file
+        const absolute_patchfile_path = bun.path.join(&[_][]const u8{
+            dir,
+            patchfile_path,
+        }, .auto);
+        // TODO: can the patch file be anything other than utf-8?
+        const patchfile_txt = std.fs.cwd().readFileAlloc(
+            this.manager.allocator,
+            absolute_patchfile_path,
+            1024 * 1024 * 1024 * 4,
+        ) catch @panic("TODO zack");
+        defer this.manager.allocator.free(patchfile_txt);
+        var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch @panic("TODO zack");
+        defer patchfile.deinit(bun.default_allocator);
+
+        // 2. Create temp dir to do all the modifications
+        var tmpname_buf: [1024]u8 = undefined;
+        const tempdir_name = bun.span(bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch @panic("TODO zack"));
+        const system_tmpdir = bun.fs.FileSystem.instance.tmpdir() catch @panic("TODO zack");
+        var tmpdir = system_tmpdir.makeOpenPath(tempdir_name, .{}) catch @panic("TODO zack");
+        defer tmpdir.close();
+
+        const pkg_name = this.callback.apply.pkgname;
+
+        var resolution_buf: [512]u8 = undefined;
+        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{this.callback.apply.resolution.fmt(strbuf, .posix)}) catch unreachable;
+
+        const dummy_node_modules = .{
+            .path = std.ArrayList(u8).init(this.manager.allocator),
+            .tree_id = 0,
+        };
+
+        // 3. copy the unpatched files into temp dir
+        var pkg_install = PreparePatchPackageInstall{
+            .allocator = bun.default_allocator,
+            .cache_dir = this.callback.apply.cache_dir,
+            .cache_dir_subpath = this.callback.apply.cache_dir_subpath_without_patch_hash,
+            .destination_dir_subpath = tempdir_name,
+            .destination_dir_subpath_buf = tmpname_buf[0..],
+            .progress = .{},
+            .package_name = pkg_name,
+            .package_version = resolution_label,
+            // dummy value
+            .node_modules = &dummy_node_modules,
+        };
+
+        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile)) {
+            .success => {},
+            .fail => {
+                @panic("TODO print the error nicely");
+            },
+        }
+
+        var patch_pkg_dir = system_tmpdir.openDir(tempdir_name, .{}) catch @panic("TODO zack");
+        defer patch_pkg_dir.close();
+
+        // 4. apply patch
+        if (patchfile.apply(this.manager.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
+            defer e.deref();
+            std.debug.print("LOL: {}\n", .{e});
+            // return .{
+            //     .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
+            // };
+            @panic("TODO zack");
+        }
+
+        // 5. rename to cache dir
+        const path_in_tmpdir = bun.path.joinZ(
+            &[_][]const u8{
+                tempdir_name,
+                // tempdir_name,
+            },
+            .auto,
+        );
+        // var allocated = false;
+        // const package_name_z = brk: {
+        //     if (this.package_name.len < tmpname_buf.len) {
+        //         @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
+        //         tmpname_buf[this.package_name.len] = 0;
+        //         break :brk tmpname_buf[0..this.package_name.len :0];
+        //     }
+        //     allocated = true;
+        //     break :brk this.manager.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
+        // };
+        // defer if (allocated) this.manager.allocator.free(package_name_z);
+        if (bun.sys.renameat2(
+            bun.toFD(system_tmpdir.fd),
+            path_in_tmpdir,
+            bun.toFD(this.callback.apply.cache_dir.fd),
+            this.callback.apply.cache_dir_subpath,
+            .{},
+        ).asErr()) |e| {
+            _ = e; // autofix
+
+            // return .{
+            //     .fail = .{
+            //         .err = bun.errnoToZigErr(e.getErrno()),
+            //         .step = .patching,
+            //     },
+            // };
+            @panic("TODO zack");
+        }
+
+        return Maybe(void).success;
+    }
+
+    fn calcHash(this: *PatchTask) Maybe(u64) {
+        bun.assert(this.callback == .calc_hash);
+
+        const dir = this.project_dir;
+        const patchfile_path = this.callback.calc_hash.patchfile_path;
+
+        // parse the patch file
+        const absolute_patchfile_path = bun.path.joinZ(&[_][]const u8{
+            dir,
+            patchfile_path,
+        }, .auto);
+
+        const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
+            .err => |e| return .{ .err = Error.fromSys(e) },
+            .result => |s| s,
+        };
+        const size: u64 = @intCast(stat.size);
+
+        const fd = switch (bun.sys.open(absolute_patchfile_path, std.os.O.RDONLY, 0)) {
+            .err => |e| return .{ .err = Error.fromSys(e) },
+            .result => |fd| fd,
+        };
+        defer _ = bun.sys.close(fd);
+
+        var hasher = bun.Wyhash11.init(0);
+
+        // what's a good number for this? page size i guess
+        const STACK_SIZE = 16384;
+
+        var stack: [STACK_SIZE]u8 = undefined;
+        var read: usize = 0;
+        while (read < size) {
+            var i: usize = 0;
+            while (i < STACK_SIZE and i < size) {
+                switch (bun.sys.read(fd, stack[i..])) {
+                    .result => |w| i += w,
+                    .err => |e| return .{ .err = Error.fromSys(e) },
+                }
+            }
+            read += i;
+            hasher.update(stack[0..i]);
+        }
+
+        return .{ .result = hasher.final() };
+    }
+
+    fn notify(this: *PatchTask) void {
+        defer this.manager.wake();
+        this.manager.patch_task_queue.push(this);
+    }
+
+    fn schedule(this: *PatchTask, batch: *ThreadPool.Batch) void {
+        batch.push(ThreadPool.Batch.from(&this.task));
+    }
+
+    fn newCalcPatchHash(
+        manager: *PackageManager,
+        pkg_id: PackageID,
+        name_and_version_hash: u64,
+        dependency_id: DependencyID,
+        url: string,
+    ) *PatchTask {
+        const patchdep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse @panic("This is a bug");
+        bun.debugAssert(patchdep.patchfile_hash_is_null);
+        const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
+
+        const pt = bun.new(PatchTask, .{
+            .callback = .{
+                .calc_hash = .{
+                    .pkg_id = pkg_id,
+                    .patchfile_path = patchfile_path,
+                    .dependency_id = dependency_id,
+                    .url = url,
+                    .name_and_version_hash = name_and_version_hash,
+                },
+            },
+            .manager = manager,
+            .managerrr = manager,
+            .project_dir = FileSystem.instance.top_level_dir,
+        });
+
+        return pt;
+    }
+
+    fn newApplyPatchHash(
+        pkg_manager: *PackageManager,
+        pkg_id: PackageID,
+        patch_hash: u64,
+        name_and_version_hash: u64,
+    ) *PatchTask {
+        const pkg_name = pkg_manager.lockfile.packages.items(.name)[pkg_id];
+        const resolution: *const Resolution = &pkg_manager.lockfile.packages.items(.resolution)[pkg_id];
+
+        const stuff = PatchTask.computeCacheDirAndSubpath(
+            pkg_manager,
+            pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items),
+            resolution,
+            patch_hash,
+        );
+
+        const patchfilepath = pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
+
+        const pt = bun.new(PatchTask, .{
+            .callback = .{
+                .apply = .{
+                    .pkg_id = pkg_id,
+                    .resolution = resolution,
+                    .patch_hash = patch_hash,
+                    .name_and_version_hash = name_and_version_hash,
+                    .cache_dir = stuff.cache_dir,
+                    .patchfilepath = patchfilepath,
+                    .pkgname = pkg_manager.allocator.dupe(u8, pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
+                    // need to dupe this as it's calculated using
+                    // `PackageManager.cached_package_folder_name_buf` which may be
+                    // modified
+                    .cache_dir_subpath = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath) catch bun.outOfMemory(),
+                    .cache_dir_subpath_without_patch_hash = pkg_manager.allocator.dupeZ(u8, stuff.cache_dir_subpath[0 .. std.mem.indexOf(u8, stuff.cache_dir_subpath, "_patch_hash=") orelse @panic("This is a bug in Bun.")]) catch bun.outOfMemory(),
+                },
+            },
+            .manager = pkg_manager,
+            .managerrr = pkg_manager,
+            .project_dir = FileSystem.instance.top_level_dir,
+        });
+
+        return pt;
+    }
+
+    /// this is copy pasted from `installPackageWithNameAndResolution()`
+    /// it's not great to do this
+    pub fn computeCacheDirAndSubpath(
+        manager: *PackageManager,
+        pkg_name: string,
+        resolution: *const Resolution,
+        patch_hash: u64,
+    ) struct { cache_dir: std.fs.Dir, cache_dir_subpath: stringZ } {
+        const name = pkg_name;
+        const buf = manager.lockfile.buffers.string_bytes.items;
+        _ = buf; // autofix
+        var cache_dir = std.fs.cwd();
+        var cache_dir_subpath: stringZ = "";
+
+        switch (resolution.tag) {
+            .npm => {
+                cache_dir_subpath = manager.cachedNPMPackageFolderName(name, resolution.value.npm.version, patch_hash);
+                cache_dir = manager.getCacheDirectory();
+            },
+            .git => {
+                cache_dir_subpath = manager.cachedGitFolderName(
+                    &resolution.value.git,
+                    patch_hash,
+                );
+                cache_dir = manager.getCacheDirectory();
+            },
+            .github => {
+                cache_dir_subpath = manager.cachedGitHubFolderName(&resolution.value.github, patch_hash);
+                cache_dir = manager.getCacheDirectory();
+            },
+            .folder => {
+                @panic("TODO @zack fix");
+                // const folder = resolution.value.folder.slice(buf);
+                // // Handle when a package depends on itself via file:
+                // // example:
+                // //   "mineflayer": "file:."
+                // if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                //     cache_dir_subpath = ".";
+                // } else {
+                //     @memcpy(manager.folder_path_buf[0..folder.len], folder);
+                //     this.folder_path_buf[folder.len] = 0;
+                //     cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
+                // }
+                // cache_dir = std.fs.cwd();
+            },
+            .local_tarball => {
+                cache_dir_subpath = manager.cachedTarballFolderName(resolution.value.local_tarball, patch_hash);
+                cache_dir = manager.getCacheDirectory();
+            },
+            .remote_tarball => {
+                cache_dir_subpath = manager.cachedTarballFolderName(resolution.value.remote_tarball, patch_hash);
+                cache_dir = manager.getCacheDirectory();
+            },
+            .workspace => {
+                @panic("TODO @zack fix");
+                // const folder = resolution.value.workspace.slice(buf);
+                // // Handle when a package depends on itself
+                // if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                //     cache_dir_subpath = ".";
+                // } else {
+                //     @memcpy(this.folder_path_buf[0..folder.len], folder);
+                //     this.folder_path_buf[folder.len] = 0;
+                //     cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
+                // }
+                // cache_dir = std.fs.cwd();
+            },
+            .symlink => {
+                @panic("TODO @zack fix");
+                // const directory = manager.globalLinkDir() catch |err| {
+                //     if (comptime log_level != .silent) {
+                //         const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
+                //         const args = .{ name, @errorName(err) };
+
+                //         if (comptime log_level.showProgress()) {
+                //             switch (Output.enable_ansi_colors) {
+                //                 inline else => |enable_ansi_colors| {
+                //                     this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                //                 },
+                //             }
+                //         } else {
+                //             Output.prettyErrorln(fmt, args);
+                //         }
+                //     }
+
+                //     if (manager.options.enable.fail_early) {
+                //         Global.exit(1);
+                //     }
+
+                //     Output.flush();
+                //     this.summary.fail += 1;
+                //     this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                //     return;
+                // };
+
+                // const folder = resolution.value.symlink.slice(buf);
+
+                // if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                //     cache_dir_subpath = ".";
+                //     cache_dir = std.fs.cwd();
+                // } else {
+                //     const global_link_dir = manager.globalLinkDirPath() catch unreachable;
+                //     var ptr = &this.folder_path_buf;
+                //     var remain: []u8 = this.folder_path_buf[0..];
+                //     @memcpy(ptr[0..global_link_dir.len], global_link_dir);
+                //     remain = remain[global_link_dir.len..];
+                //     if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
+                //         remain[0] = std.fs.path.sep;
+                //         remain = remain[1..];
+                //     }
+                //     @memcpy(remain[0..folder.len], folder);
+                //     remain = remain[folder.len..];
+                //     remain[0] = 0;
+                //     const len = @intFromPtr(remain.ptr) - @intFromPtr(ptr);
+                //     cache_dir_subpath = this.folder_path_buf[0..len :0];
+                //     cache_dir = directory;
+                // }
+            },
+            else => {
+                @panic("TODO @zack fix");
+                // if (comptime Environment.allow_assert) {
+                //     @panic("Internal assertion failure: unexpected resolution tag");
+                // }
+                // this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                // return;
+            },
+        }
+
+        return .{
+            .cache_dir = cache_dir,
+            .cache_dir_subpath = cache_dir_subpath,
+        };
+    }
+};
+
 const NetworkTask = struct {
     http: AsyncHTTP = undefined,
     task_id: u64,
@@ -219,6 +771,8 @@ const NetworkTask = struct {
         git_checkout: void,
         local_tarball: void,
     },
+    /// Key in patchedDependencies in package.json
+    apply_patch_task: ?*PatchTask = null,
     next: ?*NetworkTask = null,
 
     pub const DedupeMap = std.HashMap(u64, void, IdentityContext(u64), 80);
@@ -574,11 +1128,15 @@ pub const Features = struct {
     };
 };
 
-pub const PreinstallState = enum(u2) {
+pub const PreinstallState = enum(u4) {
     unknown = 0,
-    done = 1,
-    extract = 2,
-    extracting = 3,
+    done,
+    extract,
+    extracting,
+    calc_patch_hash,
+    calcing_patch_hash,
+    apply_patch,
+    applying_patch,
 };
 
 /// Schedule long-running callbacks for a task
@@ -593,6 +1151,7 @@ const Task = struct {
     id: u64,
     err: ?anyerror = null,
     package_manager: *PackageManager,
+    apply_patch_task: ?*PatchTask = null,
     next: ?*Task = null,
 
     /// An ID that lets us register a callback without keeping the same pointer around
@@ -895,6 +1454,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             .regular => struct {
                 root_project_dir: ?[]const u8 = null,
                 patch_path: string = undefined,
+                patch_contents_hash: u64 = 0,
 
                 pub const NULL = Patch{};
 
@@ -978,6 +1538,28 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
         };
 
+        ///
+        fn verifyPatchHash(
+            this: *@This(),
+            root_node_modules_dir: std.fs.Dir,
+        ) bool {
+            bun.debugAssert(!this.patch.isNull());
+
+            // hash from the .patch file, to be checked against bun tag
+            const patchfile_contents_hash = this.patch.patch_contents_hash;
+            var digitbuf: [20]u8 = undefined;
+            const digits = std.fmt.bufPrint(digitbuf[0..], "{d}", .{patchfile_contents_hash}) catch bun.outOfMemory();
+
+            const patch_tag_path = bun.path.joinZ(&[_][]const u8{
+                this.destination_dir_subpath,
+                ".bun-tag-",
+                digits[0..],
+            }, .posix);
+
+            _ = bun.sys.fstatat(bun.toFD(root_node_modules_dir.fd), patch_tag_path).unwrap() catch return false;
+            return true;
+        }
+
         // 1. verify that .bun-tag exists (was it installed from bun?)
         // 2. check .bun-tag against the resolved version
         fn verifyGitResolution(
@@ -1015,11 +1597,16 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             buf: []const u8,
             root_node_modules_dir: std.fs.Dir,
         ) bool {
-            return switch (resolution.tag) {
+            const verified =
+                switch (resolution.tag) {
                 .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
                 .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
                 else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
             };
+            if (comptime kind == .patch) return verified;
+            if (this.patch.isNull()) return verified;
+            if (!verified) return false;
+            return this.verifyPatchHash(root_node_modules_dir);
         }
 
         fn verifyPackageJSONNameAndVersion(this: *@This(), root_node_modules_dir: std.fs.Dir) bool {
@@ -2239,98 +2826,98 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // Are steps 2-3 strictly necessary? Probably not, but they have the added benefit
             // of being atomic and thus resilient to unexpected crashes etc.
             if (kind != .patch) {
-                if (!this.patch.isNull()) {
-                    const dir = this.patch.root_project_dir.?;
-                    const patchfile_path = this.patch.patch_path;
+                // if (!this.patch.isNull()) {
+                //     const dir = this.patch.root_project_dir.?;
+                //     const patchfile_path = this.patch.patch_path;
 
-                    // parse the patch file
-                    const absolute_patchfile_path = bun.path.join(&[_][]const u8{
-                        dir,
-                        patchfile_path,
-                    }, .auto);
-                    // TODO: can the patch file be anything other than utf-8?
-                    const patchfile_txt = std.fs.cwd().readFileAlloc(
-                        this.allocator,
-                        absolute_patchfile_path,
-                        1024 * 1024 * 1024 * 4,
-                    ) catch |e| return .{
-                        .fail = .{ .err = e, .step = .patching },
-                    };
-                    defer this.allocator.free(patchfile_txt);
-                    var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
-                        return .{ .fail = .{ .err = e, .step = .patching } };
-                    };
-                    defer patchfile.deinit(bun.default_allocator);
+                //     // parse the patch file
+                //     const absolute_patchfile_path = bun.path.join(&[_][]const u8{
+                //         dir,
+                //         patchfile_path,
+                //     }, .auto);
+                //     // TODO: can the patch file be anything other than utf-8?
+                //     const patchfile_txt = std.fs.cwd().readFileAlloc(
+                //         this.allocator,
+                //         absolute_patchfile_path,
+                //         1024 * 1024 * 1024 * 4,
+                //     ) catch |e| return .{
+                //         .fail = .{ .err = e, .step = .patching },
+                //     };
+                //     defer this.allocator.free(patchfile_txt);
+                //     var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| {
+                //         return .{ .fail = .{ .err = e, .step = .patching } };
+                //     };
+                //     defer patchfile.deinit(bun.default_allocator);
 
-                    // create temp dir
-                    var tmpname_buf: [1024]u8 = undefined;
-                    const tempdir_name = bun.span(
-                        bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |e| return .{
-                            .fail = .{ .err = e, .step = .patching },
-                        },
-                    );
-                    const __tmpdir = bun.fs.FileSystem.instance.tmpdir() catch |e|
-                        return .{
-                        .fail = .{ .err = e, .step = .patching },
-                    };
-                    var tmpdir = __tmpdir.makeOpenPath(tempdir_name, .{}) catch |e| return .{
-                        .fail = .{ .err = e, .step = .patching },
-                    };
-                    defer tmpdir.close();
+                //     // create temp dir
+                //     var tmpname_buf: [1024]u8 = undefined;
+                //     const tempdir_name = bun.span(
+                //         bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch |e| return .{
+                //             .fail = .{ .err = e, .step = .patching },
+                //         },
+                //     );
+                //     const __tmpdir = bun.fs.FileSystem.instance.tmpdir() catch |e|
+                //         return .{
+                //         .fail = .{ .err = e, .step = .patching },
+                //     };
+                //     var tmpdir = __tmpdir.makeOpenPath(tempdir_name, .{}) catch |e| return .{
+                //         .fail = .{ .err = e, .step = .patching },
+                //     };
+                //     defer tmpdir.close();
 
-                    // install original package to tempdir
-                    const result = this.installImpl(skip_delete, tmpdir, .copyfile);
-                    if (result.isFail()) return result;
+                //     // install original package to tempdir
+                //     const result = this.installImpl(skip_delete, tmpdir, .copyfile);
+                //     if (result.isFail()) return result;
 
-                    var patch_pkg_dir = tmpdir.openDir(this.package_name, .{}) catch |e| return .{
-                        .fail = .{ .err = e, .step = .patching },
-                    };
-                    defer patch_pkg_dir.close();
+                //     var patch_pkg_dir = tmpdir.openDir(this.package_name, .{}) catch |e| return .{
+                //         .fail = .{ .err = e, .step = .patching },
+                //     };
+                //     defer patch_pkg_dir.close();
 
-                    // apply patch
-                    if (patchfile.apply(this.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
-                        defer e.deref();
-                        return .{
-                            .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
-                        };
-                    }
+                //     // apply patch
+                //     if (patchfile.apply(this.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
+                //         defer e.deref();
+                //         return .{
+                //             .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
+                //         };
+                //     }
 
-                    // rename to original destination dir
-                    const path_in_tmpdir = bun.path.joinZ(
-                        &[_][]const u8{
-                            tempdir_name,
-                            this.destination_dir_subpath,
-                        },
-                        .auto,
-                    );
-                    var allocated = false;
-                    const package_name_z = brk: {
-                        if (this.package_name.len < tmpname_buf.len) {
-                            @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
-                            tmpname_buf[this.package_name.len] = 0;
-                            break :brk tmpname_buf[0..this.package_name.len :0];
-                        }
-                        allocated = true;
-                        break :brk this.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
-                    };
-                    defer if (allocated) this.allocator.free(package_name_z);
-                    if (bun.sys.renameat2(
-                        bun.toFD(__tmpdir.fd),
-                        path_in_tmpdir,
-                        bun.toFD(destination_dir.fd),
-                        package_name_z,
-                        .{},
-                    ).asErr()) |e| {
-                        return .{
-                            .fail = .{
-                                .err = bun.errnoToZigErr(e.getErrno()),
-                                .step = .patching,
-                            },
-                        };
-                    }
+                //     // rename to original destination dir
+                //     const path_in_tmpdir = bun.path.joinZ(
+                //         &[_][]const u8{
+                //             tempdir_name,
+                //             this.destination_dir_subpath,
+                //         },
+                //         .auto,
+                //     );
+                //     var allocated = false;
+                //     const package_name_z = brk: {
+                //         if (this.package_name.len < tmpname_buf.len) {
+                //             @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
+                //             tmpname_buf[this.package_name.len] = 0;
+                //             break :brk tmpname_buf[0..this.package_name.len :0];
+                //         }
+                //         allocated = true;
+                //         break :brk this.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
+                //     };
+                //     defer if (allocated) this.allocator.free(package_name_z);
+                //     if (bun.sys.renameat2(
+                //         bun.toFD(__tmpdir.fd),
+                //         path_in_tmpdir,
+                //         bun.toFD(destination_dir.fd),
+                //         package_name_z,
+                //         .{},
+                //     ).asErr()) |e| {
+                //         return .{
+                //             .fail = .{
+                //                 .err = bun.errnoToZigErr(e.getErrno()),
+                //                 .step = .patching,
+                //             },
+                //         };
+                //     }
 
-                    return Result.success();
-                }
+                //     return Result.success();
+                // }
             }
 
             return this.installImpl(skip_delete, destination_dir, this.getInstallMethod());
@@ -2528,6 +3115,10 @@ pub const PackageManager = struct {
     network_tarball_batch: ThreadPool.Batch = .{},
     network_resolve_batch: ThreadPool.Batch = .{},
     network_task_fifo: NetworkQueue = undefined,
+    patch_apply_batch: ThreadPool.Batch = .{},
+    patch_calc_hash_batch: ThreadPool.Batch = .{},
+    patch_task_fifo: PatchTaskFifo = undefined,
+    patch_task_queue: PatchTaskQueue = .{},
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks.init(bun.default_allocator),
@@ -2574,6 +3165,7 @@ pub const PackageManager = struct {
 
     pub var verbose_install = false;
 
+    pub const PatchTaskQueue = bun.UnboundedQueue(PatchTask, .next);
     pub const AsyncNetworkTaskQueue = bun.UnboundedQueue(NetworkTask, .next);
 
     pub const ScriptRunEnvironment = struct {
@@ -2991,7 +3583,14 @@ pub const PackageManager = struct {
         }
         return this.preinstall_state.items[package_id];
     }
-    pub fn determinePreinstallState(manager: *PackageManager, this: Package, lockfile: *Lockfile) PreinstallState {
+
+    pub fn determinePreinstallState(
+        manager: *PackageManager,
+        this: Package,
+        lockfile: *Lockfile,
+        out_name_and_version_hash: *?u64,
+        out_patchfile_hash: *?u64,
+    ) PreinstallState {
         switch (manager.getPreinstallState(this.meta.id)) {
             .unknown => {
 
@@ -3002,12 +3601,34 @@ pub const PackageManager = struct {
                     return .done;
                 }
 
+                const patch_hash: ?u64 = brk: {
+                    if (manager.lockfile.patched_dependencies.entries.len == 0) break :brk null;
+                    var sfb = std.heap.stackFallback(1024, manager.lockfile.allocator);
+                    const name_and_version = std.fmt.allocPrint(
+                        sfb.get(),
+                        "{s}@{}",
+                        .{
+                            this.name.slice(manager.lockfile.buffers.string_bytes.items),
+                            this.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
+                        },
+                    ) catch unreachable;
+                    const name_and_version_hash = String.Builder.stringHash(name_and_version);
+                    const patched_dep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk null;
+                    defer out_name_and_version_hash.* = name_and_version_hash;
+                    if (patched_dep.patchfile_hash_is_null) {
+                        manager.setPreinstallState(this.meta.id, manager.lockfile, .calc_patch_hash);
+                        return .calc_patch_hash;
+                    }
+                    out_patchfile_hash.* = patched_dep.patchfileHash().?;
+                    break :brk patched_dep.patchfileHash().?;
+                };
+
                 const folder_path = switch (this.resolution.tag) {
-                    .git => manager.cachedGitFolderNamePrintAuto(&this.resolution.value.git),
-                    .github => manager.cachedGitHubFolderNamePrintAuto(&this.resolution.value.github),
-                    .npm => manager.cachedNPMPackageFolderName(lockfile.str(&this.name), this.resolution.value.npm.version),
-                    .local_tarball => manager.cachedTarballFolderName(this.resolution.value.local_tarball),
-                    .remote_tarball => manager.cachedTarballFolderName(this.resolution.value.remote_tarball),
+                    .git => manager.cachedGitFolderNamePrintAuto(&this.resolution.value.git, patch_hash),
+                    .github => manager.cachedGitHubFolderNamePrintAuto(&this.resolution.value.github, patch_hash),
+                    .npm => manager.cachedNPMPackageFolderName(lockfile.str(&this.name), this.resolution.value.npm.version, patch_hash),
+                    .local_tarball => manager.cachedTarballFolderName(this.resolution.value.local_tarball, patch_hash),
+                    .remote_tarball => manager.cachedTarballFolderName(this.resolution.value.remote_tarball, patch_hash),
                     else => "",
                 };
 
@@ -3019,6 +3640,28 @@ pub const PackageManager = struct {
                 if (manager.isFolderInCache(folder_path)) {
                     manager.setPreinstallState(this.meta.id, lockfile, .done);
                     return .done;
+                }
+
+                // If the package is patched, then `folder_path` looks like:
+                // is-even@1.0.0_patch_hash=abc8s6dedhsddfkahaldfjhlj
+                //
+                // If that's not in the cache, we need to put it there:
+                // 1. extract the non-patched pkg in the cache
+                // 2. copy non-patched pkg into temp dir
+                // 3. apply patch to temp dir
+                // 4. rename temp dir to `folder_path`
+                if (patch_hash != null) {
+                    const non_patched_path_ = folder_path[0 .. std.mem.indexOf(u8, folder_path, "_patch_hash=") orelse @panic("todo this is bad")];
+                    const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
+                    defer manager.lockfile.allocator.free(non_patched_path);
+                    if (manager.isFolderInCache(non_patched_path)) {
+                        manager.setPreinstallState(this.meta.id, manager.lockfile, .apply_patch);
+                        // yay step 1 is already done for us
+                        return .apply_patch;
+                    }
+                    // we need to extract non-patched pkg into the cache
+                    manager.setPreinstallState(this.meta.id, lockfile, .extract);
+                    return .extract;
                 }
 
                 manager.setPreinstallState(this.meta.id, lockfile, .extract);
@@ -3309,70 +3952,80 @@ pub const PackageManager = struct {
         ) catch unreachable;
     }
 
-    pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string) stringZ {
-        return std.fmt.bufPrintZ(buf, "@G@{s}", .{resolved}) catch unreachable;
+    pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
+        return std.fmt.bufPrintZ(buf, "@G@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
     }
 
-    pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository) stringZ {
-        return cachedGitFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved));
+    pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
+        return cachedGitFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
     }
 
-    pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository) stringZ {
+    pub const PatchHashFmt = struct {
+        hash: ?u64 = null,
+
+        pub fn format(this: *const PatchHashFmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.hash) |h| {
+                try writer.print("_patch_hash={x}", .{h});
+            }
+        }
+    };
+
+    pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
         if (!repository.resolved.isEmpty()) {
-            return this.cachedGitFolderName(repository);
+            return this.cachedGitFolderName(repository, patch_hash);
         }
 
         if (!repository.repo.isEmpty() and !repository.committish.isEmpty()) {
             const string_buf = this.lockfile.buffers.string_bytes.items;
             return std.fmt.bufPrintZ(
                 &cached_package_folder_name_buf,
-                "@G@{any}",
-                .{repository.committish.fmt(string_buf)},
+                "@G@{any}{}",
+                .{
+                    repository.committish.fmt(string_buf),
+                    PatchHashFmt{ .hash = patch_hash },
+                },
             ) catch unreachable;
         }
 
         return "";
     }
 
-    pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string) stringZ {
-        return std.fmt.bufPrintZ(buf, "@GH@{s}", .{resolved}) catch unreachable;
+    pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
+        return std.fmt.bufPrintZ(buf, "@GH@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
     }
 
-    pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository) stringZ {
-        return cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved));
+    pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
+        return cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
     }
 
-    fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository) stringZ {
+    fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
         return std.fmt.bufPrintZ(
             buf,
-            "@GH@{any}-{any}-{any}",
-            .{
-                repository.owner.fmt(string_buf),
-                repository.repo.fmt(string_buf),
-                repository.committish.fmt(string_buf),
-            },
+            "@GH@{any}-{any}-{any}{}",
+            .{ repository.owner.fmt(string_buf), repository.repo.fmt(string_buf), repository.committish.fmt(string_buf), PatchHashFmt{ .hash = patch_hash } },
         ) catch unreachable;
     }
 
-    pub fn cachedGitHubFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository) stringZ {
+    pub fn cachedGitHubFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
         if (!repository.resolved.isEmpty()) {
-            return this.cachedGitHubFolderName(repository);
+            return this.cachedGitHubFolderName(repository, patch_hash);
         }
 
         if (!repository.owner.isEmpty() and !repository.repo.isEmpty() and !repository.committish.isEmpty()) {
-            return cachedGitHubFolderNamePrintGuess(&cached_package_folder_name_buf, this.lockfile.buffers.string_bytes.items, repository);
+            return cachedGitHubFolderNamePrintGuess(&cached_package_folder_name_buf, this.lockfile.buffers.string_bytes.items, repository, patch_hash);
         }
 
         return "";
     }
 
     // TODO: normalize to alphanumeric
-    pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version) stringZ {
+    pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
         const scope = this.scopeForPackageName(name);
 
-        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version);
+        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version, null);
 
         if (scope.name.len == 0 and !this.options.did_override_default_scope) {
+            if (patch_hash != null) return cachedNPMPackageFolderPrintBasename(buf, name, version, patch_hash);
             return basename;
         }
 
@@ -3381,9 +4034,9 @@ pub const PackageManager = struct {
         var end: []u8 = undefined;
         if (scope.url.hostname.len > 32 or available.len < 64) {
             const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-            end = std.fmt.bufPrint(available, "@@{s}__{any}", .{ visible_hostname, bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)) }) catch unreachable;
+            end = std.fmt.bufPrint(available, "@@{s}__{any}{}", .{ visible_hostname, bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)), PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
         } else {
-            end = std.fmt.bufPrint(available, "@@{s}", .{scope.url.hostname}) catch unreachable;
+            end = std.fmt.bufPrint(available, "@@{s}{}", .{ scope.url.hostname, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
         }
 
         buf[spanned.len + end.len] = 0;
@@ -3395,17 +4048,17 @@ pub const PackageManager = struct {
         return cachedNPMPackageFolderPrintBasename(&cached_package_folder_name_buf, name, version);
     }
 
-    pub fn cachedNPMPackageFolderName(this: *const PackageManager, name: string, version: Semver.Version) stringZ {
-        return this.cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version);
+    pub fn cachedNPMPackageFolderName(this: *const PackageManager, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
+        return this.cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version, patch_hash);
     }
 
     // TODO: normalize to alphanumeric
-    pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version) stringZ {
+    pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
         if (version.tag.hasPre()) {
             if (version.tag.hasBuild()) {
                 return std.fmt.bufPrintZ(
                     buf,
-                    "{s}@{d}.{d}.{d}-{any}+{any}",
+                    "{s}@{d}.{d}.{d}-{any}+{any}{}",
                     .{
                         name,
                         version.major,
@@ -3413,48 +4066,52 @@ pub const PackageManager = struct {
                         version.patch,
                         bun.fmt.hexIntLower(version.tag.pre.hash),
                         bun.fmt.hexIntUpper(version.tag.build.hash),
+                        PatchHashFmt{ .hash = patch_hash },
                     },
                 ) catch unreachable;
             }
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{any}",
+                "{s}@{d}.{d}.{d}-{any}{}",
                 .{
                     name,
                     version.major,
                     version.minor,
                     version.patch,
                     bun.fmt.hexIntLower(version.tag.pre.hash),
+                    PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
         }
         if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}+{any}",
+                "{s}@{d}.{d}.{d}+{any}{}",
                 .{
                     name,
                     version.major,
                     version.minor,
                     version.patch,
                     bun.fmt.hexIntUpper(version.tag.build.hash),
+                    PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
         }
-        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}", .{
+        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}", .{
             name,
             version.major,
             version.minor,
             version.patch,
+            PatchHashFmt{ .hash = patch_hash },
         }) catch unreachable;
     }
 
-    pub fn cachedTarballFolderNamePrint(buf: []u8, url: string) stringZ {
-        return std.fmt.bufPrintZ(buf, "@T@{any}", .{bun.fmt.hexIntLower(String.Builder.stringHash(url))}) catch unreachable;
+    pub fn cachedTarballFolderNamePrint(buf: []u8, url: string, patch_hash: ?u64) stringZ {
+        return std.fmt.bufPrintZ(buf, "@T@{any}{}", .{ bun.fmt.hexIntLower(String.Builder.stringHash(url)), PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
     }
 
-    pub fn cachedTarballFolderName(this: *const PackageManager, url: String) stringZ {
-        return cachedTarballFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&url));
+    pub fn cachedTarballFolderName(this: *const PackageManager, url: String, patch_hash: ?u64) stringZ {
+        return cachedTarballFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&url), patch_hash);
     }
 
     pub fn isFolderInCache(this: *PackageManager, folder_path: stringZ) bool {
@@ -3609,8 +4266,13 @@ pub const PackageManager = struct {
         /// Is this the first time we've seen this package?
         is_first_time: bool = false,
 
-        /// Pending network task to schedule
-        network_task: ?*NetworkTask = null,
+        task: ?union(enum) {
+            /// Pending network task to schedule
+            network_task: *NetworkTask,
+
+            /// Apply patch task or calc patch hash task
+            patch_task: *PatchTask,
+        } = null,
     };
 
     fn getOrPutResolvedPackageWithFindResult(
@@ -3664,7 +4326,16 @@ pub const PackageManager = struct {
         if (comptime Environment.allow_assert) bun.assert(package.meta.id != invalid_package_id);
         defer successFn(this, dependency_id, package.meta.id);
 
-        return switch (this.determinePreinstallState(package, this.lockfile)) {
+        // non-null if the package is in "patchedDependencies"
+        var name_and_version_hash: ?u64 = null;
+        var patchfile_hash: ?u64 = null;
+
+        return switch (this.determinePreinstallState(
+            package,
+            this.lockfile,
+            &name_and_version_hash,
+            &patchfile_hash,
+        )) {
             // Is this package already in the cache?
             // We don't need to download the tarball, but we should enqueue dependencies
             .done => .{ .package = package, .is_first_time = true },
@@ -3672,15 +4343,43 @@ pub const PackageManager = struct {
             .extract => .{
                 .package = package,
                 .is_first_time = true,
-                .network_task = try this.generateNetworkTaskForTarball(
-                    Task.Id.forNPMPackage(
-                        this.lockfile.str(&name),
-                        package.resolution.value.npm.version,
+                .task = .{
+                    .network_task = try this.generateNetworkTaskForTarball(
+                        Task.Id.forNPMPackage(
+                            this.lockfile.str(&name),
+                            package.resolution.value.npm.version,
+                        ),
+                        manifest.str(&find_result.package.tarball_url),
+                        dependency_id,
+                        package,
+                        name_and_version_hash,
+                    ) orelse unreachable,
+                },
+            },
+            .calc_patch_hash => .{
+                .package = package,
+                .is_first_time = true,
+                .task = .{
+                    .patch_task = PatchTask.newCalcPatchHash(
+                        this,
+                        package.meta.id,
+                        name_and_version_hash.?,
+                        dependency_id,
+                        manifest.str(&find_result.package.tarball_url),
                     ),
-                    manifest.str(&find_result.package.tarball_url),
-                    dependency_id,
-                    package,
-                ) orelse unreachable,
+                },
+            },
+            .apply_patch => .{
+                .package = package,
+                .is_first_time = true,
+                .task = .{
+                    .patch_task = PatchTask.newApplyPatchHash(
+                        this,
+                        package.meta.id,
+                        patchfile_hash.?,
+                        name_and_version_hash.?,
+                    ),
+                },
             },
             else => unreachable,
         };
@@ -3697,6 +4396,8 @@ pub const PackageManager = struct {
         url: string,
         dependency_id: DependencyID,
         package: Lockfile.Package,
+        /// if patched then we need to do apply step after network task is done
+        patch_name_and_version_hash: ?u64,
     ) !?*NetworkTask {
         if (this.hasCreatedNetworkTask(task_id)) {
             return null;
@@ -3709,6 +4410,10 @@ pub const PackageManager = struct {
             .callback = undefined,
             .allocator = this.allocator,
             .package_manager = this,
+            .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+                const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+                break :brk PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
+            } else null,
         };
 
         const scope = this.scopeForPackageName(this.lockfile.str(&package.name));
@@ -3745,6 +4450,15 @@ pub const PackageManager = struct {
         }
 
         this.network_task_fifo.writeItemAssumeCapacity(task);
+    }
+
+    fn enqueuePatchTask(this: *PackageManager, task: *PatchTask) void {
+        debug("Enqueue patch task: 0x{x} {s}", .{ @intFromPtr(task), @tagName(task.callback) });
+        if (this.patch_task_fifo.writableLength() == 0) {
+            this.flushPatchTaskQueue();
+        }
+
+        this.patch_task_fifo.writeItemAssumeCapacity(task);
     }
 
     const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
@@ -4359,6 +5073,11 @@ pub const PackageManager = struct {
         switch (version.tag) {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
+                    const lolname = name.slice(this.lockfile.buffers.string_bytes.items);
+                    std.debug.print("LOL: {s}\n", .{lolname});
+                    if (std.mem.eql(u8, lolname, "is-even")) {
+                        std.debug.print("LOLhere \n", .{});
+                    }
                     var resolve_result_ = this.getOrPutResolvedPackage(
                         name_hash,
                         name,
@@ -4457,10 +5176,23 @@ pub const PackageManager = struct {
                                 }
                             }
 
-                            if (result.network_task) |network_task| {
-                                if (this.getPreinstallState(result.package.meta.id) == .extract) {
-                                    this.setPreinstallState(result.package.meta.id, this.lockfile, .extracting);
-                                    this.enqueueNetworkTask(network_task);
+                            if (result.task != null) {
+                                switch (result.task.?) {
+                                    .network_task => |network_task| {
+                                        if (this.getPreinstallState(result.package.meta.id) == .extract) {
+                                            this.setPreinstallState(result.package.meta.id, this.lockfile, .extracting);
+                                            this.enqueueNetworkTask(network_task);
+                                        }
+                                    },
+                                    .patch_task => |patch_task| {
+                                        if (patch_task.callback == .calc_hash and this.getPreinstallState(result.package.meta.id) == .calc_patch_hash) {
+                                            this.setPreinstallState(result.package.meta.id, this.lockfile, .calcing_patch_hash);
+                                            this.enqueuePatchTask(patch_task);
+                                        } else if (patch_task.callback == .apply and this.getPreinstallState(result.package.meta.id) == .apply_patch) {
+                                            this.setPreinstallState(result.package.meta.id, this.lockfile, .applying_patch);
+                                            this.enqueuePatchTask(patch_task);
+                                        }
+                                    },
                                 }
                             }
 
@@ -4705,11 +5437,17 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (try this.generateNetworkTaskForTarball(task_id, url, id, .{
-                    .name = dependency.name,
-                    .name_hash = dependency.name_hash,
-                    .resolution = res,
-                })) |network_task| {
+                if (try this.generateNetworkTaskForTarball(
+                    task_id,
+                    url,
+                    id,
+                    .{
+                        .name = dependency.name,
+                        .name_hash = dependency.name_hash,
+                        .resolution = res,
+                    },
+                    @panic("TODO: handle if patched"),
+                )) |network_task| {
                     this.enqueueNetworkTask(network_task);
                 }
             },
@@ -4768,7 +5506,7 @@ pub const PackageManager = struct {
                     }
 
                     // should not trigger a network call
-                    if (comptime Environment.allow_assert) bun.assert(result.network_task == null);
+                    if (comptime Environment.allow_assert) bun.assert(result.task == null);
 
                     if (comptime Environment.allow_assert)
                         debug(
@@ -4898,11 +5636,17 @@ pub const PackageManager = struct {
                         )));
                     },
                     .remote => {
-                        if (try this.generateNetworkTaskForTarball(task_id, url, id, .{
-                            .name = dependency.name,
-                            .name_hash = dependency.name_hash,
-                            .resolution = res,
-                        })) |network_task| {
+                        if (try this.generateNetworkTaskForTarball(
+                            task_id,
+                            url,
+                            id,
+                            .{
+                                .name = dependency.name,
+                                .name_hash = dependency.name_hash,
+                                .resolution = res,
+                            },
+                            @panic("TODO: handle if patched"),
+                        )) |network_task| {
                             this.enqueueNetworkTask(network_task);
                         }
                     },
@@ -4917,6 +5661,14 @@ pub const PackageManager = struct {
 
         while (network.readItem()) |network_task| {
             network_task.schedule(if (network_task.callback == .extract) &this.network_tarball_batch else &this.network_resolve_batch);
+        }
+    }
+
+    fn flushPatchTaskQueue(this: *PackageManager) void {
+        var patch_task_fifo = &this.patch_task_fifo;
+
+        while (patch_task_fifo.readItem()) |patch_task| {
+            patch_task.schedule(if (patch_task.callback == .apply) &this.patch_apply_batch else &this.patch_calc_hash_batch);
         }
     }
 
@@ -4946,21 +5698,27 @@ pub const PackageManager = struct {
             this.flushNetworkQueue();
             this.doFlushDependencyQueue();
             this.flushNetworkQueue();
+            this.flushPatchTaskQueue();
 
             if (this.total_tasks == last_count) break;
         }
     }
 
     pub fn scheduleTasks(manager: *PackageManager) usize {
-        const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len;
+        const count = manager.task_batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len + manager.patch_apply_batch.len + manager.patch_calc_hash_batch.len;
 
         _ = manager.incrementPendingTasks(@truncate(count));
+        manager.thread_pool.schedule(manager.patch_apply_batch);
+        manager.thread_pool.schedule(manager.patch_calc_hash_batch);
         manager.thread_pool.schedule(manager.task_batch);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
         HTTP.http_thread.schedule(manager.network_resolve_batch);
         manager.task_batch = .{};
         manager.network_tarball_batch = .{};
         manager.network_resolve_batch = .{};
+        manager.patch_apply_batch = .{};
+        manager.patch_calc_hash_batch = .{};
+        // TODO probably have to put patch tasks here
         return count;
     }
 
@@ -5345,6 +6103,14 @@ pub const PackageManager = struct {
         var has_network_error = false;
 
         var timestamp_this_tick: ?u32 = null;
+
+        var patch_tasks_batch = manager.patch_task_queue.popBatch();
+        var patch_tasks_iter = patch_tasks_batch.iterator();
+        while (patch_tasks_iter.next()) |ptask| {
+            if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
+            _ = manager.decrementPendingTasks();
+            ptask.runFromMainThread(manager);
+        }
 
         var network_tasks_batch = manager.async_network_task_queue.popBatch();
         var network_tasks_iter = network_tasks_batch.iterator();
@@ -5749,6 +6515,9 @@ pub const PackageManager = struct {
                     };
                     const dependency_id = tarball.dependency_id;
                     var package_id = manager.lockfile.buffers.resolutions.items[dependency_id];
+                    if (std.mem.eql(u8, manager.lockfile.packages.items(.name)[package_id].slice(manager.lockfile.buffers.string_bytes.items), "is-even")) {
+                        std.debug.print("HI!\n", .{});
+                    }
                     const alias = tarball.name.slice();
                     const resolution = &tarball.resolution;
 
@@ -5838,7 +6607,9 @@ pub const PackageManager = struct {
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                    if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    if (task.tag == .extract and task.request.extract.network.apply_patch_task != null) {
+                        manager.enqueuePatchTask(task.request.extract.network.apply_patch_task.?);
+                    } else if (comptime @TypeOf(callbacks.onExtract) != void) {
                         if (ExtractCompletionContext == *PackageInstaller) {
                             extract_ctx.fixCachedLockfilePackageSlices();
                         }
@@ -7124,7 +7895,7 @@ pub const PackageManager = struct {
         link,
         unlink,
         patch,
-        @"patch-commit",
+        // @"patch-commit",
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -7578,7 +8349,9 @@ pub const PackageManager = struct {
     // get the precise version from the lockfile (there may be multiple)
     // copy the contents into a temp folder
     pub inline fn patch(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstallCatchError(ctx, .patch, .patch);
+        _ = ctx; // autofix
+
+        // try updatePackageJSONAndInstallCatchError(ctx, .patch, .patch);
     }
 
     pub inline fn update(ctx: Command.Context) !void {
@@ -8524,10 +9297,10 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
                         Global.crash();
                     },
-                    .patch => {
-                        Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
-                        Global.crash();
-                    },
+                    // .patch => {
+                    //     Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
+                    //     Global.crash();
+                    // },
                     else => {
                         try attemptToCreatePackageJSON();
                         break :brk try PackageManager.init(ctx, subcommand);
@@ -9464,6 +10237,10 @@ pub const PackageManager = struct {
             return count;
         }
 
+        fn getPatchfileHash(patchfile_path: []const u8) ?u64 {
+            _ = patchfile_path; // autofix
+        }
+
         fn installPackageWithNameAndResolution(
             this: *PackageInstaller,
             dependency_id: DependencyID,
@@ -9493,6 +10270,20 @@ pub const PackageManager = struct {
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
+            const patch_patch, const patch_contents_hash = brk: {
+                var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
+                const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, resolution_label }) catch unreachable;
+                defer sfb.get().free(name_and_version);
+                const name_and_version_hash = String.Builder.stringHash(name_and_version);
+
+                const patchdep = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk .{ null, null };
+                bun.assert(!patchdep.patchfile_hash_is_null);
+                break :brk .{
+                    patchdep.path.slice(this.lockfile.buffers.string_bytes.items),
+                    patchdep.patchfileHash().?,
+                };
+            };
+
             var installer = PackageInstall{
                 .progress = this.progress,
                 .cache_dir = undefined,
@@ -9501,43 +10292,32 @@ pub const PackageManager = struct {
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
                 .package_name = name,
-                .patch = brk: {
-                    {
-                        std.debug.print("Debugging patched dependencies: {d}\n", .{
-                            this.lockfile.patched_dependencies.entries.len,
-                        });
-
-                        var iter = this.lockfile.patched_dependencies.iterator();
-                        while (iter.next()) |entry| {
-                            std.debug.print("  0x{d}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.slice(this.lockfile.buffers.string_bytes.items) });
-                        }
-                    }
-                    var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
-                    const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, resolution_label }) catch unreachable;
-                    const name_and_version_hash = String.Builder.stringHash(name_and_version);
-                    const patch_path = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk PackageInstall.Patch.NULL;
-                    break :brk .{
-                        .patch_path = patch_path.slice(this.lockfile.buffers.string_bytes.items),
-                        .root_project_dir = FileSystem.instance.top_level_dir,
-                    };
-                },
+                .patch = if (patch_patch) |p| PackageInstall.Patch{
+                    .patch_contents_hash = patch_contents_hash.?,
+                    .patch_path = p,
+                    .root_project_dir = FileSystem.instance.top_level_dir,
+                } else PackageInstall.Patch.NULL,
                 .package_version = resolution_label,
                 .node_modules = &this.node_modules,
                 // .install_order = this.tree_iterator.order,
             };
             debug("Installing {s}@{s}", .{ name, resolution_label });
 
+            if (std.mem.eql(u8, name, "is-even")) {
+                std.debug.print("HI!\n", .{});
+            }
+
             switch (resolution.tag) {
                 .npm => {
-                    installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm.version);
+                    installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm.version, patch_contents_hash);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .git => {
-                    installer.cache_dir_subpath = this.manager.cachedGitFolderName(&resolution.value.git);
+                    installer.cache_dir_subpath = this.manager.cachedGitFolderName(&resolution.value.git, patch_contents_hash);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .github => {
-                    installer.cache_dir_subpath = this.manager.cachedGitHubFolderName(&resolution.value.github);
+                    installer.cache_dir_subpath = this.manager.cachedGitHubFolderName(&resolution.value.github, patch_contents_hash);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .folder => {
@@ -9555,11 +10335,11 @@ pub const PackageManager = struct {
                     installer.cache_dir = std.fs.cwd();
                 },
                 .local_tarball => {
-                    installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.local_tarball);
+                    installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.local_tarball, patch_contents_hash);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .remote_tarball => {
-                    installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.remote_tarball);
+                    installer.cache_dir_subpath = this.manager.cachedTarballFolderName(resolution.value.remote_tarball, patch_contents_hash);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .workspace => {
@@ -10145,6 +10925,8 @@ pub const PackageManager = struct {
             url,
             dependency_id,
             this.lockfile.packages.get(package_id),
+            // TODO: handle this
+            @panic("TODO zack handle"),
         ) catch unreachable) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {
@@ -10178,6 +10960,7 @@ pub const PackageManager = struct {
             url,
             dependency_id,
             this.lockfile.packages.get(package_id),
+            @panic("TODO zack handle"),
         ) catch unreachable) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {
@@ -10808,6 +11591,7 @@ pub const PackageManager = struct {
                     had_any_diffs = manager.summary.hasDiffs();
 
                     if (had_any_diffs) {
+                        std.debug.print("HAD DIFFS!\n", .{});
                         var builder_ = manager.lockfile.stringBuilder();
                         // ensure we use one pointer to reference it instead of creating new ones and potentially aliasing
                         var builder = &builder_;
@@ -10820,6 +11604,7 @@ pub const PackageManager = struct {
 
                         for (lockfile.workspace_paths.values()) |path| builder.count(path.slice(lockfile.buffers.string_bytes.items));
                         for (lockfile.workspace_versions.values()) |version| version.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                        for (lockfile.patched_dependencies.values()) |patch_dep| builder.count(patch_dep.path.slice(lockfile.buffers.string_bytes.items));
 
                         lockfile.overrides.count(&lockfile, builder);
                         maybe_root.scripts.count(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
@@ -10929,7 +11714,29 @@ pub const PackageManager = struct {
                         }
 
                         // Update patched dependencies
-                        manager.lockfile.patched_dependencies = try lockfile.patched_dependencies.clone(manager.lockfile.allocator);
+                        {
+                            var iter = lockfile.patched_dependencies.iterator();
+                            while (iter.next()) |entry| {
+                                const pkg_name_and_version_hash = entry.key_ptr.*;
+                                bun.debugAssert(entry.value_ptr.patchfile_hash_is_null);
+                                const gop = try manager.lockfile.patched_dependencies.getOrPut(manager.lockfile.allocator, pkg_name_and_version_hash);
+                                if (!gop.found_existing) {
+                                    gop.value_ptr.setPatchfileHash(null);
+                                    std.debug.print("LMAO: {s}\n", .{entry.value_ptr.*.path.slice(lockfile.buffers.string_bytes.items)});
+                                    gop.value_ptr.path = builder.append(String, entry.value_ptr.*.path.slice(lockfile.buffers.string_bytes.items));
+                                    // gop.value_ptr.path = gop.value_ptr.path;
+                                } else if (!bun.strings.eql(
+                                    gop.value_ptr.path.slice(manager.lockfile.buffers.string_bytes.items),
+                                    entry.value_ptr.path.slice(lockfile.buffers.string_bytes.items),
+                                )) {
+                                    std.debug.print("LMAO: {s}\n", .{entry.value_ptr.*.path.slice(lockfile.buffers.string_bytes.items)});
+                                    gop.value_ptr.path = builder.append(String, entry.value_ptr.*.path.slice(lockfile.buffers.string_bytes.items));
+                                    gop.value_ptr.setPatchfileHash(null);
+                                } else {
+                                    std.debug.print("BEFORE: {s}\n", .{gop.value_ptr.path.slice(manager.lockfile.buffers.string_bytes.items)});
+                                }
+                            }
+                        }
 
                         builder.clamp();
 

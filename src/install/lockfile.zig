@@ -90,8 +90,24 @@ const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const TrustedDependenciesSet = std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, void, ArrayIdentityContext, false);
-pub const PatchedDependenciesMap = std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, String, ArrayIdentityContext.U64, false);
 pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
+pub const PatchedDependenciesMap = std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, PatchedDep, ArrayIdentityContext.U64, false);
+pub const PatchedDep = extern struct {
+    /// e.g. "patches/is-even@1.0.0.patch"
+    path: String,
+    _padding: [7]u8 = [_]u8{0} ** 7,
+    patchfile_hash_is_null: bool = true,
+    /// the hash of the patch file contents
+    __patchfile_hash: u64 = 0,
+
+    pub fn setPatchfileHash(this: *PatchedDep, val: ?u64) void {
+        this.patchfile_hash_is_null = val == null;
+        this.__patchfile_hash = if (val) |v| v else 0;
+    }
+    pub fn patchfileHash(this: *const PatchedDep) ?u64 {
+        return if (this.patchfile_hash_is_null) null else this.__patchfile_hash;
+    }
+};
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
@@ -799,6 +815,7 @@ pub fn cleanWithLogger(
     try new.package_index.ensureTotalCapacity(old.package_index.capacity());
     try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
     try new.buffers.preallocate(old.buffers, old.allocator);
+    try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
 
     old.scratch.dependency_list_queue.head = 0;
 
@@ -899,7 +916,18 @@ pub fn cleanWithLogger(
     new.scripts = old_scripts;
     new.meta_hash = old.meta_hash;
 
-    new.patched_dependencies = try old.patched_dependencies.clone(z_allocator);
+    {
+        var builder = new.stringBuilder();
+        for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
+        try builder.allocate();
+        for (old.patched_dependencies.keys(), old.patched_dependencies.values()) |k, v| {
+            if (!v.patchfile_hash_is_null) {
+                var patchdep = v;
+                patchdep.path = builder.append(String, patchdep.path.slice(old.buffers.string_bytes.items));
+                try new.patched_dependencies.put(new.allocator, k, patchdep);
+            }
+        }
+    }
 
     // Don't allow invalid memory to happen
     if (updates.len > 0) {
@@ -2838,6 +2866,7 @@ pub const Package = extern struct {
         this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);
         this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
         this.scripts.count(old_string_buf, *Lockfile.StringBuilder, builder);
+        for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
         const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
@@ -4604,10 +4633,11 @@ pub const Package = extern struct {
                     const key = prop.key.?;
                     const value = prop.value.?;
                     if (key.isString() and value.isString()) {
-                        var sfb = std.heap.stackFallback(128, allocator);
+                        var sfb = std.heap.stackFallback(1024, allocator);
                         const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
-                        const valuestr = string_builder.append(String, value.asString(allocator).?);
-                        lockfile.patched_dependencies.put(allocator, keyhash, valuestr) catch unreachable;
+                        const patch_path = string_builder.append(String, value.asString(allocator).?);
+                        std.debug.print("ADDED PATCHED DEP: {s}\n", .{patch_path.slice(string_builder.ptr.?[0..string_builder.cap])});
+                        lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
                     }
                 }
             }
@@ -5574,6 +5604,8 @@ pub const Serializer = struct {
         }
 
         if (this.patched_dependencies.entries.len > 0) {
+            for (this.patched_dependencies.values()) |patched_dep| bun.assert(!patched_dep.patchfile_hash_is_null);
+
             try writer.writeAll(std.mem.asBytes(&has_patched_dependencies_tag));
 
             try Lockfile.Buffers.writeArray(
@@ -5590,7 +5622,7 @@ pub const Serializer = struct {
                 stream,
                 @TypeOf(writer),
                 writer,
-                []String,
+                []PatchedDep,
                 this.patched_dependencies.values(),
             );
         }
@@ -5799,7 +5831,7 @@ pub const Serializer = struct {
                     const patched_dependencies_paths = try Lockfile.Buffers.readArray(
                         stream,
                         allocator,
-                        std.ArrayListUnmanaged(String),
+                        std.ArrayListUnmanaged(PatchedDep),
                     );
 
                     for (patched_dependencies_name_and_version_hashes.items, patched_dependencies_paths.items) |name_hash, patch_path| {

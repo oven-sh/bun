@@ -267,7 +267,7 @@ pub const Repository = extern struct {
         resolved: string,
     ) !ExtractData {
         bun.Analytics.Features.git_dependencies += 1;
-        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
+        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, @panic("TODO zack"));
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;

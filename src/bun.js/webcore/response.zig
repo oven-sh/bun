@@ -1490,7 +1490,7 @@ pub const Fetch = struct {
                 // we are streaming or already solved at this point
                 //
                 // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-                if (body.value != .Locked or this.readable_stream_ref.held.has()) {
+                if (body.value != .Locked or !this.readable_stream_ref.held.has()) {
                     return;
                 }
                 if (body.value.Locked.promise) |promise| {

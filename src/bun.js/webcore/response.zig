@@ -1487,17 +1487,27 @@ pub const Fetch = struct {
             log("onResponseFinalize", .{});
             if (this.native_response) |response| {
                 const body = response.body;
-                // we are streaming or already solved at this point
+                // Three scenarios:
+                //
+                // 1. We are streaming, in which case we should not ignore the body.
+                // 2. We were buffering, in which case
+                //    2a. if we have no promise, we should ignore the body.
+                //    2b. if we have a promise, we should keep loading the body.
+                // 3. We never started buffering, in which case we should ignore the body.
                 //
                 // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
                 if (body.value != .Locked or this.readable_stream_ref.held.has()) {
+                    // Scenario 1 or 3.
                     return;
                 }
+
                 if (body.value.Locked.promise) |promise| {
                     if (promise.isEmptyOrUndefinedOrNull()) {
+                        // Scenario 2b.
                         this.ignoreRemainingResponseBody();
                     }
                 } else {
+                    // Scenario 3.
                     this.ignoreRemainingResponseBody();
                 }
             }

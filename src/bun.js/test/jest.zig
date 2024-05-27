@@ -759,7 +759,9 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    if (!promise.isHandled(vm.global.vm())) {
+                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    }
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };

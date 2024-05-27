@@ -280,6 +280,10 @@ pub fn Batcher(comptime Type: type) type {
     };
 }
 
+pub fn bytesToMB(bytes: usize) usize {
+    return bytes / 1024 / 1024;
+}
+
 fn needsAllocator(comptime Fn: anytype) bool {
     return std.meta.fields(std.meta.ArgsTuple(@TypeOf(Fn))).len > 2;
 }

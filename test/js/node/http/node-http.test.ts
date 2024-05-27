@@ -456,7 +456,8 @@ describe("node:http", () => {
         req.setSocketKeepAlive(true, 1000);
         req.end();
         expect(true).toBe(true);
-        done();
+        // Neglecting to close this will cause a future test to fail.
+        req.on("close", () => done());
       });
     });
 

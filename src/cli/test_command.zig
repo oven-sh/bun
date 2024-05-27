@@ -884,6 +884,10 @@ pub const TestCommand = struct {
             }
 
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
+            if (reporter.jest.unhandled_errors_between_tests > 0) {
+                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+            }
+
             var print_expect_calls = reporter.summary.expectations > 0;
             if (reporter.jest.snapshots.total > 0) {
                 const passed = reporter.jest.snapshots.passed;
@@ -949,6 +953,8 @@ pub const TestCommand = struct {
 
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
+        } else if (reporter.jest.unhandled_errors_between_tests > 0) {
+            Global.exitWide(@intCast(reporter.jest.unhandled_errors_between_tests));
         }
     }
 
@@ -1030,6 +1036,9 @@ pub const TestCommand = struct {
 
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
+        vm.onUnhandledRejectionCtx = null;
+        vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
                 Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });

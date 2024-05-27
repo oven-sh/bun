@@ -189,56 +189,50 @@ it("should display a welcome message when the response value type is incorrect",
 
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
     async server => {
-      try {
-        await fetch(server.url.origin, { signal: aborty.signal });
-        throw new Error("Expected fetch to throw");
-      } catch (e: any) {
-        expect(e.name).toBe("AbortError");
-      }
-      await Bun.sleep(1);
-
-      expect(didAbort).toBe(true);
+      expect(async () => {
+        const response = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await response.blob();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
 
 it("request.signal works in leaky case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
 
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(20);
         return new Response("Test failed!");
       },
     },
     async server => {
-      expect(async () => fetch(server.url.origin, { signal: aborty.signal })).toThrow("The operation was aborted.");
-
-      await Bun.sleep(10);
-
-      expect(didAbort).toBe(true);
+      await expect(async () => {
+        const resp = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await Bun.sleep(10);
+        resp.body?.getReader();
+      }).toThrow("The operation was aborted.");
     },
   );
 });

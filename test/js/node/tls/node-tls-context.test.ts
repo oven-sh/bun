@@ -238,14 +238,17 @@ describe("tls.Server", () => {
         port: (server.address() as AddressInfo).port,
         ca,
       };
+      var authorized = false;
       const socket = tls.connect(options, () => {
-        resolve(socket.authorized);
+        authorized = socket.authorized;
         socket.end();
       });
 
       socket.on("error", reject);
       socket.on("close", () => {
-        server.close();
+        server.close(() => {
+          resolve(authorized);
+        });
       });
     });
     return promise;

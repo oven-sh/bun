@@ -2899,7 +2899,6 @@ var require_readable = __commonJS({
       } else {
         state.needReadable = false;
         state.emittedReadable = true;
-        // stream.emit("readable"); // TODO:
         emitReadable_(stream);
       }
     }
@@ -4178,7 +4177,7 @@ var require_writable = __commonJS({
           errorOrDestroy(stream, err, state.sync);
         } else if (needFinish(state)) {
           state.prefinished = true;
-          ProcessNextTick(() => stream.emit("prefinish"));
+          stream.emit("prefinish")
           state.pendingcb++;
           ProcessNextTick(finish, stream, state);
         }

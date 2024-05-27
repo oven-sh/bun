@@ -630,3 +630,38 @@ it("should correctly call removed listeners", () => {
   s.emit("x");
   expect(l2Called).toBeTrue();
 });
+
+it("should emit prefinish on current tick", done => {
+  class UpperCaseTransform extends Transform {
+    _transform(chunk, encoding, callback) {
+      this.push(chunk.toString().toUpperCase());
+      callback();
+    }
+  }
+
+  const upperCaseTransform = new UpperCaseTransform();
+
+  let prefinishCalled = false;
+  upperCaseTransform.on("prefinish", () => {
+    prefinishCalled = true;
+  });
+
+  let finishCalled = false;
+  upperCaseTransform.on("finish", () => {
+    finishCalled = true;
+  });
+
+  upperCaseTransform.end('hi');
+
+  expect(prefinishCalled).toBeTrue();
+
+  const res = upperCaseTransform.read();
+  expect(res.toString()).toBe("HI");
+
+  expect(finishCalled).toBeFalse();
+
+  process.nextTick(() => {
+    expect(finishCalled).toBeTrue();
+    done();
+  });
+});

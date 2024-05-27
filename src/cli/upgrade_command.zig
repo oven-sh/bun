@@ -513,7 +513,7 @@ pub const UpgradeCommand = struct {
 
         {
             var refresher = std.Progress{};
-            var progress = refresher.start("Downloading", version.size / 1024 / 1024); // MB
+            var progress = refresher.start("Downloading", bun.bytesToMB(version.size)); // MB
             progress.setUnit("MB");
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);

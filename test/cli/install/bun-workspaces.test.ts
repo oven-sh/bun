@@ -29,21 +29,22 @@ cache = false
 });
 
 test("dependency on workspace without version in package.json", async () => {
-  writeFileSync(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      workspaces: ["packages/*"],
-    }),
-  );
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
 
-  mkdirSync(join(packageDir, "packages", "mono"), { recursive: true });
-  writeFileSync(
-    join(packageDir, "packages", "mono", "package.json"),
-    JSON.stringify({
-      name: "lodash",
-    }),
-  );
+    write(
+      join(packageDir, "packages", "mono", "package.json"),
+      JSON.stringify({
+        name: "lodash",
+      }),
+    ),
+  ]);
 
   mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
 
@@ -113,34 +114,34 @@ test("dependency on workspace without version in package.json", async () => {
 }, 20_000);
 
 test("dependency on same name as workspace and dist-tag", async () => {
-  writeFileSync(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      workspaces: ["packages/*"],
-    }),
-  );
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
 
-  mkdirSync(join(packageDir, "packages", "mono"), { recursive: true });
-  writeFileSync(
-    join(packageDir, "packages", "mono", "package.json"),
-    JSON.stringify({
-      name: "lodash",
-      version: "4.17.21",
-    }),
-  );
+    write(
+      join(packageDir, "packages", "mono", "package.json"),
+      JSON.stringify({
+        name: "lodash",
+        version: "4.17.21",
+      }),
+    ),
 
-  mkdirSync(join(packageDir, "packages", "bar"), { recursive: true });
-  writeFileSync(
-    join(packageDir, "packages", "bar", "package.json"),
-    JSON.stringify({
-      name: "bar",
-      version: "1.0.0",
-      dependencies: {
-        lodash: "latest",
-      },
-    }),
-  );
+    write(
+      join(packageDir, "packages", "bar", "package.json"),
+      JSON.stringify({
+        name: "bar",
+        version: "1.0.0",
+        dependencies: {
+          lodash: "latest",
+        },
+      }),
+    ),
+  ]);
 
   const { out } = await runBunInstall(env, packageDir);
   const lockfile = parseLockfile(packageDir);
@@ -150,31 +151,31 @@ test("dependency on same name as workspace and dist-tag", async () => {
 });
 
 test("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
-  await writeFile(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      workspaces: ["packages/*", "apps/*"],
-    }),
-  );
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*", "apps/*"],
+      }),
+    ),
 
-  await mkdir(join(packageDir, "packages", "pkg1"), { recursive: true });
-  await writeFile(
-    join(packageDir, "packages", "pkg1", "package.json"),
-    JSON.stringify({
-      name: "pkg1",
-      version: "1.0.0",
-    }),
-  );
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+      }),
+    ),
 
-  await mkdir(join(packageDir, "apps", "pkg2"), { recursive: true });
-  await writeFile(
-    join(packageDir, "apps", "pkg2", "package.json"),
-    JSON.stringify({
-      name: "pkg2",
-      version: "1.0.0",
-    }),
-  );
+    write(
+      join(packageDir, "apps", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        version: "1.0.0",
+      }),
+    ),
+  ]);
 
   const { stdout, exited } = Bun.spawn({
     cmd: [bunExe(), "add", "pkg2@workspace:*"],
@@ -204,65 +205,73 @@ test("adding workspace in workspace edits package.json with correct version (wor
 });
 
 test("workspaces with invalid versions should still install", async () => {
-  await write(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "📦",
-      workspaces: ["packages/*"],
-      dependencies: {
-        emoji1: "workspace:*",
-        emoji2: "workspace:>=0",
-        pre: "*",
-        build: "workspace:^",
-      },
-    }),
-  );
-
-  await write(
-    join(packageDir, "packages", "emoji1", "package.json"),
-    JSON.stringify({
-      name: "emoji1",
-      version: "😃",
-    }),
-  );
-  await write(
-    join(packageDir, "packages", "emoji2", "package.json"),
-    JSON.stringify({
-      name: "emoji2",
-      version: "👀",
-    }),
-  );
-  await write(
-    join(packageDir, "packages", "pre", "package.json"),
-    JSON.stringify({
-      name: "pre",
-      version: "3.0.0_pre",
-    }),
-  );
-  await write(
-    join(packageDir, "packages", "build", "package.json"),
-    JSON.stringify({
-      name: "build",
-      version: "3.0.0_pre+bui_ld",
-    }),
-  );
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "📦",
+        workspaces: ["packages/*"],
+        dependencies: {
+          emoji1: "workspace:*",
+          emoji2: "workspace:>=0",
+          pre: "*",
+          build: "workspace:^",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "emoji1", "package.json"),
+      JSON.stringify({
+        name: "emoji1",
+        version: "😃",
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "emoji2", "package.json"),
+      JSON.stringify({
+        name: "emoji2",
+        version: "👀",
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pre", "package.json"),
+      JSON.stringify({
+        name: "pre",
+        version: "3.0.0_pre",
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "build", "package.json"),
+      JSON.stringify({
+        name: "build",
+        version: "3.0.0_pre+bui_ld",
+      }),
+    ),
+  ]);
 
   await runBunInstall(env, packageDir);
 
-  expect(await file(join(packageDir, "node_modules", "emoji1", "package.json")).json()).toEqual({
+  const results = await Promise.all([
+    file(join(packageDir, "node_modules", "emoji1", "package.json")).json(),
+    file(join(packageDir, "node_modules", "emoji2", "package.json")).json(),
+    file(join(packageDir, "node_modules", "pre", "package.json")).json(),
+    file(join(packageDir, "node_modules", "build", "package.json")).json(),
+  ]);
+
+  expect(results[0]).toEqual({
     name: "emoji1",
     version: "😃",
   });
-  expect(await file(join(packageDir, "node_modules", "emoji2", "package.json")).json()).toEqual({
+  expect(results[1]).toEqual({
     name: "emoji2",
     version: "👀",
   });
-  expect(await file(join(packageDir, "node_modules", "pre", "package.json")).json()).toEqual({
+  expect(results[2]).toEqual({
     name: "pre",
     version: "3.0.0_pre",
   });
-  expect(await file(join(packageDir, "node_modules", "build", "package.json")).json()).toEqual({
+  expect(results[3]).toEqual({
     name: "build",
     version: "3.0.0_pre+bui_ld",
   });

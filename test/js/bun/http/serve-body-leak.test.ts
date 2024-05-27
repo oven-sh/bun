@@ -122,12 +122,15 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
   return { leak, start_memory, peak_memory, end_memory, memory_examples };
 }
 
+// Since the payload size is 512 KB
+// If it was leaking the body, the memory usage would be at least 512 KB * 10_000 = 5 GB
+// If it ends up around 280 MB, it's probably not leaking the body.
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 16],
+  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 48],
   ["should not leak memory when buffering the body", callBuffering, false, 48],
-  ["should not leak memory when streaming the body", callStreaming, false, 16],
-  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 32],
-  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 32],
+  ["should not leak memory when streaming the body", callStreaming, false, 48],
+  ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
+  ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {
   const [testName, fn, skip, maxMemoryGrowth] = test_info;
   it.todoIf(skip)(
@@ -138,6 +141,7 @@ for (const test_info of [
       expect(report.peak_memory > report.start_memory * 2).toBe(false);
       // acceptable memory leak
       expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
+      expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
     },
     isDebug ? 60_000 : 30_000,
   );

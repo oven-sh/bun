@@ -490,7 +490,7 @@ declare module "bun:test" {
 
   export interface Expect extends AsymmetricMatchers {
     // the `expect()` callable signature
-    <T = unknown>(actual?: T): Matchers<T>;
+    <T = unknown>(actual: T): Matchers<T>;
 
     /**
      * Access to negated asymmetric matchers.

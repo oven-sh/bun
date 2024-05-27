@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC cannot send socket handles and only works with other `bun` processes.
+🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 

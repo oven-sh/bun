@@ -101,6 +101,8 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
+    unhandled_errors_between_tests: u32 = 0,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
@@ -1306,8 +1308,10 @@ pub const TestRunnerTask = struct {
     };
 
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+        var deduped = false;
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
+            deduped = true;
         } else {
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
         }
@@ -1316,6 +1320,9 @@ pub const TestRunnerTask = struct {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
             this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .unhandledRejection);
+        } else if (Jest.runner) |runner| {
+            if (!deduped)
+                runner.unhandled_errors_between_tests += 1;
         }
     }
 

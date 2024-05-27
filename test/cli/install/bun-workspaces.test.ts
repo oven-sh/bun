@@ -1,4 +1,4 @@
-import { spawnSync } from "bun";
+import { spawnSync, write, file } from "bun";
 import { bunExe, bunEnv as env, runBunInstall, tmpdirSync, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
@@ -200,5 +200,70 @@ test("adding workspace in workspace edits package.json with correct version (wor
     dependencies: {
       pkg2: "workspace:*",
     },
+  });
+});
+
+test("workspaces with invalid versions should still install", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "📦",
+      workspaces: ["packages/*"],
+      dependencies: {
+        emoji1: "workspace:*",
+        emoji2: "workspace:>=0",
+        pre: "*",
+        build: "workspace:^",
+      },
+    }),
+  );
+
+  await write(
+    join(packageDir, "packages", "emoji1", "package.json"),
+    JSON.stringify({
+      name: "emoji1",
+      version: "😃",
+    }),
+  );
+  await write(
+    join(packageDir, "packages", "emoji2", "package.json"),
+    JSON.stringify({
+      name: "emoji2",
+      version: "👀",
+    }),
+  );
+  await write(
+    join(packageDir, "packages", "pre", "package.json"),
+    JSON.stringify({
+      name: "pre",
+      version: "3.0.0_pre",
+    }),
+  );
+  await write(
+    join(packageDir, "packages", "build", "package.json"),
+    JSON.stringify({
+      name: "build",
+      version: "3.0.0_pre+bui_ld",
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "emoji1", "package.json")).json()).toEqual({
+    name: "emoji1",
+    version: "😃",
+  });
+  expect(await file(join(packageDir, "node_modules", "emoji2", "package.json")).json()).toEqual({
+    name: "emoji2",
+    version: "👀",
+  });
+  expect(await file(join(packageDir, "node_modules", "pre", "package.json")).json()).toEqual({
+    name: "pre",
+    version: "3.0.0_pre",
+  });
+  expect(await file(join(packageDir, "node_modules", "build", "package.json")).json()).toEqual({
+    name: "build",
+    version: "3.0.0_pre+bui_ld",
   });
 });

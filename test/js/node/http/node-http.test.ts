@@ -1815,6 +1815,26 @@ it("#10177 response.write with non-ascii latin1 should not cause duplicated char
     });
 }, 20_000);
 
+it("#11425 http no payload limit", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`, {
+        method: "POST",
+        body: new Uint8Array(1024 * 1024 * 200),
+      });
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("should emit events in the right order", async () => {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],

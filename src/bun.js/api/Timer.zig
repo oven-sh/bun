@@ -130,8 +130,7 @@ pub const All = struct {
                     return true;
                 },
                 .lt => {
-                    const duration = now.duration(&min.next);
-                    spec.* = duration;
+                    spec.* = min.next.duration(&now);
                     return true;
                 },
             }

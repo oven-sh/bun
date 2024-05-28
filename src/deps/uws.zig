@@ -44,6 +44,7 @@ pub const InternalLoopData = extern struct {
     mutex: u32, // this is actually a bun.Lock
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
+    iteration_nr: usize,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
@@ -1207,7 +1208,7 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
-    pub fn iterationNumber(this: *const PosixLoop) c_longlong {
+    pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
 

@@ -42,7 +42,7 @@ struct us_internal_loop_data_t {
     void *parent_ptr;
     char parent_tag;
     /* We do not care if this flips or not, it doesn't matter */
-    long long iteration_nr;
+    size_t iteration_nr;
 };
 
 #endif // LOOP_DATA_H

@@ -92,9 +92,11 @@ pub const ProcessHandle = struct {
 
         if (Environment.isPosix) {
             if (spawned.stdout) |stdout| {
+                _ = bun.sys.setNonblocking(stdout);
                 try handle.stdout.start(stdout, true).unwrap();
             }
             if (spawned.stderr) |stderr| {
+                _ = bun.sys.setNonblocking(stderr);
                 try handle.stderr.start(stderr, true).unwrap();
             }
         } else {

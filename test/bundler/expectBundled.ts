@@ -1,7 +1,7 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "fs";
 import path from "path";
 import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
@@ -10,6 +10,7 @@ import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
 import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -1247,6 +1248,24 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
+    // Check that all source maps are valid JSON
+    if (opts.sourceMap === "external" && outdir) {
+      for (const file of readdirSync(outdir, { recursive: true })) {
+        if (file.endsWith(".map")) {
+          const parsed = await Bun.file(path.join(outdir, file)).json();
+          await SourceMapConsumer.with(parsed, null, async map => {
+            map.eachMapping(m => {
+              expect(m.source).toBeDefined();
+              expect(m.generatedLine).toBeGreaterThanOrEqual(0);
+              expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
+              expect(m.originalLine).toBeGreaterThanOrEqual(0);
+              expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+            });
+          });
+        }
+      }
+    }
+
     // Runtime checks!
     if (run) {
       const runs = Array.isArray(run) ? run : [run];
@@ -1411,23 +1430,12 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      // it.todo(id, () => {
-      //   throw error;
-      // });
       return ref;
     }
   }
 
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
-    // it(id, async () => {
-    //   try {
-    //     await expectBundled(id, opts as any);
-    //   } catch (error) {
-    //     return;
-    //   }
-    //   throw new Error(`Expected test to fail but it passed.`);
-    // });
   } else {
     it(id, () => expectBundled(id, opts as any));
   }

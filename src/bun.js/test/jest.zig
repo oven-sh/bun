@@ -80,7 +80,11 @@ pub const TestRunner = struct {
 
     snapshots: Snapshots,
 
-    default_timeout_ms: u32 = 0,
+    default_timeout_ms: u32,
+
+    // from `setDefaultTimeout() or jest.setTimeout()`
+    default_timeout_override: u32 = std.math.maxInt(u32),
+
     test_timeout_timer: ?*bun.uws.Timer = null,
     last_test_timeout_timer_duration: u32 = 0,
     active_test_for_timeout: ?TestRunner.Test.ID = null,
@@ -96,6 +100,8 @@ pub const TestRunner = struct {
     // Used for --test-name-pattern to reduce allocations
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
+
+    unhandled_errors_between_tests: u32 = 0,
 
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
@@ -326,7 +332,7 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 13);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 14);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
         module.put(
@@ -436,6 +442,12 @@ pub const Jest = struct {
 
         module.put(
             globalObject,
+            ZigString.static("setDefaultTimeout"),
+            JSC.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false),
+        );
+
+        module.put(
+            globalObject,
             ZigString.static("expect"),
             Expect.getConstructor(globalObject),
         );
@@ -464,7 +476,7 @@ pub const Jest = struct {
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 7);
+        const jest = JSValue.createEmptyObject(globalObject, 8);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
@@ -485,6 +497,7 @@ pub const Jest = struct {
             useRealTimers,
         );
         jest.put(globalObject, ZigString.static("now"), JSC.NewFunction(globalObject, ZigString.static("now"), 0, JSMock__jsNow, false));
+        jest.put(globalObject, ZigString.static("setTimeout"), JSC.NewFunction(globalObject, ZigString.static("setTimeout"), 1, jsSetDefaultTimeout, false));
 
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
@@ -546,6 +559,22 @@ pub const Jest = struct {
         return Bun__Jest__testModuleObject(globalObject);
     }
 
+    fn jsSetDefaultTimeout(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
+            return .zero;
+        }
+
+        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
+
+        if (Jest.runner) |test_runner| {
+            test_runner.default_timeout_override = timeout_ms;
+        }
+
+        return .undefined;
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
@@ -568,7 +597,10 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
-    timeout_millis: u32 = 0,
+
+    // null if the test does not set a timeout
+    timeout_millis: u32 = std.math.maxInt(u32),
+
     retry_count: u32 = 0, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
 
@@ -686,6 +718,14 @@ pub const TestScope = struct {
             task.started_at = timer.started;
         }
 
+        if (this.timeout_millis == std.math.maxInt(u32)) {
+            if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
+                this.timeout_millis = Jest.runner.?.default_timeout_override;
+            } else {
+                this.timeout_millis = Jest.runner.?.default_timeout_ms;
+            }
+        }
+
         Jest.runner.?.armTimeout(
             this.timeout_millis,
             task.test_id,
@@ -730,7 +770,9 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    if (!promise.isHandled(vm.global.vm())) {
+                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    }
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
@@ -1176,6 +1218,7 @@ pub const DescribeScope = struct {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
         if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
+        globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
@@ -1278,17 +1321,42 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+        var deduped = false;
+        const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
+
+        if (rejection.asAnyPromise()) |promise| {
+            promise.setHandled(globalObject.vm());
+        }
+
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
+            deduped = true;
         } else {
+            if (is_unhandled and Jest.runner != null) {
+                Output.prettyErrorln(
+                    \\<r>
+                    \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
+                    \\<d>-------------------------------<r>
+                    \\
+                , .{});
+
+                Output.flush();
+            }
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
+            if (is_unhandled and Jest.runner != null) {
+                Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
+                Output.flush();
+            }
         }
 
         if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
             this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .unhandledRejection);
+        } else if (Jest.runner) |runner| {
+            if (!deduped)
+                runner.unhandled_errors_between_tests += 1;
         }
     }
 
@@ -1348,6 +1416,10 @@ pub const TestRunnerTask = struct {
         this.sync_state = .pending;
 
         var result = TestScope.run(&test_, this);
+
+        if (this.describe.tests.items.len > test_id) {
+            this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
+        }
 
         // rejected promises should fail the test
         if (result != .fail)
@@ -1578,7 +1650,7 @@ inline fn createScope(
         }
     }
 
-    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
@@ -1834,7 +1906,7 @@ fn eachBind(
         return .zero;
     }
 
-    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {

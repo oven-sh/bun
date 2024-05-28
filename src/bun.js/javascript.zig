@@ -1863,7 +1863,7 @@ pub const VirtualMachine = struct {
         return specifier;
     }
 
-    threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
         specifier: string,
@@ -2206,9 +2206,11 @@ pub const VirtualMachine = struct {
             else => {
                 var errors_stack: [256]*anyopaque = undefined;
 
-                const errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
+                const len = @min(log.msgs.items.len, errors_stack.len);
+                const errors = errors_stack[0..len];
+                const logs = log.msgs.items[0..len];
 
-                for (log.msgs.items, errors) |msg, *current| {
+                for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
                         .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                         .resolve => ResolveMessage.create(
@@ -3806,7 +3808,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             var fs: *Fs.FileSystem = bundler.fs;
             var rfs: *Fs.FileSystem.RealFS = &fs.fs;
             var resolver = &bundler.resolver;
-            var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
             var current_task: HotReloadTask = .{
                 .reloader = this,

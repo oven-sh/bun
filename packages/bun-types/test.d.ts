@@ -94,6 +94,7 @@ declare module "bun:test" {
     clearAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
+    setTimeout(milliseconds: number): void;
   }
   export const jest: Jest;
   export namespace jest {
@@ -293,6 +294,13 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  /**
+   * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
+   * override this value. The default timeout is 5000ms (5 seconds).
+   *
+   * @param milliseconds the number of milliseconds for the default timeout
+   */
+  export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.

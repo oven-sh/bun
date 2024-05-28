@@ -37,8 +37,8 @@ const bundler = bun.bundler;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: bun.PathBuffer = undefined;
+var path_buf2: bun.PathBuffer = undefined;
 const NpmArgs = struct {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
     pub const package_name: string = "npm_package_name";
@@ -103,7 +103,7 @@ pub const RunCommand = struct {
     /// Cached to only run once
     pub fn findShell(PATH: string, cwd: string) ?stringZ {
         const bufs = struct {
-            pub var shell_buf_once: [bun.MAX_PATH_BYTES]u8 = undefined;
+            pub var shell_buf_once: bun.PathBuffer = undefined;
             pub var found_shell: [:0]const u8 = "";
         };
         if (bufs.found_shell.len > 0) {

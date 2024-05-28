@@ -237,7 +237,7 @@ const LibUVBackend = struct {
         const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
         port_buf[port.len] = 0;
         const portZ = port_buf[0..port.len :0];
-        var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var hostname: bun.PathBuffer = undefined;
         _ = strings.copy(hostname[0..], query.name);
         hostname[query.name.len] = 0;
         const host = hostname[0..query.name.len :0];
@@ -758,7 +758,7 @@ pub const GetAddrInfoRequest = struct {
                     const port = std.fmt.bufPrintIntToSlice(&port_buf, query.port, 10, .lower, .{});
                     port_buf[port.len] = 0;
                     const portZ = port_buf[0..port.len :0];
-                    var hostname: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var hostname: bun.PathBuffer = undefined;
                     _ = strings.copy(hostname[0..], query.name);
                     hostname[query.name.len] = 0;
                     var addrinfo: ?*std.c.addrinfo = null;
@@ -1226,7 +1226,7 @@ pub const InternalDNS = struct {
         };
 
         const Result = extern struct {
-            info: ?*std.c.addrinfo,
+            info: ?[*]ResultEntry,
             err: c_int,
         };
 
@@ -1279,7 +1279,7 @@ pub const InternalDNS = struct {
             bun.assert(this.notify.items.len == 0);
             if (this.result) |res| {
                 if (res.info) |info| {
-                    std.c.freeaddrinfo(info);
+                    bun.default_allocator.destroy(&info[0]);
                 }
             }
             if (this.key.host) |host| {
@@ -1432,11 +1432,84 @@ pub const InternalDNS = struct {
         }
     };
 
+    const ResultEntry = extern struct {
+        info: std.c.addrinfo,
+        addr: std.c.sockaddr.storage,
+    };
+
+    // re-order result to interleave ipv4 and ipv6 (also pack into a single allocation)
+    fn processResults(info: *std.c.addrinfo) []ResultEntry {
+        var count: usize = 0;
+        var info_: ?*std.c.addrinfo = info;
+        while (info_) |ai| {
+            count += 1;
+            info_ = ai.next;
+        }
+
+        var results = bun.default_allocator.alloc(ResultEntry, count) catch bun.outOfMemory();
+
+        // copy results
+        var i: usize = 0;
+        info_ = info;
+        while (info_) |ai| {
+            results[i].info = ai.*;
+            if (ai.addr) |addr| {
+                if (ai.family == std.c.AF.INET) {
+                    const addr_in: *std.c.sockaddr.in = @ptrCast(&results[i].addr);
+                    addr_in.* = @as(*std.c.sockaddr.in, @alignCast(@ptrCast(addr))).*;
+                } else if (ai.family == std.c.AF.INET6) {
+                    const addr_in: *std.c.sockaddr.in6 = @ptrCast(&results[i].addr);
+                    addr_in.* = @as(*std.c.sockaddr.in6, @alignCast(@ptrCast(addr))).*;
+                }
+            } else {
+                results[i].addr = std.mem.zeroes(std.c.sockaddr.storage);
+            }
+            i += 1;
+            info_ = ai.next;
+        }
+
+        // sort (interleave ipv4 and ipv6)
+        var want: usize = std.c.AF.INET6;
+        for (0..count) |idx| {
+            if (results[idx].info.family == want) continue;
+            for (idx + 1..count) |j| {
+                if (results[j].info.family == want) {
+                    std.mem.swap(ResultEntry, &results[idx], &results[j]);
+                    want = if (want == std.c.AF.INET6) std.c.AF.INET else std.c.AF.INET6;
+                }
+            } else {
+                // the rest of the list is all one address family
+                break;
+            }
+        }
+
+        // set up pointers
+        for (results, 0..) |*entry, idx| {
+            entry.info.canonname = null;
+            if (idx + 1 < count) {
+                entry.info.next = &results[idx + 1].info;
+            } else {
+                entry.info.next = null;
+            }
+            if (entry.info.addr != null) {
+                entry.info.addr = @alignCast(@ptrCast(&entry.addr));
+            }
+        }
+
+        return results;
+    }
+
     fn afterResult(req: *Request, info: ?*std.c.addrinfo, err: c_int) void {
+        const results: ?[*]ResultEntry = if (info) |ai| brk: {
+            const res = processResults(ai);
+            std.c.freeaddrinfo(ai);
+            break :brk res.ptr;
+        } else null;
+
         global_cache.lock.lock();
 
         req.result = .{
-            .info = info,
+            .info = results,
             .err = err,
         };
         var notify = req.notify;

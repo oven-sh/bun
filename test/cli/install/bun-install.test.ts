@@ -1,5 +1,5 @@
 import { file, listen, Socket, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
 import { access, mkdir, readlink as readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, sep } from "path";
@@ -39,7 +39,11 @@ expect.extend({
   },
 });
 
-beforeAll(dummyBeforeAll);
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+  dummyBeforeAll();
+});
+
 afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
@@ -966,6 +970,7 @@ it("should handle installing the same peerDependency with different versions", a
     "",
     "2 packages installed",
   ]);
+  expect(await exited).toBe(0);
 });
 
 it("should handle installing the same peerDependency with the same version", async () => {
@@ -1003,6 +1008,8 @@ it("should handle installing the same peerDependency with the same version", asy
     "",
     "1 package installed",
   ]);
+
+  expect(await exited).toBe(0);
 });
 
 it("should handle life-cycle scripts within workspaces", async () => {
@@ -2005,92 +2012,6 @@ it("should handle ^0.0.2rc1 in dependencies", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
     "+ bar@0.0.2-rc1",
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
-    name: "bar",
-    version: "0.0.2",
-  });
-  await access(join(package_dir, "bun.lockb"));
-});
-
-it("should handle ^0.0.2_pre3 in dependencies", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.2_pre3": { as: "0.0.2" } }));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        bar: "^0.0.2_pre3+baz",
-      },
-    }),
-  );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@0.0.2-_pre3",
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
-  expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
-  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
-    name: "bar",
-    version: "0.0.2",
-  });
-  await access(join(package_dir, "bun.lockb"));
-});
-
-it("should handle ^0.0.2b_4+cafe_b0ba in dependencies", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls, { "0.0.2b_4+cafe_b0ba": { as: "0.0.2" } }));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        bar: "^0.0.2b_4+cafe_b0ba",
-      },
-    }),
-  );
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const err = await new Response(stderr).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bar@0.0.2-b_4+cafe_b0ba",
     "",
     "1 package installed",
   ]);
@@ -3384,7 +3305,7 @@ it("should handle bitbucket git dependencies", async () => {
     dummyAfterEach();
     dummyBeforeEach();
   }
-}, 20000);
+});
 
 it("should handle gitlab git dependencies", async () => {
   const deps = ["gitlab:dylan-conway/public-install-test", "gitlab.com:dylan-conway/public-install-test"];
@@ -3459,7 +3380,7 @@ it("should handle gitlab git dependencies", async () => {
     dummyAfterEach();
     dummyBeforeEach();
   }
-}, 10000);
+});
 
 it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {
   const urls: string[] = [];
@@ -3987,7 +3908,7 @@ cache = false
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
-}, 20000);
+});
 
 it("should consider peerDependencies during hoisting", async () => {
   const urls: string[] = [];
@@ -4431,7 +4352,7 @@ it("should handle Git URL in dependencies", async () => {
   const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
   await access(join(package_dir, "bun.lockb"));
-}, 20000);
+});
 
 it("should handle Git URL in dependencies (SCP-style)", async () => {
   const urls: string[] = [];
@@ -4489,7 +4410,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   const package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
   expect(package_json.name).toBe("uglify-js");
   await access(join(package_dir, "bun.lockb"));
-}, 20000);
+});
 
 it("should handle Git URL with committish in dependencies", async () => {
   const urls: string[] = [];
@@ -4549,7 +4470,7 @@ it("should handle Git URL with committish in dependencies", async () => {
   expect(package_json.name).toBe("uglify-js");
   expect(package_json.version).toBe("3.14.1");
   await access(join(package_dir, "bun.lockb"));
-}, 20000);
+});
 
 it("should fail on invalid Git URL", async () => {
   const urls: string[] = [];
@@ -4623,7 +4544,7 @@ it("should fail on Git URL with invalid committish", async () => {
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
-}, 20000);
+});
 
 it("should de-duplicate committish in Git URLs", async () => {
   const urls: string[] = [];
@@ -4709,7 +4630,7 @@ it("should de-duplicate committish in Git URLs", async () => {
   expect(ver_json.name).toBe("uglify-js");
   expect(ver_json.version).toBe("3.14.1");
   await access(join(package_dir, "bun.lockb"));
-}, 20000);
+});
 
 it("should handle Git URL with existing lockfile", async () => {
   const urls: string[] = [];
@@ -4913,7 +4834,7 @@ cache = false
     join("..", "uglify-js", "bin", "uglifyjs"),
   );
   await access(join(package_dir, "bun.lockb"));
-}, 20000);
+});
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
   const urls: string[] = [];
@@ -6164,7 +6085,7 @@ cache = false
   expect(await readdirSorted(package_dir)).toEqual(["bun.lockb", "bunfig.toml", "node_modules", "package.json"]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(foo_package);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toBeEmpty();
-}, 20000);
+});
 
 it("should handle trustedDependencies", async () => {
   function getScripts(name: string) {

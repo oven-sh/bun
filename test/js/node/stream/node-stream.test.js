@@ -598,3 +598,35 @@ it("emits newListener event _before_ adding the listener", () => {
   stream.on("foo", () => {});
   expect(cb).toHaveBeenCalled();
 });
+
+it("reports error", () => {
+  expect(() => {
+    const dup = new Duplex({
+      read() {
+        this.push("Hello World!\n");
+        this.push(null);
+      },
+      write(chunk, encoding, callback) {
+        callback(new Error("test"));
+      },
+    });
+
+    dup.emit("error", new Error("test"));
+  }).toThrow("test");
+});
+
+it("should correctly call removed listeners", () => {
+  const s = new Stream();
+  let l2Called = false;
+  const l1 = () => {
+    s.removeListener("x", l2);
+  };
+  const l2 = () => {
+    l2Called = true;
+  };
+  s.on("x", l1);
+  s.on("x", l2);
+
+  s.emit("x");
+  expect(l2Called).toBeTrue();
+});

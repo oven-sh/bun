@@ -2370,7 +2370,6 @@ describe("fs/promises", () => {
       }
 
       const maxFD = getMaxFD();
-
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });

@@ -166,6 +166,10 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-beta+build", "1.2.3-beta+otherbuild"],
       ["1.2.3+build", "1.2.3+otherbuild"],
       ["  v1.2.3+build", "1.2.3+otherbuild"],
+
+      ["1.1.1-next.0 ", "1.1.1-next.0    "],
+      ["1.1.1-next.0.a ", "1.1.1-next.0.a    "],
+      ["1.1.1-next.0.a+abc ", "1.1.1-next.0.a+jkejf    "],
     ];
 
     for (const [left, right] of tests) {
@@ -349,6 +353,8 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies(">=7.0.0-rc2", "7.0.0-rc2", true);
 
     testSatisfies("^1.2.3-pr.1 || >=1.2.4-alpha", "1.2.4-alpha.notready", true);
+
+    testSatisfies("^3.0.0-next.0||^3.0.0", "3.0.0-next.2", true);
 
     const notPassing = [
       "0.1.0",

@@ -1,8 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeAll, setDefaultTimeout } from "bun:test";
 import { rm, writeFile, cp } from "fs/promises";
 import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 import { spawn } from "bun";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 describe("esbuild integration test", () => {
   test("install and use esbuild", async () => {

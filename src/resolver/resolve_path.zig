@@ -9,7 +9,7 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
-pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+pub fn z(input: []const u8, output: *bun.PathBuffer) [:0]const u8 {
     if (input.len > bun.MAX_PATH_BYTES) {
         if (comptime bun.Environment.allow_assert) @panic("path too long");
         return "";
@@ -409,7 +409,7 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = @as(usize, @intCast(@intFromBool(normalized_from[0] == separator))) + 1 + last_common_separator;
+        var i: usize = @as(usize, @intCast(@intFromBool(platform.isSeparator(normalized_from[0])))) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
@@ -427,13 +427,15 @@ pub fn relativeToCommonPath(
     if (normalized_to.len > last_common_separator + 1) {
         var tail = normalized_to[last_common_separator..];
         if (normalized_from.len > 0 and (last_common_separator == normalized_from.len or (last_common_separator == normalized_from.len - 1))) {
-            if (tail[0] == separator) {
+            if (platform.isSeparator(tail[0])) {
                 tail = tail[1..];
             }
         }
 
         // avoid making non-absolute paths absolute
-        const insert_leading_slash = tail[0] != separator and out_slice.len > 0 and out_slice[out_slice.len - 1] != separator;
+        const insert_leading_slash = !platform.isSeparator(tail[0]) and
+            out_slice.len > 0 and !platform.isSeparator(out_slice[out_slice.len - 1]);
+
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;
             out_slice.len += 1;
@@ -496,6 +498,13 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const normalized_from = if (platform.isAbsolute(from)) brk: {
+        if (platform == .loose and bun.Environment.isWindows) {
+            // we want to invoke the windows resolution behavior but end up with a
+            // string with forward slashes.
+            const normalized = normalizeStringBuf(from, relative_from_buf[1..], true, .windows, true);
+            platformToPosixInPlace(u8, normalized);
+            break :brk normalized;
+        }
         const path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_from_buf[0] = platform.separator();
@@ -510,6 +519,11 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
     );
 
     const normalized_to = if (platform.isAbsolute(to)) brk: {
+        if (platform == .loose and bun.Environment.isWindows) {
+            const normalized = normalizeStringBuf(to, relative_to_buf[1..], true, .windows, true);
+            platformToPosixInPlace(u8, normalized);
+            break :brk normalized;
+        }
         const path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_to_buf[0] = platform.separator();
@@ -1971,8 +1985,8 @@ pub fn pathToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
     return buf[0..path.len];
 }
 
-pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
-    if (std.fs.path.sep == '/') return;
+pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []const T {
+    if (std.fs.path.sep == '/') return path;
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
         @memcpy(buf[idx..index], path[idx..index]);

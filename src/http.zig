@@ -809,7 +809,7 @@ pub const HTTPThread = struct {
                 var requested_config = client.tls_props.?;
                 for (custom_ssl_context_map.keys()) |other_config| {
                     if (requested_config.isSame(other_config)) {
-                        // we freee the callers config since we have a existing one
+                        // we free the callers config since we have a existing one
                         requested_config.deinit();
                         bun.default_allocator.destroy(requested_config);
                         client.tls_props = other_config;
@@ -1808,6 +1808,7 @@ pub const AsyncHTTP = struct {
         disable_keepalive: ?bool = null,
         disable_decompression: ?bool = null,
         reject_unauthorized: ?bool = null,
+        tls_props: ?*SSLConfig = null,
     };
 
     pub fn init(
@@ -1869,6 +1870,9 @@ pub const AsyncHTTP = struct {
         }
         if (options.reject_unauthorized) |val| {
             this.client.reject_unauthorized = val;
+        }
+        if (options.tls_props) |val| {
+            this.client.tls_props = val;
         }
 
         if (options.http_proxy) |proxy| {

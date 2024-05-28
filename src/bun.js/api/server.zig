@@ -815,9 +815,14 @@ pub const ServerConfig = struct {
                 }
 
                 if (obj.get(global, "lowMemoryMode")) |low_memory_mode| {
-                    result.low_memory_mode = low_memory_mode.toBoolean();
-                    any = true;
-                    result.requires_custom_request_ctx = true;
+                    if (low_memory_mode.isBoolean() or low_memory_mode.isUndefined()) {
+                        result.low_memory_mode = low_memory_mode.toBoolean();
+                        any = true;
+                    } else {
+                        global.throw("Expected lowMemoryMode to be a boolean", .{});
+                        result.deinit();
+                        return null;
+                    }
                 }
             }
 

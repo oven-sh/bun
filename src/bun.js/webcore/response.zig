@@ -1637,6 +1637,7 @@ pub const Fetch = struct {
                     .disable_decompression = fetch_options.disable_decompression,
                     .reject_unauthorized = fetch_options.reject_unauthorized,
                     .verbose = fetch_options.verbose,
+                    .tls_props = fetch_options.ssl_config,
                 },
             );
 
@@ -1645,14 +1646,6 @@ pub const Fetch = struct {
             if (fetch_options.redirect_type != FetchRedirect.follow) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
             }
-
-            fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
-            fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
-            fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
-            fetch_tasklet.http.?.client.disable_decompression = fetch_options.disable_decompression;
-            fetch_tasklet.http.?.client.reject_unauthorized = fetch_options.reject_unauthorized;
-
-            fetch_tasklet.http.?.client.tls_props = fetch_options.ssl_config;
 
             // we want to return after headers are received
             fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
@@ -2098,7 +2091,7 @@ pub const Fetch = struct {
                                         bun.default_allocator.destroy(existing_conf);
                                         ssl_config = null;
                                     }
-                                    ssl_config = bun.default_allocator.create(SSLConfig) catch @panic("out of memory!");
+                                    ssl_config = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                     ssl_config.?.* = config;
                                 }
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {
@@ -2255,11 +2248,7 @@ pub const Fetch = struct {
             defer str.deref();
             if (str.isEmpty()) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
-                // clean hostname and tls props if any
-                if (ssl_config) |conf| {
-                    conf.deinit();
-                    bun.default_allocator.destroy(conf);
-                }
+                // clean hostname if any
                 if (hostname) |hn| {
                     bun.default_allocator.free(hn);
                     hostname = null;
@@ -2281,11 +2270,7 @@ pub const Fetch = struct {
             }
 
             url = ZigURL.fromString(allocator, str) catch {
-                // clean hostname and tls props if any
-                if (ssl_config) |conf| {
-                    conf.deinit();
-                    bun.default_allocator.destroy(conf);
-                }
+                // clean hostname if any
                 if (hostname) |hn| {
                     bun.default_allocator.free(hn);
                     hostname = null;
@@ -2396,13 +2381,8 @@ pub const Fetch = struct {
 
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
-                                if (ssl_config) |conf| {
-                                    conf.deinit();
-                                    bun.default_allocator.destroy(conf);
-                                    ssl_config = null;
-                                }
                                 if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
-                                    ssl_config = bun.default_allocator.create(SSLConfig) catch @panic("out of memory!");
+                                    ssl_config = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                     ssl_config.?.* = config;
                                 }
                                 if (tls.get(ctx, "rejectUnauthorized")) |reject| {

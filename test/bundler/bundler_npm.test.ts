@@ -4,7 +4,7 @@ var { describe, test, expect } = testForFile(import.meta.path);
 describe("bundler", () => {
   itBundled("npm/ReactSSR", {
     todo: process.platform === "win32", // TODO(@paperdave)
-    install: ["react@next", "react-dom@next"],
+    install: ["react@18.3.1", "react-dom@18.3.1"],
     files: {
       "/entry.tsx": /* tsx */ `
         import React from "react";
@@ -39,17 +39,34 @@ describe("bundler", () => {
     },
     // this test serves two purposes
     // - does react work when bundled
-    // - do sourcemaps on a library work
+    // - do sourcemaps on a real-world library work
     sourceMap: "external",
     outdir: "out/",
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
     snapshotSourceMap: {
-      "entry.js.map": "fec584437037e37b5b538a3404e3e540921cb397a1ef630ade3660b8d90512f5",
+      "entry.js.map": {
+        files: [
+          "../node_modules/react/cjs/react.development.js",
+          "../node_modules/react/cjs/react-jsx-dev-runtime.development.js",
+          "../node_modules/react-dom/cjs/react-dom-server-legacy.browser.development.js",
+          "../node_modules/react-dom/cjs/react-dom-server.browser.development.js",
+          "../node_modules/react-dom/server.browser.js",
+          "../entry.tsx",
+        ],
+        mappings: [
+          ["react.development.js:524:'getContextName'", "1:5404:r1"],
+          ["react.development.js:2495:'actScopeDepth'", "1:26072:GJ++"],
+          ["react.development.js:696:''Component'", '1:7470:\'Component "%s"'],
+          ["entry.tsx:6:'\"Content-Type\"'", '1:221674:"Content-Type"'],
+          ["entry.tsx:11:'<html>'", "1:221930:void"],
+          ["entry.tsx:23:'await'", "1:222035:await"],
+        ],
+      },
     },
     run: {
-      stdout: "<!DOCTYPE html><html><head></head><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
+      stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",
     },
   });
   itBundled("npm/LodashES", {

@@ -1078,12 +1078,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     minifyWhitespace: true,
     splitting: true,
-    snapshotSourceMap: {
-      "second-1702abcdd066f0da.js.map": "53ef213fc5445c58cd284f926c0e681044565700dee156f2ce7bd960e9d004d2",
-      "index-12718fe9cb7375d3.js.map": "059a50b655aa7a13d626f9d532c02410ef7af89b4a3c6b1a1410ab4af6a49312",
-      "index.js.map": "f0b49657f1e741a6f5daba0425baa899d35dd3dfb6362cab1782b9c7cebf21c3",
-      "third-1f12a955bb7ca607.js.map": "8fe3493783584dde93b6f2325d4bea0edb512bedcf64d833bea184fc23149b63",
-    },
   });
   // chunk-concat weaved mappings together incorrectly causing the `console`
   // token to be -2, thus breaking the rest of the mappings in the file
@@ -1104,7 +1098,10 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     minifyWhitespace: true,
     snapshotSourceMap: {
-      "entry.js.map": "7b1c552e334d07145dcee0e028adb5d97a948ed3f4f11db9c6ecde8ec239612e",
+      "entry.js.map": {
+        files: ["../node_modules/react/index.js", "../entry.js"],
+        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+      },
     },
   });
 

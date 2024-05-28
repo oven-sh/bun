@@ -519,6 +519,39 @@ function validateBoolean(value, name) {
 
 let AsyncResource = null;
 
+function getMaxListeners(emitterOrTarget) {
+  // TODO: apparently EventTarget in Node can have a max number of listeners?
+  return emitterOrTarget?._maxListeners ?? defaultMaxListeners;
+}
+
+// Copy-pasta from Node.js source code
+function addAbortListener(signal, listener) {
+  if (signal === undefined) {
+    throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+  }
+
+  validateAbortSignal(signal, "signal");
+  if (typeof listener !== "function") {
+    throw ERR_INVALID_ARG_TYPE("listener", "function", listener);
+  }
+
+  let removeEventListener;
+  if (signal.aborted) {
+    queueMicrotask(() => listener());
+  } else {
+    signal.addEventListener("abort", listener, { __proto__: null, once: true });
+    removeEventListener = () => {
+      signal.removeEventListener("abort", listener);
+    };
+  }
+  return {
+    __proto__: null,
+    [Symbol.dispose]() {
+      removeEventListener?.();
+    },
+  };
+}
+
 class EventEmitterAsyncResource extends EventEmitter {
   triggerAsyncId;
   asyncResource;
@@ -581,13 +614,14 @@ Object.assign(EventEmitter, {
   once,
   on,
   getEventListeners,
-  // getMaxListeners,
+  getMaxListeners,
   setMaxListeners,
   EventEmitter,
   usingDomains: false,
   captureRejectionSymbol,
   EventEmitterAsyncResource,
   errorMonitor: kErrorMonitor,
+  addAbortListener,
   init: EventEmitter,
   listenerCount,
 });

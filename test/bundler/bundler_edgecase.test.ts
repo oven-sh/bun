@@ -574,7 +574,7 @@ describe("bundler", () => {
             break;
         }
         console.log(a);
-    
+
         var x = 123, y = 45;
         switch (console) {
           case 456:
@@ -582,14 +582,14 @@ describe("bundler", () => {
         }
         var y = 67;
         console.log(x, y);
-    
+
         var z = 123;
         switch (console) {
           default:
             var z = typeof z;
         }
         console.log(z);
-    
+
         var A = 1, B = 2;
         switch (A) {
           case A:
@@ -1078,6 +1078,31 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     minifyWhitespace: true,
     splitting: true,
+  });
+  // chunk-concat weaved mappings together incorrectly causing the `console`
+  // token to be -2, thus breaking the rest of the mappings in the file
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        import * as react from "react";
+        console.log(react);
+      `,
+      "/node_modules/react/index.js": `
+        var _ = module;
+        sideEffect(() =>   {});
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../node_modules/react/index.js", "../entry.js"],
+        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+      },
+    },
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

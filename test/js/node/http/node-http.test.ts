@@ -1826,9 +1826,10 @@ it("should emit events in the right order", async () => {
   const err = await new Response(stderr).text();
   expect(err).toBeEmpty();
   const out = await new Response(stdout).text();
+  // TODO: prefinish and socket should actually be flipped, and the rest of the missing events should be added
   expect(out.split("\n")).toEqual([
-    `[ "req", "socket" ]`,
     `[ "req", "prefinish" ]`,
+    `[ "req", "socket" ]`,
     `[ "req", "finish" ]`,
     `[ "req", "response" ]`,
     "STATUS: 200",

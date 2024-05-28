@@ -190,8 +190,10 @@ pub const SavedSourceMap = struct {
     pub const MissingSourceMapNoteInfo = struct {
         pub var storage: bun.PathBuffer = undefined;
         pub var path: ?[]const u8 = null;
+        pub var seen_invalid = false;
 
         pub fn print() void {
+            if (seen_invalid) return;
             if (path) |note| {
                 Output.note(
                     "missing sourcemaps for {s}",

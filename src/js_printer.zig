@@ -1381,7 +1381,6 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
-
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
@@ -1389,8 +1388,6 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
-
-            // TODO:
             printer.addSourceMapping(location);
         }
 

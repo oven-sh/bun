@@ -56,6 +56,7 @@ pub fn pushStatic(this: *StringJoiner, data: []const u8) void {
 
 /// `data` is cloned
 pub fn pushCloned(this: *StringJoiner, data: []const u8) void {
+    if (data.len == 0) return;
     this.push(
         this.allocator.dupe(u8, data) catch bun.outOfMemory(),
         this.allocator,
@@ -63,6 +64,7 @@ pub fn pushCloned(this: *StringJoiner, data: []const u8) void {
 }
 
 pub fn push(this: *StringJoiner, data: []const u8, allocator: ?Allocator) void {
+    if (data.len == 0) return;
     this.len += data.len;
 
     const new_tail = Node.init(this.allocator, data, allocator);
@@ -142,7 +144,8 @@ pub fn doneWithEnd(this: *StringJoiner, allocator: Allocator, end: []const u8) !
 
 pub fn lastByte(this: *const StringJoiner) u8 {
     const slice = (this.tail orelse return 0).slice;
-    return if (slice.len > 0) slice[slice.len - 1] else 0;
+    assert(slice.len > 0);
+    return slice[slice.len - 1];
 }
 
 pub fn ensureNewlineAtEnd(this: *StringJoiner) void {

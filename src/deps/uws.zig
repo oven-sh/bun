@@ -45,7 +45,6 @@ pub const InternalLoopData = extern struct {
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
 
-    iteration_nr: c_longlong,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
@@ -1276,18 +1275,19 @@ pub const PosixLoop = extern struct {
     pub const wake = wakeup;
 
     pub fn tick(this: *PosixLoop) void {
-        us_loop_run_bun_tick(this, 0);
+        us_loop_run_bun_tick(this, null);
     }
 
     pub fn tickWithoutIdle(this: *PosixLoop) void {
-        us_loop_run_bun_tick(this, std.math.maxInt(i64));
+        const timespec = bun.timespec{ .sec = 0, .nsec = 0 };
+        us_loop_run_bun_tick(this, &timespec);
     }
 
-    pub fn tickWithTimeout(this: *PosixLoop, timeoutMs: i64) void {
-        us_loop_run_bun_tick(this, timeoutMs);
+    pub fn tickWithTimeout(this: *PosixLoop, timespec: ?*const bun.timespec) void {
+        us_loop_run_bun_tick(this, timespec);
     }
 
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
 
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -2784,7 +2784,7 @@ pub const WindowsLoop = extern struct {
 
     extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
 
-    pub fn iterationNumber(this: *const WindowsLoop) c_longlong {
+    pub fn iterationNumber(this: *const WindowsLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
 

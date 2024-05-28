@@ -41,7 +41,7 @@ pub fn Intrusive(
         }
 
         /// Look at the next minimum value but do not remove it.
-        pub fn peek(self: *Self) ?*T {
+        pub fn peek(self: *const Self) ?*T {
             return self.root;
         }
 

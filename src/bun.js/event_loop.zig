@@ -394,7 +394,7 @@ const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
-const TimerReference = JSC.BunTimer.Timeout.TimerReference;
+const TimerObject = JSC.BunTimer.TimerObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
@@ -473,7 +473,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellCondExprStatTask,
     ShellAsync,
     ShellAsyncSubprocessDone,
-    TimerReference,
+    TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
 
     ProcessWaiterThreadTask,
@@ -771,8 +771,6 @@ pub const EventLoop = struct {
     deferred_tasks: DeferredTaskQueue = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
-    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
-
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
@@ -826,15 +824,6 @@ pub const EventLoop = struct {
 
     pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
         return this.virtual_machine;
-    }
-
-    pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
-        return this.timer_reference_pool orelse brk: {
-            const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
-            _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);
-            this.timer_reference_pool = _pool;
-            break :brk _pool;
-        };
     }
 
     pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
@@ -1236,10 +1225,10 @@ pub const EventLoop = struct {
                     var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                     any.drain();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
+                @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
                     bun.markPosixOnly();
-                    var any: *TimerReference = task.get(TimerReference).?;
-                    any.runFromJSThread();
+                    var any: *TimerObject = task.get(TimerObject).?;
+                    any.runImmediateTask(this.virtual_machine);
                 },
 
                 else => if (Environment.allow_assert) {
@@ -1361,16 +1350,22 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
-            loop.tick();
+            // for the printer, this is defined:
+            var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
 
             if (comptime Environment.isDebug) {
-                log("tick {}", .{bun.fmt.fmtDuration(event_loop_sleep_timer.read())});
+                log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
             }
         } else {
             loop.tickWithoutIdle();
             if (comptime Environment.isDebug) {
                 log("tickWithoutIdle", .{});
             }
+        }
+
+        if (Environment.isPosix) {
+            ctx.timer.drainTimers(ctx);
         }
 
         this.flushImmediateQueue();
@@ -1457,11 +1452,10 @@ pub const EventLoop = struct {
 
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
-
+        var ctx = this.virtual_machine;
         this.flushImmediateQueue();
         this.tickImmediateTasks();
 
-        var ctx = this.virtual_machine;
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
             if (pending_unref > 0) {
@@ -1472,9 +1466,15 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
-            loop.tick();
+            var timespec: bun.timespec = undefined;
+
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
+        }
+
+        if (Environment.isPosix) {
+            ctx.timer.drainTimers(ctx);
         }
 
         this.flushImmediateQueue();
@@ -1570,7 +1570,8 @@ pub const EventLoop = struct {
                             return false;
                         }
 
-                        this.autoTickWithTimeout(remaining);
+                        // TODO:
+                        this.autoTick();
                     }
                 }
                 return true;

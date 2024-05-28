@@ -341,23 +341,16 @@ public:
         Bun__HTTPRequestContextDebugTLS__onRejectStream,
         Bun__HTTPRequestContextDebugTLS__onResolve,
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
-
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-
         Bun__TestScope__onReject,
         Bun__TestScope__onResolve,
-
-        CallbackJob__onResolve,
-        CallbackJob__onReject,
-
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
-
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
     };
-    static constexpr size_t promiseFunctionsSize = 26;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 

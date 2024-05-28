@@ -614,3 +614,19 @@ it("reports error", () => {
     dup.emit("error", new Error("test"));
   }).toThrow("test");
 });
+
+it("should correctly call removed listeners", () => {
+  const s = new Stream();
+  let l2Called = false;
+  const l1 = () => {
+    s.removeListener("x", l2);
+  };
+  const l2 = () => {
+    l2Called = true;
+  };
+  s.on("x", l1);
+  s.on("x", l2);
+
+  s.emit("x");
+  expect(l2Called).toBeTrue();
+});

@@ -943,27 +943,6 @@ pub const Version = extern struct {
             while (i < input.len) : (i += 1) {
                 const c = input[i];
                 switch (c) {
-                    ' ' => {
-                        switch (state) {
-                            .none => {},
-                            .pre => {
-                                result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                            .build => {
-                                result.tag.build = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                        }
-                        result.len = @as(u32, @truncate(i));
-                        break;
-                    },
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
@@ -981,7 +960,32 @@ pub const Version = extern struct {
                             start = i + 1;
                         }
                     },
-                    else => {},
+
+                    // only continue if character is a valid pre/build tag character
+                    // https://semver.org/#spec-item-9
+                    'a'...'z', 'A'...'Z', '0'...'9', '.' => {},
+
+                    else => {
+                        switch (state) {
+                            .none => {},
+                            .pre => {
+                                result.tag.pre = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                            .build => {
+                                result.tag.build = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                        }
+                        result.len = @truncate(i);
+                        break;
+                    },
                 }
             }
 
@@ -1182,7 +1186,7 @@ pub const Version = extern struct {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
                     if (result.wildcard == .none and part_i >= 2 and switch (c) {
-                        'a'...'z', 'A'...'Z', '_' => true,
+                        'a'...'z', 'A'...'Z' => true,
                         else => false,
                     }) {
                         part_start_i = i;

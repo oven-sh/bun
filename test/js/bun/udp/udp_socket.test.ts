@@ -1,7 +1,7 @@
 import { udpSocket } from "bun";
-import { describe, test, expect, it } from "bun:test";
-import { randomPort } from "harness";
-import { dataTypes, dataCases } from "./testdata";
+import { describe, expect, test } from "bun:test";
+import { disableAggressiveGCScope, randomPort } from "harness";
+import { dataCases, dataTypes } from "./testdata";
 
 describe("udpSocket()", () => {
   test("can create a socket", async () => {
@@ -65,14 +65,14 @@ describe("udpSocket()", () => {
   );
 
   const validateRecv = (socket, data, port, address, binaryType, bytes) => {
+    // This test file takes 1 minute in CI because we are running GC too much.
+    using _ = disableAggressiveGCScope();
+
     expect(socket).toBeInstanceOf(Object);
     expect(socket.binaryType).toBe(binaryType || "buffer");
-    expect(data).toHaveLength(bytes.length);
-    if (data instanceof ArrayBuffer) {
-      expect(new Uint8Array(data)).toStrictEqual(new Uint8Array(bytes));
-    } else {
-      expect(Buffer.from(data)).toStrictEqual(Buffer.from(bytes));
-    }
+    expect(data.byteLength).toBe(bytes.byteLength);
+    expect(data).toBeBinaryType(binaryType || "buffer");
+    expect(data).toEqual(bytes);
     expect(port).toBeInteger();
     expect(port).toBeWithin(1, 65535 + 1);
     expect(port).not.toBe(socket.port);
@@ -81,17 +81,27 @@ describe("udpSocket()", () => {
   };
 
   const validateSend = res => {
+    // This test file takes 1 minute in CI because we are running GC too much.
+    using _ = disableAggressiveGCScope();
+
     expect(res).toBeBoolean();
   };
 
   const validateSendMany = (res, count) => {
+    // This test file takes 1 minute in CI because we are running GC too much.
+    using _ = disableAggressiveGCScope();
+
     expect(res).toBeNumber();
     expect(res).toBeGreaterThanOrEqual(0);
     expect(res).toBeLessThanOrEqual(count);
   };
 
   for (const { binaryType, type } of dataTypes) {
-    for (const { label, data, bytes } of dataCases) {
+    for (let { label, data, bytes } of dataCases) {
+      if (type === ArrayBuffer) {
+        bytes = new Uint8Array(bytes).buffer;
+      }
+
       test(`send ${label} (${binaryType || "undefined"})`, async done => {
         const client = await udpSocket({});
         const server = await udpSocket({

@@ -32,14 +32,14 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const NullableAllocator = bun.NullableAllocator;
 const DataURL = @import("../../resolver/data_url.zig").DataURL;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
-const StringJoiner = @import("../../string_joiner.zig");
+const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 const Mutex = @import("../../lock.zig").Lock;
 
@@ -1487,15 +1487,27 @@ pub const Fetch = struct {
             log("onResponseFinalize", .{});
             if (this.native_response) |response| {
                 const body = response.body;
-                // we are streaming or already solved at this point
-                if (body.value != .Locked or this.readable_stream_ref.get() != null) {
+                // Three scenarios:
+                //
+                // 1. We are streaming, in which case we should not ignore the body.
+                // 2. We were buffering, in which case
+                //    2a. if we have no promise, we should ignore the body.
+                //    2b. if we have a promise, we should keep loading the body.
+                // 3. We never started buffering, in which case we should ignore the body.
+                //
+                // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
+                if (body.value != .Locked or this.readable_stream_ref.held.has()) {
+                    // Scenario 1 or 3.
                     return;
                 }
+
                 if (body.value.Locked.promise) |promise| {
                     if (promise.isEmptyOrUndefinedOrNull()) {
+                        // Scenario 2b.
                         this.ignoreRemainingResponseBody();
                     }
                 } else {
+                    // Scenario 3.
                     this.ignoreRemainingResponseBody();
                 }
             }

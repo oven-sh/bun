@@ -18,12 +18,12 @@ bun add @sentry/bun
 
 Then, initialize the Sentry SDK with your Sentry DSN in your app's entry file. You can find your DSN in your Sentry project settings.
 
-```JavaScript
-import * as Sentry from '@sentry/bun';
+```js
+import * as Sentry from "@sentry/bun";
 
 // Ensure to call this before importing any other modules!
 Sentry.init({
-  dsn: '__SENTRY_DSN__',
+  dsn: "__SENTRY_DSN__",
 
   // Add Performance Monitoring by setting tracesSampleRate
   // We recommend adjusting this value in production
@@ -35,7 +35,7 @@ Sentry.init({
 
 You can verify that Sentry is working by capturing a test error:
 
-```JavaScript
+```js
 setTimeout(() => {
   try {
     foo();

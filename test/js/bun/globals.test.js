@@ -153,3 +153,8 @@ it("self is a getter", () => {
   expect(descriptor.configurable).toBe(true);
   expect(globalThis.self).toBe(globalThis);
 });
+
+it("errors thrown by native code should be TypeError", async () => {
+  expect(() => Bun.dns.prefetch()).toThrowError(TypeError);
+  expect(async () => await fetch("http://localhost", { body: "123" })).toThrowError(TypeError);
+});

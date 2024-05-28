@@ -1547,45 +1547,6 @@ class ClientRequest extends OutgoingMessage {
     }
   }
 
-  end(chunk, encoding, callback) {
-    if (typeof chunk === 'function') {
-      callback = chunk;
-      chunk = null;
-      encoding = null;
-    } else if (typeof encoding === 'function') {
-      callback = encoding;
-      encoding = null;
-    }
-  
-    if (chunk) {
-      if (this.#finished) {
-        onError(this,
-                new ERR_STREAM_WRITE_AFTER_END(),
-                typeof callback !== 'function' ? nop : callback);
-        return this;
-      }
-  
-      write_(this, chunk, encoding, null, true);
-    } else if (this.#finished) {
-      callback(new ERR_STREAM_ALREADY_FINISHED('end'));
-      return this;
-    } 
-
-    if (typeof callback === 'function') {
-      this.once('finish', callback);
-    }
-
-    process.nextTick(() => {
-      this.emit('prefinish');
-      this.emit('finish');
-    });
-
-    this._final(nop);
-
-    return this;
-  };
-
-
   get aborted() {
     return this.#signal?.aborted || !!this[kAbortController]?.signal.aborted;
   }

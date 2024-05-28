@@ -550,6 +550,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
           ws.data.pong(ws, data);
         },
       },
+      maxRequestBodySize: Number.MAX_SAFE_INTEGER,
       // Be very careful not to access (web) Request object
       // properties:
       // - request.url

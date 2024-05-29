@@ -34,11 +34,11 @@ Object.assign(globalThis.Promise, Promise);
 
 function wrap(input) {
   if (typeof input?.catch === "function") {
-    return input?.catch?.((e) => {
+    return input?.catch?.(e => {
       if (ENABLE_LOGGING) {
-        console.error(e)
+        console.error(e);
       }
-    })
+    });
   }
 
   return input;

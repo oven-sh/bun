@@ -6627,7 +6627,12 @@ pub const NodeFS = struct {
                 mode_ |= C.darwin.COPYFILE_EXCL;
             }
 
-            return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+            const first_try = ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse return ret.success;
+            if (first_try == .err and first_try.err.errno == @intFromEnum(C.E.NOENT)) {
+                bun.makePath(std.fs.cwd(), bun.path.dirname(dest, .auto)) catch {};
+                return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+            }
+            return first_try;
         }
 
         if (Environment.isLinux) {

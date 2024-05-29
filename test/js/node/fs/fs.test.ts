@@ -3216,3 +3216,18 @@ it("promises.fdatasync with a bad fd should include that in the error thrown", a
   }
   expect.unreachable();
 });
+
+it("promises.cp should work even if dest does not exist", async () => {
+  const x_dir = tmpdirSync();
+  let src = "package-lock.json";
+  let folder = "folder-not-exist";
+  let dst = join(folder, src);
+
+  src = join(x_dir, src);
+  folder = join(x_dir, folder);
+  dst = join(x_dir, dst);
+
+  await promises.writeFile(src, "A".repeat(131073));
+  await promises.rm(folder, { recursive: true, force: true });
+  await promises.cp(src, dst);
+});

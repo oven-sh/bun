@@ -762,7 +762,7 @@ pub const Version = extern struct {
 
         // minor
         i += 1;
-        if (i == input.len or !std.ascii.isDigit(input[i])) return false;
+        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
         d = input[i];
         while (std.ascii.isDigit(d)) {
             i += 1;

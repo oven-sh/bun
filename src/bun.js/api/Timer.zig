@@ -684,7 +684,7 @@ pub const EventLoopTimer = struct {
     };
 
     fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
-        const order = b.next.order(&a.next);
+        const order = a.next.order(&b.next);
         if (order == .eq) {
             if (a.tag == .TimerObject and b.tag == .TimerObject) {
                 const a_timer = @fieldParentPtr(TimerObject, "event_loop_timer", a);

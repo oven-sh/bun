@@ -3216,7 +3216,8 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    digest(hashInto?: NodeJS.TypedArray): NodeJS.TypedArray;
+    digest(): Buffer;
+    digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
 
     /**
      * Run the hash over the given data
@@ -3225,10 +3226,11 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
+    static hash(algorithm: SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer;
     static hash(
       algorithm: SupportedCryptoAlgorithms,
       input: Bun.BlobOrStringOrBuffer,
-      hashInto?: NodeJS.TypedArray,
+      hashInto: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
     /**

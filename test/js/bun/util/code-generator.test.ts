@@ -20,8 +20,12 @@ globalThis.Promise = function (...args) {
     return Promise.resolve();
   }
 
-  return new Promise(...args);
+  const { resolve, reject, promise } = Promise.withResolvers();
+  args[0](resolve, reject);
+
+  return promise;
 };
+
 Object.assign(globalThis.Promise, Promise);
 
 // Don't allow these to be called
@@ -73,6 +77,7 @@ delete console.clear;
 delete console.warn;
 delete console.time;
 delete console.timeEnd;
+delete console.trace;
 delete console.timeLog;
 delete console.assert;
 Bun.generateHeapSnapshot = () => {};
@@ -190,10 +195,10 @@ function callAllMethods(object) {
     try {
       try {
         const returnValue = Reflect.apply(object?.[methodName], object, []);
-        queue.push(returnValue);
+        Bun.inspect?.(returnValue), queue.push(returnValue);
       } catch (e) {
         const returnValue = Reflect.apply(object.constructor?.[methodName], object?.constructor, []);
-        queue.push(returnValue);
+        Bun.inspect?.(returnValue), queue.push(returnValue);
       }
     } catch (e) {
       const val = object?.[methodName];
@@ -219,7 +224,7 @@ function callAllMethods(object) {
           if (returnValue?.then) {
             continue;
           }
-          queue.push(returnValue);
+          Bun.inspect?.(returnValue), queue.push(returnValue);
         } catch (e) {}
       }
     }
@@ -234,15 +239,15 @@ function constructAllConstructors(object) {
     try {
       try {
         const returnValue = Reflect.construct(object, [], method);
-        queue.push(returnValue);
+        Bun.inspect?.(returnValue), queue.push(returnValue);
       } catch (e) {
         const returnValue = Reflect.construct(object?.constructor, [], method);
-        queue.push(returnValue);
+        Bun.inspect?.(returnValue), queue.push(returnValue);
       }
     } catch (e) {
       try {
         const returnValue = Reflect.construct(object?.prototype?.constructor, [], method);
-        queue.push(returnValue);
+        Bun.inspect?.(returnValue), queue.push(returnValue);
       } catch (e) {
         Error.captureStackTrace(e);
       }
@@ -263,7 +268,7 @@ function constructAllConstructors(object) {
           continue;
         }
 
-        queue.push(returnValue);
+        Bun.inspect?.(returnValue), queue.push(returnValue);
         seen.add(returnValue);
       } catch (e) {}
     }
@@ -272,15 +277,7 @@ function constructAllConstructors(object) {
 
 describe("Call all methods", () => {
   test("globalThis", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const init = callAllMethodsCount;
-    try {
-      callAllMethods(globalThis);
-    } catch (e) {
-    } finally {
-      await Bun.sleep(0);
-    }
-
+    callAllMethods(globalThis);
     await Bun.sleep(0);
   });
 

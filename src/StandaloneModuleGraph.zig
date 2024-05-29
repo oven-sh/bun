@@ -81,6 +81,7 @@ pub const StandaloneModuleGraph = struct {
                 var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator) catch @panic("out of memory");
                 // make it never free
                 store.ref();
+                store.static_lifetime = true;
 
                 var blob_ = bun.default_allocator.create(bun.JSC.WebCore.Blob) catch @panic("out of memory");
                 blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);

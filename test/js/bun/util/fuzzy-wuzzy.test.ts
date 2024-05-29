@@ -1,12 +1,19 @@
 /**
  *
- * This is sort of like a fuzzer.
+ * This file attempts to run practically every function in Bun with no
+ * arguments. This is sort of like a fuzzer.
  *
- * We go through most of the methods & constructors in Bun
- * Try to call them with no arguments
- * Try to construct them with no arguments
+ * If you have a test failure pointing to this file, or if this file suddenly
+ * started becoming flaky, that usually means a JS bindings issue or a memory bug.
  *
- * This is mostly to catch assertion failures in generated code
+ * What this does:
+ *
+ * Go through most of the methods & constructors in Bun:
+ * - Try to call them with no arguments - Foo()
+ * - Try to construct them with no arguments - new Foo()
+ *
+ * If your code panics or crashes with an uncatchable exception when no
+ * arguments are passed, that's a bug you should fix.
  *
  */
 
@@ -290,29 +297,6 @@ function constructAllConstructors(object) {
   }
 }
 
-describe("Call all methods", () => {
-  test("globalThis", async () => {
-    callAllMethods(globalThis);
-    await Bun.sleep(0);
-  });
-
-  test("Bun", () => {
-    callAllMethods(Bun);
-  });
-});
-
-describe("Construct all constructors", () => {
-  test("globalThis", async () => {
-    constructAllConstructors(globalThis);
-    await Bun.sleep(1);
-  });
-
-  test("Bun", async () => {
-    constructAllConstructors(Bun);
-    await Bun.sleep(1);
-  });
-});
-
 const modules = [
   "module",
   "util",
@@ -368,4 +352,24 @@ for (const HardCodedClass of [
 ]) {
   test("call " + (HardCodedClass.name || HardCodedClass.toString()), () => constructAllConstructors(HardCodedClass));
   test("construct " + (HardCodedClass.name || HardCodedClass.toString()), () => callAllMethods(HardCodedClass));
+}
+
+const globals = [
+  [globalThis, "globalThis"],
+  [Bun, "Bun"],
+] as const;
+
+for (const [Global, name] of globals) {
+  describe(name, () => {
+    test("call", async () => {
+      await Bun.sleep(1);
+      callAllMethods(Global);
+      await Bun.sleep(1);
+    });
+    test("construct", async () => {
+      await Bun.sleep(1);
+      constructAllConstructors(Global);
+      await Bun.sleep(1);
+    });
+  });
 }

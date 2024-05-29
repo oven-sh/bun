@@ -6903,18 +6903,18 @@ const LinkerContext = struct {
                 line_offset.advance(compile_result.code());
                 j.push(compile_result.code(), bun.default_allocator);
             } else {
-                const generated_offset = line_offset;
                 j.push(compile_result.code(), bun.default_allocator);
 
                 if (compile_result.source_map_chunk()) |source_map_chunk| {
-                    line_offset.reset();
                     if (c.options.source_maps != .none) {
                         try compile_results_for_source_map.append(worker.allocator, CompileResultForSourceMap{
                             .source_map_chunk = source_map_chunk,
-                            .generated_offset = generated_offset.value,
+                            .generated_offset = line_offset.value,
                             .source_index = compile_result.sourceIndex(),
                         });
                     }
+
+                    line_offset.reset();
                 } else {
                     line_offset.advance(compile_result.code());
                 }

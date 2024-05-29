@@ -3448,8 +3448,8 @@ pub const Package = extern struct {
                     if (from_lockfile.patched_dependencies.get(entry.key_ptr.*)) |val| {
                         if (!std.mem.eql(
                             u8,
-                            val.path.slice(to_lockfile.buffers.string_bytes.items),
-                            entry.value_ptr.path.slice(from_lockfile.buffers.string_bytes.items),
+                            val.path.slice(from_lockfile.buffers.string_bytes.items),
+                            entry.value_ptr.path.slice(to_lockfile.buffers.string_bytes.items),
                         )) break :patched_dependencies_changed true;
                     } else break :patched_dependencies_changed true;
                 }

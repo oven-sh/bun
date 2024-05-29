@@ -60,10 +60,11 @@ pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
 const bun_hash_tag = ".bun-tag-";
-const max_buntag_hash_buf_len: comptime_int = brk: {
+const max_hex_hash_len: comptime_int = brk: {
     var buf: [128]u8 = undefined;
-    break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len + bun_hash_tag.len + 1;
+    break :brk (std.fmt.bufPrint(buf[0..], "{x}", .{std.math.maxInt(u64)}) catch @panic("Buf wasn't big enough.")).len;
 };
+const max_buntag_hash_buf_len: comptime_int = max_hex_hash_len + bun_hash_tag.len + 1;
 const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 // these bytes are skipped
@@ -209,7 +210,7 @@ pub const Aligner = struct {
     }
 };
 
-const PatchTask = struct {
+pub const PatchTask = struct {
     manager: *const PackageManager,
     managerrr: *PackageManager,
     project_dir: []const u8,
@@ -271,7 +272,9 @@ const PatchTask = struct {
         cache_dir_subpath: stringZ,
         cache_dir_subpath_without_patch_hash: stringZ,
 
-        task_callbacks: TaskCallbackList = .{},
+        /// this is non-null if this was called before a Task, for example extracting
+        task_id: ?Task.Id.Type = null,
+        dependency_id: ?DependencyID = null,
 
         result: ?Maybe(void) = null,
     };
@@ -317,23 +320,25 @@ const PatchTask = struct {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         switch (this.callback) {
             .calc_hash => this.runFromMainThreadCalcHash(manager),
-            .apply => this.runFromMainThreadApply(),
+            .apply => this.runFromMainThreadApply(manager),
         }
     }
 
-    fn runFromMainThreadApply(this: *PatchTask) void {
-        defer this.deinit();
+    fn runFromMainThreadApply(this: *PatchTask, manager: *PackageManager) void {
+        _ = this; // autofix
+        _ = manager; // autofix
+
     }
 
     fn runFromMainThreadCalcHash(this: *PatchTask, manager: *PackageManager) void {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
-        defer this.deinit();
         const calc_hash = &this.callback.calc_hash;
         const hash = switch (calc_hash.result orelse @panic("bad")) {
             .result => |h| h,
             .err => @panic("TODO handle error gracefully"),
         };
+        std.debug.print("CALCULATED HASH: {x}\n", .{hash});
         var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
         if (gop.found_existing) {
             gop.value_ptr.setPatchfileHash(hash);
@@ -506,22 +511,43 @@ const PatchTask = struct {
         //     break :brk this.manager.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
         // };
         // defer if (allocated) this.manager.allocator.free(package_name_z);
-        if (bun.sys.renameat2(
-            bun.toFD(system_tmpdir.fd),
-            path_in_tmpdir,
-            bun.toFD(this.callback.apply.cache_dir.fd),
-            this.callback.apply.cache_dir_subpath,
-            .{},
-        ).asErr()) |e| {
-            _ = e; // autofix
 
-            // return .{
-            //     .fail = .{
-            //         .err = bun.errnoToZigErr(e.getErrno()),
-            //         .step = .patching,
-            //     },
-            // };
-            @panic("TODO zack");
+        worked: {
+            if (bun.sys.renameat2(
+                bun.toFD(system_tmpdir.fd),
+                path_in_tmpdir,
+                bun.toFD(this.callback.apply.cache_dir.fd),
+                this.callback.apply.cache_dir_subpath,
+                .{
+                    .exclude = true,
+                },
+            ).asErr()) |e| {
+                if (switch (e.getErrno()) {
+                    bun.C.E.NOTEMPTY, bun.C.E.EXIST, bun.C.E.OPNOTSUPP => true,
+                    else => false,
+                }) {
+                    switch (bun.sys.renameat2(
+                        bun.toFD(system_tmpdir.fd),
+                        path_in_tmpdir,
+                        bun.toFD(this.callback.apply.cache_dir.fd),
+                        this.callback.apply.cache_dir_subpath,
+                        .{
+                            .exchange = true,
+                        },
+                    )) {
+                        .err => {},
+                        .result => break :worked,
+                    }
+                }
+
+                // return .{
+                //     .fail = .{
+                //         .err = bun.errnoToZigErr(e.getErrno()),
+                //         .step = .patching,
+                //     },
+                // };
+                @panic("TODO zack");
+            }
         }
 
         return Maybe(void).success;
@@ -1189,6 +1215,7 @@ const Task = struct {
     /// An ID that lets us register a callback without keeping the same pointer around
     pub fn NewID(comptime Hasher: type, comptime IDType: type) type {
         return struct {
+            const Type = IDType;
             pub fn forNPMPackage(package_name: string, package_version: Semver.Version) IDType {
                 var hasher = Hasher.init(0);
                 hasher.update("npm-package:");
@@ -2845,6 +2872,25 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             };
         }
 
+        fn patchedPackageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID, patchfile_hash: u64) bool {
+            return switch (manager.getPreinstallState(package_id)) {
+                .done => false,
+                else => brk: {
+                    const patch_hash_prefix = "_patch_hash=";
+                    var patch_hash_part: [patch_hash_prefix.len + max_buntag_hash_buf_len + 1]u8 = undefined;
+                    @memcpy(patch_hash_part[0..patch_hash_prefix.len], patch_hash_prefix);
+                    const hash_str = std.fmt.bufPrint(patch_hash_part[patch_hash_prefix.len..], "{x}", .{patchfile_hash}) catch unreachable;
+                    @memcpy(bun.path.join_buf[0..], this.cache_dir_subpath);
+                    @memcpy(bun.path.join_buf[this.cache_dir_subpath.len .. this.cache_dir_subpath.len + hash_str.len], hash_str);
+                    bun.path.join_buf[this.cache_dir_subpath.len + hash_str.len] = 0;
+                    const patch_cache_dir_subpath = bun.path.join_buf[0 .. this.cache_dir_subpath.len + hash_str.len :0];
+                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, patch_cache_dir_subpath).unwrap() catch false;
+                    if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+                    break :brk !exists;
+                },
+            };
+        }
+
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir) Result {
             // If this fails, we don't care.
             // we'll catch it the next error
@@ -4447,7 +4493,9 @@ pub const PackageManager = struct {
             .package_manager = this,
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
                 const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
-                break :brk PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
+                const task = PatchTask.newApplyPatchHash(this, package.meta.id, patch_hash, h);
+                task.callback.apply.task_id = task_id;
+                break :brk task;
             } else null,
         };
 
@@ -6144,7 +6192,22 @@ pub const PackageManager = struct {
         while (patch_tasks_iter.next()) |ptask| {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
             _ = manager.decrementPendingTasks();
+            defer ptask.deinit();
             ptask.runFromMainThread(manager);
+            if (ptask.callback == .apply) {
+                if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    if (ptask.callback.apply.task_id) |task_id| {
+                        const name = manager.lockfile.packages.items(.name)[ptask.callback.apply.pkg_id].slice(manager.lockfile.buffers.string_bytes.items);
+                        if (!callbacks.onPatch(extract_ctx, name, task_id, log_level)) {
+                            if (comptime Environment.allow_assert) {
+                                Output.panic("Ran callback to install enqueued packages, but there was no task associated with it.", .{});
+                            }
+                        }
+                    } else if (ExtractCompletionContext == *PackageInstaller) {
+                        extract_ctx.installPackage(ptask.callback.apply.dependency_id.?, log_level);
+                    }
+                }
+            }
         }
 
         var network_tasks_batch = manager.async_network_task_queue.popBatch();
@@ -10157,7 +10220,7 @@ pub const PackageManager = struct {
         pub fn installEnqueuedPackagesImpl(
             this: *PackageInstaller,
             name: []const u8,
-            task_id: Task.Id,
+            task_id: Task.Id.Type,
             comptime log_level: Options.LogLevel,
         ) bool {
             if (this.manager.task_queue.fetchRemove(task_id)) |removed| {
@@ -10171,7 +10234,7 @@ pub const PackageManager = struct {
 
                 if (callbacks.items.len == 0) {
                     debug("Unexpected state: no callbacks for async task.", .{});
-                    return;
+                    return true;
                 }
 
                 for (callbacks.items) |*cb| {
@@ -10557,6 +10620,20 @@ pub const PackageManager = struct {
                     }
 
                     return;
+                }
+
+                if (!installer.patch.isNull()) {
+                    if (installer.patchedPackageMissingFromCache(this.manager, package_id, installer.patch.patch_contents_hash)) {
+                        const task = PatchTask.newApplyPatchHash(
+                            this.manager,
+                            package_id,
+                            installer.patch.patch_contents_hash,
+                            patch_name_and_version_hash.?,
+                        );
+                        task.callback.apply.dependency_id = dependency_id;
+                        this.manager.enqueuePatchTask(task);
+                        return;
+                    }
                 }
 
                 if (!is_pending_package_install and !this.canInstallPackageForTree(this.lockfile.buffers.trees.items, this.current_tree_id)) {
@@ -11342,6 +11419,7 @@ pub const PackageManager = struct {
                             &installer,
                             .{
                                 .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
+                                .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                                 .onResolve = {},
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
@@ -11364,6 +11442,7 @@ pub const PackageManager = struct {
                     &installer,
                     .{
                         .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
+                        .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                         .onResolve = {},
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
@@ -11388,6 +11467,7 @@ pub const PackageManager = struct {
                             closure.installer,
                             .{
                                 .onExtract = PackageInstaller.installEnqueuedPackagesAfterExtraction,
+                                .onPatch = PackageInstaller.installEnqueuedPackagesImpl,
                                 .onResolve = {},
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
@@ -11917,6 +11997,7 @@ pub const PackageManager = struct {
                                 this,
                                 .{
                                     .onExtract = {},
+                                    .onPatch = {},
                                     .onResolve = {},
                                     .onPackageManifestError = {},
                                     .onPackageDownloadError = {},

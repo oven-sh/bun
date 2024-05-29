@@ -2314,7 +2314,60 @@ describe("workspaces", async () => {
 });
 
 describe("update", () => {
-  describe("alised dependencies", () => {
+  test("dist-tags", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "latest",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+      name: "a-dep",
+      version: "1.0.10",
+    });
+
+    // Update without args, `latest` should stay
+    await runBunUpdate(env, packageDir);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "latest",
+      },
+    });
+
+    // Update with `a-dep` and `--latest`, `latest` should be replaced with the installed version
+    await runBunUpdate(env, packageDir, ["a-dep"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "^1.0.10",
+      },
+    });
+    await runBunUpdate(env, packageDir, ["--latest"]);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a-dep": "^1.0.10",
+      },
+    });
+  });
+  test("exact versions stay exact", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+  });
+  describe("alises", () => {
     test("update all", async () => {
       await write(
         join(packageDir, "package.json"),

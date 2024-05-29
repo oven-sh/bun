@@ -908,18 +908,20 @@ pub fn cleanWithLogger(
 
         const dep_list = slice.items(.dependencies)[package_id_to_update];
         const res_list = slice.items(.resolutions)[package_id_to_update];
-        const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
+        const workspace_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
-        for (updates) |*update| {
+        request_updated: for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
-                for (root_deps, resolved_ids) |dep, package_id| {
+                for (resolved_ids, workspace_deps) |package_id, dep| {
                     if (update.matches(dep, string_buf)) {
                         if (package_id > new.packages.len) continue;
                         update.version_buf = string_buf;
                         update.version = dep.version;
                         update.resolution = resolutions[package_id];
                         update.resolved_name = names[package_id];
+
+                        continue :request_updated;
                     }
                 }
             }

@@ -60,10 +60,10 @@ pub const BrotliEncoder = struct {
         });
 
         if (opts.get(globalThis, "params")) |params| {
-            for (0..std.meta.fields(bun.brotli.c.BrotliEncoderParameter).len) |i| {
-                const idx = params.getIndex(globalThis, @intCast(i));
-                if (!idx.isNumber()) continue;
-                const was_set = this.stream.brotli.setParameter(@enumFromInt(i), idx.toU32());
+            inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
+                const idx = params.getIndex(globalThis, f.value);
+                if (!idx.isNumber()) break;
+                const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
                 if (!was_set) globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
                 if (!was_set) return .zero;
             }
@@ -380,10 +380,10 @@ pub const BrotliDecoder = struct {
         };
 
         if (opts.get(globalThis, "params")) |params| {
-            for (0..std.meta.fields(bun.brotli.c.BrotliDecoderParameter).len) |i| {
-                const idx = params.getIndex(globalThis, @intCast(i));
-                if (!idx.isNumber()) continue;
-                const was_set = this.stream.brotli.setParameter(@enumFromInt(i), idx.toU32());
+            inline for (std.meta.fields(bun.brotli.c.BrotliDecoderParameter)) |f| {
+                const idx = params.getIndex(globalThis, f.value);
+                if (!idx.isNumber()) break;
+                const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
                 if (!was_set) globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
                 if (!was_set) return .zero;
             }

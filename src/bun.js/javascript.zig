@@ -2363,7 +2363,7 @@ pub const VirtualMachine = struct {
                         };
 
                         // Only re-query if we previously had something cached.
-                        if (jsc_vm.bundler.resolver.bustDirCache(bun.strings.pathWithoutTrailingSlashOne(buster_name))) {
+                        if (jsc_vm.bundler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(buster_name))) {
                             continue;
                         }
 
@@ -4398,7 +4398,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             // on windows we receive file events for all items affected by a directory change
                             // so we only need to clear the directory cache. all other effects will be handled
                             // by the file events
-                            _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                            _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
                             continue;
                         }
                         var affected_buf: [128][]const u8 = undefined;
@@ -4448,7 +4448,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             }
                         }
 
-                        _ = this.ctx.bustDirCache(strings.pathWithoutTrailingSlashOne(file_path));
+                        _ = this.ctx.bustDirCache(strings.withoutTrailingSlashWindowsPath(file_path));
 
                         if (entries_option) |dir_ent| {
                             var last_file_hash: GenericWatcher.HashType = std.math.maxInt(GenericWatcher.HashType);

@@ -2440,7 +2440,17 @@ pub const PackageManager = struct {
     update_requests: []UpdateRequest = &[_]UpdateRequest{},
 
     root_package_json_file: std.fs.File,
-    root_dependency_list: Lockfile.DependencySlice = .{},
+
+    /// The package id corresponding to the workspace the install is happening in
+    root_package_id: struct {
+        id: ?PackageID = null,
+        pub fn get(this: *@This(), manager: *PackageManager) PackageID {
+            return this.id orelse {
+                this.id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
+                return this.id.?;
+            };
+        }
+    } = .{},
 
     thread_pool: ThreadPool,
     task_batch: ThreadPool.Batch = .{},
@@ -2519,6 +2529,10 @@ pub const PackageManager = struct {
         original_version: string,
         is_alias: bool,
     }) = .{},
+
+    pub fn clearCachedItemsDependingOnLockfileBuffer(this: *PackageManager) void {
+        this.root_package_id.id = null;
+    }
 
     // maybe rename to `PackageJSONCache` if we cache more than workspaces
     pub const WorkspacePackageJSONCache = struct {
@@ -3687,7 +3701,8 @@ pub const PackageManager = struct {
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
             name_hash,
-            if (this.to_update) null else version,
+            // If updating, only update packages in the current workspace
+            if (this.to_update and this.isRootDependency(dependency_id)) null else version,
             &.{
                 .tag = .npm,
                 .value = .{
@@ -4330,8 +4345,14 @@ pub const PackageManager = struct {
         try tmpfile.promoteToCWD(tmpname, "yarn.lock");
     }
 
-    pub fn isRootDependency(this: *const PackageManager, id: DependencyID) bool {
-        return this.root_dependency_list.contains(id);
+    // /// Is this a direct dependency of the workspace root package.json?
+    pub fn isWorkspaceRootDependency(this: *PackageManager, id: DependencyID) bool {
+        return this.lockfile.packages.items(.dependencies)[0].contains(id);
+    }
+
+    /// Is this a direct dependency of the workspace the install is taking place in?
+    pub fn isRootDependency(this: *PackageManager, id: DependencyID) bool {
+        return this.lockfile.packages.items(.dependencies)[this.root_package_id.get(this)].contains(id);
     }
 
     fn enqueueDependencyWithMain(
@@ -7380,8 +7401,6 @@ pub const PackageManager = struct {
                         .workspace => try allocator.dupe(u8, "workspace:*"),
                         else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
                     };
-
-                    if (request.version.tag == .npm or request.version.tag == .dist_tag) {}
                 }
             }
         }
@@ -7843,9 +7862,11 @@ pub const PackageManager = struct {
             const lockfile_path_z = buf[0..lockfile_path.len :0];
 
             switch (manager.lockfile.loadFromDisk(
+                manager,
                 allocator,
                 log,
                 lockfile_path_z,
+                true,
             )) {
                 .ok => |load| manager.lockfile = load.lockfile,
                 else => manager.lockfile.initEmpty(allocator),
@@ -10401,6 +10422,7 @@ pub const PackageManager = struct {
         defer this.lockfile = original_lockfile;
         if (!this.options.local_package_features.dev_dependencies) {
             this.lockfile = try this.lockfile.maybeCloneFilteringRootPackages(
+                this,
                 this.options.local_package_features,
                 this.options.enable.exact_versions,
                 log_level,
@@ -10856,7 +10878,7 @@ pub const PackageManager = struct {
     fn installWithManager(
         manager: *PackageManager,
         ctx: Command.Context,
-        package_json_contents: string,
+        root_package_json_contents: string,
         comptime log_level: Options.LogLevel,
     ) !void {
 
@@ -10871,9 +10893,11 @@ pub const PackageManager = struct {
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
+                manager,
                 manager.allocator,
                 manager.log,
                 manager.options.lockfile_path,
+                true,
             )
         else
             .{ .not_found = {} };
@@ -10892,7 +10916,7 @@ pub const PackageManager = struct {
         manager.progress = .{};
 
         // Step 2. Parse the package.json file
-        const package_json_source = logger.Source.initPathString(package_json_cwd, package_json_contents);
+        const root_package_json_source = logger.Source.initPathString(package_json_cwd, root_package_json_contents);
 
         switch (load_lockfile_result) {
             .err => |cause| {
@@ -10951,7 +10975,7 @@ pub const PackageManager = struct {
                         &lockfile,
                         manager.allocator,
                         manager.log,
-                        package_json_source,
+                        root_package_json_source,
                         void,
                         {},
                         Features.main,
@@ -10997,7 +11021,6 @@ pub const PackageManager = struct {
                         const old_resolutions_list = resolution_lists[0];
                         dep_lists[0] = .{ .off = off, .len = len };
                         resolution_lists[0] = .{ .off = off, .len = len };
-                        manager.root_dependency_list = dep_lists[0];
                         try builder.allocate();
 
                         const all_name_hashes: []PackageNameHash = brk: {
@@ -11139,15 +11162,13 @@ pub const PackageManager = struct {
                 manager.lockfile,
                 manager.allocator,
                 manager.log,
-                package_json_source,
+                root_package_json_source,
                 void,
                 {},
                 Features.main,
             );
 
             root = try manager.lockfile.appendPackage(root);
-
-            manager.root_dependency_list = root.dependencies;
 
             if (root.dependencies.len > 0) {
                 _ = manager.getCacheDirectory();
@@ -11260,6 +11281,7 @@ pub const PackageManager = struct {
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
+            manager,
             manager.update_requests,
             manager.log,
             manager.options.enable.exact_versions,
@@ -11276,7 +11298,6 @@ pub const PackageManager = struct {
                     return error.InstallFailed;
                 }
             }
-            manager.root_dependency_list = manager.lockfile.packages.items(.dependencies)[0];
             manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
         }
 
@@ -11710,7 +11731,10 @@ pub const bun_install_js_bindings = struct {
         var lockfile: Lockfile = undefined;
         lockfile.initEmpty(allocator);
 
-        const load_result: Lockfile.LoadFromDiskResult = lockfile.loadFromDisk(allocator, &log, lockfile_path);
+        // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
+        const manager = &PackageManager.instance;
+
+        const load_result: Lockfile.LoadFromDiskResult = lockfile.loadFromDisk(manager, allocator, &log, lockfile_path, true);
 
         switch (load_result) {
             .err => |err| {

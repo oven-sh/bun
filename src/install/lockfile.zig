@@ -205,7 +205,14 @@ pub const LoadFromDiskResult = union(enum) {
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
-pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+pub fn loadFromDisk(
+    this: *Lockfile,
+    manager: *PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    filename: stringZ,
+    comptime attempt_loading_from_other_lockfile: bool,
+) LoadFromDiskResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
     const buf = (if (filename.len > 0)
@@ -214,13 +221,20 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
         File.from(std.io.getStdIn()).readToEnd(allocator).unwrap()) catch |err| {
         return switch (err) {
             error.EACCESS, error.EPERM, error.ENOENT => {
-                // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                return migration.detectAndLoadOtherLockfile(
-                    this,
-                    allocator,
-                    log,
-                    filename,
-                );
+                if (comptime attempt_loading_from_other_lockfile) {
+                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                    return migration.detectAndLoadOtherLockfile(
+                        this,
+                        manager,
+                        allocator,
+                        log,
+                        filename,
+                    );
+                }
+
+                return LoadFromDiskResult{
+                    .err = .{ .step = .open_file, .value = err },
+                };
             },
             error.EINVAL, error.ENOTDIR, error.EISDIR => LoadFromDiskResult{ .not_found = {} },
             else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
@@ -650,6 +664,7 @@ pub const Tree = struct {
 /// Our in-memory representation is all that's left.
 pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
+    manager: *PackageManager,
     features: Features,
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
@@ -670,7 +685,7 @@ pub fn maybeCloneFilteringRootPackages(
 
     if (!any_changes) return old;
 
-    return try old.clean(&.{}, exact_versions, log_level);
+    return try old.clean(manager, &.{}, exact_versions, log_level);
 }
 
 fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
@@ -746,6 +761,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
 }
 pub fn clean(
     old: *Lockfile,
+    manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
@@ -759,11 +775,12 @@ pub fn clean(
         log.deinit();
     }
 
-    return old.cleanWithLogger(updates, &log, exact_versions, log_level);
+    return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
 }
 
 pub fn cleanWithLogger(
     old: *Lockfile,
+    manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
     log: *logger.Log,
     exact_versions: bool,
@@ -778,7 +795,7 @@ pub fn cleanWithLogger(
 
     // preinstall_state is used during installPackages. the indexes(package ids) need
     // to be remapped
-    var preinstall_state = PackageManager.instance.preinstall_state;
+    var preinstall_state = manager.preinstall_state;
     var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
@@ -821,6 +838,7 @@ pub fn cleanWithLogger(
         .clone_queue = clone_queue_,
         .log = log,
         .old_preinstall_state = old_preinstall_state,
+        .manager = manager,
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -904,10 +922,10 @@ pub fn cleanWithLogger(
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
-        const package_id_to_update = new.getWorkspacePackageID(PackageManager.instance.workspace_name_hash);
+        const workspace_package_id = manager.root_package_id.get(manager);
 
-        const dep_list = slice.items(.dependencies)[package_id_to_update];
-        const res_list = slice.items(.resolutions)[package_id_to_update];
+        const dep_list = slice.items(.dependencies)[workspace_package_id];
+        const res_list = slice.items(.resolutions)[workspace_package_id];
         const workspace_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
@@ -996,6 +1014,7 @@ const Cloner = struct {
     trees_count: u32 = 1,
     log: *logger.Log,
     old_preinstall_state: std.ArrayListUnmanaged(Install.PreinstallState),
+    manager: *PackageManager,
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -1017,6 +1036,10 @@ const Cloner = struct {
                 this,
             );
         }
+
+        // cloning finished, items in lockfile buffer might have a different order, meaning
+        // package ids and dependency ids have changed
+        this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.buffers.dependencies.items.len > 0)
             try this.hoist(this.lockfile);
@@ -1041,7 +1064,7 @@ const Cloner = struct {
             .dependencies = lockfile.buffers.dependencies.items,
             .log = this.log,
             .lockfile = lockfile,
-            .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
+            .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
@@ -1113,7 +1136,9 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
-        const load_from_disk = lockfile.loadFromDisk(allocator, log, lockfile_path);
+        // TODO remove the need for manager when migrating from package-lock.json
+        const manager = &PackageManager.instance;
+        const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
         switch (load_from_disk) {
             .err => |cause| {
                 switch (cause.step) {
@@ -3067,8 +3092,8 @@ pub const Package = extern struct {
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        if (PackageManager.instance.preinstall_state.items.len > 0) {
-            PackageManager.instance.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
+        if (cloner.manager.preinstall_state.items.len > 0) {
+            cloner.manager.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
         }
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {

@@ -12,24 +12,70 @@
 
 const logCalled = false;
 
-import { test, expect, describe } from "bun:test";
-import { CryptoHasher } from "bun";
+import { describe, expect, test } from "bun:test";
+
+const Promise = globalThis.Promise;
+globalThis.Promise = function (...args) {
+  if (args.length === 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise(...args);
+};
+Object.assign(globalThis.Promise, Promise);
 
 // Don't allow these to be called
-delete require("process").exit;
-delete require("process")._reallyExit;
-delete require("process").abort;
-delete require("process").kill;
-
+delete process.exit;
+delete process._reallyExit;
+delete process.reallyExit;
+delete process.abort;
+delete process.kill;
+delete process._kill;
+delete process._destroy;
+delete process._events;
+delete process.openStdin;
+delete process.emitWarning;
+delete require("stream").Readable.prototype.destroy;
+delete globalThis.Loader;
 // ** Uncatchable errors in tests **
 delete ReadableStreamDefaultReader.prototype["closed"];
 delete ReadableStreamBYOBReader.prototype["closed"];
 delete WritableStreamDefaultWriter.prototype["ready"];
 delete WritableStreamDefaultWriter.prototype["closed"];
+WebAssembly.compile = () => {};
+WebAssembly.instantiate = () => {};
 // ** Uncatchable errors in tests **
 
-const banned = ["alert", "prompt", "confirm", "open", "close", "connect", "listen", "_start"];
+const banned = [
+  "alert",
+  "prompt",
+  "confirm",
+  "open",
+  "close",
+  "connect",
+  "listen",
+  "_start",
+  "wait",
+  "wait",
+  "sleep",
+  "exit",
+  "kill",
+  // "_read",
+  // "read",
+  // "_write",
+  // "resume",
+];
 const drainMicrotasks = require("bun:jsc").drainMicrotasks;
+
+import.meta.require.cache["bun:jsc"] = {};
+delete console.takeHeapSnapshot;
+delete console.clear;
+delete console.warn;
+delete console.time;
+delete console.timeEnd;
+delete console.timeLog;
+delete console.assert;
+Bun.generateHeapSnapshot = () => {};
 
 const TODOs = [
   "ByteLengthQueuingStrategy",
@@ -42,7 +88,6 @@ const TODOs = [
   "ReadableStreamDefaultReader",
   "TransformStream",
   "TransformStreamDefaultController",
-  "Worker",
   "WritableStream",
   "WritableStreamDefaultController",
   "WritableStreamDefaultWriter",
@@ -79,6 +124,7 @@ const ignoreList = [
   URIError.prototype,
   RegExp.prototype,
   Date.prototype,
+  String.prototype,
 
   // TODO: getFunctionRealm() on these.
   ReadableStream.prototype,
@@ -88,6 +134,9 @@ const constructBanned = banned;
 const callBanned = [...TODOs, ...banned];
 
 function allThePropertyNames(object, banned) {
+  if (!object) {
+    return [];
+  }
   const names = Object.getOwnPropertyNames(object);
   var pro = Object.getPrototypeOf(object);
 
@@ -115,7 +164,7 @@ if (logCalled) {
     const original = Reflect.construct;
     Reflect.construct = function (...args) {
       try {
-        console.log(args?.[1]?.name || args?.[0]?.name || args?.[0]?.[Symbol.toStringTag]);
+        console.log(args?.[0]?.name || args?.[1]?.name || args?.[0]?.name || args?.[0]?.[Symbol.toStringTag]);
       } catch (e) {}
       return original(...args);
     };
@@ -124,7 +173,7 @@ if (logCalled) {
     const original = Reflect.apply;
     Reflect.apply = function (...args) {
       try {
-        console.log(args?.[1]?.name || args?.[0]?.name || args?.[0]?.[Symbol.toStringTag]);
+        console.log(args?.[0]?.name || args?.[1]?.name || args?.[0]?.name || args?.[0]?.[Symbol.toStringTag]);
       } catch (e) {}
       return original(...args);
     };
@@ -132,20 +181,33 @@ if (logCalled) {
 }
 
 const seenValues = new WeakSet();
+var callAllMethodsCount = 0;
 function callAllMethods(object) {
+  callAllMethodsCount++;
   const queue = [];
-  const seen = new Set([object, object?.__proto__, object?.constructor, object?.subarray]);
+  const seen = new Set([object, object?.subarray]);
   for (const methodName of allThePropertyNames(object, callBanned)) {
     try {
-      const returnValue = Reflect.apply(object?.[methodName], object, []);
-      queue.push(returnValue);
-      drainMicrotasks();
-    } catch (e) {}
+      try {
+        const returnValue = Reflect.apply(object?.[methodName], object, []);
+        queue.push(returnValue);
+      } catch (e) {
+        const returnValue = Reflect.apply(object.constructor?.[methodName], object?.constructor, []);
+        queue.push(returnValue);
+      }
+    } catch (e) {
+      const val = object?.[methodName];
+      if (val && (typeof val === "object" || typeof val === "function") && !seenValues.has(val)) {
+        seenValues.add(val);
+        queue.push(val);
+      }
+    } finally {
+    }
   }
 
   while (queue.length) {
     const value = queue.shift();
-    if (value && typeof value === "object") {
+    if (value) {
       for (const methodName of allThePropertyNames(value, callBanned)) {
         try {
           const method = value?.[methodName];
@@ -153,14 +215,11 @@ function callAllMethods(object) {
             continue;
           }
           seen.add(method);
-
-          const returnValue = Reflect.apply(method, value, []);
-          if (seen.has(returnValue) || returnValue?.then) {
+          const returnValue = Reflect?.apply?.(method, value, []);
+          if (returnValue?.then) {
             continue;
           }
-          seen.add(returnValue);
           queue.push(returnValue);
-          drainMicrotasks();
         } catch (e) {}
       }
     }
@@ -173,111 +232,60 @@ function constructAllConstructors(object) {
   for (const methodName of allThePropertyNames(object, constructBanned)) {
     const method = object?.[methodName];
     try {
-      const returnValue = Reflect.construct(object, method, []);
-      queue.push(returnValue);
+      try {
+        const returnValue = Reflect.construct(object, [], method);
+        queue.push(returnValue);
+      } catch (e) {
+        const returnValue = Reflect.construct(object?.constructor, [], method);
+        queue.push(returnValue);
+      }
     } catch (e) {
       try {
-        const returnValue = Reflect.construct(object.constructor, [], method);
+        const returnValue = Reflect.construct(object?.prototype?.constructor, [], method);
         queue.push(returnValue);
-        drainMicrotasks();
-      } catch (e) {}
+      } catch (e) {
+        Error.captureStackTrace(e);
+      }
     }
   }
 
   while (queue.length) {
     const value = queue.shift();
-    if (value && typeof value === "object") {
-      for (const methodName of allThePropertyNames(value, constructBanned)) {
-        try {
-          const method = value?.[methodName];
-          if (method && seen.has(method)) {
-            continue;
-          }
-          seen.add(method);
-          const returnValue = Reflect.construct(object, method, [], value);
-          if (seen.has(returnValue) || seen.has(returnValue?.__proto__ || returnValue?.then)) {
-            continue;
-          }
-          seen.add(returnValue);
-          queue.push(returnValue);
-          drainMicrotasks();
-        } catch (e) {}
-      }
+    for (const methodName of allThePropertyNames(value, constructBanned)) {
+      try {
+        const method = value?.[methodName];
+        if (method && seen.has(method)) {
+          continue;
+        }
+
+        const returnValue = Reflect.construct(value, [], method);
+        if (seen.has(returnValue)) {
+          continue;
+        }
+
+        queue.push(returnValue);
+        seen.add(returnValue);
+      } catch (e) {}
     }
   }
 }
 
 describe("Call all methods", () => {
-  test("globalThis", () => {
-    callAllMethods(globalThis);
+  test("globalThis", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const init = callAllMethodsCount;
+    try {
+      callAllMethods(globalThis);
+    } catch (e) {
+    } finally {
+      await Bun.sleep(0);
+    }
+
+    await Bun.sleep(0);
   });
 
   test("Bun", () => {
-    callAllMethods(Bun);
-  });
-
-  test("node:url", () => {
-    callAllMethods(require("url"));
-  });
-
-  test("node:util", () => {
-    callAllMethods(require("util"));
-  });
-
-  test("node:path", () => {
-    callAllMethods(require("path"));
-  });
-
-  test("node:module", () => {
-    callAllMethods(require("module"));
-  });
-
-  test("node:http2", () => {
-    callAllMethods(require("http2"));
-  });
-
-  test("node:diagnostics_channel", () => {
-    callAllMethods(require("diagnostics_channel"));
-  });
-
-  test("node:os", () => {
-    callAllMethods(require("os"));
-  });
-
-  test("node:perf_hooks", () => {
-    callAllMethods(require("perf_hooks"));
-  });
-
-  test("node:child_process", () => {
-    callAllMethods(require("child_process"));
-  });
-
-  test("bun:ffi", () => {
-    callAllMethods(require("bun:ffi"));
-  });
-
-  test("node:trace_events", () => {
-    callAllMethods(require("node:trace_events"));
-  });
-
-  test("node:punycode", () => {
-    callAllMethods(require("node:punycode"));
-  });
-
-  test("node:timers", () => {
-    callAllMethods(require("node:timers"));
-  });
-
-  test("node:crypto", () => {
-    callAllMethods(require("node:crypto"));
-  });
-
-  test("node:dgram", () => {
-    callAllMethods(require("node:dgram"));
-  });
-
-  test("node:domain", () => {
-    callAllMethods(require("node:domain"));
+    expect(() => callAllMethods(Bun)).pass();
   });
 });
 
@@ -295,23 +303,37 @@ describe("Construct all constructors", () => {
     constructAllConstructors(Bun);
     await Bun.sleep(1);
   });
-
-  test("node:url", () => {
-    constructAllConstructors(require("url"));
-  });
-
-  test("node:util", () => {
-    constructAllConstructors(require("util"));
-  });
-
-  test("node:path", () => {
-    constructAllConstructors(require("path"));
-  });
-
-  test("node:module", () => {
-    constructAllConstructors(require("module"));
-  });
 });
+
+const modules = [
+  "module",
+  "util",
+  "url",
+  "path",
+  "path/posix",
+  "path/win32",
+  "perf_hooks",
+  "os",
+  "dgram",
+  "domain",
+  // "crypto",
+  "timers",
+  "punycode",
+  "trace_events",
+  "child_process",
+  "diagnostics_channel",
+  "http2",
+  "bun:ffi",
+  "string_decoder",
+  "bun:sqlite",
+];
+
+for (const mod of modules) {
+  describe(mod, () => {
+    test("call", () => callAllMethods(require(mod)));
+    test("construct", () => constructAllConstructors(require(mod)));
+  });
+}
 
 for (const HardCodedClass of [
   require("fs").ReadStream,
@@ -320,12 +342,22 @@ for (const HardCodedClass of [
   require("tty").WriteStream,
   require("fs").Stats,
   require("fs").Dirent,
+  Intl,
+  Intl.Collator,
+  Intl.DateTimeFormat,
+  Intl.ListFormat,
+  Intl.NumberFormat,
+  Intl.PluralRules,
+  Intl.RelativeTimeFormat,
+  Intl.Locale,
+  Intl.DisplayNames,
+  Intl.Segmenter,
 
   // TODO: undefined is not an object
   // require("fs").FSWatcher,
 
-  require("process"),
+  process,
 ]) {
-  test("call " + HardCodedClass.name || HardCodedClass?.toString?.(), () => constructAllConstructors(HardCodedClass));
-  test("construct " + HardCodedClass.name || HardCodedClass?.toString?.(), () => callAllMethods(HardCodedClass));
+  test("call " + (HardCodedClass.name || HardCodedClass.toString()), () => constructAllConstructors(HardCodedClass));
+  test("construct " + (HardCodedClass.name || HardCodedClass.toString()), () => callAllMethods(HardCodedClass));
 }

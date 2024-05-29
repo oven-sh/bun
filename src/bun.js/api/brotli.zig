@@ -64,8 +64,11 @@ pub const BrotliEncoder = struct {
                 const idx = params.getIndex(globalThis, f.value);
                 if (!idx.isNumber()) break;
                 const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
-                if (!was_set) globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
-                if (!was_set) return .zero;
+                if (!was_set) {
+                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                    this.deinit();
+                    return .zero;
+                }
             }
         }
 
@@ -384,8 +387,11 @@ pub const BrotliDecoder = struct {
                 const idx = params.getIndex(globalThis, f.value);
                 if (!idx.isNumber()) break;
                 const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
-                if (!was_set) globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
-                if (!was_set) return .zero;
+                if (!was_set) {
+                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                    this.deinit();
+                    return .zero;
+                }
             }
         }
 

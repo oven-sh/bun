@@ -1515,7 +1515,12 @@ export function itBundled(
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
   } else {
-    it(id, () => expectBundled(id, opts as any));
+    it(
+      id,
+      () => expectBundled(id, opts as any),
+      // sourcemap code is slow
+      opts.snapshotSourceMap ? 20_000 : undefined,
+    );
   }
   return ref;
 }

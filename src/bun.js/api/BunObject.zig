@@ -2340,7 +2340,10 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return JSC.JSValue.jsNumber(@as(u16, @truncate(this.evp.size())));
+            return JSC.JSValue.jsNumber(switch (this.*) {
+                .evp => |*inner| inner.size(),
+                .zig => |*inner| inner.digest_length,
+            });
         }
 
         pub fn getAlgorithm(
@@ -2510,20 +2513,20 @@ pub const Crypto = struct {
             }
 
             switch (this.*) {
-                .evp => {},
+                .evp => |*inner| {
+                    inner.update(buffer.slice());
+                    const err = BoringSSL.ERR_get_error();
+                    if (err != 0) {
+                        const instance = createCryptoError(globalThis, err);
+                        BoringSSL.ERR_clear_error();
+                        globalThis.throwValue(instance);
+                        return .zero;
+                    }
+                },
                 .zig => |*inner| {
                     inner.update(buffer.slice());
                     return thisValue;
                 },
-            }
-
-            this.evp.update(buffer.slice());
-            const err = BoringSSL.ERR_get_error();
-            if (err != 0) {
-                const instance = createCryptoError(globalThis, err);
-                BoringSSL.ERR_clear_error();
-                globalThis.throwValue(instance);
-                return .zero;
             }
 
             return thisValue;
@@ -2536,8 +2539,8 @@ pub const Crypto = struct {
         ) callconv(.C) JSC.JSValue {
             var new: CryptoHasher = undefined;
             switch (this.*) {
-                .evp => {
-                    new = .{ .evp = this.evp.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory") };
+                .evp => |*inner| {
+                    new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory") };
                 },
                 .zig => |*inner| {
                     new = .{ .zig = inner.copy() };
@@ -2614,9 +2617,9 @@ pub const Crypto = struct {
 
         pub fn finalize(this: *CryptoHasher) callconv(.C) void {
             switch (this.*) {
-                .evp => {
+                .evp => |*inner| {
                     // https://github.com/oven-sh/bun/issues/3250
-                    this.evp.deinit();
+                    inner.deinit();
                 },
                 .zig => |*inner| {
                     inner.deinit();

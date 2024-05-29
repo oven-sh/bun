@@ -448,4 +448,10 @@ void JSBufferListConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* 
 
 const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListConstructor) };
 
+
+JSValue getBufferList(Zig::GlobalObject* globalObject)
+{
+    return reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList();
+}
+
 } // namespace Zig

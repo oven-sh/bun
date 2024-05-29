@@ -185,8 +185,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
 #if defined(LIBUS_USE_EPOLL) 
 
-static int has_epoll_pwait2 = 0;
-
+// static int has_epoll_pwait2 = 0;
 // TODO:
 
 #endif
@@ -208,14 +207,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    if (timeoutMs > 0) {
-        if (timeoutMs == INT64_MAX) {
-            timeoutMs = 0;
-        }
-        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, (int)timeoutMs);
-    } else {
-        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
+    int timeoutMs = -1; 
+    if (timeout) {
+        timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
     }
+    loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, timeoutMs);
 #else
     loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
 #endif

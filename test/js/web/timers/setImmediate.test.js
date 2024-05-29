@@ -50,7 +50,7 @@ it("clearImmediate", async () => {
     } else {
       resolve();
     }
-  })
+  });
 
   await promise;
 });

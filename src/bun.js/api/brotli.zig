@@ -48,6 +48,7 @@ pub const BrotliEncoder = struct {
             return .zero;
         }
 
+        const opts = arguments[0];
         const callback = arguments[2];
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
@@ -57,6 +58,16 @@ pub const BrotliEncoder = struct {
                 return .zero;
             },
         });
+
+        if (opts.get(globalThis, "params")) |params| {
+            for (0..std.meta.fields(bun.brotli.c.BrotliEncoderParameter).len) |i| {
+                const idx = params.getIndex(globalThis, @intCast(i));
+                if (!idx.isNumber()) continue;
+                const was_set = this.stream.brotli.setParameter(@enumFromInt(i), idx.toU32());
+                if (!was_set) globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                if (!was_set) return .zero;
+            }
+        }
 
         const out = this.toJS(globalThis);
         @This().callbackSetCached(out, globalThis, callback);
@@ -356,6 +367,7 @@ pub const BrotliDecoder = struct {
             return .zero;
         }
 
+        const opts = arguments[0];
         const callback = arguments[2];
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
@@ -366,6 +378,16 @@ pub const BrotliDecoder = struct {
             globalThis.throw("Failed to create BrotliDecoder", .{});
             return .zero;
         };
+
+        if (opts.get(globalThis, "params")) |params| {
+            for (0..std.meta.fields(bun.brotli.c.BrotliDecoderParameter).len) |i| {
+                const idx = params.getIndex(globalThis, @intCast(i));
+                if (!idx.isNumber()) continue;
+                const was_set = this.stream.brotli.setParameter(@enumFromInt(i), idx.toU32());
+                if (!was_set) globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                if (!was_set) return .zero;
+            }
+        }
 
         const out = this.toJS(globalThis);
         @This().callbackSetCached(out, globalThis, callback);

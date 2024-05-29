@@ -285,7 +285,7 @@ describe("Call all methods", () => {
   });
 
   test("Bun", () => {
-    expect(() => callAllMethods(Bun)).pass();
+    callAllMethods(Bun);
   });
 });
 

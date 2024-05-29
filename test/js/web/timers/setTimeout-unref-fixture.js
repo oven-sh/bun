@@ -6,7 +6,6 @@ if (timer.unref() !== timer) throw new Error("Expected timer.unref() === timer")
 var ranCount = 0;
 process.exitCode = 1;
 const going2Refresh = setTimeout(() => {
-  console.log("Right now", new Date());
   if (ranCount < 1) going2Refresh.refresh();
   ranCount++;
 

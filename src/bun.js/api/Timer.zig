@@ -503,7 +503,7 @@ pub const TimerObject = struct {
         const this_value = callframe.this();
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if (this.id == -1 or this.kind == .setImmediate) {
+        if (this.id == -1 or this.kind == .setImmediate or this.has_cleared_timer) {
             return this_value;
         }
 

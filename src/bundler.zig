@@ -420,7 +420,7 @@ pub const Bundler = struct {
             };
 
             // Only re-query if we previously had something cached.
-            if (bundler.resolver.bustDirCache(buster_name)) {
+            if (bundler.resolver.bustDirCache(bun.strings.pathWithoutTrailingSlashOne(buster_name))) {
                 if (_resolveEntryPoint(bundler, entry_point)) |result|
                     return result
                 else |_| {

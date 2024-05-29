@@ -35,7 +35,6 @@ it("clearImmediate", async () => {
   var called = false;
   const id = setImmediate(() => {
     called = true;
-    expect.unreachable();
   });
   clearImmediate(id);
 

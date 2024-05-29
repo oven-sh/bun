@@ -168,6 +168,7 @@ pub const All = struct {
         // setImmediate(foo)
         if (kind == .setTimeout and interval == 0) {
             const timer_object, const timer_js = TimerObject.init(globalThis, vm, id, .setImmediate, 0, callback, arguments_array_or_zero);
+            timer_object.ref();
             vm.enqueueImmediateTask(JSC.Task.init(timer_object));
             if (vm.isInspectorEnabled()) {
                 Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }), !repeat);

@@ -3162,7 +3162,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         if (this.progress_node) |progress| {
             progress.activate();
             this.downloaded_bytes += incoming_data.len;
-            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
+            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
             progress.context.maybeRefresh();
         }
     }
@@ -3219,7 +3219,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     if (this.progress_node) |progress| {
         progress.activate();
         this.downloaded_bytes += incoming_data.len;
-        progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
+        progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
         progress.context.maybeRefresh();
     }
 
@@ -3231,7 +3231,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
         if (this.progress_node) |progress| {
             progress.activate();
             this.downloaded_bytes = this.state.total_body_received;
-            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
+            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
             progress.context.maybeRefresh();
         }
         return is_done or processed;
@@ -3288,7 +3288,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             if (this.progress_node) |progress| {
                 progress.activate();
                 this.downloaded_bytes = buffer.list.items.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
                 progress.context.maybeRefresh();
             }
             // streaming chunks
@@ -3308,7 +3308,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             if (this.progress_node) |progress| {
                 progress.activate();
                 this.downloaded_bytes = buffer.list.items.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
                 progress.context.maybeRefresh();
             }
 
@@ -3365,7 +3365,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             if (this.progress_node) |progress| {
                 progress.activate();
                 this.downloaded_bytes += buffer.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
                 progress.context.maybeRefresh();
             }
             const body_buffer = this.state.getBodyBuffer();

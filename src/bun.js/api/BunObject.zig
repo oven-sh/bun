@@ -3545,6 +3545,11 @@ const UnsafeObject = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
         const args = callframe.arguments(2).slice();
+        if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArray()) {
+            globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
+            return .zero;
+        }
+
         const array_buffer = JSC.ArrayBuffer.fromTypedArray(globalThis, args[0]);
         switch (array_buffer.typed_array_type) {
             .Uint16Array, .Int16Array => {
@@ -3589,6 +3594,10 @@ const TOMLObject = struct {
         defer arena.deinit();
         var log = logger.Log.init(default_allocator);
         const arguments = callframe.arguments(1).slice();
+        if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
+            globalThis.throwInvalidArguments("Expected a string to parse", .{});
+            return .zero;
+        }
 
         var input_slice = arguments[0].toSlice(globalThis, bun.default_allocator);
         defer input_slice.deinit();
@@ -3693,116 +3702,164 @@ pub const FFIObject = struct {
         }
 
         pub fn @"u8"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"u16"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"u32"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn ptr(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"i8"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"i16"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn @"i32"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
         pub fn intptr(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
         pub fn @"f32"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
         pub fn @"f64"(
-            _: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
         }
 
         pub fn @"i64"(
-            global: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
-            return JSValue.fromInt64NoTruncate(global, value);
+            return JSValue.fromInt64NoTruncate(globalObject, value);
         }
 
         pub fn @"u64"(
-            global: *JSGlobalObject,
+            globalObject: *JSGlobalObject,
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
+            if (arguments.len == 0 or !arguments[0].isNumber()) {
+                globalObject.throwInvalidArguments("Expected a pointer", .{});
+                return .zero;
+            }
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @as(usize, @intCast(arguments[1].to(i32))) else @as(usize, 0);
             const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
-            return JSValue.fromUInt64NoTruncate(global, value);
+            return JSValue.fromUInt64NoTruncate(globalObject, value);
         }
 
         pub fn u8WithoutTypeChecks(

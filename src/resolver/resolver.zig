@@ -1626,8 +1626,8 @@ pub const Resolver = struct {
     /// But drive roots MUST have a trailing slash ('/' and 'C:\')
     /// UNC paths, even if the root, must not have the trailing slash.
     ///
-    /// The helper function bun.strings.pathWithoutTrailingSlashOne can be used to remove
-    /// the trailing slash from a path, but also note it will only remove a SINGLE slash.
+    /// The helper function bun.strings.withoutTrailingSlashWindowsPath can be used
+    /// to remove the trailing slash from a path
     pub fn assertValidCacheKey(path: []const u8) void {
         if (Environment.allow_assert) {
             if (path.len > 1 and strings.charIsAnySlash(path[path.len - 1]) and !if (Environment.isWindows)
@@ -2109,7 +2109,7 @@ pub const Resolver = struct {
     ) !?*DirInfo {
         assert(r.package_manager != null);
 
-        const dir_path = strings.pathWithoutTrailingSlashOne(dir_path_maybe_trail_slash);
+        const dir_path = strings.withoutTrailingSlashWindowsPath(dir_path_maybe_trail_slash);
 
         assertValidCacheKey(dir_path);
         var dir_cache_info_result = r.dir_cache.getOrPut(dir_path) catch bun.outOfMemory();
@@ -2608,7 +2608,7 @@ pub const Resolver = struct {
 
         assert(std.fs.path.isAbsolute(input_path));
 
-        const path_without_trailing_slash = strings.pathWithoutTrailingSlashOne(input_path);
+        const path_without_trailing_slash = strings.withoutTrailingSlashWindowsPath(input_path);
         assertValidCacheKey(path_without_trailing_slash);
         const top_result = try r.dir_cache.getOrPut(path_without_trailing_slash);
         if (top_result.status != .unknown) {
@@ -2630,7 +2630,7 @@ pub const Resolver = struct {
             .status = .not_found,
         };
         const root_path = if (Environment.isWindows)
-            bun.strings.pathWithoutTrailingSlashOne(ResolvePath.windowsFilesystemRoot(path))
+            bun.strings.withoutTrailingSlashWindowsPath(ResolvePath.windowsFilesystemRoot(path))
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -3724,7 +3724,8 @@ pub const Resolver = struct {
             }
         }
 
-        const dir_path = bun.strings.pathWithoutTrailingSlashOne(Dirname.dirname(path));
+        const dir_path = bun.strings.withoutTrailingSlashWindowsPath(Dirname.dirname(path));
+        bun.strings.assertIsValidWindowsPath(u8, dir_path);
 
         const dir_entry: *Fs.FileSystem.RealFS.EntriesOption = rfs.readDirectory(
             dir_path,

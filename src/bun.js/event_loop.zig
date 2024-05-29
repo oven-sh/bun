@@ -1226,7 +1226,6 @@ pub const EventLoop = struct {
                     any.drain();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
-                    bun.markPosixOnly();
                     var any: *TimerObject = task.get(TimerObject).?;
                     any.runImmediateTask(this.virtual_machine);
                 },

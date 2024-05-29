@@ -1,5 +1,7 @@
+
 #include "root.h"
 
+#include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSObject.h"
@@ -25,6 +27,17 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
     WebCore::JSTimeout* timeout = jsCast<WebCore::JSTimeout*>(JSC::JSValue::decode(encodedTimeoutValue));
 
     JSCell* callbackCell = timeout->m_callback.get().asCell();
+    JSValue restoreAsyncContext;
+    JSC::InternalFieldTuple* asyncContextData = nullptr;
+
+    if (auto *wrapper = jsDynamicCast<AsyncContextFrame*>(callbackCell)) {
+        auto *frame = jsCast<InternalFieldTuple*>(callbackCell);
+        callbackCell = wrapper->callback.get().asCell();
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+    }
+
     switch (callbackCell->type()) {
     case JSC::JSPromiseType: {
         // This was a Bun.sleep() call
@@ -52,7 +65,8 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
             }
         }
 
-        AsyncContextFrame::call(globalObject, JSValue(callbackCell), JSValue(timeout), ArgList(args));
+        JSC::profiledCall(globalObject, ProfilingReason::API, JSValue(callbackCell), JSC::getCallData(callbackCell),  timeout, ArgList(args));
+        break;
     }
     }
 
@@ -60,6 +74,10 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
         auto* exception = scope.exception();
         scope.clearException();
         Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    }
+
+    if (asyncContextData) {
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 }
 

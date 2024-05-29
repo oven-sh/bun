@@ -2587,11 +2587,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotask"_s, jsFunctionPerformMicrotask, ImplementationVisibility::Public));
         });
 
-    m_bunSleepThenCallback.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 1, "onSleep"_s, functionBunSleepThenCallback, ImplementationVisibility::Public));
-        });
-
     m_performMicrotaskVariadicFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
@@ -3401,7 +3396,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
-    thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);

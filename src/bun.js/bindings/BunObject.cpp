@@ -346,18 +346,6 @@ extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*, JSString*));
 
-JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-
-    JSPromise* promise = jsDynamicCast<JSC::JSPromise*>(callFrame->argument(0));
-    RELEASE_ASSERT(promise);
-
-    promise->resolve(globalObject, JSC::jsUndefined());
-
-    return JSC::JSValue::encode(promise);
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -377,9 +365,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Timer__setTimeout(globalObject, JSValue::encode(global->bunSleepThenCallback()), JSC::JSValue::encode(millisecondsValue), JSValue::encode(promise));
+    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {});
     return JSC::JSValue::encode(promise);
 }
 

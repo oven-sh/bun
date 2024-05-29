@@ -6898,14 +6898,14 @@ pub const PackageManager = struct {
                                             const resolution = resolutions[package_id];
                                             if (resolution.tag != .npm) continue;
 
+                                            const workspace_dep_name = workspace_dep.name.slice(string_buf);
+                                            if (!strings.eqlLong(workspace_dep_name, dep_name, true)) continue;
+
                                             if (workspace_dep.version.npm()) |npm_version| {
                                                 // It's possible we inserted a dependency that won't update (version is an exact version).
                                                 // If we find one, skip to keep the original version literal.
                                                 if (!manager.options.do.update_to_latest and npm_version.version.isExact()) break :updated;
                                             }
-
-                                            const workspace_dep_name = workspace_dep.name.slice(string_buf);
-                                            if (!strings.eqlLong(workspace_dep_name, dep_name, true)) continue;
 
                                             const original_version_to_use = brk: {
                                                 if (options.exact_versions or !is_alias) break :brk original_version;

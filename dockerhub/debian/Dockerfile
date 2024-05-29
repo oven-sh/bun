@@ -81,6 +81,7 @@ RUN groupadd bun \
     && apt update \
     && apt-get install -qq --no-install-recommends \
       git \
+      python3 \
     && which bun \
     && which bunx \
     && bun --version

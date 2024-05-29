@@ -113,6 +113,7 @@ RUN --mount=type=bind,from=build,source=/tmp,target=/tmp \
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && apk --no-cache add \
       git \
+      python3 \
     && which bun \
     && which bunx \
     && bun --version

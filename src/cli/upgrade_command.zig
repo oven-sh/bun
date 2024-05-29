@@ -513,8 +513,9 @@ pub const UpgradeCommand = struct {
 
         {
             var refresher = std.Progress{};
-            var progress = refresher.start("Downloading", bun.bytesToMB(version.size)); // MB
-            progress.setUnit("MB");
+            const download_progress = try std.fmt.allocPrint(std.heap.page_allocator, "Downloading [0 bytes/{s:.2}]", .{bun.fmt.size(version.size)});
+            var progress = refresher.start(download_progress, 0);
+
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
@@ -535,7 +536,7 @@ pub const UpgradeCommand = struct {
             );
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
-            async_http.client.progress_formatter = bun.bytesToMB;
+            async_http.client.estimated_content_length = version.size;
             async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
             const response = try async_http.sendSync(true);

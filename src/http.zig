@@ -1506,7 +1506,9 @@ redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
-progress_formatter: ?*const fn (size: usize) usize = null,
+downloaded_bytes: u64 = 0,
+estimated_content_length: u64 = 0,
+
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
 disable_decompression: bool = false,
@@ -3159,9 +3161,8 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     defer {
         if (this.progress_node) |progress| {
             progress.activate();
-            if (this.progress_formatter) |formatter| {
-                progress.setCompletedItems(formatter(incoming_data.len));
-            } else progress.setCompletedItems(incoming_data.len);
+            this.downloaded_bytes += incoming_data.len;
+            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
             progress.context.maybeRefresh();
         }
     }
@@ -3217,9 +3218,8 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     if (this.progress_node) |progress| {
         progress.activate();
-        if (this.progress_formatter) |formatter| {
-            progress.setCompletedItems(formatter(this.state.total_body_received));
-        } else progress.setCompletedItems(this.state.total_body_received);
+        this.downloaded_bytes += incoming_data.len;
+        progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
         progress.context.maybeRefresh();
     }
 
@@ -3230,9 +3230,8 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
         if (this.progress_node) |progress| {
             progress.activate();
-            if (this.progress_formatter) |formatter| {
-                progress.setCompletedItems(formatter(this.state.total_body_received));
-            } else progress.setCompletedItems(this.state.total_body_received);
+            this.downloaded_bytes = this.state.total_body_received;
+            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
             progress.context.maybeRefresh();
         }
         return is_done or processed;
@@ -3288,9 +3287,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         -2 => {
             if (this.progress_node) |progress| {
                 progress.activate();
-                if (this.progress_formatter) |formatter| {
-                    progress.setCompletedItems(formatter(buffer.list.items.len));
-                } else progress.setCompletedItems(buffer.list.items.len);
+                this.downloaded_bytes = buffer.list.items.len;
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
                 progress.context.maybeRefresh();
             }
             // streaming chunks
@@ -3309,9 +3307,8 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
 
             if (this.progress_node) |progress| {
                 progress.activate();
-                if (this.progress_formatter) |formatter| {
-                    progress.setCompletedItems(formatter(buffer.list.items.len));
-                } else progress.setCompletedItems(buffer.list.items.len);
+                this.downloaded_bytes = buffer.list.items.len;
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
                 progress.context.maybeRefresh();
             }
 
@@ -3367,9 +3364,8 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         -2 => {
             if (this.progress_node) |progress| {
                 progress.activate();
-                if (this.progress_formatter) |formatter| {
-                    progress.setCompletedItems(formatter(buffer.len));
-                } else progress.setCompletedItems(buffer.len);
+                this.downloaded_bytes += buffer.len;
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch unreachable);
                 progress.context.maybeRefresh();
             }
             const body_buffer = this.state.getBodyBuffer();
@@ -3390,9 +3386,8 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
             if (this.progress_node) |progress| {
                 progress.activate();
-                if (this.progress_formatter) |formatter| {
-                    progress.setCompletedItems(formatter(buffer.len));
-                } else progress.setCompletedItems(buffer.len);
+                this.downloaded_bytes += buffer.len;
+                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
                 progress.context.maybeRefresh();
             }
 

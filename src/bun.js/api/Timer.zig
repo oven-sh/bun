@@ -528,14 +528,15 @@ pub const TimerObject = struct {
     }
 
     pub fn cancel(this: *TimerObject, vm: *VirtualMachine) void {
-        if (this.kind == .setImmediate) return;
         this.setEnableKeepingEventLoopAlive(vm, false);
+        this.has_cleared_timer = true;
+
+        if (this.kind == .setImmediate) return;
 
         const was_active = this.event_loop_timer.state == .ACTIVE;
 
         this.event_loop_timer.state = .CANCELLED;
         this.strong_this.deinit();
-        this.has_cleared_timer = true;
 
         if (was_active) {
             vm.timer.remove(&this.event_loop_timer);

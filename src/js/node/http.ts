@@ -1,7 +1,7 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
-const { Duplex, Readable, Writable } = require("node:stream");
+const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
 
 const {
   getHeader,

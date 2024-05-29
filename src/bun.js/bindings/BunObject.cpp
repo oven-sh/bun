@@ -377,8 +377,9 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
+    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {});
+    Bun__Timer__setTimeout(globalObject, JSValue::encode(global->bunSleepThenCallback()), JSC::JSValue::encode(millisecondsValue), JSValue::encode(promise));
     return JSC::JSValue::encode(promise);
 }
 

@@ -88,14 +88,21 @@ pub const All = struct {
         all.ensureUVTimer(vm);
     }
 
-    pub fn incrementTimerRef(this: *All, increment: i32) void {
-        const old = this.active_timer_count;
-        this.active_timer_count += increment;
+    pub fn incrementTimerRef(this: *All, delta: i32) void {
         const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", this);
 
-        if (old + increment == 1) {
+        const old = this.active_timer_count;
+        const new = old + delta;
+
+        if (comptime Environment.isDebug) {
+            assert(new >= 0);
+        }
+
+        this.active_timer_count = new;
+
+        if (old <= 0 and new > 0) {
             vm.uwsLoop().ref();
-        } else if (old + increment == 0) {
+        } else if (old > 0 and new <= 0) {
             // We no longer have an active timer.
             vm.uwsLoop().unref();
         }

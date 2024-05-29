@@ -1221,13 +1221,13 @@ pub const PosixLoop = extern struct {
     }
 
     pub fn ref(this: *PosixLoop) void {
-        log("ref", .{});
+        log("ref {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
         this.active += 1;
     }
 
     pub fn unref(this: *PosixLoop) void {
-        log("unref", .{});
+        log("unref {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
         this.num_polls -= 1;
         this.active -|= 1;
     }

@@ -921,11 +921,10 @@ pub fn cleanWithLogger(
         for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
         try builder.allocate();
         for (old.patched_dependencies.keys(), old.patched_dependencies.values()) |k, v| {
-            if (!v.patchfile_hash_is_null) {
-                var patchdep = v;
-                patchdep.path = builder.append(String, patchdep.path.slice(old.buffers.string_bytes.items));
-                try new.patched_dependencies.put(new.allocator, k, patchdep);
-            }
+            // bun.assert(!v.patchfile_hash_is_null);
+            var patchdep = v;
+            patchdep.path = builder.append(String, patchdep.path.slice(old.buffers.string_bytes.items));
+            try new.patched_dependencies.put(new.allocator, k, patchdep);
         }
     }
 
@@ -3278,6 +3277,8 @@ pub const Package = extern struct {
             added_trusted_dependencies: std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, bool, ArrayIdentityContext, false) = .{},
             removed_trusted_dependencies: TrustedDependenciesSet = .{},
 
+            patched_dependencies_changed: bool = false,
+
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
                 this.remove += that.remove;
@@ -3287,7 +3288,8 @@ pub const Package = extern struct {
             pub inline fn hasDiffs(this: Summary) bool {
                 return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or
                     this.added_trusted_dependencies.count() > 0 or
-                    this.removed_trusted_dependencies.count() > 0;
+                    this.removed_trusted_dependencies.count() > 0 or
+                    this.patched_dependencies_changed;
             }
         };
 
@@ -3431,6 +3433,28 @@ pub const Package = extern struct {
                     break :trusted_dependencies;
                 }
             }
+
+            {
+                std.debug.print("DIGG DEBUGGING: \n", .{});
+                var iter = from_lockfile.patched_dependencies.iterator();
+                while (iter.next()) |entry| {
+                    std.debug.print("  0x{x}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.slice(from_lockfile.buffers.string_bytes.items) });
+                }
+            }
+            summary.patched_dependencies_changed = patched_dependencies_changed: {
+                if (from_lockfile.patched_dependencies.entries.len != to_lockfile.patched_dependencies.entries.len) break :patched_dependencies_changed true;
+                var iter = to_lockfile.patched_dependencies.iterator();
+                while (iter.next()) |entry| {
+                    if (from_lockfile.patched_dependencies.get(entry.key_ptr.*)) |val| {
+                        if (!std.mem.eql(
+                            u8,
+                            val.path.slice(to_lockfile.buffers.string_bytes.items),
+                            entry.value_ptr.path.slice(from_lockfile.buffers.string_bytes.items),
+                        )) break :patched_dependencies_changed true;
+                    } else break :patched_dependencies_changed true;
+                }
+                break :patched_dependencies_changed false;
+            };
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {

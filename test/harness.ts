@@ -840,7 +840,7 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
   expect(err).toContain("Saved lockfile");
   let out = await new Response(stdout).text();
   expect(await exited).toBe(0);
-  return { out, err, exited };
+  return { err, out };
 }
 
 // If you need to modify, clone it

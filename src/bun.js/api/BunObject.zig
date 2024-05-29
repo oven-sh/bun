@@ -2340,7 +2340,10 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             _: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return JSC.JSValue.jsNumber(@as(u16, @truncate(this.evp.size())));
+            return JSC.JSValue.jsNumber(switch (this.*) {
+                .evp => |*inner| inner.size(),
+                .zig => |*inner| inner.digest_length,
+            });
         }
 
         pub fn getAlgorithm(

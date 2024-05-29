@@ -52,10 +52,32 @@ describe("CryptoHasher", () => {
     shake256: "369771bb2cb9d2b04c1d54cca487e372d9f187f73f7ba3f65b95c8ee7798c527",
   } as const;
 
+  const expectedBitLength = {
+    blake2b256: 256,
+    blake2b512: 512,
+    md4: 128,
+    md5: 128,
+    ripemd160: 160,
+    sha1: 160,
+    sha224: 224,
+    sha256: 256,
+    sha384: 384,
+    sha512: 512,
+    "sha512-224": 224,
+    "sha512-256": 256,
+    "sha3-224": 224,
+    "sha3-256": 256,
+    "sha3-384": 384,
+    "sha3-512": 512,
+    shake128: 128,
+    shake256: 256,
+  } as const;
+
   for (const algorithm of CryptoHasher.algorithms) {
     it(`new CryptoHasher ${algorithm}`, () => {
       var hasher = new CryptoHasher(algorithm);
       expect(hasher.algorithm).toEqual(algorithm);
+      expect(hasher.byteLength).toEqual(expectedBitLength[algorithm] / 8);
       hasher.update("hello world");
       expect(hasher.digest("hex")).toEqual(expected[algorithm]);
     });

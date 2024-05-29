@@ -390,12 +390,13 @@ pub fn shellEscape(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
-    if (callframe.argumentsCount() < 1) {
+    const arguments = callframe.arguments(1);
+    if (arguments.len < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
         return .undefined;
     }
 
-    const jsval = callframe.argument(0);
+    const jsval = arguments.ptr[0];
     const bunstr = jsval.toBunString(globalThis);
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();

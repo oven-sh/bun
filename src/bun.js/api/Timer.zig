@@ -53,7 +53,7 @@ pub const All = struct {
         timer.state = .ACTIVE;
 
         if (Environment.isWindows) {
-            this.ensureUVTimer(@fieldParentPtr(JSC.VirtualMachine, "timers", this));
+            this.ensureUVTimer(@fieldParentPtr(JSC.VirtualMachine, "timer", this));
         }
     }
 
@@ -68,47 +68,36 @@ pub const All = struct {
         if (this.uv_timer.data == null) {
             this.uv_timer.init(vm.uvLoop());
             this.uv_timer.data = vm;
+            this.uv_timer.unref();
         }
 
         if (this.timers.peek()) |timer| {
-            const next_ns = timer.ns();
-            const now = bun.getRoughTickCountMs();
-            this.uv_timer.start(now -| (next_ns / std.time.ns_per_ms), 0, &onUVTimer);
+            const now = timespec.now();
+            const wait = if (timer.next.greater(&now))
+                timer.next.duration(&now)
+            else
+                timespec{ .nsec = 0, .sec = 0 };
+            this.uv_timer.start(wait.ns() / std.time.ns_per_ms, 0, &onUVTimer);
         }
     }
 
     pub fn onUVTimer(uv_timer_t: *uv.uv_timer_t) callconv(.C) void {
         const all = @fieldParentPtr(All, "uv_timer", uv_timer_t);
-        all.drainTimers(@fieldParentPtr(JSC.VirtualMachine, "timer", all));
+        const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", all);
+        all.drainTimers(vm);
+        all.ensureUVTimer(vm);
     }
 
     pub fn incrementTimerRef(this: *All, increment: i32) void {
         const old = this.active_timer_count;
         this.active_timer_count += increment;
+        const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", this);
 
         if (old + increment == 1) {
-            const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", this);
-
-            if (Environment.isPosix) {
-                vm.uwsLoop().ref();
-            }
-
-            if (Environment.isWindows) {
-                this.ensureUVTimer(vm);
-                this.uv_timer.ref();
-            }
+            vm.uwsLoop().ref();
         } else if (old + increment == 0) {
             // We no longer have an active timer.
-            const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", this);
-
-            if (Environment.isPosix) {
-                vm.uwsLoop().unref();
-            }
-
-            if (Environment.isWindows) {
-                this.ensureUVTimer(vm);
-                this.uv_timer.unref();
-            }
+            vm.uwsLoop().unref();
         }
     }
 

@@ -2806,7 +2806,7 @@ pub const WindowsLoop = extern struct {
 
     pub const wake = wakeup;
 
-    pub fn tickWithTimeout(this: *WindowsLoop, _: i64) void {
+    pub fn tickWithTimeout(this: *WindowsLoop, _: ?*const bun.timespec) void {
         us_loop_run(this);
     }
 

@@ -291,15 +291,11 @@ describe("Call all methods", () => {
 
 describe("Construct all constructors", () => {
   test("globalThis", async () => {
-    globalThis.reportError = console.error;
-
     constructAllConstructors(globalThis);
     await Bun.sleep(1);
   });
 
   test("Bun", async () => {
-    globalThis.reportError = console.error;
-
     constructAllConstructors(Bun);
     await Bun.sleep(1);
   });

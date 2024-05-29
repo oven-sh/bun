@@ -308,7 +308,7 @@ pub fn shell(
     const allocator = getAllocator(globalThis);
     var arena = bun.ArenaAllocator.init(allocator);
 
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments(8);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const string_args = arguments.nextEat() orelse {
         globalThis.throw("shell: expected 2 arguments, got 0", .{});
@@ -318,10 +318,17 @@ pub fn shell(
     const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     var script = std.ArrayList(u8).init(arena.allocator());
+
     if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
-        globalThis.throwOutOfMemory();
+        if (!globalThis.hasException())
+            globalThis.throwOutOfMemory();
         return JSValue.undefined;
     })) {
+        return .undefined;
+    }
+
+    if (globalThis.hasException()) {
+        arena.deinit();
         return .undefined;
     }
 
@@ -383,13 +390,14 @@ pub fn shellEscape(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) callconv(.C) JSC.JSValue {
-    if (callframe.argumentsCount() < 0) {
+    if (callframe.argumentsCount() < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
         return .undefined;
     }
 
     const jsval = callframe.argument(0);
     const bunstr = jsval.toBunString(globalThis);
+    if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
     var outbuf = std.ArrayList(u8).init(bun.default_allocator);
@@ -435,6 +443,8 @@ pub fn braces(
     };
     const brace_str = brace_str_js.toBunString(globalThis);
     defer brace_str.deref();
+    if (globalThis.hasException()) return .zero;
+
     const brace_slice = brace_str.toUTF8(bun.default_allocator);
     defer brace_slice.deinit();
 
@@ -453,6 +463,7 @@ pub fn braces(
             }
         }
     }
+    if (globalThis.hasException()) return .zero;
 
     var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
     defer arena.deinit();
@@ -552,6 +563,9 @@ pub fn which(
     }
 
     bin_str = path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+    if (globalThis.hasException()) {
+        return .zero;
+    }
 
     if (bin_str.len >= bun.MAX_PATH_BYTES) {
         globalThis.throw("bin path is too long", .{});

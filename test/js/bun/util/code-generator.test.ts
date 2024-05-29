@@ -10,7 +10,7 @@
  *
  */
 
-const logCalled = false;
+const ENABLE_LOGGING = false;
 
 import { describe, expect, test } from "bun:test";
 
@@ -23,10 +23,26 @@ globalThis.Promise = function (...args) {
   const { resolve, reject, promise } = Promise.withResolvers();
   args[0](resolve, reject);
 
-  return promise;
+  return promise?.catch?.(e => {
+    if (ENABLE_LOGGING) {
+      console.log(e);
+    }
+  });
 };
-
+globalThis.Promise.prototype = Promise.prototype;
 Object.assign(globalThis.Promise, Promise);
+
+function wrap(input) {
+  if (typeof input?.catch === "function") {
+    return input?.catch?.((e) => {
+      if (ENABLE_LOGGING) {
+        console.error(e)
+      }
+    })
+  }
+
+  return input;
+}
 
 // Don't allow these to be called
 delete process.exit;
@@ -164,7 +180,7 @@ function allThePropertyNames(object, banned) {
   return names;
 }
 
-if (logCalled) {
+if (ENABLE_LOGGING) {
   {
     const original = Reflect.construct;
     Reflect.construct = function (...args) {
@@ -194,10 +210,10 @@ function callAllMethods(object) {
   for (const methodName of allThePropertyNames(object, callBanned)) {
     try {
       try {
-        const returnValue = Reflect.apply(object?.[methodName], object, []);
+        const returnValue = wrap(Reflect.apply(object?.[methodName], object, []));
         Bun.inspect?.(returnValue), queue.push(returnValue);
       } catch (e) {
-        const returnValue = Reflect.apply(object.constructor?.[methodName], object?.constructor, []);
+        const returnValue = wrap(Reflect.apply(object.constructor?.[methodName], object?.constructor, []));
         Bun.inspect?.(returnValue), queue.push(returnValue);
       }
     } catch (e) {
@@ -220,7 +236,7 @@ function callAllMethods(object) {
             continue;
           }
           seen.add(method);
-          const returnValue = Reflect?.apply?.(method, value, []);
+          const returnValue = wrap(Reflect?.apply?.(method, value, []));
           if (returnValue?.then) {
             continue;
           }

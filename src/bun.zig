@@ -3339,9 +3339,17 @@ pub const timespec = extern struct {
 
     // TODO: this is wrong!
     pub fn duration(this: *const timespec, other: *const timespec) timespec {
+        var sec_diff = this.sec - other.sec;
+        var nsec_diff = this.nsec - other.nsec;
+
+        if (nsec_diff < 0) {
+            sec_diff -= 1;
+            nsec_diff += std.time.ns_per_s;
+        }
+
         return timespec{
-            .sec = this.sec - other.sec,
-            .nsec = this.nsec - other.nsec,
+            .sec = sec_diff,
+            .nsec = nsec_diff,
         };
     }
 
@@ -3374,8 +3382,8 @@ pub const timespec = extern struct {
             return max;
     }
 
-    pub fn less(a: *const timespec, b: *const timespec) bool {
-        return a.order(b) != .gt;
+    pub fn greater(a: *const timespec, b: *const timespec) bool {
+        return a.order(b) == .gt;
     }
 
     pub fn now() timespec {
@@ -3384,10 +3392,11 @@ pub const timespec = extern struct {
 
     pub fn msFromNow(interval: i64) timespec {
         var new_timespec = getRoughTickCount();
-        const as_ns = interval * std.time.ns_per_ms;
-        const seconds_to_increment = @divFloor(as_ns, std.time.ns_per_s);
-        new_timespec.sec += seconds_to_increment;
-        new_timespec.nsec += as_ns;
+        const sec_inc = @divFloor(interval, std.time.ms_per_s);
+        const nsec_inc = @rem(interval, std.time.ms_per_s) * std.time.ns_per_ms;
+
+        new_timespec.sec += sec_inc;
+        new_timespec.nsec += nsec_inc;
 
         if (new_timespec.nsec >= std.time.ns_per_s) {
             new_timespec.sec += 1;

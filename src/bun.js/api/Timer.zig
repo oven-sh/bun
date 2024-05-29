@@ -147,7 +147,7 @@ pub const All = struct {
         const now = &timespec.now();
 
         while (this.timers.peek()) |t| {
-            if (t.next.less(now)) {
+            if (t.next.greater(now)) {
                 break;
             }
 

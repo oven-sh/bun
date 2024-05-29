@@ -78,6 +78,7 @@ RUN groupadd bun \
       --shell /bin/sh \
       --create-home \
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
+    && apt update \
     && apt-get install -qq --no-install-recommends \
       git \
     && which bun \

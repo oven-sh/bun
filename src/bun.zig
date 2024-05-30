@@ -3337,6 +3337,10 @@ pub const timespec = extern struct {
     sec: isize = 0,
     nsec: isize = 0,
 
+    pub fn eql(this: *const timespec, other: *const timespec) bool {
+        return this.sec == other.sec and this.nsec == other.nsec;
+    }
+
     pub fn toInstant(this: *const timespec) std.time.Instant {
         if (comptime Environment.isPosix) {
             return std.time.Instant{

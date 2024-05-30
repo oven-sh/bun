@@ -34,9 +34,9 @@ my-test.test.js:
 3 | beforeEach(async () => {
 4 |   Bun.sleep(1).then(() => {
 5 |     throw new Error('## stage beforeEach ##');
-      ^
+              ^
 error: ## stage beforeEach ##
-      at <dir>/my-test.test.js:5:3
+      at <dir>/my-test.test.js:5:11
 (fail) my-test [xx ms]
 
  0 pass
@@ -49,7 +49,7 @@ Ran 1 tests across 1 files. [xx ms]
 exports[`unhandled errors between tests are reported in afterEach 1`] = `
 "
 my-test.test.js:
-(pass) my-test [xx ms]
+(pass) my-test
 
 # Unhandled error between tests
 -------------------------------
@@ -75,7 +75,7 @@ Ran 1 tests across 1 files. [xx ms]
 exports[`unhandled errors between tests are reported in afterAll 1`] = `
 "
 my-test.test.js:
-(pass) my-test [xx ms]
+(pass) my-test
 
 # Unhandled error between tests
 -------------------------------
@@ -115,7 +115,7 @@ error: ## stage describe ##
       at <dir>/my-test.test.js:3:1
 -------------------------------
 
-(pass) my-test [xx ms]
+(pass) my-test
 
  1 pass
  0 fail

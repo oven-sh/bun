@@ -3527,9 +3527,8 @@ pub const Blob = struct {
                 switch (bun.linux.memfd_allocator.create(bytes_)) {
                     .err => {},
                     .result => |result| {
-                        const store = bun.new(
-                            Store,
-                            Store{
+                        const store = Store.new(
+                            .{
                                 .data = .{
                                     .bytes = result,
                                 },

@@ -123,6 +123,7 @@ describe("tls.Server", () => {
               resolve();
             },
           );
+          client.on("error", reject);
         });
       }
 
@@ -305,7 +306,7 @@ describe("tls.Server", () => {
           client.end();
         },
       );
-
+      client.on("error", reject);
       client.on("close", () => {
         server.close();
       });

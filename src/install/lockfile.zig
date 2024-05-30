@@ -1311,7 +1311,7 @@ pub const Printer = struct {
             version: Semver.Version,
             version_buf: string,
             resolution: Resolution,
-            name: string,
+            dependency_id: DependencyID,
         };
 
         const ShouldPrintPackageInstallResult = union(enum) {
@@ -1361,7 +1361,7 @@ pub const Printer = struct {
                                         .version = original_version,
                                         .version_buf = entry.original_version_string_buf,
                                         .resolution = resolution,
-                                        .name = name,
+                                        .dependency_id = dep_id,
                                     },
                                 };
                             }
@@ -1381,6 +1381,7 @@ pub const Printer = struct {
             writer: Writer,
         ) !void {
             const string_buf = this.lockfile.buffers.string_bytes.items;
+            const dependency = this.lockfile.buffers.dependencies.items[update_info.dependency_id];
 
             const fmt = comptime brk: {
                 if (enable_ansi_colors) {
@@ -1392,7 +1393,7 @@ pub const Printer = struct {
             try writer.print(
                 fmt,
                 .{
-                    update_info.name,
+                    dependency.name.slice(string_buf),
                     update_info.version.fmt(update_info.version_buf),
                     update_info.resolution.value.npm.version.fmt(string_buf),
                 },

@@ -9506,16 +9506,6 @@ pub const PackageManager = struct {
             return true;
         }
 
-        // pub fn printTreeDeps(this: *PackageInstaller) void {
-        //     for (this.tree_ids_to_trees_the_id_depends_on, 0..) |deps, j| {
-        //         std.debug.print("tree #{d:3}: ", .{j});
-        //         for (0..this.lockfile.buffers.trees.items.len) |tree_id| {
-        //             std.debug.print("{d} ", .{@intFromBool(deps.isSet(tree_id))});
-        //         }
-        //         std.debug.print("\n", .{});
-        //     }
-        // }
-
         pub fn deinit(this: *PackageInstaller) void {
             const allocator = this.manager.allocator;
             this.pending_lifecycle_scripts.deinit(this.manager.allocator);
@@ -10659,8 +10649,6 @@ pub const PackageManager = struct {
             };
 
             try installer.node_modules.path.append(std.fs.path.sep);
-
-            // installer.printTreeDeps();
 
             defer installer.deinit();
 

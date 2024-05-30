@@ -41,7 +41,7 @@ server.on("listening", () => {
 });`);
   fs.writeFileSync(file_name, contents);
 
-  const subprocess = Bun.spawn([nodeExecutable, file_name], {
+  const subprocess = Bun.spawn([nodeExecutable, file_name, JSON.stringify(TLS_CERT)], {
     stdout: "pipe",
     stdin: "inherit",
     stderr: "inherit",

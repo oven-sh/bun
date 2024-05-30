@@ -49,7 +49,6 @@ const Fs = bun.fs;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
-pub var test_elapsed_timer: ?*std.time.Timer = null;
 
 pub const Tag = enum(u3) {
     pass,
@@ -85,8 +84,10 @@ pub const TestRunner = struct {
     // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
 
-    test_timeout_timer: ?*bun.uws.Timer = null,
-    last_test_timeout_timer_duration: u32 = 0,
+    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+        .next = .{},
+        .tag = .TestRunner,
+    },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
     test_options: *const bun.CLI.Command.TestOptions = undefined,
 
@@ -105,17 +106,13 @@ pub const TestRunner = struct {
 
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
-    pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
-        const this = timer.ext(TestRunner).?;
+    pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
+        _ = vm; // autofix
+        this.event_loop_timer.state = .FIRED;
 
         if (this.pending_test) |pending_test| {
-            if (!pending_test.reported) {
-                const now = std.time.Instant.now() catch unreachable;
-                const elapsed = now.since(pending_test.started_at);
-
-                if (elapsed >= (@as(u64, this.last_test_timeout_timer_duration) * std.time.ns_per_ms)) {
-                    pending_test.timeout();
-                }
+            if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
+                pending_test.timeout(now);
             }
         }
     }
@@ -128,15 +125,20 @@ pub const TestRunner = struct {
         this.active_test_for_timeout = test_id;
 
         if (milliseconds > 0) {
-            if (this.test_timeout_timer == null) {
-                this.test_timeout_timer = bun.uws.Timer.createFallthrough(bun.uws.Loop.get(), this);
-            }
-
-            if (this.last_test_timeout_timer_duration != milliseconds) {
-                this.last_test_timeout_timer_duration = milliseconds;
-                this.test_timeout_timer.?.set(this, onTestTimeout, @as(i32, @intCast(milliseconds)), @as(i32, @intCast(milliseconds)));
-            }
+            this.scheduleTimeout(milliseconds);
         }
+    }
+
+    pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
+        const then = bun.timespec.msFromNow(@intCast(milliseconds));
+        const vm = JSC.VirtualMachine.get();
+        if (this.event_loop_timer.state == .ACTIVE) {
+            vm.timer.remove(&this.event_loop_timer);
+        }
+
+        this.event_loop_timer.next = then;
+        this.event_loop_timer.tag = .TestRunner;
+        vm.timer.insert(&this.event_loop_timer);
     }
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
@@ -702,10 +704,7 @@ pub const TestScope = struct {
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
-        if (test_elapsed_timer) |timer| {
-            timer.reset();
-            task.started_at = timer.started;
-        }
+        task.started_at = bun.timespec.now();
 
         if (this.timeout_millis == std.math.maxInt(u32)) {
             if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
@@ -1302,7 +1301,7 @@ pub const TestRunnerTask = struct {
     promise_state: AsyncState = .none,
     sync_state: AsyncState = .none,
     reported: bool = false,
-    started_at: std.time.Instant = std.mem.zeroes(std.time.Instant),
+    started_at: bun.timespec = .{},
 
     pub const AsyncState = enum {
         none,
@@ -1451,16 +1450,24 @@ pub const TestRunnerTask = struct {
         return false;
     }
 
-    pub fn timeout(this: *TestRunnerTask) void {
+    pub fn timeout(this: *TestRunnerTask, now: *const bun.timespec) void {
         if (comptime Environment.allow_assert) assert(!this.reported);
-
+        const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .timeout);
+        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = elapsed });
     }
 
-    pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
-        switch (comptime from) {
+    const ResultType = union(enum) {
+        promise: void,
+        callback: void,
+        sync: void,
+        timeout: u64,
+        unhandledRejection: void,
+    };
+
+    pub fn handleResult(this: *TestRunnerTask, result: Result, from: ResultType) void {
+        switch (from) {
             .promise => {
                 if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
@@ -1482,7 +1489,6 @@ pub const TestRunnerTask = struct {
                 this.sync_state = .fulfilled;
             },
             .timeout, .unhandledRejection => {},
-            else => @compileError("Bad from"),
         }
 
         defer {
@@ -1496,11 +1502,15 @@ pub const TestRunnerTask = struct {
         this.reported = true;
 
         const test_id = this.test_id;
-        const test_ = this.describe.tests.items[test_id];
+        var test_ = this.describe.tests.items[test_id];
+        if (from == .timeout) {
+            test_.timeout_millis = @truncate(from.timeout);
+        }
+
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
 
-        if (comptime from == .timeout) {
+        if (from == .timeout) {
             const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
         }
@@ -1515,10 +1525,7 @@ pub const TestRunnerTask = struct {
                 this.source_file_path,
                 test_.label,
                 count,
-                if (test_elapsed_timer) |timer|
-                    timer.read()
-                else
-                    0,
+                this.started_at.sinceNow(),
                 describe,
             ),
             .fail => |count| Jest.runner.?.reportFailure(
@@ -1526,10 +1533,7 @@ pub const TestRunnerTask = struct {
                 this.source_file_path,
                 test_.label,
                 count,
-                if (test_elapsed_timer) |timer|
-                    timer.read()
-                else
-                    0,
+                this.started_at.sinceNow(),
                 describe,
             ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
@@ -1541,10 +1545,7 @@ pub const TestRunnerTask = struct {
                     this.source_file_path,
                     test_.label,
                     count,
-                    if (test_elapsed_timer) |timer|
-                        timer.read()
-                    else
-                        0,
+                    this.started_at.sinceNow(),
                     describe,
                 );
             },
@@ -1728,12 +1729,6 @@ inline fn createScope(
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
         }) catch unreachable;
-
-        if (test_elapsed_timer == null) create_timer: {
-            const timer = allocator.create(std.time.Timer) catch unreachable;
-            timer.* = std.time.Timer.start() catch break :create_timer;
-            test_elapsed_timer = timer;
-        }
     } else {
         var scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
@@ -2020,12 +2015,6 @@ fn eachBind(
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
                     }) catch unreachable;
-
-                    if (test_elapsed_timer == null) create_timer: {
-                        const timer = allocator.create(std.time.Timer) catch unreachable;
-                        timer.* = std.time.Timer.start() catch break :create_timer;
-                        test_elapsed_timer = timer;
-                    }
                 }
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;

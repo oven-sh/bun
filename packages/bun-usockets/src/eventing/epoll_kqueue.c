@@ -18,6 +18,7 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
+#include <time.h>
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
@@ -32,7 +33,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <string.h> // memset
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -182,7 +183,14 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
+#if defined(LIBUS_USE_EPOLL) 
+
+// static int has_epoll_pwait2 = 0;
+// TODO:
+
+#endif
+
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
         return;
 
@@ -199,25 +207,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, int64_t timeoutMs) {
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    if (timeoutMs > 0) {
-        if (timeoutMs == INT64_MAX) {
-            timeoutMs = 0;
-        }
-        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, (int)timeoutMs);
-    } else {
-        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
+    int timeoutMs = -1; 
+    if (timeout) {
+        timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
     }
+    loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, timeoutMs);
 #else
-    if (timeoutMs > 0) {
-        struct timespec ts = {0, 0};
-        if (timeoutMs != INT64_MAX) {
-            ts.tv_sec = timeoutMs / 1000;
-            ts.tv_nsec = (timeoutMs % 1000) * 1000000;
-        }
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, &ts);
-    } else {
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
-    }
+    loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
 #endif
 
     /* Iterate ready polls, dispatching them by type */

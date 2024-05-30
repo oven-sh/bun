@@ -32,20 +32,27 @@ it("setImmediate", async () => {
 });
 
 it("clearImmediate", async () => {
+  const { resolve, reject, promise } = Promise.withResolvers();
   var called = false;
   const id = setImmediate(() => {
     called = true;
-    expect.unreachable();
   });
   clearImmediate(id);
 
   // assert it doesn't crash if you call clearImmediate twice
   clearImmediate(id);
 
-  await new Promise((resolve, reject) => {
-    setImmediate(resolve);
-  });
   expect(called).toBe(false);
+
+  setImmediate(() => {
+    if (called) {
+      reject(new Error("clearImmediate didn't work"));
+    } else {
+      resolve();
+    }
+  });
+
+  await promise;
 });
 
 it("setImmediate should not keep the process alive forever", async () => {

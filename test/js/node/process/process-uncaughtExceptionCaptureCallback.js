@@ -1,6 +1,7 @@
 let monitorCalled = false;
 
-setTimeout(() => {
+setTimeout(async () => {
+  console.log("setTimeout");
   // uncaughtExceptionMonitor should be called
   if (!monitorCalled) {
     process.exit(1);
@@ -10,6 +11,7 @@ setTimeout(() => {
 }, 1);
 
 process.on("uncaughtExceptionMonitor", err => {
+  console.log("uncaughtExceptionMonitor");
   monitorCalled = true;
   if (!err) {
     process.exit(1);
@@ -17,6 +19,7 @@ process.on("uncaughtExceptionMonitor", err => {
 });
 
 process.setUncaughtExceptionCaptureCallback(err => {
+  console.log("setUncaughtExceptionCaptureCallback");
   // there should be an error
   if (!err) {
     process.exit(1);

@@ -147,4 +147,5 @@
     "WebKit/WebKitBuild": true,
     "WebKit/WebInspectorUI": true,
   },
+  "git.detectSubmodules": false,
 }

@@ -48,6 +48,7 @@ pub const BrotliEncoder = struct {
             return .zero;
         }
 
+        const opts = arguments[0];
         const callback = arguments[2];
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
@@ -57,6 +58,19 @@ pub const BrotliEncoder = struct {
                 return .zero;
             },
         });
+
+        if (opts.get(globalThis, "params")) |params| {
+            inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
+                const idx = params.getIndex(globalThis, f.value);
+                if (!idx.isNumber()) break;
+                const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
+                if (!was_set) {
+                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                    this.deinit();
+                    return .zero;
+                }
+            }
+        }
 
         const out = this.toJS(globalThis);
         @This().callbackSetCached(out, globalThis, callback);
@@ -111,7 +125,7 @@ pub const BrotliEncoder = struct {
         });
 
         if (result.toError()) |err| {
-            this.globalThis.bunVM().runErrorHandler(err, null);
+            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
         }
     }
 
@@ -356,6 +370,7 @@ pub const BrotliDecoder = struct {
             return .zero;
         }
 
+        const opts = arguments[0];
         const callback = arguments[2];
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
@@ -366,6 +381,19 @@ pub const BrotliDecoder = struct {
             globalThis.throw("Failed to create BrotliDecoder", .{});
             return .zero;
         };
+
+        if (opts.get(globalThis, "params")) |params| {
+            inline for (std.meta.fields(bun.brotli.c.BrotliDecoderParameter)) |f| {
+                const idx = params.getIndex(globalThis, f.value);
+                if (!idx.isNumber()) break;
+                const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
+                if (!was_set) {
+                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                    this.deinit();
+                    return .zero;
+                }
+            }
+        }
 
         const out = this.toJS(globalThis);
         @This().callbackSetCached(out, globalThis, callback);
@@ -402,7 +430,7 @@ pub const BrotliDecoder = struct {
         });
 
         if (result.toError()) |err| {
-            this.globalThis.bunVM().runErrorHandler(err, null);
+            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
         }
     }
 

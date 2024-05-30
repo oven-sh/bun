@@ -513,8 +513,12 @@ pub const UpgradeCommand = struct {
 
         {
             var refresher = std.Progress{};
-            var progress_string_buf: [512]u8 = undefined;
-            var progress = refresher.start(try std.fmt.bufPrint(&progress_string_buf, "Downloading [0 bytes/{s:.2}]", .{bun.fmt.size(version.size)}), 0);
+
+            // This cannot be stack-owned because it is shared by the http thread
+            const progress_string_buf: []u8 = bun.default_allocator.alloc(u8, 512) catch bun.outOfMemory();
+            defer bun.default_allocator.free(progress_string_buf);
+
+            var progress = refresher.start("Downloading", 0);
 
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
@@ -545,6 +549,9 @@ pub const UpgradeCommand = struct {
             switch (response.status_code) {
                 404 => {
                     if (use_canary) {
+                        progress.end();
+                        refresher.refresh();
+
                         Output.prettyErrorln(
                             \\<r><red>error:<r> Canary builds are not available for this platform yet
                             \\

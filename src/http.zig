@@ -1506,7 +1506,7 @@ redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
-progress_string_buf: [512]u8 = undefined,
+progress_string_buf: []u8 = undefined,
 downloaded_bytes: u64 = 0,
 estimated_content_length: u64 = 0,
 
@@ -2714,6 +2714,15 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             // we save the successful parsed response
             this.state.pending_response = response;
 
+            // For requests that have progress nodes, check for content-length header to provide better download estimates.
+            if (this.progress_node != null) {
+                if (response.getHeader("content-length")) |length_str| {
+                    if (std.fmt.parseInt(u64, length_str, 10)) |estimated_length| {
+                        this.estimated_content_length = estimated_length;
+                    } else |_| {}
+                }
+            }
+
             const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
             // handle the case where we have a 100 Continue
             if (response.status_code == 100) {
@@ -3138,9 +3147,17 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
 }
 
 fn updateProgress(this: *HTTPClient) void {
+    // Zig 0.12's progress API does not support floating point or percentage progresses,
+    // only integers. To get around this, the items' name is adjusted with the desired
+    // format message.
     if (this.progress_node) |progress| {
         progress.activate();
-        progress.setName(std.fmt.bufPrint(&this.progress_string_buf, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
+        progress.setName(
+            std.fmt.bufPrint(this.progress_string_buf, "Downloading [{s:.2} / {s:.2}]", .{
+                bun.fmt.size(this.downloaded_bytes),
+                bun.fmt.size(this.estimated_content_length),
+            }) catch "Downloading",
+        );
         progress.context.maybeRefresh();
     }
 }
@@ -3171,7 +3188,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         this.downloaded_bytes += incoming_data.len;
 
         if (this.progress_node != null)
-            updateProgress(this);
+            this.updateProgress();
     }
     // we can ignore the body data in redirects
     if (this.state.is_redirect_pending) return;
@@ -3225,7 +3242,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     this.downloaded_bytes += incoming_data.len;
 
     if (this.progress_node != null)
-        updateProgress(this);
+        this.updateProgress();
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
@@ -3234,7 +3251,7 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
         this.downloaded_bytes = this.state.total_body_received;
         if (this.progress_node != null)
-            updateProgress(this);
+            this.updateProgress();
 
         return is_done or processed;
     }
@@ -3289,7 +3306,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         -2 => {
             this.downloaded_bytes = buffer.list.items.len;
             if (this.progress_node != null)
-                updateProgress(this);
+                this.updateProgress();
 
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
@@ -3307,7 +3324,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
 
             this.downloaded_bytes = buffer.list.items.len;
             if (this.progress_node != null)
-                updateProgress(this);
+                this.updateProgress();
 
             return true;
         },
@@ -3361,7 +3378,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         -2 => {
             this.downloaded_bytes += buffer.len;
             if (this.progress_node != null)
-                updateProgress(this);
+                this.updateProgress();
 
             const body_buffer = this.state.getBodyBuffer();
             try body_buffer.appendSliceExact(buffer);
@@ -3381,7 +3398,7 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
             this.downloaded_bytes += buffer.len;
             if (this.progress_node != null)
-                updateProgress(this);
+                this.updateProgress();
 
             return true;
         },

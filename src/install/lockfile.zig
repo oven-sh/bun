@@ -891,7 +891,7 @@ pub fn cleanWithLogger(
         try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
         new.workspace_versions.entries.len = old.workspace_versions.entries.len;
         for (versions, new.workspace_versions.values()) |src, *dest| {
-            dest.* = src.clone(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+            dest.* = src.append(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
         }
 
         @memcpy(
@@ -1097,6 +1097,8 @@ pub const Printer = struct {
     options: PackageManager.Options,
     successfully_installed: ?Bitset = null,
 
+    manager: ?*PackageManager,
+
     updates: []const PackageManager.UpdateRequest = &[_]PackageManager.UpdateRequest{},
 
     pub const Format = enum { yarn };
@@ -1138,6 +1140,7 @@ pub const Printer = struct {
 
         // TODO remove the need for manager when migrating from package-lock.json
         const manager = &PackageManager.instance;
+
         const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
         switch (load_from_disk) {
             .err => |cause| {
@@ -1217,6 +1220,7 @@ pub const Printer = struct {
         var printer = Printer{
             .lockfile = lockfile,
             .options = options,
+            .manager = null,
         };
 
         switch (format) {
@@ -1320,41 +1324,72 @@ pub const Printer = struct {
         ) !void {
             const string_buf = this.lockfile.buffers.string_bytes.items;
             const packages_slice = this.lockfile.packages.slice();
-            const resolved = packages_slice.items(.resolution);
-            const dependency_name = dependency.name.slice(string_buf);
-            if (PackageManager.instance.formatLaterVersionInCache(dependency_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
-                const fmt = comptime brk: {
-                    if (enable_ansi_colors) {
-                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
-                    } else {
-                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
-                    }
-                };
-                try writer.print(
-                    fmt,
-                    .{
-                        dependency_name,
-                        resolved[package_id].fmt(string_buf, .posix),
-                        later_version_fmt,
-                    },
-                );
-            } else {
-                const fmt = comptime brk: {
-                    if (enable_ansi_colors) {
-                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                    } else {
-                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                    }
-                };
+            const resolution: Resolution = packages_slice.items(.resolution)[package_id];
+            const name = dependency.name.slice(string_buf);
 
-                try writer.print(
-                    fmt,
-                    .{
-                        dependency_name,
-                        resolved[package_id].fmt(string_buf, .posix),
-                    },
-                );
+            if (this.manager) |manager| {
+                if (resolution.tag == .npm) {
+                    if (manager.updating_packages.getEntry(name)) |entry| {
+                        if (entry.value_ptr.original_version) |original_version| {
+                            if (!original_version.eql(resolution.value.npm.version)) {
+                                // package was updated
+                                const fmt = comptime brk: {
+                                    if (enable_ansi_colors) {
+                                        break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d>: <b>{} -\\><r> <b><cyan>{}<r>\n", enable_ansi_colors);
+                                    }
+                                    break :brk Output.prettyFmt("<r>↑ <b>{s}<r><d>: <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
+                                };
+                                try writer.print(
+                                    fmt,
+                                    .{
+                                        name,
+                                        original_version.fmt(entry.value_ptr.original_version_string_buf),
+                                        resolution.value.npm.fmt(string_buf),
+                                    },
+                                );
+
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                if (manager.formatLaterVersionInCache(name, dependency.name_hash, resolution)) |later_version_fmt| {
+                    const fmt = comptime brk: {
+                        if (enable_ansi_colors) {
+                            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                        } else {
+                            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                        }
+                    };
+                    try writer.print(
+                        fmt,
+                        .{
+                            name,
+                            resolution.fmt(string_buf, .posix),
+                            later_version_fmt,
+                        },
+                    );
+
+                    return;
+                }
             }
+
+            const fmt = comptime brk: {
+                if (enable_ansi_colors) {
+                    break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                } else {
+                    break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                }
+            };
+
+            try writer.print(
+                fmt,
+                .{
+                    name,
+                    resolution.fmt(string_buf, .posix),
+                },
+            );
         }
 
         /// - Prints an empty newline with no diffs
@@ -3312,7 +3347,7 @@ pub const Package = extern struct {
             package.resolution = Resolution{
                 .value = .{
                     .npm = .{
-                        .version = version.clone(
+                        .version = version.append(
                             manifest.string_buf,
                             @TypeOf(&string_builder),
                             &string_builder,

@@ -2526,8 +2526,10 @@ pub const PackageManager = struct {
     //
     // dependency name -> original version literal
     updating_packages: bun.StringArrayHashMapUnmanaged(struct {
-        original_version: string,
+        original_version_literal: string,
         is_alias: bool,
+        original_version_string_buf: string = "",
+        original_version: ?Semver.Version,
     }) = .{},
 
     pub fn clearCachedItemsDependingOnLockfileBuffer(this: *PackageManager) void {
@@ -3697,12 +3699,14 @@ pub const PackageManager = struct {
         install_peer: bool,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
+        const name_str = name.slice(this.lockfile.buffers.string_bytes.items);
+        // If updating, only update packages in the current workspace
+        const should_update = this.to_update and this.isRootDependency(dependency_id) and this.updating_packages.contains(name_str);
 
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
             name_hash,
-            // If updating, only update packages in the current workspace
-            if (this.to_update and this.isRootDependency(dependency_id)) null else version,
+            if (should_update) null else version,
             &.{
                 .tag = .npm,
                 .value = .{
@@ -4306,6 +4310,7 @@ pub const PackageManager = struct {
         var printer = Lockfile.Printer{
             .lockfile = this.lockfile,
             .options = this.options,
+            .manager = this,
         };
 
         var tmpname_buf: [512]u8 = undefined;
@@ -6869,8 +6874,9 @@ pub const PackageManager = struct {
                                 if (entry.found_existing) continue;
 
                                 entry.value_ptr.* = .{
-                                    .original_version = version_literal,
+                                    .original_version_literal = version_literal,
                                     .is_alias = alias_at_index != null,
+                                    .original_version = null,
                                 };
 
                                 if (manager.options.do.update_to_latest) {
@@ -6912,7 +6918,7 @@ pub const PackageManager = struct {
                                     // fetchSwapRemove because we want to update the first dependency with a matching
                                     // name, or none at all
                                     if (manager.updating_packages.fetchSwapRemove(key_str)) |entry| {
-                                        const original_version = entry.value.original_version;
+                                        const original_version_literal = entry.value.original_version_literal;
                                         const is_alias = entry.value.is_alias;
                                         const dep_name = entry.key;
                                         for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
@@ -6929,11 +6935,11 @@ pub const PackageManager = struct {
                                             }
 
                                             const original_version_to_use = brk: {
-                                                if (options.exact_versions or !is_alias) break :brk original_version;
-                                                if (strings.lastIndexOfChar(original_version, '@')) |at_index| {
-                                                    break :brk original_version[at_index + 1 ..];
+                                                if (options.exact_versions or !is_alias) break :brk original_version_literal;
+                                                if (strings.lastIndexOfChar(original_version_literal, '@')) |at_index| {
+                                                    break :brk original_version_literal[at_index + 1 ..];
                                                 }
-                                                break :brk original_version;
+                                                break :brk original_version_literal;
                                             };
 
                                             const new_version = try switch (options.exact_versions or Semver.Version.@"is exact-ish"(original_version_to_use)) {
@@ -7148,11 +7154,28 @@ pub const PackageManager = struct {
 
                                 const key_str = key.asStringCloned(allocator) orelse break :add_packages_to_update;
                                 const version_literal = new_dependencies[k].value.?.asStringCloned(allocator) orelse break :add_packages_to_update;
+                                var tag = Dependency.Version.Tag.infer(version_literal);
+
+                                if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+
                                 if (strings.eqlLong(request_dep_name, key_str, true)) {
                                     const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
                                     if (entry.found_existing) break :add_packages_to_update;
 
-                                    entry.value_ptr.original_version = version_literal;
+                                    var is_alias = false;
+                                    if (strings.hasPrefixComptime(version_literal, "npm:")) {
+                                        if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
+                                            tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
+                                            if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+                                            is_alias = true;
+                                        }
+                                    }
+
+                                    entry.value_ptr.* = .{
+                                        .original_version_literal = version_literal,
+                                        .is_alias = is_alias,
+                                        .original_version = null,
+                                    };
                                 }
                             }
                             if (!request.is_aliased and !request.resolved_name.isEmpty() and key.data.e_string.eql(
@@ -10460,7 +10483,7 @@ pub const PackageManager = struct {
         // or if you just cloned a repo
         // we want to check lazily though
         // no need to download packages you've already installed!!
-        var skip_verify_installed_version_number = false;
+        var new_node_modules = false;
         const cwd = std.fs.cwd();
         const node_modules_folder = brk: {
             // Attempt to open the existing node_modules folder
@@ -10469,7 +10492,7 @@ pub const PackageManager = struct {
                 .err => {},
             }
 
-            skip_verify_installed_version_number = true;
+            new_node_modules = true;
 
             // Attempt to create a new node_modules folder
             bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
@@ -10484,7 +10507,8 @@ pub const PackageManager = struct {
             };
         };
 
-        var skip_delete = skip_verify_installed_version_number;
+        var skip_delete = new_node_modules;
+        var skip_verify_installed_version_number = new_node_modules;
 
         if (options.enable.force_install) {
             skip_verify_installed_version_number = true;
@@ -10955,6 +10979,42 @@ pub const PackageManager = struct {
                 if (manager.options.enable.fail_early) Global.crash();
             },
             .ok => {
+                if (manager.subcommand == .update) {
+                    // existing lockfile, get the original version is updating
+                    const lockfile = manager.lockfile;
+                    const packages = lockfile.packages.slice();
+                    const resolutions = packages.items(.resolution);
+                    const workspace_package_id = manager.root_package_id.get(manager);
+                    const workspace_dep_list = packages.items(.dependencies)[workspace_package_id];
+                    const workspace_res_list = packages.items(.resolutions)[workspace_package_id];
+                    const workspace_deps = workspace_dep_list.get(lockfile.buffers.dependencies.items);
+                    const workspace_package_ids = workspace_res_list.get(lockfile.buffers.resolutions.items);
+                    for (workspace_deps, workspace_package_ids) |dep, package_id| {
+                        if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+
+                        if (manager.updating_packages.getPtr(dep.name.slice(lockfile.buffers.string_bytes.items))) |entry_ptr| {
+                            const original_resolution: Resolution = resolutions[package_id];
+                            // Just in case check if the resolution is `npm`. It should always be `npm` because the dependency version
+                            // is `npm` or `dist_tag`.
+                            if (original_resolution.tag != .npm) continue;
+
+                            var original = original_resolution.value.npm.version;
+                            const tag_total = original.tag.pre.len() + original.tag.build.len();
+                            if (tag_total > 0) {
+                                // clone because don't know if lockfile buffer wil reallocate
+                                var tag_buf = manager.allocator.alloc(u8, tag_total) catch bun.outOfMemory();
+                                original.tag = original_resolution.value.npm.version.tag.cloneInto(
+                                    lockfile.buffers.string_bytes.items,
+                                    &tag_buf,
+                                );
+
+                                entry_ptr.original_version_string_buf = tag_buf;
+                            }
+
+                            entry_ptr.original_version = original;
+                        }
+                    }
+                }
                 differ: {
                     root = load_lockfile_result.ok.lockfile.rootPackage() orelse {
                         needs_new_lockfile = true;
@@ -11097,7 +11157,7 @@ pub const PackageManager = struct {
                             var iter = lockfile.workspace_versions.iterator();
                             while (iter.next()) |entry| {
                                 // Copy version string offsets
-                                const version = entry.value_ptr.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
+                                const version = entry.value_ptr.append(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                                 manager.lockfile.workspace_versions.putAssumeCapacity(entry.key_ptr.*, version);
                             }
                         }
@@ -11523,6 +11583,7 @@ pub const PackageManager = struct {
                     .options = manager.options,
                     .updates = manager.update_requests,
                     .successfully_installed = install_summary.successfully_installed,
+                    .manager = manager,
                 };
 
                 switch (Output.enable_ansi_colors) {

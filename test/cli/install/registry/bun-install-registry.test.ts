@@ -2414,6 +2414,40 @@ describe("update", () => {
         version: "1.1.0",
       });
     });
+    test("with pre and build tags", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "aliased-dep": "npm:prereleases-3@5.0.0-alpha.150",
+          },
+        }),
+      );
+
+      await runBunUpdate(env, packageDir);
+
+      expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
+        name: "foo",
+        dependencies: {
+          "aliased-dep": "npm:prereleases-3@5.0.0-alpha.150",
+        },
+      });
+
+      expect(await file(join(packageDir, "node_modules", "aliased-dep", "package.json")).json()).toMatchObject({
+        name: "prereleases-3",
+        version: "5.0.0-alpha.150",
+      });
+
+      const { out } = await runBunUpdate(env, packageDir, ["--latest"]);
+      expect(out).toEqual(["", "↑ aliased-dep 5.0.0-alpha.150 -> 5.0.0-alpha.153", "", "1 package installed"]);
+      expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
+        name: "foo",
+        dependencies: {
+          "aliased-dep": "npm:prereleases-3@5.0.0-alpha.153",
+        },
+      });
+    });
   });
   test("--no-save will update packages in node_modules and not save to package.json", async () => {
     await write(

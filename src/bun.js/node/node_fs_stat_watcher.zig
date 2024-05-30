@@ -366,7 +366,7 @@ pub const StatWatcher = struct {
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
-        vm.rareData().nodeFSStatWatcherScheduler(vm, @intCast(this.interval)).append(this);
+        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
@@ -391,7 +391,7 @@ pub const StatWatcher = struct {
             _ = vm.uncaughtException(this.globalThis, result, false);
         }
 
-        vm.rareData().nodeFSStatWatcherScheduler(vm, @intCast(this.interval)).append(this);
+        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 
     /// Called from any thread

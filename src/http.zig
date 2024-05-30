@@ -1506,6 +1506,7 @@ redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
+progress_string_buf: [512]u8 = undefined,
 downloaded_bytes: u64 = 0,
 estimated_content_length: u64 = 0,
 
@@ -3136,6 +3137,14 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
     };
 }
 
+fn updateProgress(this: *HTTPClient) void {
+    if (this.progress_node) |progress| {
+        progress.activate();
+        progress.setName(std.fmt.bufPrint(&this.progress_string_buf, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
+        progress.context.maybeRefresh();
+    }
+}
+
 // preallocate a buffer for the body no more than 256 MB
 // the intent is to avoid an OOM caused by a malicious server
 // reporting gigantic Conten-Length and then
@@ -3159,11 +3168,9 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         this.state.total_body_received += incoming_data.len;
     }
     defer {
-        if (this.progress_node) |progress| {
-            progress.activate();
+        if (this.progress_node != null) {
             this.downloaded_bytes += incoming_data.len;
-            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-            progress.context.maybeRefresh();
+            updateProgress(this);
         }
     }
     // we can ignore the body data in redirects
@@ -3216,11 +3223,9 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
 
     this.state.total_body_received += remainder.len;
 
-    if (this.progress_node) |progress| {
-        progress.activate();
+    if (this.progress_node != null) {
         this.downloaded_bytes += incoming_data.len;
-        progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-        progress.context.maybeRefresh();
+        updateProgress(this);
     }
 
     // done or streaming
@@ -3228,11 +3233,9 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
-        if (this.progress_node) |progress| {
-            progress.activate();
+        if (this.progress_node != null) {
             this.downloaded_bytes = this.state.total_body_received;
-            progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-            progress.context.maybeRefresh();
+            updateProgress(this);
         }
         return is_done or processed;
     }
@@ -3285,11 +3288,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         -1 => return error.InvalidHTTPResponse,
         // Needs more data
         -2 => {
-            if (this.progress_node) |progress| {
-                progress.activate();
+            if (this.progress_node != null) {
                 this.downloaded_bytes = buffer.list.items.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-                progress.context.maybeRefresh();
+                updateProgress(this);
             }
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
@@ -3305,11 +3306,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 buffer,
             );
 
-            if (this.progress_node) |progress| {
-                progress.activate();
+            if (this.progress_node != null) {
                 this.downloaded_bytes = buffer.list.items.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-                progress.context.maybeRefresh();
+                updateProgress(this);
             }
 
             return true;
@@ -3362,11 +3361,9 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         },
         // Needs more data
         -2 => {
-            if (this.progress_node) |progress| {
-                progress.activate();
+            if (this.progress_node != null) {
                 this.downloaded_bytes += buffer.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-                progress.context.maybeRefresh();
+                updateProgress(this);
             }
             const body_buffer = this.state.getBodyBuffer();
             try body_buffer.appendSliceExact(buffer);
@@ -3384,11 +3381,9 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             try this.handleResponseBodyFromSinglePacket(buffer);
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
-            if (this.progress_node) |progress| {
-                progress.activate();
+            if (this.progress_node != null) {
                 this.downloaded_bytes += buffer.len;
-                progress.setName(std.fmt.allocPrint(std.heap.page_allocator, "Downloading [{s:.2}/{s:.2}]", .{ bun.fmt.size(this.downloaded_bytes), bun.fmt.size(this.estimated_content_length) }) catch bun.outOfMemory());
-                progress.context.maybeRefresh();
+                updateProgress(this);
             }
 
             return true;

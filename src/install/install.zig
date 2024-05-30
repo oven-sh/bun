@@ -336,13 +336,16 @@ pub const PatchTask = struct {
         const calc_hash = &this.callback.calc_hash;
         const hash = switch (calc_hash.result orelse @panic("bad")) {
             .result => |h| h,
-            .err => @panic("TODO handle error gracefully"),
+            .err => |e| {
+                std.debug.print("ERROR: {s} {s}\n", .{ @tagName(e.errno), if (e.path) |p| p else "idk" });
+                @panic("TODO zack handle error gracefully");
+            },
         };
         std.debug.print("CALCULATED HASH: {x}\n", .{hash});
         var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
         if (gop.found_existing) {
             gop.value_ptr.setPatchfileHash(hash);
-        } else @panic("TODO this means a bug");
+        } else @panic("TODO zack this means a bug");
 
         if (calc_hash.state) |state| {
             const url = state.url;
@@ -1272,6 +1275,17 @@ const Task = struct {
         var this = @fieldParentPtr(Task, "threadpool_task", task);
         const manager = this.package_manager;
         defer {
+            if (this.status == .success) {
+                if (this.apply_patch_task) |pt| {
+                    defer pt.deinit();
+                    const result = pt.apply();
+                    if (result.asErr()) |e| {
+                        std.debug.print("ERROR: {}\n", .{e});
+                        @panic("TODO zack handle result");
+                    }
+                    // TODO zack check result
+                }
+            }
             manager.resolve_tasks.push(this);
             manager.wake();
         }
@@ -2862,10 +2876,19 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         pub fn packageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID) bool {
-            return switch (manager.getPreinstallState(package_id)) {
+            const state = manager.getPreinstallState(package_id);
+            return switch (state) {
                 .done => false,
                 else => brk: {
-                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+                    if (this.patch.isNull()) {
+                        const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+                        if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+                        break :brk !exists;
+                    }
+                    const cache_dir_subpath_without_patch_hash = this.cache_dir_subpath[0 .. std.mem.lastIndexOf(u8, this.cache_dir_subpath, "_patch_hash=") orelse @panic("Patched dependency cache dir subpath does not have the \"_patch_hash=HASH\" suffix. This is a bug, please file a GitHub issue.")];
+                    @memcpy(bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len], cache_dir_subpath_without_patch_hash);
+                    bun.path.join_buf[cache_dir_subpath_without_patch_hash.len] = 0;
+                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, bun.path.join_buf[0..cache_dir_subpath_without_patch_hash.len :0]).unwrap() catch false;
                     if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
                     break :brk !exists;
                 },
@@ -2873,22 +2896,20 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         }
 
         fn patchedPackageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID, patchfile_hash: u64) bool {
-            return switch (manager.getPreinstallState(package_id)) {
-                .done => false,
-                else => brk: {
-                    const patch_hash_prefix = "_patch_hash=";
-                    var patch_hash_part: [patch_hash_prefix.len + max_buntag_hash_buf_len + 1]u8 = undefined;
-                    @memcpy(patch_hash_part[0..patch_hash_prefix.len], patch_hash_prefix);
-                    const hash_str = std.fmt.bufPrint(patch_hash_part[patch_hash_prefix.len..], "{x}", .{patchfile_hash}) catch unreachable;
-                    @memcpy(bun.path.join_buf[0..], this.cache_dir_subpath);
-                    @memcpy(bun.path.join_buf[this.cache_dir_subpath.len .. this.cache_dir_subpath.len + hash_str.len], hash_str);
-                    bun.path.join_buf[this.cache_dir_subpath.len + hash_str.len] = 0;
-                    const patch_cache_dir_subpath = bun.path.join_buf[0 .. this.cache_dir_subpath.len + hash_str.len :0];
-                    const exists = Syscall.directoryExistsAt(this.cache_dir.fd, patch_cache_dir_subpath).unwrap() catch false;
-                    if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
-                    break :brk !exists;
-                },
-            };
+            _ = patchfile_hash; // autofix
+
+            // const patch_hash_prefix = "_patch_hash=";
+            // var patch_hash_part_buf: [patch_hash_prefix.len + max_buntag_hash_buf_len + 1]u8 = undefined;
+            // @memcpy(patch_hash_part_buf[0..patch_hash_prefix.len], patch_hash_prefix);
+            // const hash_str = std.fmt.bufPrint(patch_hash_part_buf[patch_hash_prefix.len..], "{x}", .{patchfile_hash}) catch unreachable;
+            // const patch_hash_part = patch_hash_part_buf[0 .. patch_hash_prefix.len + hash_str.len];
+            // @memcpy(bun.path.join_buf[0..this.cache_dir_subpath.len], this.cache_dir_subpath);
+            // @memcpy(bun.path.join_buf[this.cache_dir_subpath.len .. this.cache_dir_subpath.len + patch_hash_part.len], patch_hash_part);
+            // bun.path.join_buf[this.cache_dir_subpath.len + patch_hash_part.len] = 0;
+            // const patch_cache_dir_subpath = bun.path.join_buf[0 .. this.cache_dir_subpath.len + patch_hash_part.len :0];
+            const exists = Syscall.directoryExistsAt(this.cache_dir.fd, this.cache_dir_subpath).unwrap() catch false;
+            if (exists) manager.setPreinstallState(package_id, manager.lockfile, .done);
+            return !exists;
         }
 
         pub fn install(this: *@This(), skip_delete: bool, destination_dir: std.fs.Dir) Result {
@@ -4892,6 +4913,9 @@ pub const PackageManager = struct {
         task_id: u64,
         name: string,
         repository: *const Repository,
+        dependency: *const Dependency,
+        /// if patched then we need to do apply step after network task is done
+        patch_name_and_version_hash: ?u64,
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
@@ -4913,6 +4937,17 @@ pub const PackageManager = struct {
                 },
             },
             .id = task_id,
+            .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+                const dep = dependency;
+                const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
+                    .PackageID => |p| p,
+                    .PackageIDMultiple => |ps| ps.items[0], // TODO is this correct
+                };
+                const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+                const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
+                pt.callback.apply.task_id = task_id;
+                break :brk pt;
+            } else null,
             .data = undefined,
         };
         return &task.threadpool_task;
@@ -4926,6 +4961,8 @@ pub const PackageManager = struct {
         name: string,
         resolution: Resolution,
         resolved: string,
+        /// if patched then we need to do apply step after network task is done
+        patch_name_and_version_hash: ?u64,
     ) *ThreadPool.Task {
         var task = this.preallocated_resolve_tasks.get();
         task.* = Task{
@@ -4954,6 +4991,17 @@ pub const PackageManager = struct {
                     ) catch unreachable,
                 },
             },
+            .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
+                const dep = this.lockfile.buffers.dependencies.items[dependency_id];
+                const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
+                    .PackageID => |p| p,
+                    .PackageIDMultiple => |ps| ps.items[0], // TODO is this correct
+                };
+                const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
+                const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
+                pt.callback.apply.task_id = task_id;
+                break :brk pt;
+            } else null,
             .id = task_id,
             .data = undefined,
         };
@@ -5460,6 +5508,7 @@ pub const PackageManager = struct {
                         alias,
                         res,
                         resolved,
+                        null,
                     )));
                 } else {
                     var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
@@ -5470,7 +5519,7 @@ pub const PackageManager = struct {
 
                     if (this.hasCreatedNetworkTask(clone_id)) return;
 
-                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep)));
+                    this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, dependency, null)));
                 }
             },
             .github => {
@@ -5529,7 +5578,7 @@ pub const PackageManager = struct {
                         .name_hash = dependency.name_hash,
                         .resolution = res,
                     },
-                    @panic("TODO: handle if patched"),
+                    null,
                 )) |network_task| {
                     this.enqueueNetworkTask(network_task);
                 }
@@ -6197,12 +6246,14 @@ pub const PackageManager = struct {
             if (ptask.callback == .apply) {
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     if (ptask.callback.apply.task_id) |task_id| {
-                        const name = manager.lockfile.packages.items(.name)[ptask.callback.apply.pkg_id].slice(manager.lockfile.buffers.string_bytes.items);
-                        if (!callbacks.onPatch(extract_ctx, name, task_id, log_level)) {
-                            if (comptime Environment.allow_assert) {
-                                Output.panic("Ran callback to install enqueued packages, but there was no task associated with it.", .{});
-                            }
-                        }
+                        _ = task_id; // autofix
+
+                        // const name = manager.lockfile.packages.items(.name)[ptask.callback.apply.pkg_id].slice(manager.lockfile.buffers.string_bytes.items);
+                        // if (!callbacks.onPatch(extract_ctx, name, task_id, log_level)) {
+                        //     if (comptime Environment.allow_assert) {
+                        //         Output.panic("Ran callback to install enqueued packages, but there was no task associated with it.", .{});
+                        //     }
+                        // }
                     } else if (ExtractCompletionContext == *PackageInstaller) {
                         extract_ctx.installPackage(ptask.callback.apply.dependency_id.?, log_level);
                     }
@@ -6613,9 +6664,6 @@ pub const PackageManager = struct {
                     };
                     const dependency_id = tarball.dependency_id;
                     var package_id = manager.lockfile.buffers.resolutions.items[dependency_id];
-                    if (std.mem.eql(u8, manager.lockfile.packages.items(.name)[package_id].slice(manager.lockfile.buffers.string_bytes.items), "is-even")) {
-                        std.debug.print("HI!\n", .{});
-                    }
                     const alias = tarball.name.slice();
                     const resolution = &tarball.resolution;
 
@@ -6705,9 +6753,10 @@ pub const PackageManager = struct {
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
 
-                    if (task.tag == .extract and task.request.extract.network.apply_patch_task != null) {
-                        manager.enqueuePatchTask(task.request.extract.network.apply_patch_task.?);
-                    } else if (comptime @TypeOf(callbacks.onExtract) != void) {
+                    // if (task.tag == .extract and task.request.extract.network.apply_patch_task != null) {
+                    //     manager.enqueuePatchTask(task.request.extract.network.apply_patch_task.?);
+                    // } else
+                    if (comptime @TypeOf(callbacks.onExtract) != void) {
                         if (ExtractCompletionContext == *PackageInstaller) {
                             extract_ctx.fixCachedLockfilePackageSlices();
                         }
@@ -10563,6 +10612,7 @@ pub const PackageManager = struct {
                                 alias,
                                 resolution,
                                 context,
+                                patch_name_and_version_hash,
                             );
                         },
                         .github => {
@@ -10573,6 +10623,7 @@ pub const PackageManager = struct {
                                 package_id,
                                 url,
                                 context,
+                                patch_name_and_version_hash,
                             );
                         },
                         .local_tarball => {
@@ -10589,6 +10640,7 @@ pub const PackageManager = struct {
                                 package_id,
                                 resolution.value.remote_tarball.slice(buf),
                                 context,
+                                patch_name_and_version_hash,
                             );
                         },
                         .npm => {
@@ -10995,6 +11047,7 @@ pub const PackageManager = struct {
         alias: string,
         resolution: *const Resolution,
         task_context: TaskCallbackContext,
+        patch_name_and_version_hash: ?u64,
     ) void {
         const repository = &resolution.value.git;
         const url = this.lockfile.str(&repository.repo);
@@ -11014,14 +11067,7 @@ pub const PackageManager = struct {
         if (checkout_queue.found_existing) return;
 
         if (this.git_repositories.get(clone_id)) |repo_fd| {
-            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
-                checkout_id,
-                repo_fd,
-                dependency_id,
-                alias,
-                resolution.*,
-                resolved,
-            )));
+            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(checkout_id, repo_fd, dependency_id, alias, resolution.*, resolved, patch_name_and_version_hash)));
         } else {
             var clone_queue = this.task_queue.getOrPut(this.allocator, clone_id) catch unreachable;
             if (!clone_queue.found_existing) {
@@ -11035,7 +11081,7 @@ pub const PackageManager = struct {
 
             if (clone_queue.found_existing) return;
 
-            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, repository)));
+            this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, repository, &this.lockfile.buffers.dependencies.items[dependency_id], null)));
         }
     }
 
@@ -11067,8 +11113,6 @@ pub const PackageManager = struct {
             url,
             dependency_id,
             this.lockfile.packages.get(package_id),
-            // TODO: handle this
-            // @panic("TODO zack handle"),
             patch_name_and_version_hash,
         ) catch unreachable) |task| {
             task.schedule(&this.network_tarball_batch);
@@ -11084,6 +11128,7 @@ pub const PackageManager = struct {
         package_id: PackageID,
         url: string,
         task_context: TaskCallbackContext,
+        patch_name_and_version_hash: ?u64,
     ) void {
         const task_id = Task.Id.forTarball(url);
         var task_queue = this.task_queue.getOrPut(this.allocator, task_id) catch unreachable;
@@ -11103,7 +11148,7 @@ pub const PackageManager = struct {
             url,
             dependency_id,
             this.lockfile.packages.get(package_id),
-            @panic("TODO zack handle"),
+            patch_name_and_version_hash,
         ) catch unreachable) |task| {
             task.schedule(&this.network_tarball_batch);
             if (this.network_tarball_batch.len > 0) {

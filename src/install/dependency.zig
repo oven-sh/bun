@@ -264,6 +264,10 @@ pub const Version = struct {
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
 
+    pub inline fn npm(this: *const Version) ?NpmInfo {
+        return if (this.tag == .npm) this.value.npm else null;
+    }
+
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
             .npm => {

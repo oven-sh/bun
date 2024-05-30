@@ -3168,10 +3168,10 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         this.state.total_body_received += incoming_data.len;
     }
     defer {
-        if (this.progress_node != null) {
-            this.downloaded_bytes += incoming_data.len;
+        this.downloaded_bytes += incoming_data.len;
+
+        if (this.progress_node != null)
             updateProgress(this);
-        }
     }
     // we can ignore the body data in redirects
     if (this.state.is_redirect_pending) return;
@@ -3222,21 +3222,20 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     this.state.total_body_received += remainder.len;
+    this.downloaded_bytes += incoming_data.len;
 
-    if (this.progress_node != null) {
-        this.downloaded_bytes += incoming_data.len;
+    if (this.progress_node != null)
         updateProgress(this);
-    }
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
-        if (this.progress_node != null) {
-            this.downloaded_bytes = this.state.total_body_received;
+        this.downloaded_bytes = this.state.total_body_received;
+        if (this.progress_node != null)
             updateProgress(this);
-        }
+
         return is_done or processed;
     }
     return false;
@@ -3288,10 +3287,10 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         -1 => return error.InvalidHTTPResponse,
         // Needs more data
         -2 => {
-            if (this.progress_node != null) {
-                this.downloaded_bytes = buffer.list.items.len;
+            this.downloaded_bytes = buffer.list.items.len;
+            if (this.progress_node != null)
                 updateProgress(this);
-            }
+
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
                 return try this.state.processBodyBuffer(buffer);
@@ -3306,10 +3305,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 buffer,
             );
 
-            if (this.progress_node != null) {
-                this.downloaded_bytes = buffer.list.items.len;
+            this.downloaded_bytes = buffer.list.items.len;
+            if (this.progress_node != null)
                 updateProgress(this);
-            }
 
             return true;
         },
@@ -3361,10 +3359,10 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         },
         // Needs more data
         -2 => {
-            if (this.progress_node != null) {
-                this.downloaded_bytes += buffer.len;
+            this.downloaded_bytes += buffer.len;
+            if (this.progress_node != null)
                 updateProgress(this);
-            }
+
             const body_buffer = this.state.getBodyBuffer();
             try body_buffer.appendSliceExact(buffer);
 
@@ -3381,10 +3379,9 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             try this.handleResponseBodyFromSinglePacket(buffer);
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
-            if (this.progress_node != null) {
-                this.downloaded_bytes += buffer.len;
+            this.downloaded_bytes += buffer.len;
+            if (this.progress_node != null)
                 updateProgress(this);
-            }
 
             return true;
         },

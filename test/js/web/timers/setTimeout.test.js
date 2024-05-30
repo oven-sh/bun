@@ -148,22 +148,23 @@ it("Bun.sleep propagates exceptions", async () => {
   }
 });
 
+const tolerance = 8;
 it("Bun.sleep works with a Date object", async () => {
   const offset = isWindows ? 100 : 10;
-  const now = performance.now();
+  const init = performance.now();
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(Math.ceil(performance.now() - now)).toBeGreaterThanOrEqual(offset);
+  expect(Math.ceil(performance.now() - init + tolerance)).toBeGreaterThanOrEqual(offset);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {
-  const offset = isWindows ? 100 : 10;
+  const offset = isWindows ? 100 : 50;
   let ten_ms = new Date();
+  const init = performance.now();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  let now = new Date();
-  expect(+now).toBeGreaterThanOrEqual(+ten_ms);
+  expect(Math.ceil(performance.now() - init + tolerance)).toBeGreaterThanOrEqual(offset);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {

@@ -27,11 +27,10 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
     WebCore::JSTimeout* timeout = jsCast<WebCore::JSTimeout*>(JSC::JSValue::decode(encodedTimeoutValue));
 
     JSCell* callbackCell = timeout->m_callback.get().asCell();
-    JSValue restoreAsyncContext;
+    JSValue restoreAsyncContext{};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
 
     if (auto *wrapper = jsDynamicCast<AsyncContextFrame*>(callbackCell)) {
-        auto *frame = jsCast<InternalFieldTuple*>(callbackCell);
         callbackCell = wrapper->callback.get().asCell();
         asyncContextData = globalObject->m_asyncContextData.get();
         restoreAsyncContext = asyncContextData->getInternalField(0);

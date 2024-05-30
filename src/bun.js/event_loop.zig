@@ -1371,38 +1371,6 @@ pub const EventLoop = struct {
         ctx.onAfterEventLoop();
     }
 
-    pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
-        var ctx = this.virtual_machine;
-        var loop = this.usocketsLoop();
-
-        this.flushImmediateQueue();
-        this.tickImmediateTasks();
-
-        if (comptime Environment.isPosix) {
-            // Some tasks need to keep the event loop alive for one more tick.
-            // We want to keep the event loop alive long enough to process those ticks and any microtasks
-            //
-            // BUT. We don't actually have an idle event in that case.
-            // That means the process will be waiting forever on nothing.
-            // So we need to drain the counter immediately before entering uSockets loop
-            const pending_unref = ctx.pending_unref_counter;
-            if (pending_unref > 0) {
-                ctx.pending_unref_counter = 0;
-                loop.unrefCount(pending_unref);
-            }
-        }
-
-        if (loop.isActive()) {
-            this.processGCTimer();
-            loop.tickWithTimeout(timeoutMs);
-        } else {
-            loop.tickWithoutIdle();
-        }
-
-        this.flushImmediateQueue();
-        ctx.onAfterEventLoop();
-    }
-
     pub fn flushImmediateQueue(this: *EventLoop) void {
         // If we can get away with swapping the queues, do that rather than copying the data
         if (this.immediate_tasks.count > 0) {

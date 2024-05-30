@@ -1384,7 +1384,7 @@ pub const Printer = struct {
 
             const fmt = comptime brk: {
                 if (enable_ansi_colors) {
-                    break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{} -\\><r> <b><cyan>{}<r>\n", enable_ansi_colors);
+                    break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{} →<r> <b><cyan>{}<r>\n", enable_ansi_colors);
                 }
                 break :brk Output.prettyFmt("<r>^ <b>{s}<r><d> <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
             };

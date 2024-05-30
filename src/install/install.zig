@@ -11188,6 +11188,8 @@ pub const PackageManager = struct {
                     return;
                 }
 
+                // above checks if unpatched package is in cache, if not null apply patch in temp directory, copy
+                // into cache, then install into node_modules
                 if (!installer.patch.isNull()) {
                     if (installer.patchedPackageMissingFromCache(this.manager, package_id, installer.patch.patch_contents_hash)) {
                         const task = PatchTask.newApplyPatchHash(

@@ -2539,6 +2539,16 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
     }
 }
 
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePathW(dir: std.fs.Dir, sub_path: []const u16) !void {
+    // was going to copy/paste makePath and use all W versions but they didn't all exist
+    // and this buffer was needed anyway
+    var buf: PathBuffer = undefined;
+    const buf_len = simdutf.convert.utf16.to.utf8.le(sub_path, &buf);
+    return makePath(dir, buf[0..buf_len]);
+}
+
 pub const Async = @import("async");
 
 /// This is a helper for writing path string literals that are compatible with Windows.

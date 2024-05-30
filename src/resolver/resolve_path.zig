@@ -489,6 +489,17 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
     }
 }
 
+pub fn dirnameW(str: []const u16) []const u16 {
+    const separator = lastIndexOfSeparatorWindowsT(u16, str) orelse {
+        // return disk designator instead
+        if (str.len < 2) return &.{};
+        if (!(str[1] == ':')) return &.{};
+        if (!bun.path.isDriveLetterT(u16, str[0])) return &.{};
+        return str[0..2];
+    };
+    return str[0..separator];
+}
+
 threadlocal var relative_from_buf: bun.PathBuffer = undefined;
 threadlocal var relative_to_buf: bun.PathBuffer = undefined;
 

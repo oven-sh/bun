@@ -89,7 +89,7 @@ pub const StatWatcherScheduler = struct {
         while (prev.closed) {
             var c = prev;
             defer {
-                c.used_by_scheduler_thread = false;
+                c.used_by_scheduler_thread.store(false, .Release);
             }
 
             log("[1] removing closed watcher for '{s}'", .{prev.path});
@@ -117,7 +117,7 @@ pub const StatWatcherScheduler = struct {
                 log("[2] removing closed watcher for '{s}'", .{c.path});
                 prev.next = c.next;
                 curr = c.next;
-                c.used_by_scheduler_thread = false;
+                c.used_by_scheduler_thread.store(false, .Release);
                 continue;
             }
             if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 -| 500)) {
@@ -145,7 +145,7 @@ pub const StatWatcher = struct {
     /// Closed is set to true to tell the scheduler to remove from list and mark `used_by_scheduler_thread` as false.
     closed: bool,
     /// When this is marked `false` this StatWatcher can get freed
-    used_by_scheduler_thread: bool,
+    used_by_scheduler_thread: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     path: [:0]u8,
     persistent: bool,
@@ -227,16 +227,16 @@ pub const StatWatcher = struct {
                     bigint = (options_or_callable.getOptional(ctx, "bigint", bool) catch return null) orelse false;
 
                     if (options_or_callable.get(ctx, "interval")) |interval_| {
-                        if (!interval_.isNumber()) {
+                        if (!interval_.isNumber() and !interval_.isAnyInt()) {
                             JSC.throwInvalidArguments(
-                                "bigint must be a boolean.",
+                                "interval must be a number.",
                                 .{},
                                 ctx,
                                 exception,
                             );
                             return null;
                         }
-                        interval = interval_.toInt32(); //*
+                        interval = interval_.coerce(i32, ctx);
                     }
                 }
             }
@@ -288,7 +288,9 @@ pub const StatWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) callconv(.C) bool {
-        return this.used_by_scheduler_thread;
+        @fence(.Acquire);
+
+        return this.used_by_scheduler_thread.load(.Acquire);
     }
 
     /// Stops file watching but does not free the instance.
@@ -332,7 +334,7 @@ pub const StatWatcher = struct {
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
-                this.used_by_scheduler_thread = false;
+                this.used_by_scheduler_thread.store(false, .Release);
                 return;
             }
 
@@ -355,7 +357,7 @@ pub const StatWatcher = struct {
 
     pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
-            this.used_by_scheduler_thread = false;
+            this.used_by_scheduler_thread.store(false, .Release);
             return;
         }
 
@@ -363,12 +365,12 @@ pub const StatWatcher = struct {
         this.last_jsvalue = JSC.Strong.create(jsvalue, this.globalThis);
 
         const vm = this.globalThis.bunVM();
-        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
+        vm.rareData().nodeFSStatWatcherScheduler(vm, @intCast(this.interval)).append(this);
     }
 
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
-            this.used_by_scheduler_thread = false;
+            this.used_by_scheduler_thread.store(false, .Release);
             return;
         }
 
@@ -388,7 +390,7 @@ pub const StatWatcher = struct {
             _ = vm.uncaughtException(this.globalThis, result, false);
         }
 
-        vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
+        vm.rareData().nodeFSStatWatcherScheduler(vm, @intCast(this.interval)).append(this);
     }
 
     /// Called from any thread
@@ -461,7 +463,7 @@ pub const StatWatcher = struct {
             .js_this = .zero,
             .closed = false,
             .path = alloc_file_path,
-            .used_by_scheduler_thread = true,
+            .used_by_scheduler_thread = std.atomic.Value(bool).init(true),
             // Instant.now will not fail on our target platforms.
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this

@@ -415,12 +415,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveReturned()`](https://jestjs.io/docs/expect#tohavereturned)
 
 ---
 
-- ❌
+- ✅
 - [`.toHaveReturnedTimes()`](https://jestjs.io/docs/expect#tohavereturnedtimesnumber)
 
 ---

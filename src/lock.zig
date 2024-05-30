@@ -4,9 +4,9 @@ const Futex = @import("./futex.zig");
 
 // Credit: this is copypasta from @kprotty. Thank you @kprotty!
 pub const Mutex = struct {
-    state: Atomic(u32) = Atomic(u32).init(UNLOCKED),
+    state: Atomic(u32) = Atomic(u32).init(UNLOCKED), // if changed update loop.c in usockets
 
-    const UNLOCKED = 0;
+    const UNLOCKED = 0; // if changed update loop.c in usockets
     const LOCKED = 0b01;
     const CONTENDED = 0b11;
     const is_x86 = @import("builtin").target.cpu.arch.isX86();
@@ -125,3 +125,11 @@ pub const Lock = struct {
 };
 
 pub fn spinCycle() void {}
+
+export fn Bun__lock(lock: *Lock) void {
+    lock.lock();
+}
+
+export fn Bun__unlock(lock: *Lock) void {
+    lock.unlock();
+}

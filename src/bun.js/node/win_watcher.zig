@@ -180,7 +180,7 @@ pub const PathWatcher = struct {
     }
 
     pub fn init(manager: *PathWatcherManager, path: [:0]const u8, recursive: bool) bun.JSC.Maybe(*PathWatcher) {
-        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: bun.PathBuffer = undefined;
         const event_path = switch (bun.sys.readlink(path, &outbuf)) {
             .err => |err| brk: {
                 if (err.errno == @intFromEnum(bun.C.E.NOENT)) {

@@ -382,7 +382,7 @@ pub fn Maybe(comptime ReturnTypeT: type) type {
     return JSC.Node.Maybe(ReturnTypeT, Error);
 }
 
-pub fn getcwd(buf: *[bun.MAX_PATH_BYTES]u8) Maybe([]const u8) {
+pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
     const Result = Maybe([]const u8);
     buf[0] = 0;
     const rc = std.c.getcwd(buf, bun.MAX_PATH_BYTES);
@@ -641,10 +641,11 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: bun.Mode) Maybe(void) {
     };
 }
 
-pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
+const fnctl_int = if (Environment.isLinux) usize else c_int;
+pub fn fcntl(fd: bun.FileDescriptor, cmd: i32, arg: fnctl_int) Maybe(fnctl_int) {
     const result = fcntl_symbol(fd.cast(), cmd, arg);
-    if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
-    return .{ .result = @as(usize, @intCast(result)) };
+    if (Maybe(fnctl_int).errnoSys(result, .fcntl)) |err| return err;
+    return .{ .result = @intCast(result) };
 }
 
 pub fn getErrno(rc: anytype) bun.C.E {
@@ -687,9 +688,7 @@ pub fn normalizePathWindows(
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
-        return .{
-            .result = norm,
-        };
+        return .{ .result = norm };
     }
 
     const base_fd = if (dir_fd == bun.invalid_fd)
@@ -1226,9 +1225,9 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     var debug_timer = bun.Output.DebugTimer.start();
 
     defer {
-        if (comptime Environment.isDebug) {
+        if (Environment.isDebug) {
             if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                bun.Output.debugWarn("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
+                log("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
             }
         }
     }
@@ -1751,7 +1750,6 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
             bun.strings.toNTPath(&w_buf_from, from),
             to_dir,
             bun.strings.toNTPath(&w_buf_to, to),
-            // @paperdave why waas this set to false?
             true,
         );
 
@@ -2145,23 +2143,99 @@ pub fn getMaxPipeSizeOnLinux() usize {
     );
 }
 
+pub const WindowsFileAttributes = packed struct(windows.DWORD) {
+    //1 0x00000001 FILE_ATTRIBUTE_READONLY
+    is_readonly: bool,
+    //2 0x00000002 FILE_ATTRIBUTE_HIDDEN
+    is_hidden: bool,
+    //4 0x00000004 FILE_ATTRIBUTE_SYSTEM
+    is_system: bool,
+    //8
+    _03: bool,
+    //1 0x00000010 FILE_ATTRIBUTE_DIRECTORY
+    is_directory: bool,
+    //2 0x00000020 FILE_ATTRIBUTE_ARCHIVE
+    is_archive: bool,
+    //4 0x00000040 FILE_ATTRIBUTE_DEVICE
+    is_device: bool,
+    //8 0x00000080 FILE_ATTRIBUTE_NORMAL
+    is_normal: bool,
+    //1 0x00000100 FILE_ATTRIBUTE_TEMPORARY
+    is_temporary: bool,
+    //2 0x00000200 FILE_ATTRIBUTE_SPARSE_FILE
+    is_sparse_file: bool,
+    //4 0x00000400 FILE_ATTRIBUTE_REPARSE_POINT
+    is_reparse_point: bool,
+    //8 0x00000800 FILE_ATTRIBUTE_COMPRESSED
+    is_compressed: bool,
+    //1 0x00001000 FILE_ATTRIBUTE_OFFLINE
+    is_offline: bool,
+    //2 0x00002000 FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+    is_not_content_indexed: bool,
+    //4 0x00004000 FILE_ATTRIBUTE_ENCRYPTED
+    is_encrypted: bool,
+    //8 0x00008000 FILE_ATTRIBUTE_INTEGRITY_STREAM
+    is_integrity_stream: bool,
+    //1 0x00010000 FILE_ATTRIBUTE_VIRTUAL
+    is_virtual: bool,
+    //2 0x00020000 FILE_ATTRIBUTE_NO_SCRUB_DATA
+    is_no_scrub_data: bool,
+    //4 0x00040000 FILE_ATTRIBUTE_EA
+    is_ea: bool,
+    //8 0x00080000 FILE_ATTRIBUTE_PINNED
+    is_pinned: bool,
+    //1 0x00100000 FILE_ATTRIBUTE_UNPINNED
+    is_unpinned: bool,
+    //2
+    _21: bool,
+    //4 0x00040000 FILE_ATTRIBUTE_RECALL_ON_OPEN
+    is_recall_on_open: bool,
+    //8
+    _23: bool,
+    //1
+    _24: bool,
+    //2
+    _25: bool,
+    //4 0x00400000 FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    is_recall_on_data_access: bool,
+    //
+    __: u5,
+};
+
+pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
+    if (comptime !Environment.isWindows) @compileError("Windows only");
+
+    const T = std.meta.Child(@TypeOf(path));
+    if (T == u16) {
+        assertIsValidWindowsPath(bun.OSPathChar, path);
+        const dword = kernel32.GetFileAttributesW(path.ptr);
+        if (comptime Environment.isDebug) {
+            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), dword });
+        }
+        if (dword == windows.INVALID_FILE_ATTRIBUTES) {
+            return null;
+        }
+        const attributes: WindowsFileAttributes = @bitCast(dword);
+        return attributes;
+    } else {
+        var wbuf: bun.WPathBuffer = undefined;
+        const path_to_use = bun.strings.toWPath(&wbuf, path);
+        return getFileAttributes(path_to_use);
+    }
+}
+
 pub fn existsOSPath(path: bun.OSPathSliceZ, file_only: bool) bool {
     if (comptime Environment.isPosix) {
         return system.access(path, 0) == 0;
     }
 
     if (comptime Environment.isWindows) {
-        assertIsValidWindowsPath(bun.OSPathChar, path);
-        const attributes = kernel32.GetFileAttributesW(path.ptr);
-        if (Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), attributes });
-        }
-        if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+        const attributes = getFileAttributes(path) orelse return false;
+
+        if (file_only and attributes.is_directory) {
             return false;
         }
-        if (file_only and attributes & windows.FILE_ATTRIBUTE_DIRECTORY != 0) {
-            return false;
-        }
+
         return true;
     }
 
@@ -2174,10 +2248,7 @@ pub fn exists(path: []const u8) bool {
     }
 
     if (comptime Environment.isWindows) {
-        var wbuf: bun.WPathBuffer = undefined;
-        const path_to_use = bun.strings.toWPath(&wbuf, path);
-        assertIsValidWindowsPath(u16, path_to_use);
-        return kernel32.GetFileAttributesW(path_to_use.ptr) != windows.INVALID_FILE_ATTRIBUTES;
+        return getFileAttributes(path) != null;
     }
 
     @compileError("TODO: existsOSPath");
@@ -2254,6 +2325,26 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     }
 
     return faccessat(dir_fd, subpath);
+}
+
+pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
+    const flags = switch (bun.sys.fcntl(
+        fd,
+        std.os.F.GETFL,
+        0,
+    )) {
+        .result => |f| f,
+        .err => |err| return .{ .err = err },
+    };
+
+    const new_flags = flags | std.os.O.NONBLOCK;
+
+    switch (bun.sys.fcntl(fd, std.os.F.SETFL, new_flags)) {
+        .err => |err| return .{ .err = err },
+        .result => {},
+    }
+
+    return Maybe(void).success;
 }
 
 pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
@@ -2500,20 +2591,60 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         @compileError("Linux only.");
     }
 
-    if (comptime Environment.allow_assert)
-        bun.assert(!std.fs.path.isAbsolute(name)); // absolute path will get ignored.
+    const CAP_DAC_READ_SEARCH = struct {
+        pub var status = std.atomic.Value(i32).init(0);
+    };
 
-    return Maybe(void).errnoSysP(
-        std.os.linux.linkat(
-            bun.fdcast(tmpfd),
+    while (true) {
+        // This is racy but it's fine if we call linkat() with an empty path multiple times.
+        const current_status = CAP_DAC_READ_SEARCH.status.load(.Monotonic);
+
+        const rc = if (current_status != -1) std.os.linux.linkat(
+            tmpfd.cast(),
             "",
-            dirfd,
+            dirfd.cast(),
             name,
             os.AT.EMPTY_PATH,
-        ),
-        .link,
-        name,
-    ) orelse Maybe(void).success;
+        ) else brk: {
+            //
+            // snprintf(path, PATH_MAX,  "/proc/self/fd/%d", fd);
+            // linkat(AT_FDCWD, path, AT_FDCWD, "/path/for/file",
+            //        AT_SYMLINK_FOLLOW);
+            //
+            var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
+            const path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{tmpfd.cast()}) catch unreachable;
+
+            break :brk std.os.linux.linkat(
+                os.AT.FDCWD,
+                path,
+                dirfd.cast(),
+                name,
+                os.AT.SYMLINK_FOLLOW,
+            );
+        };
+
+        if (Maybe(void).errnoSysFd(rc, .link, tmpfd)) |err| {
+            switch (err.getErrno()) {
+                .INTR => continue,
+                .ISDIR, .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
+                    // CAP_DAC_READ_SEARCH is required to linkat with an empty path.
+                    if (current_status == 0) {
+                        CAP_DAC_READ_SEARCH.status.store(-1, .Monotonic);
+                        continue;
+                    }
+                },
+                else => {},
+            }
+
+            return err;
+        }
+
+        if (current_status == 0) {
+            CAP_DAC_READ_SEARCH.status.store(1, .Monotonic);
+        }
+
+        return Maybe(void).success;
+    }
 }
 
 /// On Linux, this `preadv2(2)` to attempt to read a blocking file descriptor without blocking.

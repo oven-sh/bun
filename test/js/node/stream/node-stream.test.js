@@ -1,4 +1,4 @@
-import { expect, describe, it } from "bun:test";
+import { expect, describe, it, jest } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
@@ -533,7 +533,7 @@ it("#9242.10 PassThrough has constructor", () => {
 });
 
 it("should send Readable events in the right order", async () => {
-  const package_dir = tmpdirSync("bun-test-node-stream");
+  const package_dir = tmpdirSync();
   const fixture_path = join(package_dir, "fixture.js");
 
   await Bun.write(
@@ -578,13 +578,90 @@ it("should send Readable events in the right order", async () => {
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual([
     `[ "readable", "pause" ]`,
-    // `[ "readable", "resume" ]`,
+    `[ "readable", "resume" ]`,
     `[ "readable", "data" ]`,
     `[ "readable", "data" ]`,
-    // `[ "readable", "readable" ]`,
+    `[ "readable", "readable" ]`,
     `[ "readable", "end" ]`,
     `[ "readable", "close" ]`,
     `[ 1, "Hello World!\\n" ]`,
     ``,
   ]);
+});
+
+it("emits newListener event _before_ adding the listener", () => {
+  const cb = jest.fn(event => {
+    expect(stream.listenerCount(event)).toBe(0);
+  });
+  const stream = new Stream();
+  stream.on("newListener", cb);
+  stream.on("foo", () => {});
+  expect(cb).toHaveBeenCalled();
+});
+
+it("reports error", () => {
+  expect(() => {
+    const dup = new Duplex({
+      read() {
+        this.push("Hello World!\n");
+        this.push(null);
+      },
+      write(chunk, encoding, callback) {
+        callback(new Error("test"));
+      },
+    });
+
+    dup.emit("error", new Error("test"));
+  }).toThrow("test");
+});
+
+it("should correctly call removed listeners", () => {
+  const s = new Stream();
+  let l2Called = false;
+  const l1 = () => {
+    s.removeListener("x", l2);
+  };
+  const l2 = () => {
+    l2Called = true;
+  };
+  s.on("x", l1);
+  s.on("x", l2);
+
+  s.emit("x");
+  expect(l2Called).toBeTrue();
+});
+
+it("should emit prefinish on current tick", done => {
+  class UpperCaseTransform extends Transform {
+    _transform(chunk, encoding, callback) {
+      this.push(chunk.toString().toUpperCase());
+      callback();
+    }
+  }
+
+  const upperCaseTransform = new UpperCaseTransform();
+
+  let prefinishCalled = false;
+  upperCaseTransform.on("prefinish", () => {
+    prefinishCalled = true;
+  });
+
+  let finishCalled = false;
+  upperCaseTransform.on("finish", () => {
+    finishCalled = true;
+  });
+
+  upperCaseTransform.end("hi");
+
+  expect(prefinishCalled).toBeTrue();
+
+  const res = upperCaseTransform.read();
+  expect(res.toString()).toBe("HI");
+
+  expect(finishCalled).toBeFalse();
+
+  process.nextTick(() => {
+    expect(finishCalled).toBeTrue();
+    done();
+  });
 });

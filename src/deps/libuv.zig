@@ -682,16 +682,6 @@ pub const Loop = extern struct {
         this.wq_async.send();
     }
 
-    pub fn refConcurrently(this: *Loop) void {
-        log("refConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
-    }
-
-    pub fn unrefConcurrently(this: *Loop) void {
-        log("unrefConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
-    }
-
     pub fn unrefCount(this: *Loop, count: i32) void {
         log("unrefCount({d})", .{count});
         this.active_handles -= @intCast(count);
@@ -1182,6 +1172,32 @@ pub const struct_uv_timer_s = extern struct {
     repeat: u64,
     start_id: u64,
     timer_cb: uv_timer_cb,
+
+    pub fn init(this: *@This(), loop: *Loop) void {
+        if (uv_timer_init(loop, this) != 0) {
+            @panic("internal error: uv_timer_init failed");
+        }
+    }
+
+    pub fn start(this: *@This(), timeout: u64, repeat: u64, callback: uv_timer_cb) void {
+        if (uv_timer_start(this, callback, timeout, repeat) != 0) {
+            @panic("internal error: uv_timer_start failed");
+        }
+    }
+
+    pub fn stop(this: *@This()) void {
+        if (uv_timer_stop(this) != 0) {
+            @panic("internal error: uv_timer_stop failed");
+        }
+    }
+
+    pub fn unref(this: *@This()) void {
+        uv_unref(@alignCast(@ptrCast(this)));
+    }
+
+    pub fn ref(this: *@This()) void {
+        uv_ref(@alignCast(@ptrCast(this)));
+    }
 };
 pub const uv_timer_t = struct_uv_timer_s;
 const struct_unnamed_413 = extern struct {

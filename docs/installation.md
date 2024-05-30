@@ -144,7 +144,7 @@ $ bun upgrade
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
 
-**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
+**Scoop users** — To avoid conflicts with Scoop, use `scoop update bun` instead.
 
 **proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
@@ -162,7 +162,7 @@ The canary build is useful for testing new features and bug fixes before they're
 [View canary build](https://github.com/oven-sh/bun/releases/tag/canary)
 
 {% callout %}
-**Note** — To switch back to a stable release from canary, run `bun upgrade` again with no flags.
+**Note** — To switch back to a stable release from canary, run `bun upgrade --stable`.
 {% /callout %}
 
 ## Installing older versions of Bun

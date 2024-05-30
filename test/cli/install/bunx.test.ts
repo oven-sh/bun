@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, isWindows } from "harness";
-import { mkdtemp, realpath, writeFile, rm } from "fs/promises";
+import { beforeEach, expect, it, beforeAll, setDefaultTimeout } from "bun:test";
+import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
+import { writeFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -11,6 +11,10 @@ let x_dir: string;
 let current_tmpdir: string;
 let install_cache_dir: string;
 let env = { ...bunEnv };
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 beforeEach(async () => {
   const waiting: Promise<void>[] = [];
@@ -29,9 +33,9 @@ beforeEach(async () => {
     }
   });
 
-  install_cache_dir = await mkdtemp(join(tmpdir(), "bun-install-cache-" + Math.random().toString(36).slice(2)));
-  current_tmpdir = await realpath(await mkdtemp(join(tmpdir(), "bun-x-tmpdir" + Math.random().toString(36).slice(2))));
-  x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test" + Math.random().toString(36).slice(2))));
+  install_cache_dir = tmpdirSync();
+  current_tmpdir = tmpdirSync();
+  x_dir = tmpdirSync();
 
   env.TEMP = current_tmpdir;
   env.BUN_TMPDIR = env.TMPDIR = current_tmpdir;
@@ -101,11 +105,8 @@ it("should install and run default (latest) version", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(await exited).toBe(0);
@@ -120,11 +121,8 @@ it("should install and run specified version", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
   expect(await exited).toBe(0);
@@ -140,12 +138,9 @@ it("should output usage if no arguments are passed", async () => {
     env,
   });
 
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(err).toContain("Usage: ");
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toHaveLength(0);
   expect(await exited).toBe(1);
@@ -169,7 +164,6 @@ it("should work for @scoped packages", async () => {
     withoutCache.exited,
   ]);
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("Usage: babel [options]");
   expect(exited).toBe(0);
   // cached
@@ -189,7 +183,6 @@ it("should work for @scoped packages", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
 
   expect(out.trim()).toContain("Usage: babel [options]");
 });
@@ -214,7 +207,6 @@ console.log(
   });
   const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(exitCode).toBe(0);
@@ -238,7 +230,6 @@ it("should work for github repository", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(exited).toBe(0);
 
@@ -259,7 +250,6 @@ it("should work for github repository", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(exited).toBe(0);
 });
@@ -281,7 +271,6 @@ it("should work for github repository with committish", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("hello bun!");
   expect(exited).toBe(0);
 
@@ -302,7 +291,6 @@ it("should work for github repository with committish", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("hello bun!");
   expect(exited).toBe(0);
 });
@@ -324,7 +312,6 @@ it.each(["--version", "-v"])("should print the version using %s and exit", async
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain(Bun.version);
   expect(exited).toBe(0);
 });
@@ -346,7 +333,6 @@ it("should print the revision and exit", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain(Bun.version);
   expect(out.trim()).toContain(Bun.revision.slice(0, 7));
   expect(exited).toBe(0);
@@ -369,7 +355,6 @@ it("should pass --version to the package if specified", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
 });

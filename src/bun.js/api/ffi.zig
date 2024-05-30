@@ -282,7 +282,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
-        var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var filepath_buf: bun.PathBuffer = undefined;
         const name = brk: {
             if (JSC.ModuleLoader.resolveEmbeddedFile(
                 vm,

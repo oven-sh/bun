@@ -30,9 +30,8 @@ const empty = Buffer.alloc(0);
 describe("fetch() with streaming", () => {
   [-1, 0, 20, 50, 100].forEach(timeout => {
     it(`should be able to fail properly when reading from readable stream with timeout ${timeout}`, async () => {
-      let server: Server | null = null;
-      try {
-        server = Bun.serve({
+      {
+        using server = Bun.serve({
           port: 0,
           async fetch(req) {
             return new Response(
@@ -77,109 +76,83 @@ describe("fetch() with streaming", () => {
             expect(err.message).toBe("The operation timed out.");
           }
         }
-      } finally {
-        server?.stop();
       }
     });
   });
 
   it(`should be locked after start buffering`, async () => {
-    let server: Server | null = null;
-    try {
-      server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              async start(controller) {
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.close();
             },
-          );
-        },
-      });
-
-      const server_url = `http://${server.hostname}:${server.port}`;
-      const res = await fetch(server_url);
-      try {
-        const promise = res.text(); // start buffering
-        res.body?.getReader(); // get a reader
-        const result = await promise; // should throw the right error
-        expect.unreachable();
-      } catch (err: any) {
-        if (err.name !== "TypeError") throw err;
-        expect(err.message).toBe("ReadableStream is locked");
-      }
-    } finally {
-      server?.stop();
-    }
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "text/plain",
+            },
+          },
+        );
+      },
+    });
+    const server_url = `http://${server.hostname}:${server.port}`;
+    const res = await fetch(server_url, {});
+    const promise = res.text();
+    expect(async () => res.body?.getReader()).toThrow("ReadableStream is locked");
+    await promise;
   });
 
   it(`should be locked after start buffering when calling getReader`, async () => {
-    let server: Server | null = null;
-    try {
-      server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(
-            new ReadableStream({
-              async start(controller) {
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.enqueue("Hello, World!");
-                await Bun.sleep(10);
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain",
-              },
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.enqueue("Hello, World!");
+              await Bun.sleep(10);
+              controller.close();
             },
-          );
-        },
-      });
+          }),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "text/plain",
+            },
+          },
+        );
+      },
+    });
 
-      const server_url = `http://${server.hostname}:${server.port}`;
-      const res = await fetch(server_url);
-      try {
-        const body = res.body as ReadableStream<Uint8Array>;
-        const promise = res.text(); // start buffering
-        body.getReader(); // get a reader
-        const result = await promise; // should throw the right error
-        expect.unreachable();
-      } catch (err: any) {
-        if (err.name !== "TypeError") throw err;
-        expect(err.message).toBe("ReadableStream is locked");
-      }
-    } finally {
-      server?.stop();
-    }
+    const server_url = `http://${server.hostname}:${server.port}`;
+    const res = await fetch(server_url);
+    var body = res.body as ReadableStream<Uint8Array>;
+    const promise = res.text();
+    expect(() => body.getReader()).toThrow("ReadableStream is locked");
+    await promise;
   });
 
   it("can deflate with and without headers #4478", async () => {
-    let server: Server | null = null;
-    try {
-      server = Bun.serve({
+    {
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           if (req.url.endsWith("/with_headers")) {
@@ -205,8 +178,6 @@ describe("fetch() with streaming", () => {
       const url = `http://${server.hostname}:${server.port}/`;
       expect(await fetch(`${url}with_headers`).then(res => res.text())).toBe("Hello, World");
       expect(await fetch(url).then(res => res.text())).toBe("Hello, World");
-    } finally {
-      server?.stop();
     }
   });
 
@@ -257,10 +228,9 @@ describe("fetch() with streaming", () => {
   }
 
   it("stream still works after response get out of scope", async () => {
-    let server: Server | null = null;
-    try {
+    {
       const content = "Hello, world!\n".repeat(5);
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response(
@@ -295,34 +265,29 @@ describe("fetch() with streaming", () => {
       gcTick(false);
       const reader = await getReader();
       gcTick(false);
-      let buffer = Buffer.alloc(0);
-      let parts = 0;
+      var chunks = [];
       while (true) {
         gcTick(false);
 
         const { done, value } = (await reader?.read()) as ReadableStreamDefaultReadResult<any>;
         if (value) {
-          buffer = Buffer.concat([buffer, value]);
+          chunks.push(value);
         }
-        parts++;
         if (done) {
           break;
         }
       }
 
       gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBeGreaterThan(1);
-    } finally {
-      server?.stop();
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(content);
     }
   });
 
   it("response inspected size should reflect stream state", async () => {
-    let server: Server | null = null;
-    try {
+    {
       const content = "Bun!\n".repeat(4);
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response(
@@ -380,16 +345,13 @@ describe("fetch() with streaming", () => {
       }
 
       gcTick(false);
-    } finally {
-      server?.stop();
     }
   });
 
   it("can handle multiple simultaneos requests", async () => {
-    let server: Server | null = null;
-    try {
+    {
       const content = "Hello, world!\n".repeat(5);
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response(
@@ -447,16 +409,13 @@ describe("fetch() with streaming", () => {
       }
 
       await Promise.all([doRequest(), doRequest(), doRequest(), doRequest(), doRequest(), doRequest()]);
-    } finally {
-      server?.stop();
     }
   });
 
   it(`can handle transforms`, async () => {
-    let server: Server | null = null;
-    try {
+    {
       const content = "Hello, world!\n".repeat(5);
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response(
@@ -514,15 +473,12 @@ describe("fetch() with streaming", () => {
 
       gcTick(false);
       expect(result).toBe(content.toUpperCase());
-    } finally {
-      server?.stop();
     }
   });
 
   it(`can handle gz images`, async () => {
-    let server: Server | null = null;
-    try {
-      server = Bun.serve({
+    {
+      using server = Bun.serve({
         port: 0,
         fetch(req) {
           const data = fixtures["fixture.png.gz"];
@@ -554,18 +510,14 @@ describe("fetch() with streaming", () => {
 
       gcTick(false);
       expect(buffer).toEqual(fixtures["fixture.png"]);
-    } finally {
-      server?.stop();
     }
   });
 
   it(`can proxy fetch with Bun.serve`, async () => {
-    let server: Server | null = null;
-    let server_original: Server | null = null;
-    try {
+    {
       const content = "a".repeat(64 * 1024);
 
-      server_original = Bun.serve({
+      using server_original = Bun.serve({
         port: 0,
         fetch(req) {
           return new Response(
@@ -599,7 +551,7 @@ describe("fetch() with streaming", () => {
         },
       });
 
-      server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         async fetch(req) {
           const response = await fetch(`http://${server_original.hostname}:${server_original.port}`, {});
@@ -635,9 +587,6 @@ describe("fetch() with streaming", () => {
       gcTick(false);
       expect(buffer.toString("utf8")).toBe(content);
       expect(parts).toBeGreaterThanOrEqual(1);
-    } finally {
-      server?.stop();
-      server_original?.stop();
     }
   });
   const matrix = [
@@ -652,14 +601,13 @@ describe("fetch() with streaming", () => {
     for (let j = 0; j < matrix.length; j++) {
       const fixtureb = matrix[j];
       it(`can handle fixture ${fixture.name} x ${fixtureb.name}`, async () => {
-        let server: Server | null = null;
-        try {
+        {
           //@ts-ignore
           const data = fixture.data;
           //@ts-ignore
           const data_b = fixtureb.data;
           const content = Buffer.concat([data, data_b]);
-          server = Bun.serve({
+          using server = Bun.serve({
             port: 0,
             fetch(req) {
               return new Response(
@@ -699,8 +647,6 @@ describe("fetch() with streaming", () => {
           }
           gcTick(false);
           expect(buffer).toEqual(content);
-        } finally {
-          server?.stop();
         }
       });
     }
@@ -733,10 +679,9 @@ describe("fetch() with streaming", () => {
     const test = skip ? it.skip : it;
 
     test(`with invalid utf8 with ${compression} compression`, async () => {
-      let server: Server | null = null;
-      try {
+      {
         const content = Buffer.concat([invalid, Buffer.from("Hello, world!\n".repeat(5), "utf8"), invalid]);
-        server = Bun.serve({
+        using server = Bun.serve({
           port: 0,
           fetch(req) {
             return new Response(
@@ -790,16 +735,13 @@ describe("fetch() with streaming", () => {
 
         gcTick(false);
         expect(buffer).toEqual(content);
-      } finally {
-        server?.stop();
       }
     });
 
     test(`chunked response works (single chunk) with ${compression} compression`, async () => {
-      let server: Server | null = null;
-      try {
+      {
         const content = "Hello, world!\n".repeat(5);
-        server = Bun.serve({
+        using server = Bun.serve({
           port: 0,
           fetch(req) {
             return new Response(
@@ -850,16 +792,13 @@ describe("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe(content);
         expect(parts).toBe(1);
-      } finally {
-        server?.stop();
       }
     });
 
     test(`chunked response works (multiple chunks) with ${compression} compression`, async () => {
-      let server: Server | null = null;
-      try {
+      {
         const content = "Hello, world!\n".repeat(5);
-        server = Bun.serve({
+        using server = Bun.serve({
           port: 0,
           fetch(req) {
             return new Response(
@@ -921,17 +860,13 @@ describe("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe(content);
         expect(parts).toBeGreaterThan(1);
-      } finally {
-        server?.stop();
       }
     });
 
     test(`Content-Length response works (single part) with ${compression} compression`, async () => {
-      let server: Server | null = null;
-      try {
+      {
         const content = "a".repeat(1024);
-
-        server = Bun.serve({
+        using server = Bun.serve({
           port: 0,
           fetch(req) {
             return new Response(compress(compression, Buffer.from(content)), {
@@ -971,17 +906,13 @@ describe("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe(content);
         expect(parts).toBe(1);
-      } finally {
-        server?.stop();
       }
     });
 
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
-      let server: Server | null = null;
-      try {
+      {
         const content = "a".repeat(64 * 1024);
-
-        server = Bun.serve({
+        using server = Bun.serve({
           port: 0,
           fetch(req) {
             return new Response(compress(compression, Buffer.from(content)), {
@@ -1021,19 +952,14 @@ describe("fetch() with streaming", () => {
         gcTick(false);
         expect(buffer.toString("utf8")).toBe(content);
         expect(parts).toBeGreaterThan(1);
-      } finally {
-        server?.stop();
       }
     });
 
     test(`Extra data should be ignored on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {
-      let server: TCPSocketListener<any> | null = null;
-
-      try {
+      {
         const parts = 5;
         const content = "Hello".repeat(parts);
-
-        server = Bun.listen({
+        using server = Bun.listen({
           port: 0,
           hostname: "0.0.0.0",
           socket: {
@@ -1100,19 +1026,14 @@ describe("fetch() with streaming", () => {
 
         gcTick(false);
         expect(buffer.toString("utf8")).toBe(content);
-      } finally {
-        server?.stop(true);
       }
     });
 
     test(`Missing data should timeout on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {
-      let server: TCPSocketListener<any> | null = null;
-
-      try {
+      {
         const parts = 5;
         const content = "Hello".repeat(parts);
-
-        server = Bun.listen({
+        using server = Bun.listen({
           port: 0,
           hostname: "0.0.0.0",
           socket: {
@@ -1183,19 +1104,15 @@ describe("fetch() with streaming", () => {
         } catch (err) {
           expect((err as Error).name).toBe("TimeoutError");
         }
-      } finally {
-        server?.stop(true);
       }
     });
 
     if (compression !== "no") {
       test(`can handle corrupted ${compression} compression`, async () => {
-        let server: TCPSocketListener<any> | null = null;
-
-        try {
+        {
           const parts = 5;
           const content = "Hello".repeat(parts);
-          server = Bun.listen({
+          using server = Bun.listen({
             port: 0,
             hostname: "0.0.0.0",
             socket: {
@@ -1271,20 +1188,16 @@ describe("fetch() with streaming", () => {
           } catch (err) {
             expect((err as Error).name).toBe("ZlibError");
           }
-        } finally {
-          server?.stop(true);
         }
       });
     }
 
     test(`can handle socket close with ${compression} compression`, async () => {
-      let server: TCPSocketListener<any> | null = null;
-
-      try {
+      {
         const parts = 5;
         const content = "Hello".repeat(parts);
         const { promise, resolve: resolveSocket } = Promise.withResolvers<Socket>();
-        server = Bun.listen({
+        using server = Bun.listen({
           port: 0,
           hostname: "0.0.0.0",
           socket: {
@@ -1366,8 +1279,6 @@ describe("fetch() with streaming", () => {
         } catch (err) {
           expect((err as Error).name).toBe("ConnectionClosed");
         }
-      } finally {
-        server?.stop(true);
       }
     });
   }

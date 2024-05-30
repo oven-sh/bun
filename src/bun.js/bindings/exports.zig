@@ -218,6 +218,7 @@ pub const ResolvedSource = extern struct {
 
     /// This is for source_code
     source_code_needs_deref: bool = true,
+    already_bundled: bool = false,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -934,7 +935,6 @@ comptime {
 
         _ = Process.getTitle;
         _ = Process.setTitle;
-        Bun.Timer.shim.ref();
         NodePath.shim.ref();
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();

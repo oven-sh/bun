@@ -7,7 +7,7 @@ import { join } from "path";
 let x_dir: string;
 
 beforeEach(async () => {
-  x_dir = tmpdirSync("bun-create.test");
+  x_dir = tmpdirSync();
 });
 
 describe("should not crash", async () => {

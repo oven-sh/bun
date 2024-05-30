@@ -1058,7 +1058,6 @@ const Cloner = struct {
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
-            PackageManager.instance.root_dependency_list = this.lockfile.packages.items(.dependencies)[0];
             try this.hoist(this.lockfile);
         }
 

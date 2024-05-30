@@ -6857,7 +6857,7 @@ pub const PackageManager = struct {
                                 if (tag != .npm and (tag != .dist_tag or !manager.options.do.update_to_latest)) continue;
 
                                 var alias_at_index: ?usize = null;
-                                if (strings.hasPrefixComptime(version_literal, "npm:")) {
+                                if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
                                     // negative because the real package might have a scope
                                     // e.g. "dep": "npm:@foo/bar@1.2.3"
                                     if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
@@ -7041,16 +7041,42 @@ pub const PackageManager = struct {
                     inline for ([_]string{ "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" }) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
-                                if (query.expr.asProperty(
-                                    if (request.is_aliased)
-                                        request.name
-                                    else
-                                        request.version.literal.slice(request.version_buf),
-                                )) |value| {
+                                const name = if (request.is_aliased)
+                                    request.name
+                                else
+                                    request.version.literal.slice(request.version_buf);
+
+                                if (query.expr.asProperty(name)) |value| {
                                     if (value.expr.data == .e_string) {
                                         if (!request.resolved_name.isEmpty() and strings.eqlLong(list, dependency_list, true)) {
                                             replacing += 1;
                                         } else {
+                                            if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
+                                                const version_literal = value.expr.asStringCloned(allocator) orelse break :add_packages_to_update;
+                                                var tag = Dependency.Version.Tag.infer(version_literal);
+
+                                                if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+
+                                                const entry = manager.updating_packages.getOrPut(allocator, name) catch bun.outOfMemory();
+
+                                                // first come, first serve
+                                                if (entry.found_existing) break :add_packages_to_update;
+
+                                                var is_alias = false;
+                                                if (strings.hasPrefixComptime(strings.trim(version_literal, &strings.whitespace_chars), "npm:")) {
+                                                    if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
+                                                        tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
+                                                        if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
+                                                        is_alias = true;
+                                                    }
+                                                }
+
+                                                entry.value_ptr.* = .{
+                                                    .original_version_literal = version_literal,
+                                                    .is_alias = is_alias,
+                                                    .original_version = null,
+                                                };
+                                            }
                                             request.e_string = value.expr.data.e_string;
                                             remaining -= 1;
                                         }
@@ -7144,42 +7170,6 @@ pub const PackageManager = struct {
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
-                            if (manager.subcommand == .update and
-                                options.before_install and
-                                new_dependencies[k].value != null)
-                            add_packages_to_update: {
-                                const request_dep_name = switch (request.version.tag) {
-                                    .npm => request.version.value.npm.name.slice(request.version_buf),
-                                    .dist_tag => request.version.value.dist_tag.name.slice(request.version_buf),
-                                    else => break :add_packages_to_update,
-                                };
-
-                                const key_str = key.asStringCloned(allocator) orelse break :add_packages_to_update;
-                                const version_literal = new_dependencies[k].value.?.asStringCloned(allocator) orelse break :add_packages_to_update;
-                                var tag = Dependency.Version.Tag.infer(version_literal);
-
-                                if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-
-                                if (strings.eqlLong(request_dep_name, key_str, true)) {
-                                    const entry = manager.updating_packages.getOrPut(allocator, key_str) catch bun.outOfMemory();
-                                    if (entry.found_existing) break :add_packages_to_update;
-
-                                    var is_alias = false;
-                                    if (strings.hasPrefixComptime(version_literal, "npm:")) {
-                                        if (strings.lastIndexOfChar(version_literal, '@')) |at_index| {
-                                            tag = Dependency.Version.Tag.infer(version_literal[at_index + 1 ..]);
-                                            if (tag != .npm and tag != .dist_tag) break :add_packages_to_update;
-                                            is_alias = true;
-                                        }
-                                    }
-
-                                    entry.value_ptr.* = .{
-                                        .original_version_literal = version_literal,
-                                        .is_alias = is_alias,
-                                        .original_version = null,
-                                    };
-                                }
-                            }
                             if (!request.is_aliased and !request.resolved_name.isEmpty() and key.data.e_string.eql(
                                 string,
                                 request.resolved_name.slice(request.version_buf),

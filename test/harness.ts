@@ -868,10 +868,10 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
 export async function runBunUpdate(
   env: NodeJS.ProcessEnv,
   cwd: string,
-  packages?: string[],
+  args?: string[],
 ): Promise<{ out: string[]; err: string; exitCode: number }> {
   const { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "update", ...(packages ?? [])],
+    cmd: [bunExe(), "update", ...(args ?? [])],
     cwd,
     stdout: "pipe",
     stdin: "ignore",

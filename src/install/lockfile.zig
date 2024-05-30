@@ -1243,6 +1243,7 @@ pub const Printer = struct {
             id_map: ?[]DependencyID,
         ) !void {
             const lockfile = this.lockfile;
+            const string_buf = lockfile.buffers.string_bytes.items;
             const packages_slice = lockfile.packages.slice();
             const resolutions = lockfile.buffers.resolutions.items;
             const dependencies = lockfile.buffers.dependencies.items;
@@ -1250,13 +1251,37 @@ pub const Printer = struct {
             const names = packages_slice.items(.name);
             bun.assert(workspace_res.tag == .workspace or workspace_res.tag == .root);
             const resolutions_list = packages_slice.items(.resolutions);
-
             var printed_section_header = false;
+            var printed_update = false;
+
+            // find the updated packages
+            for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                    .yes, .no, .@"return" => {},
+                    .update => |update_info| {
+                        printed_new_install.* = true;
+                        printed_update = true;
+
+                        if (comptime print_section_header == .print_section_header) {
+                            if (!printed_section_header) {
+                                printed_section_header = true;
+                                const workspace_name = names[workspace_package_id].slice(string_buf);
+                                try writer.print(comptime Output.prettyFmt("<r>\n<cyan>{s}<r><d>:<r>\n", enable_ansi_colors), .{
+                                    workspace_name,
+                                });
+                            }
+                        }
+
+                        try printUpdatedPackage(this, update_info, enable_ansi_colors, Writer, writer);
+                    },
+                }
+            }
+
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
                 switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
                     .@"return" => return,
                     .yes => {},
-                    .no => continue,
+                    .no, .update => continue,
                 }
 
                 const dep = dependencies[dep_id];
@@ -1267,22 +1292,35 @@ pub const Printer = struct {
                 if (comptime print_section_header == .print_section_header) {
                     if (!printed_section_header) {
                         printed_section_header = true;
-                        const workspace_name = names[workspace_package_id].slice(lockfile.buffers.string_bytes.items);
+                        const workspace_name = names[workspace_package_id].slice(string_buf);
                         try writer.print(comptime Output.prettyFmt("<r>\n<cyan>{s}<r><d>:<r>\n", enable_ansi_colors), .{
                             workspace_name,
                         });
                     }
                 }
 
+                if (printed_update) {
+                    printed_update = false;
+                    try writer.writeAll("\n");
+                }
                 try printInstalledPackage(this, &dep, package_id, enable_ansi_colors, Writer, writer);
             }
         }
 
-        const ShouldPrintPackageInstallResult = enum {
+        const PackageUpdatePrintInfo = struct {
+            version: Semver.Version,
+            version_buf: string,
+            resolution: Resolution,
+            name: string,
+        };
+
+        const ShouldPrintPackageInstallResult = union(enum) {
             yes,
             no,
             @"return",
+            update: PackageUpdatePrintInfo,
         };
+
         fn shouldPrintPackageInstall(
             this: *const Printer,
             dep_id: DependencyID,
@@ -1311,7 +1349,54 @@ pub const Printer = struct {
 
             if (!installed.isSet(package_id)) return .no;
 
+            if (this.manager) |manager| {
+                const resolution = this.lockfile.packages.items(.resolution)[package_id];
+                if (resolution.tag == .npm) {
+                    const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
+                    if (manager.updating_packages.get(name)) |entry| {
+                        if (entry.original_version) |original_version| {
+                            if (!original_version.eql(resolution.value.npm.version)) {
+                                return .{
+                                    .update = .{
+                                        .version = original_version,
+                                        .version_buf = entry.original_version_string_buf,
+                                        .resolution = resolution,
+                                        .name = name,
+                                    },
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+
             return .yes;
+        }
+
+        fn printUpdatedPackage(
+            this: *const Printer,
+            update_info: PackageUpdatePrintInfo,
+            comptime enable_ansi_colors: bool,
+            comptime Writer: type,
+            writer: Writer,
+        ) !void {
+            const string_buf = this.lockfile.buffers.string_bytes.items;
+
+            const fmt = comptime brk: {
+                if (enable_ansi_colors) {
+                    break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{} -\\><r> <b><cyan>{}<r>\n", enable_ansi_colors);
+                }
+                break :brk Output.prettyFmt("<r>↑ <b>{s}<r><d> <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
+            };
+
+            try writer.print(
+                fmt,
+                .{
+                    update_info.name,
+                    update_info.version.fmt(update_info.version_buf),
+                    update_info.resolution.value.npm.version.fmt(string_buf),
+                },
+            );
         }
 
         fn printInstalledPackage(
@@ -1328,32 +1413,6 @@ pub const Printer = struct {
             const name = dependency.name.slice(string_buf);
 
             if (this.manager) |manager| {
-                if (resolution.tag == .npm) {
-                    if (manager.updating_packages.getEntry(name)) |entry| {
-                        if (entry.value_ptr.original_version) |original_version| {
-                            if (!original_version.eql(resolution.value.npm.version)) {
-                                // package was updated
-                                const fmt = comptime brk: {
-                                    if (enable_ansi_colors) {
-                                        break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d>: <b>{} -\\><r> <b><cyan>{}<r>\n", enable_ansi_colors);
-                                    }
-                                    break :brk Output.prettyFmt("<r>↑ <b>{s}<r><d>: <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
-                                };
-                                try writer.print(
-                                    fmt,
-                                    .{
-                                        name,
-                                        original_version.fmt(entry.value_ptr.original_version_string_buf),
-                                        resolution.value.npm.fmt(string_buf),
-                                    },
-                                );
-
-                                return;
-                            }
-                        }
-                    }
-                }
-
                 if (manager.formatLaterVersionInCache(name, dependency.name_hash, resolution)) |later_version_fmt| {
                     const fmt = comptime brk: {
                         if (enable_ansi_colors) {

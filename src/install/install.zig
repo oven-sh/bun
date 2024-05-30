@@ -2521,16 +2521,18 @@ pub const PackageManager = struct {
     workspace_package_json_cache: WorkspacePackageJSONCache = .{},
 
     // normally we have `UpdateRequests` to work with for adding/deleting/updating packages, but
-    // if `bun update` is used without any package names we need a way to known which packages
-    // we are updating.
+    // if `bun update` is used without any package names we need a way to keep information for
+    // the original packages that are updating.
     //
-    // dependency name -> original version literal
-    updating_packages: bun.StringArrayHashMapUnmanaged(struct {
+    // dependency name -> original version information
+    updating_packages: bun.StringArrayHashMapUnmanaged(PackageUpdateInfo) = .{},
+
+    pub const PackageUpdateInfo = struct {
         original_version_literal: string,
         is_alias: bool,
         original_version_string_buf: string = "",
         original_version: ?Semver.Version,
-    }) = .{},
+    };
 
     pub fn clearCachedItemsDependingOnLockfileBuffer(this: *PackageManager) void {
         this.root_package_id.id = null;
@@ -11001,11 +11003,12 @@ pub const PackageManager = struct {
                             var original = original_resolution.value.npm.version;
                             const tag_total = original.tag.pre.len() + original.tag.build.len();
                             if (tag_total > 0) {
-                                // clone because don't know if lockfile buffer wil reallocate
-                                var tag_buf = manager.allocator.alloc(u8, tag_total) catch bun.outOfMemory();
+                                // clone because don't know if lockfile buffer will reallocate
+                                const tag_buf = manager.allocator.alloc(u8, tag_total) catch bun.outOfMemory();
+                                var ptr = tag_buf;
                                 original.tag = original_resolution.value.npm.version.tag.cloneInto(
                                     lockfile.buffers.string_bytes.items,
-                                    &tag_buf,
+                                    &ptr,
                                 );
 
                                 entry_ptr.original_version_string_buf = tag_buf;

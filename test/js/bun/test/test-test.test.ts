@@ -532,7 +532,7 @@ it("test timeouts when expected", () => {
   });
 
   const err = stderr!.toString();
-  expect(err).toContain("timed out after 10ms");
+  expect(err).toHaveTestTimedOutAfter(10);
   expect(err).not.toContain("unreachable code");
 });
 

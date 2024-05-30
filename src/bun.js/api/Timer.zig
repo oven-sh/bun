@@ -382,11 +382,18 @@ pub const TimerObject = struct {
         this.strong_this.deinit();
         this.event_loop_timer.state = .FIRED;
 
-        run(this_object, globalThis, this.asyncID(), vm);
+        vm.eventLoop().enter();
+        {
+            this.ref();
+            defer this.deref();
 
-        if (this.event_loop_timer.state == .FIRED) {
-            this.deref();
+            run(this_object, globalThis, this.asyncID(), vm);
+
+            if (this.event_loop_timer.state == .FIRED) {
+                this.deref();
+            }
         }
+        vm.eventLoop().exit();
     }
 
     pub fn asyncID(this: *const TimerObject) u64 {
@@ -417,55 +424,80 @@ pub const TimerObject = struct {
 
         const globalThis = this.strong_this.globalThis.?;
         const this_object = this.strong_this.get().?;
-        var next: timespec = undefined;
-
-        // Ensure it stays alive for this scope.
-        this.ref();
-        defer this.deref();
+        var time_before_call: timespec = undefined;
 
         if (kind != .setInterval) {
             this.strong_this.clear();
         } else {
-            next = timespec.msFromNow(this.interval);
+            time_before_call = timespec.msFromNow(this.interval);
         }
         this_object.ensureStillAlive();
-        run(this_object, globalThis, ID.asyncID(.{ .id = id, .kind = kind }), vm);
 
-        if (kind == .setInterval) {
-            if (this.event_loop_timer.state == .FIRED) {
-                // If we didn't clear the setInterval, reschedule it.
-                this.event_loop_timer.next = next;
-                this.event_loop_timer.state = .ACTIVE;
-                vm.timer.insert(&this.event_loop_timer);
-            } else {
-                if (this.event_loop_timer.state != .ACTIVE) {
-                    this.strong_this.deinit();
+        vm.eventLoop().enter();
+        {
+            // Ensure it stays alive for this scope.
+            this.ref();
+            defer this.deref();
+
+            run(this_object, globalThis, ID.asyncID(.{ .id = id, .kind = kind }), vm);
+
+            var is_timer_done = false;
+
+            // Node doesn't drain microtasks after each timer callback.
+            if (kind == .setInterval) {
+                switch (this.event_loop_timer.state) {
+                    .FIRED => {
+                        // If we didn't clear the setInterval, reschedule it starting from
+                        this.event_loop_timer.next = time_before_call;
+                        vm.timer.insert(&this.event_loop_timer);
+
+                        if (this.has_js_ref) {
+                            this.setEnableKeepingEventLoopAlive(vm, true);
+                        }
+
+                        // The ref count doesn't change. It wasn't decremented.
+                    },
+                    .ACTIVE => {
+                        // The developer called timer.refresh() synchronously in the callback.
+                        vm.timer.remove(&this.event_loop_timer);
+
+                        this.event_loop_timer.next = time_before_call;
+                        vm.timer.insert(&this.event_loop_timer);
+
+                        // Balance out the ref count.
+                        // the transition from "FIRED" -> "ACTIVE" caused it to increment.
+                        this.deref();
+                    },
+                    else => {
+                        is_timer_done = true;
+                    },
+                }
+            } else if (this.event_loop_timer.state == .FIRED) {
+                is_timer_done = true;
+            }
+
+            if (is_timer_done) {
+                if (this.is_keeping_event_loop_alive) {
+                    this.is_keeping_event_loop_alive = false;
+
+                    switch (this.kind) {
+                        .setTimeout, .setInterval => {
+                            vm.timer.incrementTimerRef(-1);
+                        },
+                        else => {},
+                    }
                 }
 
-                // This ref count was already incremented when the timer refreshed.
+                // The timer will not be re-entered into the event loop at this point.
                 this.deref();
             }
-        } else if (this.event_loop_timer.state == .FIRED) {
-            if (this.is_keeping_event_loop_alive) {
-                this.is_keeping_event_loop_alive = false;
-
-                switch (this.kind) {
-                    .setTimeout, .setInterval => {
-                        vm.timer.incrementTimerRef(-1);
-                    },
-                    else => {},
-                }
-            }
-
-            // The timer is done.
-            this.deref();
         }
+        vm.eventLoop().exit();
 
         return .disarm;
     }
 
     pub fn run(this_object: JSC.JSValue, globalThis: *JSC.JSGlobalObject, async_id: u64, vm: *JSC.VirtualMachine) void {
-        vm.eventLoop().enter();
         if (vm.isInspectorEnabled()) {
             Debugger.willDispatchAsyncCall(globalThis, .DOMTimer, async_id);
         }
@@ -474,7 +506,6 @@ pub const TimerObject = struct {
             if (vm.isInspectorEnabled()) {
                 Debugger.didDispatchAsyncCall(globalThis, .DOMTimer, async_id);
             }
-            vm.eventLoop().exit();
         }
 
         // Bun__JSTimeout__call handles exceptions.

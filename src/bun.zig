@@ -3412,10 +3412,11 @@ pub const timespec = extern struct {
         return now().duration(start).ns();
     }
 
-    pub fn msFromNow(interval: i64) timespec {
-        var new_timespec = getRoughTickCount();
-        const sec_inc = @divFloor(interval, std.time.ms_per_s);
+    pub fn addMs(this: *const timespec, interval: i64) timespec {
+        const sec_inc = @divTrunc(interval, std.time.ms_per_s);
         const nsec_inc = @rem(interval, std.time.ms_per_s) * std.time.ns_per_ms;
+
+        var new_timespec = this.*;
 
         new_timespec.sec += sec_inc;
         new_timespec.nsec += nsec_inc;
@@ -3426,5 +3427,9 @@ pub const timespec = extern struct {
         }
 
         return new_timespec;
+    }
+
+    pub fn msFromNow(interval: i64) timespec {
+        return now().addMs(interval);
     }
 };

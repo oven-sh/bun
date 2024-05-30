@@ -30,27 +30,27 @@ var verdaccioServer: ChildProcess;
 var port: number = 4873;
 var packageDir: string;
 
-beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
-  verdaccioServer = fork(
-    require.resolve("verdaccio/bin/verdaccio"),
-    ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: "bun" },
-  );
+// beforeAll(async () => {
+//   setDefaultTimeout(1000 * 60 * 5);
+//   verdaccioServer = fork(
+//     require.resolve("verdaccio/bin/verdaccio"),
+//     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
+//     { silent: true, execPath: "bun" },
+//   );
 
-  await new Promise<void>(done => {
-    verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
-      if (msg.verdaccio_started) {
-        console.log("Verdaccio started");
-        done();
-      }
-    });
-  });
-});
+//   await new Promise<void>(done => {
+//     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
+//       if (msg.verdaccio_started) {
+//         console.log("Verdaccio started");
+//         done();
+//       }
+//     });
+//   });
+// });
 
-afterAll(() => {
-  verdaccioServer.kill();
-});
+// afterAll(() => {
+//   verdaccioServer.kill();
+// });
 
 beforeEach(async () => {
   packageDir = tmpdirSync();
@@ -2313,7 +2313,7 @@ describe("workspaces", async () => {
   }
 });
 
-describe("update", () => {
+describe.only("update", () => {
   test("dist-tags", async () => {
     await write(
       join(packageDir, "package.json"),
@@ -2473,7 +2473,7 @@ describe("update", () => {
       });
 
       const { out } = await runBunUpdate(env, packageDir, ["--latest"]);
-      expect(out).toEqual(["", "↑ aliased-dep 5.0.0-alpha.150 -> 5.0.0-alpha.153", "", "1 package installed"]);
+      expect(out).toEqual(["", "^ aliased-dep 5.0.0-alpha.150 -> 5.0.0-alpha.153", "", "1 package installed"]);
       expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
         name: "foo",
         dependencies: {

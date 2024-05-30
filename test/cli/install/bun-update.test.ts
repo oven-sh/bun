@@ -234,7 +234,7 @@ it("should update to latest versions of dependencies", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    "↑ baz 0.0.3 -> 0.0.5",
+    "^ baz 0.0.3 -> 0.0.5",
     "",
     "+ @barn/moo@0.1.0",
     "",

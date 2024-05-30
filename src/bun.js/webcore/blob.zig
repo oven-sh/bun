@@ -1584,7 +1584,6 @@ pub const Blob = struct {
         mime_type: MimeType = MimeType.none,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
         is_all_ascii: ?bool = null,
-        static_lifetime: bool = false,
         allocator: std.mem.Allocator,
 
         pub fn size(this: *const Store) SizeType {
@@ -1602,7 +1601,6 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
-            if (this.static_lifetime) return;
             const old = this.ref_count.fetchAdd(1, .Monotonic);
             assert(old > 0);
         }
@@ -1659,8 +1657,6 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
-            if (this.static_lifetime) return;
-
             const old = this.ref_count.fetchSub(1, .Monotonic);
             assert(old >= 1);
             if (old == 1) {
@@ -1669,8 +1665,6 @@ pub const Blob = struct {
         }
 
         pub fn deinit(this: *Blob.Store) void {
-            if (this.static_lifetime) return;
-
             const allocator = this.allocator;
 
             switch (this.data) {

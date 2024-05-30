@@ -274,6 +274,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
@@ -284,7 +285,6 @@ pub fn stderr(rare: *RareData) *Blob.Store {
         store.* = Blob.Store{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
-            .static_lifetime = true,
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
@@ -307,6 +307,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
+
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
@@ -316,7 +317,6 @@ pub fn stdout(rare: *RareData) *Blob.Store {
         store.* = Blob.Store{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
-            .static_lifetime = true,
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{
@@ -338,6 +338,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
+
         switch (Syscall.fstat(fd)) {
             .result => |stat| {
                 mode = @intCast(stat.mode);
@@ -347,7 +348,6 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         store.* = Blob.Store{
             .allocator = default_allocator,
             .ref_count = std.atomic.Value(u32).init(2),
-            .static_lifetime = true,
             .data = .{
                 .file = Blob.FileStore{
                     .pathlike = .{

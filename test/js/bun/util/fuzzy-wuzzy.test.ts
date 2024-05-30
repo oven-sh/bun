@@ -92,6 +92,7 @@ const banned = [
   // "_write",
   // "resume",
 ];
+const drainMicrotasks = require("bun:jsc").drainMicrotasks;
 
 import.meta.require.cache["bun:jsc"] = {};
 delete console.takeHeapSnapshot;

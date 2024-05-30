@@ -284,6 +284,42 @@ const binaryTypes = {
 } as const;
 
 expect.extend({
+  toHaveTestTimedOutAfter(actual: any, expected: number) {
+    if (typeof actual !== "string") {
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a string`,
+      };
+    }
+
+    const preStartI = actual.indexOf("timed out after ");
+    if (preStartI === -1) {
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to contain "timed out after "`,
+      };
+    }
+    const startI = preStartI + "timed out after ".length;
+    const endI = actual.indexOf("ms", startI);
+    if (endI === -1) {
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
+      };
+    }
+    const int = parseInt(actual.slice(startI, endI));
+    if (!Number.isSafeInteger(int)) {
+      return {
+        pass: false,
+        message: () => `Expected ${int} to be a safe integer`,
+      };
+    }
+
+    return {
+      pass: int >= expected,
+      message: () => `Expected ${int} to be >= ${expected}`,
+    };
+  },
   toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
     switch (expected) {
       case "buffer":

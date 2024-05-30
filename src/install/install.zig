@@ -2655,7 +2655,7 @@ pub const PackageManager = struct {
     );
 
     const TimePasser = struct {
-        pub var last_time: c_longlong = -1;
+        pub var last_time: u64 = 0;
     };
 
     pub const LifecycleScriptTimeLog = struct {

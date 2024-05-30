@@ -1172,6 +1172,32 @@ pub const struct_uv_timer_s = extern struct {
     repeat: u64,
     start_id: u64,
     timer_cb: uv_timer_cb,
+
+    pub fn init(this: *@This(), loop: *Loop) void {
+        if (uv_timer_init(loop, this) != 0) {
+            @panic("internal error: uv_timer_init failed");
+        }
+    }
+
+    pub fn start(this: *@This(), timeout: u64, repeat: u64, callback: uv_timer_cb) void {
+        if (uv_timer_start(this, callback, timeout, repeat) != 0) {
+            @panic("internal error: uv_timer_start failed");
+        }
+    }
+
+    pub fn stop(this: *@This()) void {
+        if (uv_timer_stop(this) != 0) {
+            @panic("internal error: uv_timer_stop failed");
+        }
+    }
+
+    pub fn unref(this: *@This()) void {
+        uv_unref(@alignCast(@ptrCast(this)));
+    }
+
+    pub fn ref(this: *@This()) void {
+        uv_ref(@alignCast(@ptrCast(this)));
+    }
 };
 pub const uv_timer_t = struct_uv_timer_s;
 const struct_unnamed_413 = extern struct {

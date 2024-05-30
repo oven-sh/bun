@@ -105,7 +105,7 @@ pub const Loop = struct {
                         .readable => |readable| {
                             switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, readable.fd)) {
                                 .err => |err| {
-                                    readable.onError(request, err);
+                                    readable.onError(readable.ctx, err);
                                 },
                                 .result => {
                                     this.active += 1;
@@ -115,7 +115,7 @@ pub const Loop = struct {
                         .writable => |writable| {
                             switch (writable.poll.registerForEpoll(writable.tag, this, .poll_writable, true, writable.fd)) {
                                 .err => |err| {
-                                    writable.onError(request, err);
+                                    writable.onError(writable.ctx, err);
                                 },
                                 .result => {
                                     this.active += 1;

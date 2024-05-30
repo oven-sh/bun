@@ -169,6 +169,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .err = e };
         }
 
+        pub inline fn initErrWithP(e: C.SystemErrno, syscall: Syscall.Tag, path: anytype) Maybe(ReturnType, ErrorType) {
+            return .{ .err = .{
+                .errno = @intFromEnum(e),
+                .syscall = syscall,
+                .path = path,
+            } };
+        }
+
         pub inline fn asErr(this: *const @This()) ?ErrorType {
             if (this.* == .err) return this.err;
             return null;

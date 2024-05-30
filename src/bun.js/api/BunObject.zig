@@ -782,8 +782,9 @@ pub fn getStdin(
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdin();
     store.ref();
-    var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
-    blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    var blob = JSC.WebCore.Blob.new(
+        JSC.WebCore.Blob.initWithStore(store, globalThis),
+    );
     blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
@@ -795,8 +796,9 @@ pub fn getStderr(
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stderr();
     store.ref();
-    var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
-    blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    var blob = JSC.WebCore.Blob.new(
+        JSC.WebCore.Blob.initWithStore(store, globalThis),
+    );
     blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
@@ -808,8 +810,9 @@ pub fn getStdout(
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdout();
     store.ref();
-    var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
-    blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
+    var blob = JSC.WebCore.Blob.new(
+        JSC.WebCore.Blob.initWithStore(store, globalThis),
+    );
     blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }

@@ -78,6 +78,7 @@ const WriteFileWindows = @import("./blob/WriteFile.zig").WriteFileWindows;
 pub const Blob = struct {
     const bloblog = Output.scoped(.Blob, false);
 
+    pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
     pub usingnamespace @import("./blob/WriteFile.zig");
     pub usingnamespace @import("./blob/ReadFile.zig");
@@ -408,7 +409,7 @@ pub const Blob = struct {
                 const bytes = try readSlice(reader, bytes_len, allocator);
 
                 const blob = Blob.init(bytes, allocator, globalThis);
-                const blob_ = bun.new(Blob, blob);
+                const blob_ = Blob.new(blob);
 
                 break :brk blob_;
             },
@@ -422,7 +423,7 @@ pub const Blob = struct {
                         var path_or_fd = JSC.Node.PathOrFileDescriptor{
                             .fd = fd,
                         };
-                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                        const blob = Blob.new(Blob.findOrCreateFileFromPath(
                             &path_or_fd,
                             globalThis,
                         ));
@@ -438,7 +439,7 @@ pub const Blob = struct {
                                 .string = bun.PathString.init(path),
                             },
                         };
-                        const blob = bun.new(Blob, Blob.findOrCreateFileFromPath(
+                        const blob = Blob.new(Blob.findOrCreateFileFromPath(
                             &dest,
                             globalThis,
                         ));
@@ -450,7 +451,7 @@ pub const Blob = struct {
                 return .zero;
             },
             .empty => brk: {
-                break :brk bun.new(Blob, Blob.initEmpty(globalThis));
+                break :brk Blob.new(Blob.initEmpty(globalThis));
             },
         };
         blob.allocator = allocator;
@@ -584,7 +585,7 @@ pub const Blob = struct {
 
     export fn Blob__dupe(ptr: *anyopaque) *Blob {
         var this = bun.cast(*Blob, ptr);
-        var new = bun.new(Blob, this.dupeWithContentType(true));
+        var new = Blob.new(this.dupeWithContentType(true));
         new.allocator = bun.default_allocator;
         return new;
     }
@@ -858,7 +859,7 @@ pub const Blob = struct {
             // eventually, this could be like Buffer.concat
             var clone = source_blob.dupe();
             clone.allocator = bun.default_allocator;
-            const cloned = bun.new(Blob, clone);
+            const cloned = Blob.new(clone);
             cloned.allocator = bun.default_allocator;
             return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx));
         } else if (destination_type == .bytes and source_type == .file) {
@@ -1347,7 +1348,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Blob {
         JSC.markBinding(@src());
-        var allocator = bun.default_allocator;
+        const allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(3);
         const args = arguments.slice();
@@ -1419,7 +1420,7 @@ pub const Blob = struct {
             blob.content_type_was_set = false;
         }
 
-        var blob_ = bun.new(Blob, blob);
+        var blob_ = Blob.new(blob);
         blob_.allocator = allocator;
         blob_.is_jsdom_file = true;
         return blob_;
@@ -1512,7 +1513,7 @@ pub const Blob = struct {
             }
         }
 
-        var ptr = bun.new(Blob, blob);
+        var ptr = Blob.new(blob);
         ptr.allocator = bun.default_allocator;
         return ptr.toJS(globalObject);
     }
@@ -1586,6 +1587,8 @@ pub const Blob = struct {
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
+        pub usingnamespace bun.New(@This());
+
         pub fn size(this: *const Store) SizeType {
             return switch (this.data) {
                 .bytes => this.data.bytes.len,
@@ -1612,7 +1615,7 @@ pub const Blob = struct {
         }
 
         pub fn initFile(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?http.MimeType, allocator: std.mem.Allocator) !*Store {
-            const store = bun.newWithAlloc(allocator, Blob.Store, .{
+            const store = Blob.Store.new(.{
                 .data = .{
                     .file = FileStore.init(
                         pathlike,
@@ -1639,7 +1642,7 @@ pub const Blob = struct {
         }
 
         pub fn init(bytes: []u8, allocator: std.mem.Allocator) !*Store {
-            const store = bun.newWithAlloc(allocator, Store, .{
+            const store = Blob.Store.new(.{
                 .data = .{
                     .bytes = ByteStore.init(bytes, allocator),
                 },
@@ -1682,7 +1685,7 @@ pub const Blob = struct {
                 },
             }
 
-            bun.destroyWithAlloc(allocator, this);
+            this.destroy();
         }
 
         const SerializeTag = enum(u8) {
@@ -3096,13 +3099,13 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        var allocator = bun.default_allocator;
+        const allocator = bun.default_allocator;
         var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];
 
         if (this.size == 0) {
             const empty = Blob.initEmpty(globalThis);
-            var ptr = bun.new(Blob, empty);
+            var ptr = Blob.new(empty);
             ptr.allocator = allocator;
             return ptr.toJS(globalThis);
         }
@@ -3194,7 +3197,7 @@ pub const Blob = struct {
         blob.content_type_allocated = content_type_was_allocated;
         blob.content_type_was_set = this.content_type_was_set or content_type_was_allocated;
 
-        var blob_ = bun.new(Blob, blob);
+        var blob_ = Blob.new(blob);
         blob_.allocator = allocator;
         return blob_.toJS(globalThis);
     }
@@ -3396,7 +3399,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Blob {
-        var allocator = bun.default_allocator;
+        const allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(2);
         const args = arguments.slice();
@@ -3456,7 +3459,7 @@ pub const Blob = struct {
 
         blob.calculateEstimatedByteSize();
 
-        var blob_ = bun.new(Blob, blob);
+        var blob_ = Blob.new(blob);
         blob_.allocator = allocator;
         return blob_;
     }
@@ -3638,9 +3641,11 @@ pub const Blob = struct {
     pub fn deinit(this: *Blob) void {
         this.detach();
 
+        // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;
-            bun.destroyWithAlloc(alloc, this);
+            bun.debugAssert(alloc.vtable == bun.default_allocator.vtable);
+            this.destroy();
         }
     }
 

@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { heapStats } from "bun:jsc";
 import { it, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
@@ -305,6 +306,41 @@ it("setTimeout should not refresh after clearTimeout", done => {
     expect(count).toBe(0);
     done();
   }, 100);
+});
+
+it("setTimeout Timeout objects are unprotected after called", async () => {
+  let { promise, resolve } = Promise.withResolvers();
+
+  const initial = heapStats().protectedObjectTypeCounts;
+  let remaining = 2;
+  setTimeout(() => {
+    remaining--;
+    if (remaining === 0) resolve();
+  }, 0);
+  setTimeout(() => {
+    remaining--;
+    if (remaining === 0) resolve();
+  }, 0);
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual((initial.Timeout || 0) + 2);
+
+  // Assert it's unprotected.
+  await promise;
+
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
+
+  Bun.gc(true);
+  remaining = 5;
+  ({ promise, resolve } = Promise.withResolvers());
+  setInterval(function () {
+    remaining--;
+    if (remaining === 0) {
+      clearInterval(this);
+      queueMicrotask(resolve);
+    }
+  });
+  Bun.gc(true);
+  await promise;
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
 });
 
 it("setTimeout CPU usage #7790", async () => {

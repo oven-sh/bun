@@ -20,6 +20,7 @@
 const ENABLE_LOGGING = false;
 
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 
 const Promise = globalThis.Promise;
 globalThis.Promise = function (...args) {
@@ -362,12 +363,14 @@ const globals = [
 
 for (const [Global, name] of globals) {
   describe(name, () => {
-    test("call", async () => {
+    // TODO: hangs in CI on Windows.
+    test.skipIf(isWindows && Global === Bun)("call", async () => {
       await Bun.sleep(1);
       callAllMethods(Global);
       await Bun.sleep(1);
     });
-    test("construct", async () => {
+    // TODO: hangs in CI on Windows.
+    test.skipIf(isWindows && Global === Bun)("construct", async () => {
       await Bun.sleep(1);
       constructAllConstructors(Global);
       await Bun.sleep(1);

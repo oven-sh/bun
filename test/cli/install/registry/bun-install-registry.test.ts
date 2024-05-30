@@ -2357,15 +2357,48 @@ describe("update", () => {
     });
   });
   test("exact versions stay exact", async () => {
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        dependencies: {
-          "a-dep": "1.0.1",
-        },
-      }),
-    );
+    const runs = [
+      { version: "1.0.1", dependency: "a-dep" },
+      { version: "npm:a-dep@1.0.1", dependency: "aliased" },
+    ];
+    for (const { version, dependency } of runs) {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            [dependency]: version,
+          },
+        }),
+      );
+      async function check(version: string) {
+        expect(await file(join(packageDir, "node_modules", dependency, "package.json")).json()).toMatchObject({
+          name: "a-dep",
+          version: version.replace(/.*@/, ""),
+        });
+
+        expect(await file(join(packageDir, "package.json")).json()).toMatchObject({
+          dependencies: {
+            [dependency]: version,
+          },
+        });
+      }
+      await runBunInstall(env, packageDir);
+      await check(version);
+
+      await runBunUpdate(env, packageDir);
+      await check(version);
+
+      await runBunUpdate(env, packageDir, [dependency]);
+      await check(version);
+
+      // this will actually update the package, but the version should remain exact
+      await runBunUpdate(env, packageDir, ["--latest"]);
+      await check(dependency === "aliased" ? "npm:a-dep@1.0.10" : "1.0.10");
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(packageDir, "bun.lockb"));
+    }
   });
   describe("alises", () => {
     test("update all", async () => {

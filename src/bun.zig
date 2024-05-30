@@ -3337,6 +3337,20 @@ pub const timespec = extern struct {
     sec: isize = 0,
     nsec: isize = 0,
 
+    pub fn toInstant(this: *const timespec) std.time.Instant {
+        if (comptime Environment.isPosix) {
+            return std.time.Instant{
+                .timestamp = @bitCast(this.*),
+            };
+        }
+
+        if (comptime Environment.isWindows) {
+            return std.time.Instant{
+                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
+            };
+        }
+    }
+
     // TODO: this is wrong!
     pub fn duration(this: *const timespec, other: *const timespec) timespec {
         var sec_diff = this.sec - other.sec;
@@ -3365,7 +3379,7 @@ pub const timespec = extern struct {
     /// shame on me I guess... but I'll be dead.
     pub fn ns(this: *const timespec) u64 {
         if (this.sec <= 0) {
-            return @intCast(this.nsec);
+            return @max(this.nsec, 0);
         }
 
         assert(this.sec >= 0);
@@ -3382,12 +3396,20 @@ pub const timespec = extern struct {
             return max;
     }
 
+    pub fn ms(this: *const timespec) u64 {
+        return this.ns() / std.time.ns_per_ms;
+    }
+
     pub fn greater(a: *const timespec, b: *const timespec) bool {
         return a.order(b) == .gt;
     }
 
     pub fn now() timespec {
         return getRoughTickCount();
+    }
+
+    pub fn sinceNow(start: *const timespec) u64 {
+        return now().duration(start).ns();
     }
 
     pub fn msFromNow(interval: i64) timespec {

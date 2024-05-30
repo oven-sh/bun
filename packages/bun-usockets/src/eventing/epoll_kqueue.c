@@ -33,7 +33,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <string.h> // memset
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, void* ctx);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -190,7 +190,9 @@ void us_loop_run(struct us_loop_t *loop) {
 
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+extern void Bun__internal_drainTimers(void* ctx);
+
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, void* ctx) {
     if (loop->num_polls == 0)
         return;
 
@@ -249,6 +251,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
                 us_internal_dispatch_ready_poll(poll, error, events);
             }
         }
+    }
+
+    if (ctx) {
+        Bun__internal_drainTimers(ctx);
     }
 
     /* Emit post callback */

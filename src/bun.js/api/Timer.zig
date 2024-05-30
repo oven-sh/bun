@@ -135,6 +135,14 @@ pub const All = struct {
         return false;
     }
 
+    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
+        drainTimers(&vm.timer, vm);
+    }
+
+    comptime {
+        _ = &Bun__internal_drainTimers;
+    }
+
     pub fn drainTimers(this: *All, vm: *VirtualMachine) void {
         if (this.timers.peek() == null) {
             return;
@@ -647,12 +655,6 @@ pub const EventLoopTimer = struct {
     /// The absolute time to fire this timer next.
     next: timespec,
 
-    /// Only used internally. If this is non-null and timer is
-    /// CANCELLED, then the timer is rearmed automatically with this
-    /// as the next time. The callback will not be called on the
-    /// cancellation.
-    reset: ?timespec = null,
-
     /// Internal heap fields.
     heap: heap.IntrusiveField(EventLoopTimer) = .{},
 
@@ -663,11 +665,13 @@ pub const EventLoopTimer = struct {
     pub const Tag = enum {
         TimerCallback,
         TimerObject,
+        TestRunner,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
                 .TimerObject => TimerObject,
+                .TestRunner => JSC.Jest.TestRunner,
             };
         }
     };
@@ -724,6 +728,11 @@ pub const EventLoopTimer = struct {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "event_loop_timer", this);
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
+                }
+
+                if (comptime t.Type() == JSC.Jest.TestRunner) {
+                    container.onTestTimeout(now, vm);
+                    return .disarm;
                 }
 
                 return container.callback(container);

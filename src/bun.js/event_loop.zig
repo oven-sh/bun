@@ -1351,7 +1351,7 @@ pub const EventLoop = struct {
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null, ctx);
 
             if (comptime Environment.isDebug) {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
@@ -1361,10 +1361,9 @@ pub const EventLoop = struct {
             if (comptime Environment.isDebug) {
                 log("tickWithoutIdle", .{});
             }
-        }
-
-        if (Environment.isPosix) {
-            ctx.timer.drainTimers(ctx);
+            if (Environment.isPosix) {
+                ctx.timer.drainTimers(ctx);
+            }
         }
 
         this.flushImmediateQueue();
@@ -1435,13 +1434,12 @@ pub const EventLoop = struct {
             this.processGCTimer();
             var timespec: bun.timespec = undefined;
 
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null, ctx);
         } else {
             loop.tickWithoutIdle();
-        }
-
-        if (Environment.isPosix) {
-            ctx.timer.drainTimers(ctx);
+            if (Environment.isPosix) {
+                ctx.timer.drainTimers(ctx);
+            }
         }
 
         this.flushImmediateQueue();

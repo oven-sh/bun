@@ -3219,6 +3219,7 @@ it("promises.fdatasync with a bad fd should include that in the error thrown", a
 
 it("promises.cp should work even if dest does not exist", async () => {
   const x_dir = tmpdirSync();
+  const text_expected = "A".repeat(131073);
   let src = "package-lock.json";
   let folder = "folder-not-exist";
   let dst = join(folder, src);
@@ -3227,7 +3228,10 @@ it("promises.cp should work even if dest does not exist", async () => {
   folder = join(x_dir, folder);
   dst = join(x_dir, dst);
 
-  await promises.writeFile(src, "A".repeat(131073));
+  await promises.writeFile(src, text_expected);
   await promises.rm(folder, { recursive: true, force: true });
   await promises.cp(src, dst);
+
+  const text_actual = await Bun.file(dst).text();
+  expect(text_actual).toBe(text_expected);
 });

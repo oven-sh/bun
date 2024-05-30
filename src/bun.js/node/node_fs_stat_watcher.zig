@@ -50,6 +50,7 @@ pub const StatWatcherScheduler = struct {
         log("append new watcher {s}", .{watcher.path});
         bun.assert(watcher.closed == false);
         bun.assert(watcher.next == null);
+        // TODO: if we are running and the new watcher has a smaller interval this can cause problems
 
         if (this.head.swap(watcher, .Monotonic)) |head| {
             watcher.next = head;

@@ -2710,7 +2710,7 @@ describe("update", () => {
     });
 
     ({ out } = await runBunUpdate(env, join(packageDir, "packages", "pkg1"), ["a-dep@^1.0.5"]));
-    expect(out).toEqual(["", "installed a-dep@1.0.10", "", "1 package installed"]);
+    expect(out).toEqual(["", "installed a-dep@1.0.10", "", expect.stringMatching(/(\[\d+\.\d+m?s\])/), ""]);
     expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
       name: "a-dep",
       version: "1.0.10",
@@ -2808,14 +2808,14 @@ describe("update", () => {
 
     // update no-deps, no range, no change
     let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
-    expect(out).toEqual(["", "installed no-deps@1.0.0", "", "2 packages installed"]);
+    expect(out).toEqual(["", "installed no-deps@1.0.0", "", expect.stringMatching(/(\[\d+\.\d+m?s\])/), ""]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
     });
 
     // update package that doesn't exist to workspace, should add to package.json
     ({ out } = await runBunUpdate(env, join(packageDir, "packages", "pkg1"), ["no-deps"]));
-    expect(out).toEqual(["", "installed no-deps@2.0.0", "", "3 packages installed"]);
+    expect(out).toEqual(["", "installed no-deps@2.0.0", "", "1 package installed"]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.0.0",
     });
@@ -2841,7 +2841,7 @@ describe("update", () => {
     );
 
     ({ out } = await runBunUpdate(env, packageDir, ["no-deps"]));
-    expect(out).toEqual(["", "installed no-deps@1.1.0", "", "3 packages installed"]);
+    expect(out).toEqual(["", "installed no-deps@1.1.0", "", "1 package installed"]);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.1.0",
     });

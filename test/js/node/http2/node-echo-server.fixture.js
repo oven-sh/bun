@@ -1,8 +1,7 @@
 const http2 = require("http2");
 const fs = require("fs");
-const { TLS_CERT, TLS_OPTIONS } = require("./tls-cert.cjs");
 const server = http2.createSecureServer({
-  ...TLS_CERT,
+  ...JSON.parse(process.argv[2]),
   rejectUnauthorized: false,
 });
 const setCookie = ["a=b", "c=d; Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly", "e=f"];

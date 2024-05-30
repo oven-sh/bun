@@ -127,7 +127,9 @@ int us_poll_events(struct us_poll_t *p) {
 
 unsigned int us_internal_accept_poll_event(struct us_poll_t *p) { return 0; }
 
-int us_internal_poll_type(struct us_poll_t *p) { return p->poll_type & POLL_TYPE_KIND_MASK; }
+int us_internal_poll_type(struct us_poll_t *p) {
+  return p->poll_type & POLL_TYPE_KIND_MASK;
+}
 
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
   p->poll_type = poll_type | (p->poll_type & POLL_TYPE_POLLING_MASK);
@@ -271,15 +273,18 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)t;
 
+  uv_timer_t *uv_timer = (uv_timer_t *)(internal_cb + 1);
+
   // only add the timer to the event loop once
   if (internal_cb->has_added_timer_to_event_loop) {
+    // update the repeat time
+    uv_timer_set_repeat(uv_timer, repeat_ms);
     return;
   }
   internal_cb->has_added_timer_to_event_loop = 1;
 
   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
 
-  uv_timer_t *uv_timer = (uv_timer_t *)(internal_cb + 1);
   if (!ms) {
     uv_timer_stop(uv_timer);
   } else {

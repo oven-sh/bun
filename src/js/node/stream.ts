@@ -1304,15 +1304,15 @@ var require_end_of_stream = __commonJS({
       return cleanup;
     }
     function finished(stream, opts) {
-      return new Promise2((resolve, reject) => {
-        eos(stream, opts, err => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
+      const { promise, resolve, reject } = $newPromiseCapability(Promise);
+      eos(stream, opts, err => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
       });
+      return promise;
     }
     module.exports = eos;
     module.exports.finished = finished;
@@ -5403,30 +5403,30 @@ var require_promises = __commonJS({
     var { pipelineImpl: pl } = require_pipeline();
     var { finished } = require_end_of_stream();
     function pipeline(...streams) {
-      return new Promise2((resolve, reject) => {
-        let signal;
-        let end;
-        const lastArg = streams[streams.length - 1];
-        if (lastArg && typeof lastArg === "object" && !isNodeStream(lastArg) && !isIterable(lastArg)) {
-          const options = ArrayPrototypePop(streams);
-          signal = options.signal;
-          end = options.end;
-        }
-        pl(
-          streams,
-          (err, value) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve(value);
-            }
-          },
-          {
-            signal,
-            end,
-          },
-        );
-      });
+      const { promise, resolve, reject } = $newPromiseCapability(Promise);
+      let signal;
+      let end;
+      const lastArg = streams[streams.length - 1];
+      if (lastArg && typeof lastArg === "object" && !isNodeStream(lastArg) && !isIterable(lastArg)) {
+        const options = ArrayPrototypePop(streams);
+        signal = options.signal;
+        end = options.end;
+      }
+      pl(
+        streams,
+        (err, value) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(value);
+          }
+        },
+        {
+          signal,
+          end,
+        },
+      );
+      return promise;
     }
     module.exports = {
       finished,

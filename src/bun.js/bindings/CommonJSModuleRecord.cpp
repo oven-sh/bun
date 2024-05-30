@@ -512,6 +512,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
 #else
     JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
 #endif
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
 
     String dirnameString = dirnameValue.toWTFString(globalObject);
 

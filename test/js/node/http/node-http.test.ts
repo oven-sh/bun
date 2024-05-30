@@ -1047,7 +1047,8 @@ describe("node:http", () => {
     });
   });
 
-  test("error event not fired, issue#4651", done => {
+  test("error event not fired, issue#4651", async () => {
+    const { promise, resolve } = Promise.withResolvers();
     const server = createServer((req, res) => {
       res.end();
     });
@@ -1056,11 +1057,12 @@ describe("node:http", () => {
         res.end();
       });
       server2.on("error", err => {
-        expect(err.code).toBe("EADDRINUSE");
-        done();
+        resolve(err);
       });
       server2.listen({ port: 42069 }, () => {});
     });
+    const err = await promise;
+    expect(err.code).toBe("EADDRINUSE");
   });
 });
 describe("node https server", async () => {

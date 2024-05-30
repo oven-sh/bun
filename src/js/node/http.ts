@@ -1215,9 +1215,9 @@ function ensureReadableStreamController(run) {
           firstWrite = undefined;
           run(controller);
           if (!this[finishedSymbol]) {
-            return new Promise(resolve => {
-              this[deferredSymbol] = resolve;
-            });
+            const { promise, resolve } = $newPromiseCapability(GlobalPromise);
+            this[deferredSymbol] = resolve;
+            return promise;
           }
         },
       }),

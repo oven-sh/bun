@@ -271,7 +271,6 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 pub fn stderr(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
-        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
 
@@ -282,7 +281,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .err => {},
         }
 
-        store.* = Blob.Store{
+        const store = Blob.Store.new(.{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
@@ -294,7 +293,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
                     .mode = mode,
                 },
             },
-        };
+        });
 
         rare.stderr_store = store;
         break :brk store;
@@ -304,7 +303,6 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 pub fn stdout(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
-        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
 
@@ -314,7 +312,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             },
             .err => {},
         }
-        store.* = Blob.Store{
+        const store = Blob.Store.new(.{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
@@ -326,7 +324,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
                     .mode = mode,
                 },
             },
-        };
+        });
         rare.stdout_store = store;
         break :brk store;
     };
@@ -335,7 +333,6 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 pub fn stdin(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
-        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
 
@@ -345,7 +342,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             },
             .err => {},
         }
-        store.* = Blob.Store{
+        const store = Blob.Store.new(.{
             .allocator = default_allocator,
             .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
@@ -357,7 +354,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                     .mode = mode,
                 },
             },
-        };
+        });
         rare.stdin_store = store;
         break :brk store;
     };

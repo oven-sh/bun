@@ -631,7 +631,7 @@ pub const Version = extern struct {
         if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
+    pub fn append(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this.*;
 
         if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
@@ -720,6 +720,93 @@ pub const Version = extern struct {
             return lhs.eql(rhs);
         }
     };
+
+    /// Not perfect, only works if the semver doesn't have multiple ranges.
+    /// e.g. 1.2.3 || 1.2.3 should return true, but will return false.
+    ///
+    /// Invalid input is considered non-exact
+    pub fn @"is exact-ish"(input: string) bool {
+        var i: usize = 0;
+
+        for (0..input.len) |c| {
+            switch (input[c]) {
+                // newlines & whitespace
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                // version separators
+                'v',
+                '=',
+                => {},
+                else => {
+                    i = c;
+                    break;
+                },
+            }
+        }
+
+        // major
+        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
+        var d = input[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= input.len) return false;
+            d = input[i];
+        }
+
+        if (d != '.') return false;
+
+        // minor
+        i += 1;
+        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
+        d = input[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= input.len) return false;
+            d = input[i];
+        }
+
+        if (d != '.') return false;
+
+        // patch
+        i += 1;
+        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
+        d = input[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+
+            // patch is done and at input end, valid
+            if (i >= input.len) return true;
+            d = input[i];
+        }
+
+        // Skip remaining valid pre/build tag characters and whitespace.
+        // Does not validate whitespace used inside pre/build tags.
+        if (!validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) return false;
+        i += 1;
+
+        // at this point the semver is valid so we can return true if it ends
+        if (i >= input.len) return true;
+        d = input[i];
+        while (validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) {
+            i += 1;
+            if (i >= input.len) return true;
+            d = input[i];
+        }
+
+        return false;
+    }
+
+    fn validPreOrBuildTagCharacter(c: u8) bool {
+        return switch (c) {
+            '-', '+', '.', 'A'...'Z', 'a'...'z', '0'...'9' => true,
+            else => false,
+        };
+    }
 
     pub fn orderWithoutTag(
         lhs: Version,

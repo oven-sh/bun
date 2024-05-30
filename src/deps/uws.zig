@@ -1275,19 +1275,19 @@ pub const PosixLoop = extern struct {
     pub const wake = wakeup;
 
     pub fn tick(this: *PosixLoop) void {
-        us_loop_run_bun_tick(this, null, null);
+        us_loop_run_bun_tick(this, null);
     }
 
     pub fn tickWithoutIdle(this: *PosixLoop) void {
         const timespec = bun.timespec{ .sec = 0, .nsec = 0 };
-        us_loop_run_bun_tick(this, &timespec, null);
+        us_loop_run_bun_tick(this, &timespec);
     }
 
-    pub fn tickWithTimeout(this: *PosixLoop, timespec: ?*const bun.timespec, ctx: ?*anyopaque) void {
-        us_loop_run_bun_tick(this, timespec, ctx);
+    pub fn tickWithTimeout(this: *PosixLoop, timespec: ?*const bun.timespec) void {
+        us_loop_run_bun_tick(this, timespec);
     }
 
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec, ctx: ?*anyopaque) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
 
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -2806,7 +2806,7 @@ pub const WindowsLoop = extern struct {
 
     pub const wake = wakeup;
 
-    pub fn tickWithTimeout(this: *WindowsLoop, _: ?*const bun.timespec, _: *?anyopaque) void {
+    pub fn tickWithTimeout(this: *WindowsLoop, _: ?*const bun.timespec) void {
         us_loop_run(this);
     }
 

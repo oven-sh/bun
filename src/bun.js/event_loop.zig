@@ -1351,7 +1351,7 @@ pub const EventLoop = struct {
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null, ctx);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
 
             if (comptime Environment.isDebug) {
                 log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
@@ -1361,9 +1361,10 @@ pub const EventLoop = struct {
             if (comptime Environment.isDebug) {
                 log("tickWithoutIdle", .{});
             }
-            if (Environment.isPosix) {
-                ctx.timer.drainTimers(ctx);
-            }
+        }
+
+        if (Environment.isPosix) {
+            ctx.timer.drainTimers(ctx);
         }
 
         this.flushImmediateQueue();
@@ -1434,12 +1435,13 @@ pub const EventLoop = struct {
             this.processGCTimer();
             var timespec: bun.timespec = undefined;
 
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null, ctx);
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
-            if (Environment.isPosix) {
-                ctx.timer.drainTimers(ctx);
-            }
+        }
+
+        if (Environment.isPosix) {
+            ctx.timer.drainTimers(ctx);
         }
 
         this.flushImmediateQueue();
@@ -1515,34 +1517,6 @@ pub const EventLoop = struct {
             },
             else => {},
         }
-    }
-
-    // TODO: this implementation is terrible
-    // we should not be checking the millitimestamp every time
-    pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
-        return switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                if (timeout == 0) {
-                    return false;
-                }
-                const start_time = std.time.milliTimestamp();
-                while (promise.status(this.virtual_machine.jsc) == .Pending) {
-                    this.tick();
-
-                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
-                        const remaining = std.time.milliTimestamp() - start_time;
-                        if (remaining >= timeout) {
-                            return false;
-                        }
-
-                        // TODO:
-                        this.autoTick();
-                    }
-                }
-                return true;
-            },
-            else => true,
-        };
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {

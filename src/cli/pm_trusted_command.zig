@@ -37,7 +37,7 @@ pub const UntrustedCommand = struct {
         Output.prettyError("<r><b>bun pm untrusted <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n\n", .{});
         Output.flush();
 
-        const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+        const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
         try pm.updateLockfileIfNeeded(load_lockfile);
 
@@ -187,7 +187,7 @@ pub const TrustCommand = struct {
 
         if (args.len == 2) errorExpectedArgs();
 
-        const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+        const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
         PackageManagerCommand.handleLoadLockfileErrors(load_lockfile, pm);
         try pm.updateLockfileIfNeeded(load_lockfile);
 

@@ -3367,7 +3367,7 @@ pub const Expr = struct {
 
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         switch (expr.data) {
-            .e_string => |str| return str.string(allocator) catch null,
+            .e_string => |str| return str.string(allocator) catch bun.outOfMemory(),
             .e_utf8_string => |str| return str.data,
             else => return null,
         }
@@ -3375,16 +3375,16 @@ pub const Expr = struct {
 
     pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         switch (expr.data) {
-            .e_string => |str| return str.stringCloned(allocator) catch null,
-            .e_utf8_string => |str| return allocator.dupe(u8, str.data) catch null,
+            .e_string => |str| return str.stringCloned(allocator) catch bun.outOfMemory(),
+            .e_utf8_string => |str| return allocator.dupe(u8, str.data) catch bun.outOfMemory(),
             else => return null,
         }
     }
 
     pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) ?stringZ {
         switch (expr.data) {
-            .e_string => |str| return str.stringZ(allocator) catch null,
-            .e_utf8_string => |str| return allocator.dupeZ(u8, str.data) catch null,
+            .e_string => |str| return str.stringZ(allocator) catch bun.outOfMemory(),
+            .e_utf8_string => |str| return allocator.dupeZ(u8, str.data) catch bun.outOfMemory(),
             else => return null,
         }
     }

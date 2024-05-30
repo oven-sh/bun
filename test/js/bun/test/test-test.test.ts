@@ -532,7 +532,7 @@ it("test timeouts when expected", () => {
   });
 
   const err = stderr!.toString();
-  expect(err).toContain("timed out after 10ms");
+  expect(err).toHaveTestTimedOutAfter(10);
   expect(err).not.toContain("unreachable code");
 });
 
@@ -564,7 +564,7 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   });
 
   let err = stderr!.toString();
-  err = err.substring(err.indexOf("expect(received).toEqual(expected)"), err.indexOf("at "));
+  err = err.substring(err.indexOf("expect(received).toEqual(expected)"), err.indexOf("at ")).trim();
 
   expect(err).toMatchSnapshot();
   expect(err).not.toContain("undefined");
@@ -673,21 +673,20 @@ describe("unhandled errors between tests are reported", () => {
 
   for (const stage of stages) {
     test("in " + stage, () => {
-      const code = `
-      import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
+      const code = /*js*/ `
+import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
 
-      ${stage}(async () => {
-        Bun.sleep(1).then(() => {
-          throw new Error('## stage ${stage} ##');
-        });
-        await Bun.sleep(1);
-        
-      });
+${stage}(async () => {
+  Bun.sleep(1).then(() => {
+    throw new Error('## stage ${stage} ##');
+  });
+  await Bun.sleep(1);
+});
 
-      test("my-test", () => {
-        expect(1).toBe(1);
-      });
-    `;
+test("my-test", () => {
+  expect(1).toBe(1);
+});
+    `.trim();
 
       const test_dir = tempDirWithFiles("unhandled-" + stage, {
         "my-test.test.js": code,

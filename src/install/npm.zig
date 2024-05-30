@@ -952,22 +952,6 @@ pub const PackageManifest = struct {
         package: *const PackageVersion,
     };
 
-    pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {
-        switch (Dependency.Version.Tag.infer(version)) {
-            .npm => {
-                const group = Semver.Query.parse(default_allocator, version, SlicedString.init(
-                    version,
-                    version,
-                )) catch return null;
-                return this.findBestVersion(group, version);
-            },
-            .dist_tag => {
-                return this.findByDistTag(version);
-            },
-            else => return null,
-        }
-    }
-
     pub fn findByVersion(this: *const PackageManifest, version: Semver.Version) ?FindResult {
         const list = if (!version.tag.hasPre()) this.pkg.releases else this.pkg.prereleases;
         const values = list.values.get(this.package_versions);
@@ -1095,7 +1079,19 @@ pub const PackageManifest = struct {
         if (json.asProperty("name")) |name_q| {
             const field = name_q.expr.asString(allocator) orelse return null;
 
-            if (!strings.eql(field, expected_name)) {
+            // This is intentionally a case insensitive comparision. If the registry is running on a system
+            // with a case insensitive filesystem, you'll be able to install dependencies with casing that doesn't match.
+            //
+            // e.g.
+            // {
+            //   "dependencies": {
+            //     // will install successfully, even though the package name in the registry is `jquery`
+            //     "jQuery": "3.7.1"
+            //   }
+            // }
+            //
+            // https://github.com/oven-sh/bun/issues/5189
+            if (!strings.eqlCaseInsensitiveASCII(expected_name, field, true)) {
                 Output.panic("<r>internal: <red>package name mismatch<r> expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, field });
                 return null;
             }

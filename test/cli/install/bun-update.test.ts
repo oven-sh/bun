@@ -130,6 +130,12 @@ it("should update to latest version of dependency", async () => {
       "baz-exec": "index.js",
     },
   });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      baz: "^0.0.5",
+    },
+  });
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -228,8 +234,9 @@ it("should update to latest versions of dependencies", async () => {
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
+    "^ baz 0.0.3 -> 0.0.5",
+    "",
     "+ @barn/moo@0.1.0",
-    "+ baz@0.0.5",
     "",
     "2 packages installed",
   ]);
@@ -252,6 +259,13 @@ it("should update to latest versions of dependencies", async () => {
     version: "0.0.5",
     bin: {
       "baz-exec": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      "@barn/moo": "^0.1.0",
+      baz: "^0.0.5",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -311,6 +325,14 @@ it("lockfile should not be modified when there are no version changes, issue#588
     expect(await exited).toBe(0);
     return await readFile(join(package_dir, "bun.lockb"));
   };
+
+  // no changes
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      baz: "0.0.3",
+    },
+  });
 
   let prev = await getLockbContent();
   urls.length = 0;

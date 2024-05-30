@@ -614,7 +614,7 @@ pub const VirtualMachine = struct {
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
-    timer: Bun.Timer = Bun.Timer{},
+    timer: Bun.Timer.All = .{},
     event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
@@ -1290,10 +1290,6 @@ pub const VirtualMachine = struct {
 
     pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
-    }
-
-    pub fn waitForPromiseWithTimeout(this: *VirtualMachine, promise: JSC.AnyPromise, timeout: u32) bool {
-        return this.eventLoop().waitForPromiseWithTimeout(promise, timeout);
     }
 
     pub fn waitForTasks(this: *VirtualMachine) void {
@@ -2539,8 +2535,6 @@ pub const VirtualMachine = struct {
                 .Internal = promise,
             });
         }
-
-        this.eventLoop().autoTick();
 
         return this.pending_internal_promise;
     }

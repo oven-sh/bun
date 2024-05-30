@@ -49,6 +49,12 @@
     },
     {
       "type": "lldb",
+      "name": "Attach",
+      "request": "attach",
+      "pid": "${command:pickMyProcess}",
+    },
+    {
+      "type": "lldb",
       "request": "launch",
       "name": "bun test [file] (fast)",
       "program": "${workspaceFolder}/build/bun-debug",

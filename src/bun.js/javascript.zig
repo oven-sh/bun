@@ -2536,8 +2536,6 @@ pub const VirtualMachine = struct {
             });
         }
 
-        this.eventLoop().autoTick();
-
         return this.pending_internal_promise;
     }
 

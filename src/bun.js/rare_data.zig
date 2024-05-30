@@ -40,7 +40,7 @@ spawn_ipc_usockets_context: ?*uws.SocketContext = null,
 
 mime_types: ?bun.http.MimeType.Map = null,
 
-node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
+node_fs_stat_watcher_scheduler: ?bun.U32HashMap(*StatWatcherScheduler) = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
 listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
@@ -384,9 +384,20 @@ pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSR
     return &rare.global_dns_data.?.resolver;
 }
 
-pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *StatWatcherScheduler {
-    return rare.node_fs_stat_watcher_scheduler orelse {
-        rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
-        return rare.node_fs_stat_watcher_scheduler.?;
+pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine, interval: u32) *StatWatcherScheduler {
+    // each StatWatcherScheduler contains 1 timer so we can use interval as key
+    // probably the interval will be the default 5000ms but we can't assume that
+    const schedulers = rare.node_fs_stat_watcher_scheduler orelse {
+        // we need to create a new hashmap and scheduler for this interval
+        rare.node_fs_stat_watcher_scheduler = bun.U32HashMap(*StatWatcherScheduler).init(vm.allocator);
+        const scheduler = StatWatcherScheduler.init(vm.allocator, vm);
+        rare.node_fs_stat_watcher_scheduler.?.put(interval, scheduler) catch bun.outOfMemory();
+        return scheduler;
+    };
+    return schedulers.get(interval) orelse {
+        // we need to create a new scheduler for this interval
+        const scheduler = StatWatcherScheduler.init(vm.allocator, vm);
+        rare.node_fs_stat_watcher_scheduler.?.put(interval, scheduler) catch bun.outOfMemory();
+        return scheduler;
     };
 }

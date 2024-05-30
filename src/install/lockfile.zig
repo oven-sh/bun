@@ -939,7 +939,7 @@ pub fn cleanWithLogger(
         for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
         try builder.allocate();
         for (old.patched_dependencies.keys(), old.patched_dependencies.values()) |k, v| {
-            // bun.assert(!v.patchfile_hash_is_null);
+            bun.assert(!v.patchfile_hash_is_null);
             var patchdep = v;
             patchdep.path = builder.append(String, patchdep.path.slice(old.buffers.string_bytes.items));
             try new.patched_dependencies.put(new.allocator, k, patchdep);
@@ -3719,13 +3719,6 @@ pub const Package = extern struct {
                 }
             }
 
-            {
-                std.debug.print("DIGG DEBUGGING: \n", .{});
-                var iter = from_lockfile.patched_dependencies.iterator();
-                while (iter.next()) |entry| {
-                    std.debug.print("  0x{x}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.slice(from_lockfile.buffers.string_bytes.items) });
-                }
-            }
             summary.patched_dependencies_changed = patched_dependencies_changed: {
                 if (from_lockfile.patched_dependencies.entries.len != to_lockfile.patched_dependencies.entries.len) break :patched_dependencies_changed true;
                 var iter = to_lockfile.patched_dependencies.iterator();
@@ -4909,7 +4902,6 @@ pub const Package = extern struct {
                         var sfb = std.heap.stackFallback(1024, allocator);
                         const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
                         const patch_path = string_builder.append(String, value.asString(allocator).?);
-                        std.debug.print("ADDED PATCHED DEP: {s}\n", .{patch_path.slice(string_builder.ptr.?[0..string_builder.cap])});
                         lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
                     }
                 }

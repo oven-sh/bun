@@ -349,7 +349,7 @@ pub const PatchTask = struct {
                 @panic("TODO zack handle error gracefully");
             },
         };
-        std.debug.print("CALCULATED HASH: {x}\n", .{hash});
+
         var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
         if (gop.found_existing) {
             gop.value_ptr.setPatchfileHash(hash);
@@ -1683,7 +1683,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 switch (resolution.tag) {
                 .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
                 .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
-                else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
+                else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
             };
             if (comptime kind == .patch) return verified;
             if (this.patch.isNull()) return verified;
@@ -5464,7 +5464,6 @@ pub const PackageManager = struct {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
                     const lolname = name.slice(this.lockfile.buffers.string_bytes.items);
-                    std.debug.print("LOL: {s}\n", .{lolname});
                     if (std.mem.eql(u8, lolname, "is-even")) {
                         std.debug.print("LOLhere \n", .{});
                     }
@@ -10411,9 +10410,6 @@ pub const PackageManager = struct {
                     },
                 }
 
-                var outpath: bun.PathBuffer = undefined;
-                const tmpdirpath = try std.os.getFdPath(destination_dir.fd, &outpath);
-                std.debug.print("Patch folder: {s}\n", .{tmpdirpath});
                 return;
             } else i = manager.lockfile.packages.len;
         }
@@ -10962,13 +10958,6 @@ pub const PackageManager = struct {
             } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
             const patch_patch, const patch_contents_hash, const patch_name_and_version_hash = brk: {
-                {
-                    std.debug.print("DEBUGGING: \n", .{});
-                    var iter = this.lockfile.patched_dependencies.iterator();
-                    while (iter.next()) |entry| {
-                        std.debug.print("  0x{x}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.slice(this.lockfile.buffers.string_bytes.items) });
-                    }
-                }
                 var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, package_version }) catch unreachable;
                 defer sfb.get().free(name_and_version);
@@ -12484,16 +12473,6 @@ pub const PackageManager = struct {
                                     gop.value_ptr.setPatchfileHash(null);
                                 }
                             }
-
-                            {
-                                std.debug.print("merge DEBUGGING: \n", .{});
-                                var iter2 = manager.lockfile.patched_dependencies.iterator();
-                                while (iter2.next()) |entry| {
-                                    std.debug.print("  0x{x}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.slice(manager.lockfile.buffers.string_bytes.items) });
-                                }
-
-                                std.debug.print("DEP: {s}\n", .{manager.lockfile.buffers.dependencies.items[0].name.slice(manager.lockfile.buffers.string_bytes.items)});
-                            }
                         }
 
                         builder.clamp();
@@ -12682,13 +12661,6 @@ pub const PackageManager = struct {
 
         manager.log.reset();
 
-        {
-            std.debug.print("DEBUGGING before: \n", .{});
-            var iter = manager.lockfile.patched_dependencies.iterator();
-            while (iter.next()) |entry| {
-                std.debug.print("  0x{x}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.slice(manager.lockfile.buffers.string_bytes.items) });
-            }
-        }
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
             manager,
@@ -12697,13 +12669,7 @@ pub const PackageManager = struct {
             manager.options.enable.exact_versions,
             log_level,
         );
-        {
-            std.debug.print("DEBUGGING after: \n", .{});
-            var iter = manager.lockfile.patched_dependencies.iterator();
-            while (iter.next()) |entry| {
-                std.debug.print("  0x{x}: {s}\n", .{ entry.key_ptr.*, entry.value_ptr.path.slice(manager.lockfile.buffers.string_bytes.items) });
-            }
-        }
+
         if (manager.lockfile.packages.len > 0) {
             root = manager.lockfile.packages.get(0);
         }

@@ -3532,7 +3532,7 @@ pub const Blob = struct {
                                 .data = .{
                                     .bytes = result,
                                 },
-                                .allocator = bun.linux.memfd_allocator,
+                                .allocator = bun.default_allocator,
                                 .ref_count = std.atomic.Value(u32).init(1),
                             },
                         );

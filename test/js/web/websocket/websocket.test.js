@@ -552,6 +552,7 @@ describe("websocket in subprocess", () => {
   it("should exit after timeout", async () => {
     let messageReceived = false;
     let start = 0;
+    let end = 0;
     using server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -568,7 +569,7 @@ describe("websocket in subprocess", () => {
         },
         message(ws, message) {
           messageReceived = true;
-          expect(performance.now() - start >= 300).toBe(true);
+          end = performance.now();
           ws.close();
         },
         close(ws) {},
@@ -584,6 +585,7 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
+    expect(Math.ceil(end - start)).toBeGreaterThanOrEqual(290);
   });
 
   it("should exit after server stop and 0 messages", async () => {

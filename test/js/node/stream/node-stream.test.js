@@ -578,10 +578,10 @@ it("should send Readable events in the right order", async () => {
   const out = await new Response(stdout).text();
   expect(out.split("\n")).toEqual([
     `[ "readable", "pause" ]`,
-    // `[ "readable", "resume" ]`,
+    `[ "readable", "resume" ]`,
     `[ "readable", "data" ]`,
     `[ "readable", "data" ]`,
-    // `[ "readable", "readable" ]`,
+    `[ "readable", "readable" ]`,
     `[ "readable", "end" ]`,
     `[ "readable", "close" ]`,
     `[ 1, "Hello World!\\n" ]`,
@@ -613,4 +613,55 @@ it("reports error", () => {
 
     dup.emit("error", new Error("test"));
   }).toThrow("test");
+});
+
+it("should correctly call removed listeners", () => {
+  const s = new Stream();
+  let l2Called = false;
+  const l1 = () => {
+    s.removeListener("x", l2);
+  };
+  const l2 = () => {
+    l2Called = true;
+  };
+  s.on("x", l1);
+  s.on("x", l2);
+
+  s.emit("x");
+  expect(l2Called).toBeTrue();
+});
+
+it("should emit prefinish on current tick", done => {
+  class UpperCaseTransform extends Transform {
+    _transform(chunk, encoding, callback) {
+      this.push(chunk.toString().toUpperCase());
+      callback();
+    }
+  }
+
+  const upperCaseTransform = new UpperCaseTransform();
+
+  let prefinishCalled = false;
+  upperCaseTransform.on("prefinish", () => {
+    prefinishCalled = true;
+  });
+
+  let finishCalled = false;
+  upperCaseTransform.on("finish", () => {
+    finishCalled = true;
+  });
+
+  upperCaseTransform.end("hi");
+
+  expect(prefinishCalled).toBeTrue();
+
+  const res = upperCaseTransform.read();
+  expect(res.toString()).toBe("HI");
+
+  expect(finishCalled).toBeFalse();
+
+  process.nextTick(() => {
+    expect(finishCalled).toBeTrue();
+    done();
+  });
 });

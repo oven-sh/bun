@@ -1,7 +1,9 @@
+
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
+#include "JavaScriptCore/JSImmutableButterfly.h"
 #include "wtf/text/Base64.h"
 #include "JavaScriptCore/BuiltinNames.h"
 #include "JavaScriptCore/CallData.h"
@@ -107,8 +109,6 @@
 #include "JSPerformanceObserver.h"
 #include "JSPerformanceObserverEntryList.h"
 #include "JSReadableByteStreamController.h"
-#include "JSReadableHelper.h"
-#include "JSReadableState.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamBYOBReader.h"
 #include "JSReadableStreamBYOBRequest.h"
@@ -1231,42 +1231,35 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     JSC::JSValue num = callFrame->argument(1);
     JSC::JSValue arguments = {};
     size_t argumentCount = callFrame->argumentCount();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     switch (argumentCount) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::throwTypeError(globalObject, scope, "setTimeout requires 1 argument (a function)"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-    case 1: {
-        num = jsNumber(0);
+    case 1:
+    case 2: {
         break;
     }
-    case 2: {
+    case 3: {
+        arguments = callFrame->argument(2);
         break;
     }
 
     default: {
-        JSC::ObjectInitializationScope initializationScope(vm);
-        JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
-            initializationScope, nullptr,
-            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-            argumentCount - 2);
+        ArgList argumentsList = ArgList(callFrame, 2);
+        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
 
-        if (UNLIKELY(!argumentsArray)) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (UNLIKELY(!args)) {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        for (size_t i = 2; i < argumentCount; i++) {
-            argumentsArray->putDirectIndex(globalObject, i - 2, callFrame->uncheckedArgument(i));
-        }
-        arguments = JSValue(argumentsArray);
+        arguments = JSValue(args);
     }
     }
 
     if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -1293,9 +1286,10 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     JSC::JSValue num = callFrame->argument(1);
     JSC::JSValue arguments = {};
     size_t argumentCount = callFrame->argumentCount();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
     switch (argumentCount) {
     case 0: {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::throwTypeError(globalObject, scope, "setInterval requires 1 argument (a function)"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -1306,29 +1300,25 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     case 2: {
         break;
     }
+    case 3: {
+        arguments = callFrame->argument(2);
+        break;
+    }
 
     default: {
-        JSC::ObjectInitializationScope initializationScope(vm);
-        JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
-            initializationScope, nullptr,
-            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-            argumentCount - 2);
+        ArgList argumentsList = ArgList(callFrame, 2);
+        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
 
-        if (UNLIKELY(!argumentsArray)) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (UNLIKELY(!args)) {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        for (size_t i = 2; i < argumentCount; i++) {
-            argumentsArray->putDirectIndex(globalObject, i - 2, callFrame->uncheckedArgument(i));
-        }
-        arguments = JSValue(argumentsArray);
+        arguments = JSValue(args);
     }
     }
 
     if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -2596,15 +2586,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotask"_s, jsFunctionPerformMicrotask, ImplementationVisibility::Public));
         });
-    m_emitReadableNextTickFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 4, "emitReadable"_s, WebCore::jsReadable_emitReadable, ImplementationVisibility::Public));
-        });
-
-    m_bunSleepThenCallback.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 1, "onSleep"_s, functionBunSleepThenCallback, ImplementationVisibility::Public));
-        });
 
     m_performMicrotaskVariadicFunction.initLater(
         [](const Initializer<JSFunction>& init) {
@@ -2985,18 +2966,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
-    m_JSReadableStateClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            auto* prototype = JSReadableStatePrototype::create(
-                init.vm, init.global, JSReadableStatePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-            auto* structure = JSReadableState::createStructure(init.vm, init.global, prototype);
-            auto* constructor = JSReadableStateConstructor::create(
-                init.vm, init.global, JSReadableStateConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
-            init.setPrototype(prototype);
-            init.setStructure(structure);
-            init.setConstructor(constructor);
-        });
-
     m_JSFFIFunctionStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
@@ -3066,24 +3035,28 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
 
     JSC::JSValue arguments = {};
-    if (argCount > 1) {
-        JSC::ObjectInitializationScope initializationScope(vm);
-        JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
-            initializationScope, nullptr,
-            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
-            argCount - 1);
+    switch (argCount) {
+    case 0:
+    case 1: {
+        break;
+    }
+    case 2: {
+        arguments = callFrame->argument(1);
+        break;
+    }
+    default: {
+        ArgList argumentsList = ArgList(callFrame, 1);
+        auto* args = JSC::JSImmutableButterfly::tryCreateFromArgList(vm, argumentsList);
 
-        if (UNLIKELY(!argumentsArray)) {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (UNLIKELY(!args)) {
             JSC::throwOutOfMemoryError(globalObject, scope);
             return JSC::JSValue::encode(JSC::JSValue {});
         }
 
-        for (size_t i = 1; i < argCount; i++) {
-            argumentsArray->putDirectIndex(globalObject, i - 1, callFrame->uncheckedArgument(i));
-        }
-        arguments = JSValue(argumentsArray);
+        arguments = JSValue(args);
     }
+    }
+
     return Bun__Timer__setImmediate(globalObject, JSC::JSValue::encode(job), JSValue::encode(arguments));
 }
 
@@ -3423,13 +3396,11 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
-    thisObject->m_bunSleepThenCallback.visit(visitor);
     thisObject->m_cachedGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
-    thisObject->m_emitReadableNextTickFunction.visit(visitor);
     thisObject->m_encodeIntoObjectStructure.visit(visitor);
     thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
     thisObject->m_esmRegistryMap.visit(visitor);
@@ -3449,7 +3420,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
-    thisObject->m_JSReadableStateClassStructure.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
@@ -3971,10 +3941,6 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(EncodedJSValue (*h
         return GlobalObject::PromiseFunctions::Bun__TestScope__onReject;
     } else if (handler == Bun__TestScope__onResolve) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__onResolve;
-    } else if (handler == CallbackJob__onResolve) {
-        return GlobalObject::PromiseFunctions::CallbackJob__onResolve;
-    } else if (handler == CallbackJob__onReject) {
-        return GlobalObject::PromiseFunctions::CallbackJob__onReject;
     } else if (handler == Bun__BodyValueBufferer__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__BodyValueBufferer__onResolveStream;
     } else if (handler == Bun__BodyValueBufferer__onRejectStream) {

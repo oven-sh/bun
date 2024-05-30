@@ -49,7 +49,6 @@ const Fs = bun.fs;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
-pub var test_elapsed_timer: ?*std.time.Timer = null;
 
 pub const Tag = enum(u3) {
     pass,
@@ -80,9 +79,15 @@ pub const TestRunner = struct {
 
     snapshots: Snapshots,
 
-    default_timeout_ms: u32 = 0,
-    test_timeout_timer: ?*bun.uws.Timer = null,
-    last_test_timeout_timer_duration: u32 = 0,
+    default_timeout_ms: u32,
+
+    // from `setDefaultTimeout() or jest.setTimeout()`
+    default_timeout_override: u32 = std.math.maxInt(u32),
+
+    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+        .next = .{},
+        .tag = .TestRunner,
+    },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
     test_options: *const bun.CLI.Command.TestOptions = undefined,
 
@@ -97,19 +102,17 @@ pub const TestRunner = struct {
     filter_regex: ?*RegularExpression,
     filter_buffer: MutableString,
 
+    unhandled_errors_between_tests: u32 = 0,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
-    pub fn onTestTimeout(timer: *bun.uws.Timer) callconv(.C) void {
-        const this = timer.ext(TestRunner).?;
+    pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
+        _ = vm; // autofix
+        this.event_loop_timer.state = .FIRED;
 
         if (this.pending_test) |pending_test| {
-            if (!pending_test.reported) {
-                const now = std.time.Instant.now() catch unreachable;
-                const elapsed = now.since(pending_test.started_at);
-
-                if (elapsed >= (@as(u64, this.last_test_timeout_timer_duration) * std.time.ns_per_ms)) {
-                    pending_test.timeout();
-                }
+            if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
+                pending_test.timeout(now);
             }
         }
     }
@@ -122,15 +125,20 @@ pub const TestRunner = struct {
         this.active_test_for_timeout = test_id;
 
         if (milliseconds > 0) {
-            if (this.test_timeout_timer == null) {
-                this.test_timeout_timer = bun.uws.Timer.createFallthrough(bun.uws.Loop.get(), this);
-            }
-
-            if (this.last_test_timeout_timer_duration != milliseconds) {
-                this.last_test_timeout_timer_duration = milliseconds;
-                this.test_timeout_timer.?.set(this, onTestTimeout, @as(i32, @intCast(milliseconds)), @as(i32, @intCast(milliseconds)));
-            }
+            this.scheduleTimeout(milliseconds);
         }
+    }
+
+    pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
+        const then = bun.timespec.msFromNow(@intCast(milliseconds));
+        const vm = JSC.VirtualMachine.get();
+        if (this.event_loop_timer.state == .ACTIVE) {
+            vm.timer.remove(&this.event_loop_timer);
+        }
+
+        this.event_loop_timer.next = then;
+        this.event_loop_timer.tag = .TestRunner;
+        vm.timer.insert(&this.event_loop_timer);
     }
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
@@ -315,7 +323,7 @@ pub const Jest = struct {
         else
             .{ TestScope, DescribeScope };
 
-        const module = JSC.JSValue.createEmptyObject(globalObject, 13);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 14);
 
         const test_fn = JSC.NewFunction(globalObject, ZigString.static("test"), 2, ThisTestScope.call, false);
         module.put(
@@ -425,6 +433,12 @@ pub const Jest = struct {
 
         module.put(
             globalObject,
+            ZigString.static("setDefaultTimeout"),
+            JSC.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false),
+        );
+
+        module.put(
+            globalObject,
             ZigString.static("expect"),
             Expect.getConstructor(globalObject),
         );
@@ -453,7 +467,7 @@ pub const Jest = struct {
         mockFn.put(globalObject, ZigString.static("module"), mockModuleFn);
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 7);
+        const jest = JSValue.createEmptyObject(globalObject, 8);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);
         jest.put(globalObject, ZigString.static("restoreAllMocks"), restoreAllMocks);
@@ -474,6 +488,7 @@ pub const Jest = struct {
             useRealTimers,
         );
         jest.put(globalObject, ZigString.static("now"), JSC.NewFunction(globalObject, ZigString.static("now"), 0, JSMock__jsNow, false));
+        jest.put(globalObject, ZigString.static("setTimeout"), JSC.NewFunction(globalObject, ZigString.static("setTimeout"), 1, jsSetDefaultTimeout, false));
 
         module.put(globalObject, ZigString.static("jest"), jest);
         module.put(globalObject, ZigString.static("spyOn"), spyOn);
@@ -535,6 +550,22 @@ pub const Jest = struct {
         return Bun__Jest__testModuleObject(globalObject);
     }
 
+    fn jsSetDefaultTimeout(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+        if (arguments.len < 1 or !arguments[0].isNumber()) {
+            globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
+            return .zero;
+        }
+
+        const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
+
+        if (Jest.runner) |test_runner| {
+            test_runner.default_timeout_override = timeout_ms;
+        }
+
+        return .undefined;
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
@@ -557,7 +588,10 @@ pub const TestScope = struct {
     task: ?*TestRunnerTask = null,
     tag: Tag = .pass,
     snapshot_count: usize = 0,
-    timeout_millis: u32 = 0,
+
+    // null if the test does not set a timeout
+    timeout_millis: u32 = std.math.maxInt(u32),
+
     retry_count: u32 = 0, // retry, on fail
     repeat_count: u32 = 0, // retry, on pass or fail
 
@@ -670,9 +704,14 @@ pub const TestScope = struct {
         debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
 
         var initial_value = JSValue.zero;
-        if (test_elapsed_timer) |timer| {
-            timer.reset();
-            task.started_at = timer.started;
+        task.started_at = bun.timespec.now();
+
+        if (this.timeout_millis == std.math.maxInt(u32)) {
+            if (Jest.runner.?.default_timeout_override != std.math.maxInt(u32)) {
+                this.timeout_millis = Jest.runner.?.default_timeout_override;
+            } else {
+                this.timeout_millis = Jest.runner.?.default_timeout_ms;
+            }
         }
 
         Jest.runner.?.setTimeout(
@@ -719,7 +758,9 @@ pub const TestScope = struct {
             }
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    if (!promise.isHandled(vm.global.vm())) {
+                        _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue(vm.global));
+                    }
 
                     if (this.tag == .todo) {
                         return .{ .todo = {} };
@@ -1165,6 +1206,7 @@ pub const DescribeScope = struct {
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
         if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
+        globalThis.bunVM().onUnhandledRejectionCtx = null;
 
         if (!skipped) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
@@ -1259,7 +1301,7 @@ pub const TestRunnerTask = struct {
     promise_state: AsyncState = .none,
     sync_state: AsyncState = .none,
     reported: bool = false,
-    started_at: std.time.Instant = std.mem.zeroes(std.time.Instant),
+    started_at: bun.timespec = .{},
 
     pub const AsyncState = enum {
         none,
@@ -1267,17 +1309,42 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, _: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+    pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSC.JSGlobalObject, rejection: JSC.JSValue) void {
+        var deduped = false;
+        const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
+
+        if (rejection.asAnyPromise()) |promise| {
+            promise.setHandled(globalObject.vm());
+        }
+
         if (jsc_vm.last_reported_error_for_dedupe == rejection and rejection != .zero) {
             jsc_vm.last_reported_error_for_dedupe = .zero;
+            deduped = true;
         } else {
+            if (is_unhandled and Jest.runner != null) {
+                Output.prettyErrorln(
+                    \\<r>
+                    \\<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>
+                    \\<d>-------------------------------<r>
+                    \\
+                , .{});
+
+                Output.flush();
+            }
             jsc_vm.runErrorHandlerWithDedupe(rejection, jsc_vm.onUnhandledRejectionExceptionList);
+            if (is_unhandled and Jest.runner != null) {
+                Output.prettyError("<r><d>-------------------------------<r>\n\n", .{});
+                Output.flush();
+            }
         }
 
         if (jsc_vm.onUnhandledRejectionCtx) |ctx| {
             var this = bun.cast(*TestRunnerTask, ctx);
             jsc_vm.onUnhandledRejectionCtx = null;
             this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .unhandledRejection);
+        } else if (Jest.runner) |runner| {
+            if (!deduped)
+                runner.unhandled_errors_between_tests += 1;
         }
     }
 
@@ -1338,6 +1405,10 @@ pub const TestRunnerTask = struct {
 
         var result = TestScope.run(&test_, this);
 
+        if (this.describe.tests.items.len > test_id) {
+            this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
+        }
+
         // rejected promises should fail the test
         if (result != .fail)
             globalThis.handleRejectedPromises();
@@ -1379,16 +1450,24 @@ pub const TestRunnerTask = struct {
         return false;
     }
 
-    pub fn timeout(this: *TestRunnerTask) void {
+    pub fn timeout(this: *TestRunnerTask, now: *const bun.timespec) void {
         if (comptime Environment.allow_assert) assert(!this.reported);
-
+        const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .timeout);
+        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = elapsed });
     }
 
-    pub fn handleResult(this: *TestRunnerTask, result: Result, comptime from: @Type(.EnumLiteral)) void {
-        switch (comptime from) {
+    const ResultType = union(enum) {
+        promise: void,
+        callback: void,
+        sync: void,
+        timeout: u64,
+        unhandledRejection: void,
+    };
+
+    pub fn handleResult(this: *TestRunnerTask, result: Result, from: ResultType) void {
+        switch (from) {
             .promise => {
                 if (comptime Environment.allow_assert) assert(this.promise_state == .pending);
                 this.promise_state = .fulfilled;
@@ -1410,7 +1489,6 @@ pub const TestRunnerTask = struct {
                 this.sync_state = .fulfilled;
             },
             .timeout, .unhandledRejection => {},
-            else => @compileError("Bad from"),
         }
 
         defer {
@@ -1424,11 +1502,15 @@ pub const TestRunnerTask = struct {
         this.reported = true;
 
         const test_id = this.test_id;
-        const test_ = this.describe.tests.items[test_id];
+        var test_ = this.describe.tests.items[test_id];
+        if (from == .timeout) {
+            test_.timeout_millis = @truncate(from.timeout);
+        }
+
         var describe = this.describe;
         describe.tests.items[test_id] = test_;
 
-        if (comptime from == .timeout) {
+        if (from == .timeout) {
             const err = this.globalThis.createErrorInstance("Test {} timed out after {d}ms", .{ bun.fmt.quote(test_.label), test_.timeout_millis });
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, true);
         }
@@ -1443,10 +1525,7 @@ pub const TestRunnerTask = struct {
                 this.source_file_path,
                 test_.label,
                 count,
-                if (test_elapsed_timer) |timer|
-                    timer.read()
-                else
-                    0,
+                this.started_at.sinceNow(),
                 describe,
             ),
             .fail => |count| Jest.runner.?.reportFailure(
@@ -1454,10 +1533,7 @@ pub const TestRunnerTask = struct {
                 this.source_file_path,
                 test_.label,
                 count,
-                if (test_elapsed_timer) |timer|
-                    timer.read()
-                else
-                    0,
+                this.started_at.sinceNow(),
                 describe,
             ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
@@ -1469,10 +1545,7 @@ pub const TestRunnerTask = struct {
                     this.source_file_path,
                     test_.label,
                     count,
-                    if (test_elapsed_timer) |timer|
-                        timer.read()
-                    else
-                        0,
+                    this.started_at.sinceNow(),
                     describe,
                 );
             },
@@ -1566,7 +1639,7 @@ inline fn createScope(
         }
     }
 
-    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
@@ -1656,12 +1729,6 @@ inline fn createScope(
             .func_has_callback = has_callback,
             .timeout_millis = timeout_ms,
         }) catch unreachable;
-
-        if (test_elapsed_timer == null) create_timer: {
-            const timer = allocator.create(std.time.Timer) catch unreachable;
-            timer.* = std.time.Timer.start() catch break :create_timer;
-            test_elapsed_timer = timer;
-        }
     } else {
         var scope = allocator.create(DescribeScope) catch unreachable;
         scope.* = .{
@@ -1822,7 +1889,7 @@ fn eachBind(
         return .zero;
     }
 
-    var timeout_ms: u32 = Jest.runner.?.default_timeout_ms;
+    var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
         timeout_ms = @as(u32, @intCast(@max(args[2].coerce(i32, globalThis), 0)));
     } else if (options.isObject()) {
@@ -1948,12 +2015,6 @@ fn eachBind(
                         .func_has_callback = has_callback_function,
                         .timeout_millis = timeout_ms,
                     }) catch unreachable;
-
-                    if (test_elapsed_timer == null) create_timer: {
-                        const timer = allocator.create(std.time.Timer) catch unreachable;
-                        timer.* = std.time.Timer.start() catch break :create_timer;
-                        test_elapsed_timer = timer;
-                    }
                 }
             } else {
                 var scope = allocator.create(DescribeScope) catch unreachable;

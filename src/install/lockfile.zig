@@ -205,7 +205,14 @@ pub const LoadFromDiskResult = union(enum) {
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
-pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+pub fn loadFromDisk(
+    this: *Lockfile,
+    manager: *PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    filename: stringZ,
+    comptime attempt_loading_from_other_lockfile: bool,
+) LoadFromDiskResult {
     if (comptime Environment.allow_assert) assert(FileSystem.instance_loaded);
 
     const buf = (if (filename.len > 0)
@@ -214,13 +221,20 @@ pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, fil
         File.from(std.io.getStdIn()).readToEnd(allocator).unwrap()) catch |err| {
         return switch (err) {
             error.EACCESS, error.EPERM, error.ENOENT => {
-                // Attempt to load from "package-lock.json", "yarn.lock", etc.
-                return migration.detectAndLoadOtherLockfile(
-                    this,
-                    allocator,
-                    log,
-                    filename,
-                );
+                if (comptime attempt_loading_from_other_lockfile) {
+                    // Attempt to load from "package-lock.json", "yarn.lock", etc.
+                    return migration.detectAndLoadOtherLockfile(
+                        this,
+                        manager,
+                        allocator,
+                        log,
+                        filename,
+                    );
+                }
+
+                return LoadFromDiskResult{
+                    .err = .{ .step = .open_file, .value = err },
+                };
             },
             error.EINVAL, error.ENOTDIR, error.EISDIR => LoadFromDiskResult{ .not_found = {} },
             else => LoadFromDiskResult{ .err = .{ .step = .open_file, .value = err } },
@@ -666,6 +680,7 @@ pub const Tree = struct {
 /// Our in-memory representation is all that's left.
 pub fn maybeCloneFilteringRootPackages(
     old: *Lockfile,
+    manager: *PackageManager,
     features: Features,
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
@@ -686,7 +701,7 @@ pub fn maybeCloneFilteringRootPackages(
 
     if (!any_changes) return old;
 
-    return try old.clean(&.{}, exact_versions, log_level);
+    return try old.clean(manager, &.{}, exact_versions, log_level);
 }
 
 fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequest, exact_versions: bool) !void {
@@ -762,6 +777,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
 }
 pub fn clean(
     old: *Lockfile,
+    manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
@@ -775,11 +791,12 @@ pub fn clean(
         log.deinit();
     }
 
-    return old.cleanWithLogger(updates, &log, exact_versions, log_level);
+    return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
 }
 
 pub fn cleanWithLogger(
     old: *Lockfile,
+    manager: *PackageManager,
     updates: []PackageManager.UpdateRequest,
     log: *logger.Log,
     exact_versions: bool,
@@ -794,7 +811,7 @@ pub fn cleanWithLogger(
 
     // preinstall_state is used during installPackages. the indexes(package ids) need
     // to be remapped
-    var preinstall_state = PackageManager.instance.preinstall_state;
+    var preinstall_state = manager.preinstall_state;
     var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
@@ -837,6 +854,7 @@ pub fn cleanWithLogger(
         .clone_queue = clone_queue_,
         .log = log,
         .old_preinstall_state = old_preinstall_state,
+        .manager = manager,
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -889,7 +907,7 @@ pub fn cleanWithLogger(
         try new.workspace_versions.ensureTotalCapacity(z_allocator, old.workspace_versions.count());
         new.workspace_versions.entries.len = old.workspace_versions.entries.len;
         for (versions, new.workspace_versions.values()) |src, *dest| {
-            dest.* = src.clone(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
+            dest.* = src.append(old.buffers.string_bytes.items, @TypeOf(&workspace_paths_builder), &workspace_paths_builder);
         }
 
         @memcpy(
@@ -916,41 +934,28 @@ pub fn cleanWithLogger(
         const string_buf = new.buffers.string_bytes.items;
         const slice = new.packages.slice();
         const names = slice.items(.name);
-        const name_hashes = slice.items(.name_hash);
         const resolutions = slice.items(.resolution);
-        const metas = slice.items(.meta);
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
-        const package_id_to_update = if (PackageManager.instance.workspace_name_hash) |workspace_name_hash| brk: {
-            for (resolutions, name_hashes, metas) |*res, name_hash, meta| {
-                if (res.tag == .workspace and name_hash == workspace_name_hash) {
-                    break :brk meta.id;
-                }
-            }
+        const workspace_package_id = manager.root_package_id.get(manager);
 
-            if (comptime Environment.allow_assert) {
-                @panic("failed to find workspace package for `bun add/remove`");
-            }
-
-            // should not hit this, default to root just in case
-            break :brk 0;
-        } else 0; // root
-
-        const dep_list = slice.items(.dependencies)[package_id_to_update];
-        const res_list = slice.items(.resolutions)[package_id_to_update];
-        const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
+        const dep_list = slice.items(.dependencies)[workspace_package_id];
+        const res_list = slice.items(.resolutions)[workspace_package_id];
+        const workspace_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
-        for (updates) |*update| {
+        request_updated: for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
-                for (root_deps, resolved_ids) |dep, package_id| {
+                for (resolved_ids, workspace_deps) |package_id, dep| {
                     if (update.matches(dep, string_buf)) {
                         if (package_id > new.packages.len) continue;
                         update.version_buf = string_buf;
                         update.version = dep.version;
                         update.resolution = resolutions[package_id];
                         update.resolved_name = names[package_id];
+
+                        continue :request_updated;
                     }
                 }
             }
@@ -966,6 +971,23 @@ pub fn cleanWithLogger(
     }
 
     return new;
+}
+
+pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
+    return if (workspace_name_hash) |workspace_name_hash_| brk: {
+        const packages = this.packages.slice();
+        const name_hashes = packages.items(.name_hash);
+        const resolutions = packages.items(.resolution);
+        const metas = packages.items(.meta);
+        for (resolutions, name_hashes, metas) |res, name_hash, meta| {
+            if (res.tag == .workspace and name_hash == workspace_name_hash_) {
+                break :brk meta.id;
+            }
+        }
+
+        // should not hit this, default to root just in case
+        break :brk 0;
+    } else 0;
 }
 
 pub const MetaHashFormatter = struct {
@@ -1008,6 +1030,7 @@ const Cloner = struct {
     trees_count: u32 = 1,
     log: *logger.Log,
     old_preinstall_state: std.ArrayListUnmanaged(Install.PreinstallState),
+    manager: *PackageManager,
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
@@ -1029,6 +1052,10 @@ const Cloner = struct {
                 this,
             );
         }
+
+        // cloning finished, items in lockfile buffer might have a different order, meaning
+        // package ids and dependency ids have changed
+        this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
         if (this.lockfile.packages.len != 0) {
             PackageManager.instance.root_dependency_list = this.lockfile.packages.items(.dependencies)[0];
@@ -1053,7 +1080,7 @@ const Cloner = struct {
             .dependencies = lockfile.buffers.dependencies.items,
             .log = this.log,
             .lockfile = lockfile,
-            .prefer_dev_dependencies = PackageManager.instance.options.local_package_features.dev_dependencies,
+            .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);
@@ -1085,6 +1112,8 @@ pub const Printer = struct {
     lockfile: *Lockfile,
     options: PackageManager.Options,
     successfully_installed: ?Bitset = null,
+
+    manager: ?*PackageManager,
 
     updates: []const PackageManager.UpdateRequest = &[_]PackageManager.UpdateRequest{},
 
@@ -1125,7 +1154,10 @@ pub const Printer = struct {
 
         var lockfile = try allocator.create(Lockfile);
 
-        const load_from_disk = lockfile.loadFromDisk(allocator, log, lockfile_path);
+        // TODO remove the need for manager when migrating from package-lock.json
+        const manager = &PackageManager.instance;
+
+        const load_from_disk = lockfile.loadFromDisk(manager, allocator, log, lockfile_path, false);
         switch (load_from_disk) {
             .err => |cause| {
                 switch (cause.step) {
@@ -1204,6 +1236,7 @@ pub const Printer = struct {
         var printer = Printer{
             .lockfile = lockfile,
             .options = options,
+            .manager = null,
         };
 
         switch (format) {
@@ -1226,6 +1259,7 @@ pub const Printer = struct {
             id_map: ?[]DependencyID,
         ) !void {
             const lockfile = this.lockfile;
+            const string_buf = lockfile.buffers.string_bytes.items;
             const packages_slice = lockfile.packages.slice();
             const resolutions = lockfile.buffers.resolutions.items;
             const dependencies = lockfile.buffers.dependencies.items;
@@ -1233,13 +1267,37 @@ pub const Printer = struct {
             const names = packages_slice.items(.name);
             bun.assert(workspace_res.tag == .workspace or workspace_res.tag == .root);
             const resolutions_list = packages_slice.items(.resolutions);
-
             var printed_section_header = false;
+            var printed_update = false;
+
+            // find the updated packages
+            for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
+                switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
+                    .yes, .no, .@"return" => {},
+                    .update => |update_info| {
+                        printed_new_install.* = true;
+                        printed_update = true;
+
+                        if (comptime print_section_header == .print_section_header) {
+                            if (!printed_section_header) {
+                                printed_section_header = true;
+                                const workspace_name = names[workspace_package_id].slice(string_buf);
+                                try writer.print(comptime Output.prettyFmt("<r>\n<cyan>{s}<r><d>:<r>\n", enable_ansi_colors), .{
+                                    workspace_name,
+                                });
+                            }
+                        }
+
+                        try printUpdatedPackage(this, update_info, enable_ansi_colors, Writer, writer);
+                    },
+                }
+            }
+
             for (resolutions_list[workspace_package_id].begin()..resolutions_list[workspace_package_id].end()) |dep_id| {
                 switch (shouldPrintPackageInstall(this, @intCast(dep_id), installed, id_map)) {
                     .@"return" => return,
                     .yes => {},
-                    .no => continue,
+                    .no, .update => continue,
                 }
 
                 const dep = dependencies[dep_id];
@@ -1250,22 +1308,35 @@ pub const Printer = struct {
                 if (comptime print_section_header == .print_section_header) {
                     if (!printed_section_header) {
                         printed_section_header = true;
-                        const workspace_name = names[workspace_package_id].slice(lockfile.buffers.string_bytes.items);
+                        const workspace_name = names[workspace_package_id].slice(string_buf);
                         try writer.print(comptime Output.prettyFmt("<r>\n<cyan>{s}<r><d>:<r>\n", enable_ansi_colors), .{
                             workspace_name,
                         });
                     }
                 }
 
+                if (printed_update) {
+                    printed_update = false;
+                    try writer.writeAll("\n");
+                }
                 try printInstalledPackage(this, &dep, package_id, enable_ansi_colors, Writer, writer);
             }
         }
 
-        const ShouldPrintPackageInstallResult = enum {
+        const PackageUpdatePrintInfo = struct {
+            version: Semver.Version,
+            version_buf: string,
+            resolution: Resolution,
+            dependency_id: DependencyID,
+        };
+
+        const ShouldPrintPackageInstallResult = union(enum) {
             yes,
             no,
             @"return",
+            update: PackageUpdatePrintInfo,
         };
+
         fn shouldPrintPackageInstall(
             this: *const Printer,
             dep_id: DependencyID,
@@ -1277,7 +1348,7 @@ pub const Printer = struct {
             const dependency = dependencies[dep_id];
             const package_id = resolutions[dep_id];
 
-            if (dependency.behavior.isPeer() or dependency.behavior.isWorkspaceOnly() or package_id >= this.lockfile.packages.len) return .no;
+            if (dependency.behavior.isWorkspaceOnly() or package_id >= this.lockfile.packages.len) return .no;
 
             if (id_map) |map| {
                 for (this.updates, map) |update, *update_dependency_id| {
@@ -1294,7 +1365,55 @@ pub const Printer = struct {
 
             if (!installed.isSet(package_id)) return .no;
 
+            if (this.manager) |manager| {
+                const resolution = this.lockfile.packages.items(.resolution)[package_id];
+                if (resolution.tag == .npm) {
+                    const name = dependency.name.slice(this.lockfile.buffers.string_bytes.items);
+                    if (manager.updating_packages.get(name)) |entry| {
+                        if (entry.original_version) |original_version| {
+                            if (!original_version.eql(resolution.value.npm.version)) {
+                                return .{
+                                    .update = .{
+                                        .version = original_version,
+                                        .version_buf = entry.original_version_string_buf,
+                                        .resolution = resolution,
+                                        .dependency_id = dep_id,
+                                    },
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+
             return .yes;
+        }
+
+        fn printUpdatedPackage(
+            this: *const Printer,
+            update_info: PackageUpdatePrintInfo,
+            comptime enable_ansi_colors: bool,
+            comptime Writer: type,
+            writer: Writer,
+        ) !void {
+            const string_buf = this.lockfile.buffers.string_bytes.items;
+            const dependency = this.lockfile.buffers.dependencies.items[update_info.dependency_id];
+
+            const fmt = comptime brk: {
+                if (enable_ansi_colors) {
+                    break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{} →<r> <b><cyan>{}<r>\n", enable_ansi_colors);
+                }
+                break :brk Output.prettyFmt("<r>^ <b>{s}<r><d> <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
+            };
+
+            try writer.print(
+                fmt,
+                .{
+                    dependency.name.slice(string_buf),
+                    update_info.version.fmt(update_info.version_buf),
+                    update_info.resolution.value.npm.version.fmt(string_buf),
+                },
+            );
         }
 
         fn printInstalledPackage(
@@ -1307,41 +1426,46 @@ pub const Printer = struct {
         ) !void {
             const string_buf = this.lockfile.buffers.string_bytes.items;
             const packages_slice = this.lockfile.packages.slice();
-            const resolved = packages_slice.items(.resolution);
-            const dependency_name = dependency.name.slice(string_buf);
-            if (PackageManager.instance.formatLaterVersionInCache(dependency_name, dependency.name_hash, resolved[package_id])) |later_version_fmt| {
-                const fmt = comptime brk: {
-                    if (enable_ansi_colors) {
-                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
-                    } else {
-                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
-                    }
-                };
-                try writer.print(
-                    fmt,
-                    .{
-                        dependency_name,
-                        resolved[package_id].fmt(string_buf, .posix),
-                        later_version_fmt,
-                    },
-                );
-            } else {
-                const fmt = comptime brk: {
-                    if (enable_ansi_colors) {
-                        break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
-                    } else {
-                        break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
-                    }
-                };
+            const resolution: Resolution = packages_slice.items(.resolution)[package_id];
+            const name = dependency.name.slice(string_buf);
 
-                try writer.print(
-                    fmt,
-                    .{
-                        dependency_name,
-                        resolved[package_id].fmt(string_buf, .posix),
-                    },
-                );
+            if (this.manager) |manager| {
+                if (manager.formatLaterVersionInCache(name, dependency.name_hash, resolution)) |later_version_fmt| {
+                    const fmt = comptime brk: {
+                        if (enable_ansi_colors) {
+                            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                        } else {
+                            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                        }
+                    };
+                    try writer.print(
+                        fmt,
+                        .{
+                            name,
+                            resolution.fmt(string_buf, .posix),
+                            later_version_fmt,
+                        },
+                    );
+
+                    return;
+                }
             }
+
+            const fmt = comptime brk: {
+                if (enable_ansi_colors) {
+                    break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                } else {
+                    break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
+                }
+            };
+
+            try writer.print(
+                fmt,
+                .{
+                    name,
+                    resolution.fmt(string_buf, .posix),
+                },
+            );
         }
 
         /// - Prints an empty newline with no diffs
@@ -2108,7 +2232,11 @@ pub const StringBuilder = struct {
     }
 
     pub fn clamp(this: *StringBuilder) void {
-        if (comptime Environment.allow_assert) assert(this.cap >= this.len);
+        if (comptime Environment.allow_assert) {
+            assert(this.cap >= this.len);
+            // assert that no other builder was allocated while this builder was being used
+            assert(this.lockfile.buffers.string_bytes.items.len == this.off + this.cap);
+        }
 
         const excess = this.cap - this.len;
 
@@ -3075,8 +3203,8 @@ pub const Package = extern struct {
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        if (PackageManager.instance.preinstall_state.items.len > 0) {
-            PackageManager.instance.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
+        if (cloner.manager.preinstall_state.items.len > 0) {
+            cloner.manager.preinstall_state.items[new_package.meta.id] = cloner.old_preinstall_state.items[this.meta.id];
         }
 
         for (old_dependencies, dependencies) |old_dep, *new_dep| {
@@ -3295,7 +3423,7 @@ pub const Package = extern struct {
             package.resolution = Resolution{
                 .value = .{
                     .npm = .{
-                        .version = version.clone(
+                        .version = version.append(
                             manifest.string_buf,
                             @TypeOf(&string_builder),
                             &string_builder,
@@ -3445,7 +3573,6 @@ pub const Package = extern struct {
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
             const from_resolutions = from.resolutions.get(from_lockfile.buffers.resolutions.items);
             var to_i: usize = 0;
-            var skipped_workspaces: usize = 0;
 
             if (from_lockfile.overrides.map.count() != to_lockfile.overrides.map.count()) {
                 summary.overrides_changed = true;
@@ -3588,11 +3715,6 @@ pub const Package = extern struct {
                         if (from_dep.name_hash == to_deps[to_i].name_hash) break :found;
                     }
 
-                    if (PackageManager.instance.workspaces.contains(from_lockfile.str(&from_dep.name))) {
-                        skipped_workspaces += 1;
-                        continue;
-                    }
-
                     // We found a removed dependency!
                     // We don't need to remove it
                     // It will be cleaned up later
@@ -3687,7 +3809,7 @@ pub const Package = extern struct {
             // Use saturating arithmetic here because a migrated
             // package-lock.json could be out of sync with the package.json, so the
             // number of from_deps could be greater than to_deps.
-            summary.add = @truncate((to_deps.len + skipped_workspaces) -| (from_deps.len -| summary.remove));
+            summary.add = @truncate((to_deps.len) -| (from_deps.len -| summary.remove));
 
             inline for (Lockfile.Scripts.names) |hook| {
                 if (!@field(to.scripts, hook).eql(
@@ -3819,13 +3941,6 @@ pub const Package = extern struct {
         if (comptime tag == null) {
             workspace_path = lockfile.workspace_paths.get(name_hash);
             workspace_version = lockfile.workspace_versions.get(name_hash);
-
-            if (workspace_path == null or workspace_version == null) {
-                if (PackageManager.instance.workspaces.get(lockfile.str(&external_alias.value))) |_workspace_version| {
-                    workspace_path = external_alias.value;
-                    workspace_version = _workspace_version;
-                }
-            }
         }
 
         if (comptime tag != null) {
@@ -3923,7 +4038,7 @@ pub const Package = extern struct {
                     dependency_version.value.workspace = path;
 
                     const workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, name_hash);
-                    const found_matching_workspace = workspace_entry.found_existing or PackageManager.instance.workspaces.contains(lockfile.str(&external_alias.value));
+                    const found_matching_workspace = workspace_entry.found_existing;
 
                     if (workspace_version) |ver| {
                         try lockfile.workspace_versions.put(allocator, name_hash, ver);
@@ -4142,16 +4257,12 @@ pub const Package = extern struct {
                 continue;
             }
 
-            var abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
+            const abs_package_json_path: stringZ = Path.joinAbsStringBufZ(
                 source.path.name.dir,
                 filepath_buf,
                 &.{ input_path, "package.json" },
                 .auto,
             );
-
-            if (comptime Environment.isWindows) {
-                abs_package_json_path = Path.normalizeStringZ(abs_package_json_path, true, .posix);
-            }
 
             const workspace_entry = processWorkspaceName(
                 allocator,
@@ -4193,16 +4304,26 @@ pub const Package = extern struct {
 
             if (workspace_entry.name.len == 0) continue;
 
+            const rel_input_path = Path.relativePlatform(
+                source.path.name.dir,
+                strings.withoutSuffixComptime(abs_package_json_path, std.fs.path.sep_str ++ "package.json"),
+                .auto,
+                true,
+            );
+            if (comptime Environment.isWindows) {
+                Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(rel_input_path));
+            }
+
             if (string_builder) |builder| {
                 builder.count(workspace_entry.name);
-                builder.count(input_path);
+                builder.count(rel_input_path);
                 builder.cap += bun.MAX_PATH_BYTES;
                 if (workspace_entry.version) |version_string| {
                     builder.count(version_string);
                 }
             }
 
-            try workspace_names.insert(input_path, .{
+            try workspace_names.insert(rel_input_path, .{
                 .name = workspace_entry.name,
                 .name_loc = workspace_entry.name_loc,
                 .version = workspace_entry.version,
@@ -4311,16 +4432,20 @@ pub const Package = extern struct {
                     const workspace_path: string = Path.relativePlatform(
                         source.path.name.dir,
                         abs_workspace_dir_path,
-                        .posix,
+                        .auto,
                         true,
                     );
-
-                    Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(workspace_path));
+                    if (comptime Environment.isWindows) {
+                        Path.dangerouslyConvertPathToPosixInPlace(u8, @constCast(workspace_path));
+                    }
 
                     if (string_builder) |builder| {
                         builder.count(workspace_entry.name);
                         builder.count(workspace_path);
                         builder.cap += bun.MAX_PATH_BYTES;
+                        if (workspace_entry.version) |version| {
+                            builder.count(version);
+                        }
                     }
 
                     try workspace_names.insert(workspace_path, .{

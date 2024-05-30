@@ -11,7 +11,7 @@ const BabyList = JSAst.BabyList;
 const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const Joiner = @import("../string_joiner.zig");
+const StringJoiner = bun.StringJoiner;
 const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
@@ -484,11 +484,6 @@ pub const Mapping = struct {
             }
             remain = remain[source_index_delta.start..];
 
-            // // "AAAA" is extremely common
-            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
-
-            // }
-
             // Read the original line
             const original_line_delta = decodeVLQ(remain, 0);
             if (original_line_delta.start == 0) {
@@ -713,7 +708,15 @@ pub const SourceProviderMap = opaque {
                         arena.allocator(),
                         found_url.slice(),
                         result,
-                    ) catch return null,
+                    ) catch |err| {
+                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        });
+                        // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
                 };
             }
 
@@ -725,11 +728,8 @@ pub const SourceProviderMap = opaque {
                 @memcpy(load_path_buf[0..source_filename.len], source_filename);
                 @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
 
-                const data = switch (bun.sys.File.readFrom(
-                    std.fs.cwd(),
-                    load_path_buf[0 .. source_filename.len + 4],
-                    arena.allocator(),
-                )) {
+                const load_path = load_path_buf[0 .. source_filename.len + 4];
+                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, arena.allocator())) {
                     .err => break :try_external,
                     .result => |data| data,
                 };
@@ -741,7 +741,15 @@ pub const SourceProviderMap = opaque {
                         arena.allocator(),
                         data,
                         result,
-                    ) catch return null,
+                    ) catch |err| {
+                        bun.Output.warn("Could not decode sourcemap '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        });
+                        // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
                 };
             }
 
@@ -766,14 +774,14 @@ pub const LineColumnOffset = struct {
         pub fn advance(this: *Optional, input: []const u8) void {
             switch (this.*) {
                 .null => {},
-                .value => this.value.advance(input),
+                .value => |*v| v.advance(input),
             }
         }
 
         pub fn reset(this: *Optional) void {
             switch (this.*) {
                 .null => {},
-                .value => this.value = .{},
+                .value => this.* = .{ .value = .{} },
             }
         }
     };
@@ -787,9 +795,13 @@ pub const LineColumnOffset = struct {
         }
     }
 
-    pub fn advance(this: *LineColumnOffset, input: []const u8) void {
-        var columns = this.columns;
-        defer this.columns = columns;
+    pub fn advance(this_ptr: *LineColumnOffset, input: []const u8) void {
+        // Instead of mutating `this_ptr` directly, copy the state to the stack and do
+        // all the work here, then move it back to the input pointer. When sourcemaps
+        // are enabled, this function is extremely hot.
+        var this = this_ptr.*;
+        defer this_ptr.* = this;
+
         var offset: u32 = 0;
         while (strings.indexOfNewlineOrNonASCII(input, offset)) |i| {
             assert(i >= offset);
@@ -803,7 +815,7 @@ pub const LineColumnOffset = struct {
             // This can lead to integer overflow, crashes, or hangs.
             // https://github.com/oven-sh/bun/issues/10624
             if (cursor.width == 0) {
-                columns += 1;
+                this.columns += 1;
                 offset = i + 1;
                 continue;
             }
@@ -814,22 +826,32 @@ pub const LineColumnOffset = struct {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
-                        columns += 1;
+                        this.columns += 1;
                         continue;
                     }
 
                     this.lines += 1;
-                    columns = 0;
+                    this.columns = 0;
                 },
                 else => |c| {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    columns += switch (c) {
+                    this.columns += switch (c) {
                         0...0xFFFF => 1,
                         else => 2,
                     };
                 },
             }
         }
+
+        const remain = input[offset..];
+
+        if (bun.Environment.allow_assert) {
+            assert(bun.strings.isAllASCII(remain));
+            assert(!bun.strings.containsChar(remain, '\n'));
+            assert(!bun.strings.containsChar(remain, '\r'));
+        }
+
+        this.columns += @intCast(remain.len);
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
@@ -886,9 +908,14 @@ pub const SourceMapPieces = struct {
         var current: usize = 0;
         var generated = LineColumnOffset{};
         var prev_shift_column_delta: i32 = 0;
-        var j = Joiner{};
 
-        j.push(this.prefix.items);
+        // the joiner's node allocator contains string join nodes as well as some vlq encodings
+        // it doesnt contain json payloads or source code, so 16kb is probably going to cover
+        // most applications.
+        var sfb = std.heap.stackFallback(16384, bun.default_allocator);
+        var j = StringJoiner{ .allocator = sfb.get() };
+
+        j.pushStatic(this.prefix.items);
         const mappings = this.mappings.items;
 
         while (current < mappings.len) {
@@ -938,23 +965,24 @@ pub const SourceMapPieces = struct {
                 continue;
             }
 
-            j.push(mappings[start_of_run..potential_end_of_run]);
+            j.pushStatic(mappings[start_of_run..potential_end_of_run]);
 
             assert(shift.before.lines == shift.after.lines);
 
             const shift_column_delta = shift.after.columns - shift.before.columns;
             const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
             const encode = encodeVLQ(vlq_value);
-            j.push(encode.bytes[0..encode.len]);
+            j.pushCloned(encode.bytes[0..encode.len]);
             prev_shift_column_delta = shift_column_delta;
 
             start_of_run = potential_start_of_run;
         }
 
-        j.push(mappings[start_of_run..]);
-        j.push(this.suffix.items);
+        j.pushStatic(mappings[start_of_run..]);
 
-        return try j.done(allocator);
+        const str = try j.doneWithEnd(allocator, this.suffix.items);
+        bun.assert(str[0] == '{'); // invalid json
+        return str;
     }
 };
 
@@ -967,61 +995,61 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
+pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
-    if (start_state.generated_line > 0) {
-        j.append(try strings.repeatingAlloc(allocator, @as(usize, @intCast(start_state.generated_line)), ';'), 0, allocator);
+    if (start_state.generated_line != 0) {
+        j.push(try strings.repeatingAlloc(allocator, @intCast(start_state.generated_line), ';'), allocator);
         prev_end_state.generated_column = 0;
     }
 
+    // Skip past any leading semicolons, which indicate line breaks
     var source_map = source_map_;
     if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
-        j.push(source_map[0..semicolons]);
-        source_map = source_map[semicolons..];
-        prev_end_state.generated_column = 0;
-        start_state.generated_column = 0;
+        if (semicolons > 0) {
+            j.pushStatic(source_map[0..semicolons]);
+            source_map = source_map[semicolons..];
+            prev_end_state.generated_column = 0;
+            start_state.generated_column = 0;
+        }
     }
 
     // Strip off the first mapping from the buffer. The first mapping should be
     // for the start of the original file (the printer always generates one for
     // the start of the file).
-    //
-    // Bun has a 24-byte header for source map meta-data
     var i: usize = 0;
-    const generated_column_ = decodeVLQAssumeValid(source_map, i);
-    i = generated_column_.start;
-    const source_index_ = decodeVLQAssumeValid(source_map, i);
-    i = source_index_.start;
-    const original_line_ = decodeVLQAssumeValid(source_map, i);
-    i = original_line_.start;
-    const original_column_ = decodeVLQAssumeValid(source_map, i);
-    i = original_column_.start;
+    const generated_column = decodeVLQAssumeValid(source_map, i);
+    i = generated_column.start;
+    const source_index = decodeVLQAssumeValid(source_map, i);
+    i = source_index.start;
+    const original_line = decodeVLQAssumeValid(source_map, i);
+    i = original_line.start;
+    const original_column = decodeVLQAssumeValid(source_map, i);
+    i = original_column.start;
 
     source_map = source_map[i..];
 
     // Rewrite the first mapping to be relative to the end state of the previous
     // chunk. We now know what the end state is because we're in the second pass
     // where all chunks have already been generated.
-    start_state.source_index += source_index_.value;
-    start_state.generated_column += generated_column_.value;
-    start_state.original_line += original_line_.value;
-    start_state.original_column += original_column_.value;
+    start_state.source_index += source_index.value;
+    start_state.generated_column += generated_column.value;
+    start_state.original_line += original_line.value;
+    start_state.original_column += original_column.value;
 
-    j.append(
+    j.push(
         appendMappingToBuffer(
             MutableString.initEmpty(allocator),
             j.lastByte(),
             prev_end_state,
             start_state,
         ).list.items,
-        0,
         allocator,
     );
 
     // Then append everything after that without modification.
-    j.push(source_map);
+    j.pushStatic(source_map);
 }
 
 const vlq_lookup_table: [256]VLQ = brk: {
@@ -1455,9 +1483,8 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         buffer.appendCharAssumeCapacity(',');
     }
 
-    comptime var i: usize = 0;
-    inline while (i < vlq.len) : (i += 1) {
-        buffer.appendAssumeCapacity(vlq[i].bytes[0..vlq[i].len]);
+    inline for (vlq) |item| {
+        buffer.appendAssumeCapacity(item.bytes[0..item.len]);
     }
 
     return buffer;

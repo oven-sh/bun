@@ -183,7 +183,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/bunfig)
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/bunfig).
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -251,11 +251,11 @@ Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 
 Escapes the following characters from an input string:
 
-- `"` becomes `"&quot;"`
-- `&` becomes `"&amp;"`
-- `'` becomes `"&#x27;"`
-- `<` becomes `"&lt;"`
-- `>` becomes `"&gt;"`
+- `"` becomes `&quot;`
+- `&` becomes `&amp;`
+- `'` becomes `&#x27;`
+- `<` becomes `&lt;`
+- `>` becomes `&gt;`
 
 This function is optimized for large input. On an M1X, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ascii

@@ -2465,14 +2465,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
 {
     JSC::VM& vm = globalObject->vm();
     ZigString code = *arg1;
-    JSC::JSObject* rangeError = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
-    static const char* range_error_name = "RangeError";
-
-    rangeError->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying({ range_error_name, 10 })))),
-        0);
+    JSC::JSObject* rangeError = Zig::getRangeErrorInstance(message, globalObject).asCell()->getObject();
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
@@ -2488,14 +2481,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
 {
     JSC::VM& vm = globalObject->vm();
     ZigString code = *arg1;
-    JSC::JSObject* typeError = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
-    static const char* range_error_name = "TypeError";
-
-    typeError->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying({ range_error_name, 9 })))),
-        0);
+    JSC::JSObject* typeError = Zig::getTypeErrorInstance(message, globalObject).asCell()->getObject();
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);

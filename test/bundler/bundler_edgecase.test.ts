@@ -381,13 +381,13 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
       `,
       "/x.aaaa": `x`,
     },
+    outdir: "/out",
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
@@ -574,7 +574,7 @@ describe("bundler", () => {
             break;
         }
         console.log(a);
-    
+
         var x = 123, y = 45;
         switch (console) {
           case 456:
@@ -582,14 +582,14 @@ describe("bundler", () => {
         }
         var y = 67;
         console.log(x, y);
-    
+
         var z = 123;
         switch (console) {
           default:
             var z = typeof z;
         }
         console.log(z);
-    
+
         var A = 1, B = 2;
         switch (A) {
           case A:
@@ -1056,6 +1056,55 @@ describe("bundler", () => {
     },
     target: "bun",
   });
+  itBundled("edgecase/EmitInvalidSourceMap1", {
+    files: {
+      "/src/index.ts": /* ts */ `
+        const y = await import("./second.mts");
+        import * as z from "./third.mts";
+        const v = await import("./third.mts");
+        console.log(z, v, y);
+      `,
+      "/src/second.mts": /* ts */ `
+        export default "swag";
+      `,
+      "/src/third.mts": /* ts */ `
+        export default "bun";
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    splitting: true,
+  });
+  // chunk-concat weaved mappings together incorrectly causing the `console`
+  // token to be -2, thus breaking the rest of the mappings in the file
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        import * as react from "react";
+        console.log(react);
+      `,
+      "/node_modules/react/index.js": `
+        var _ = module;
+        sideEffect(() =>   {});
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../node_modules/react/index.js", "../entry.js"],
+        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+      },
+    },
+  });
+
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [
     // input, output:bun, output:node

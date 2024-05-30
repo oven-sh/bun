@@ -270,7 +270,84 @@ export function randomPort(): number {
   return 1024 + Math.floor(Math.random() * (65535 - 1024));
 }
 
+const binaryTypes = {
+  "buffer": Buffer,
+  "arraybuffer": ArrayBuffer,
+  "uint8array": Uint8Array,
+  "uint16array": Uint16Array,
+  "uint32array": Uint32Array,
+  "int8array": Int8Array,
+  "int16array": Int16Array,
+  "int32array": Int32Array,
+  "float32array": Float32Array,
+  "float64array": Float64Array,
+} as const;
+
 expect.extend({
+  toHaveTestTimedOutAfter(actual: any, expected: number) {
+    if (typeof actual !== "string") {
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to be a string`,
+      };
+    }
+
+    const preStartI = actual.indexOf("timed out after ");
+    if (preStartI === -1) {
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to contain "timed out after "`,
+      };
+    }
+    const startI = preStartI + "timed out after ".length;
+    const endI = actual.indexOf("ms", startI);
+    if (endI === -1) {
+      return {
+        pass: false,
+        message: () => `Expected ${actual} to contain "ms" after "timed out after "`,
+      };
+    }
+    const int = parseInt(actual.slice(startI, endI));
+    if (!Number.isSafeInteger(int)) {
+      return {
+        pass: false,
+        message: () => `Expected ${int} to be a safe integer`,
+      };
+    }
+
+    return {
+      pass: int >= expected,
+      message: () => `Expected ${int} to be >= ${expected}`,
+    };
+  },
+  toBeBinaryType(actual: any, expected: keyof typeof binaryTypes) {
+    switch (expected) {
+      case "buffer":
+        return {
+          pass: Buffer.isBuffer(actual),
+          message: () => `Expected ${actual} to be buffer`,
+        };
+      case "arraybuffer":
+        return {
+          pass: actual instanceof ArrayBuffer,
+          message: () => `Expected ${actual} to be ArrayBuffer`,
+        };
+      default: {
+        const ctor = binaryTypes[expected];
+        if (!ctor) {
+          return {
+            pass: false,
+            message: () => `Expected ${expected} to be a binary type`,
+          };
+        }
+
+        return {
+          pass: actual instanceof ctor,
+          message: () => `Expected ${actual} to be ${expected}`,
+        };
+      }
+    }
+  },
   toRun(cmds: string[], optionalStdout?: string) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
@@ -354,7 +431,11 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
               switch (pkg.resolution.tag) {
                 case "npm":
                   const name = dep.is_alias ? dep.npm.name : dep.name;
-                  if (!Bun.deepMatch({ name: name, version: pkg.resolution.value }, resolved)) {
+                  if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    if (dep.behavior.peer && dep.npm) {
+                      // allow peer dependencies to not match exactly, but still satisfy
+                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
+                    }
                     return {
                       pass: false,
                       message: () =>
@@ -385,7 +466,25 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             const pkg = lockfile.packages[dep.package_id];
             if (shouldSkip(pkg, dep)) continue;
             try {
-              require.resolve(join(dep.name, "package.json"), { paths: [treeDepPath] });
+              const resolved = await Bun.file(Bun.resolveSync(join(dep.name, "package.json"), treeDepPath)).json();
+              switch (pkg.resolution.tag) {
+                case "npm":
+                  const name = dep.is_alias ? dep.npm.name : dep.name;
+                  if (!Bun.deepMatch({ name, version: pkg.resolution.value }, resolved)) {
+                    // workspaces don't need a version
+                    if (treePkg.resolution.tag === "workspace" && !resolved.version) continue;
+                    if (dep.behavior.peer && dep.npm) {
+                      // allow peer dependencies to not match exactly, but still satisfy
+                      if (Bun.semver.satisfies(pkg.resolution.value, dep.npm.version)) continue;
+                    }
+                    return {
+                      pass: false,
+                      message: () =>
+                        `Expected ${dep.name} to have version ${pkg.resolution.value} in ${treeDepPath}, but got ${resolved.version}`,
+                    };
+                  }
+                  break;
+              }
             } catch (e) {
               return {
                 pass: false,
@@ -445,6 +544,21 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
+  if (isMacOS || isLinux) {
+    let max = -1;
+    // https://github.com/python/cpython/commit/e21a7a976a7e3368dc1eba0895e15c47cb06c810
+    for (let entry of fs.readdirSync(isMacOS ? "/dev/fd" : "/proc/self/fd")) {
+      const fd = parseInt(entry.trim(), 10);
+      if (Number.isSafeInteger(fd) && fd >= 0) {
+        max = Math.max(max, fd);
+      }
+    }
+
+    if (max >= 0) {
+      return max;
+    }
+  }
+
   const maxFD = openSync("/dev/null", "r");
   closeSync(maxFD);
   return maxFD;
@@ -755,7 +869,7 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   for (const env of envs) {
     for (const key in env) {
       if (!env[key]) continue;
-      const normalized = keys[key.toUpperCase()] ?? key;
+      const normalized = (keys[key.toUpperCase()] ??= key);
       flat[normalized] = env[key];
     }
   }
@@ -787,6 +901,32 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
   return { out, err, exited };
 }
 
+export async function runBunUpdate(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  args?: string[],
+): Promise<{ out: string[]; err: string; exitCode: number }> {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "update", ...(args ?? [])],
+    cwd,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await Bun.readableStreamToText(stderr);
+  let out = await Bun.readableStreamToText(stdout);
+  let exitCode = await exited;
+  if (exitCode !== 0) {
+    console.log("stdout:", out);
+    console.log("stderr:", err);
+    expect().fail("bun update failed");
+  }
+
+  return { out: out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/), err, exitCode };
+}
+
 // If you need to modify, clone it
 export const expiredTls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
@@ -800,3 +940,12 @@ export const tls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDrzCCApegAwIBAgIUHaenuNcUAu0tjDZGpc7fK4EX78gwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yMzA5MDYyMzI3MzRaFw0yNTA5MDUyMzI3MzRaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC+7odzr3yI\nYewRNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MB\nKw3rl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwP\ndwVUeR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn\n0oH9HbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOF\nzDpcp1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FU\nIDHtnUsoHX3RAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUF3y/su4J/8ScpK+rM2LwTct6EQow\nDQYJKoZIhvcNAQELBQADggEBAGWGWp59Bmrk3Gt0bidFLEbvlOgGPWCT9ZrJUjgc\nhY44E+/t4gIBdoKOSwxo1tjtz7WsC2IYReLTXh1vTsgEitk0Bf4y7P40+pBwwZwK\naeIF9+PC6ZoAkXGFRoyEalaPVQDBg/DPOMRG9OH0lKfen9OGkZxmmjRLJzbyfAhU\noI/hExIjV8vehcvaJXmkfybJDYOYkN4BCNqPQHNf87ZNdFCb9Zgxwp/Ou+47J5k4\n5plQ+K7trfKXG3ABMbOJXNt1b0sH8jnpAsyHY4DLEQqxKYADbXsr3YX/yy6c0eOo\nX2bHGD1+zGsb7lGyNyoZrCZ0233glrEM4UxmvldBcWwOWfk=\n-----END CERTIFICATE-----\n",
   key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+7odzr3yIYewR\nNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MBKw3r\nl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwPdwVU\neR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn0oH9\nHbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOFzDpc\np1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FUIDHt\nnUsoHX3RAgMBAAECggEAAckMqkn+ER3c7YMsKRLc5bUE9ELe+ftUwfA6G+oXVorn\nE+uWCXGdNqI+TOZkQpurQBWn9IzTwv19QY+H740cxo0ozZVSPE4v4czIilv9XlVw\n3YCNa2uMxeqp76WMbz1xEhaFEgn6ASTVf3hxYJYKM0ljhPX8Vb8wWwlLONxr4w4X\nOnQAB5QE7i7LVRsQIpWKnGsALePeQjzhzUZDhz0UnTyGU6GfC+V+hN3RkC34A8oK\njR3/Wsjahev0Rpb+9Pbu3SgTrZTtQ+srlRrEsDG0wVqxkIk9ueSMOHlEtQ7zYZsk\nlX59Bb8LHNGQD5o+H1EDaC6OCsgzUAAJtDRZsPiZEQKBgQDs+YtVsc9RDMoC0x2y\nlVnP6IUDXt+2UXndZfJI3YS+wsfxiEkgK7G3AhjgB+C+DKEJzptVxP+212hHnXgr\n1gfW/x4g7OWBu4IxFmZ2J/Ojor+prhHJdCvD0VqnMzauzqLTe92aexiexXQGm+WW\nwRl3YZLmkft3rzs3ZPhc1G2X9QKBgQDOQq3rrxcvxSYaDZAb+6B/H7ZE4natMCiz\nLx/cWT8n+/CrJI2v3kDfdPl9yyXIOGrsqFgR3uhiUJnz+oeZFFHfYpslb8KvimHx\nKI+qcVDcprmYyXj2Lrf3fvj4pKorc+8TgOBDUpXIFhFDyM+0DmHLfq+7UqvjU9Hs\nkjER7baQ7QKBgQDTh508jU/FxWi9RL4Jnw9gaunwrEt9bxUc79dp+3J25V+c1k6Q\nDPDBr3mM4PtYKeXF30sBMKwiBf3rj0CpwI+W9ntqYIwtVbdNIfWsGtV8h9YWHG98\nJ9q5HLOS9EAnogPuS27walj7wL1k+NvjydJ1of+DGWQi3aQ6OkMIegap0QKBgBlR\nzCHLa5A8plG6an9U4z3Xubs5BZJ6//QHC+Uzu3IAFmob4Zy+Lr5/kITlpCyw6EdG\n3xDKiUJQXKW7kluzR92hMCRnVMHRvfYpoYEtydxcRxo/WS73SzQBjTSQmicdYzLE\ntkLtZ1+ZfeMRSpXy0gR198KKAnm0d2eQBqAJy0h9AoGBAM80zkd+LehBKq87Zoh7\ndtREVWslRD1C5HvFcAxYxBybcKzVpL89jIRGKB8SoZkF7edzhqvVzAMP0FFsEgCh\naClYGtO+uo+B91+5v2CCqowRJUGfbFOtCuSPR7+B3LDK8pkjK2SQ0mFPUfRA5z0z\nNVWtC0EYNBTRkqhYtqr3ZpUc\n-----END PRIVATE KEY-----\n",
 });
+
+export function disableAggressiveGCScope() {
+  const gc = Bun.unsafe.gcAggressionLevel(0);
+  return {
+    [Symbol.dispose]() {
+      Bun.unsafe.gcAggressionLevel(gc);
+    },
+  };
+}

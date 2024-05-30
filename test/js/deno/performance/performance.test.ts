@@ -8,7 +8,7 @@ test({ permissions: { hrtime: false } }, async function performanceNow() {
   let totalTime = 0;
   setTimeout(() => {
     const end = performance.now();
-    totalTime = end - start;
+    totalTime = Math.ceil(end - start);
     resolve();
   }, 10);
   await promise;

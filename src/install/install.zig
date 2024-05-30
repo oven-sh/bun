@@ -3693,6 +3693,7 @@ pub const PackageManager = struct {
         this: *PackageManager,
         name_hash: PackageNameHash,
         name: String,
+        dependency: *const Dependency,
         version: Dependency.Version,
         dependency_id: DependencyID,
         behavior: Behavior,
@@ -3701,9 +3702,12 @@ pub const PackageManager = struct {
         install_peer: bool,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
-        const name_str = name.slice(this.lockfile.buffers.string_bytes.items);
-        // If updating, only update packages in the current workspace
-        const should_update = this.to_update and this.isRootDependency(dependency_id) and this.updating_packages.contains(name_str);
+        const should_update = this.to_update and
+            // If updating, only update packages in the current workspace
+            this.isRootDependency(dependency_id) and
+            // no need to do a look up if update requests are empty (`bun update` with no args)
+            (this.update_requests.len == 0 or
+            this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
 
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
@@ -3881,6 +3885,7 @@ pub const PackageManager = struct {
         this: *PackageManager,
         name_hash: PackageNameHash,
         name: String,
+        dependency: *const Dependency,
         version: Dependency.Version,
         behavior: Behavior,
         dependency_id: DependencyID,
@@ -4046,6 +4051,7 @@ pub const PackageManager = struct {
                 return try this.getOrPutResolvedPackageWithFindResult(
                     name_hash,
                     name,
+                    dependency,
                     version,
                     dependency_id,
                     behavior,
@@ -4459,6 +4465,7 @@ pub const PackageManager = struct {
                     var resolve_result_ = this.getOrPutResolvedPackage(
                         name_hash,
                         name,
+                        dependency,
                         version,
                         dependency.behavior,
                         id,
@@ -4604,6 +4611,7 @@ pub const PackageManager = struct {
                                                     if (this.getOrPutResolvedPackageWithFindResult(
                                                         name_hash,
                                                         name,
+                                                        dependency,
                                                         version,
                                                         id,
                                                         dependency.behavior,
@@ -4810,6 +4818,7 @@ pub const PackageManager = struct {
                 const _result = this.getOrPutResolvedPackage(
                     name_hash,
                     name,
+                    dependency,
                     version,
                     dependency.behavior,
                     id,

@@ -998,11 +998,11 @@ pub const PackageInstall = struct {
         return switch (resolution.tag) {
             .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
             .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
-            else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir),
+            else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
         };
     }
 
-    fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir) bool {
+    fn verifyPackageJSONNameAndVersion(this: *PackageInstall, root_node_modules_dir: std.fs.Dir, resolution_tag: Resolution.Tag) bool {
         const allocator = this.allocator;
         var total: usize = 0;
         var read: usize = 0;
@@ -1057,7 +1057,13 @@ pub const PackageInstall = struct {
             }
 
             // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-            if (total < "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len) return false;
+            const minimum = if (resolution_tag == .workspace and this.package_version.len == 0)
+                // workspaces aren't required to have a version
+                "{\"name\":\"\"}".len + this.package_name.len
+            else
+                "{\"name\":\"\",\"version\":\"\"}".len + this.package_name.len + this.package_version.len;
+
+            if (total < minimum) return false;
 
             break :brk logger.Source.initPathString(bun.span(package_json_path), mutable.list.items[0..total]);
         };
@@ -1069,7 +1075,10 @@ pub const PackageInstall = struct {
 
         var package_json_checker = json_parser.PackageJSONVersionChecker.init(allocator, &source, &log) catch return false;
         _ = package_json_checker.parseExpr() catch return false;
-        if (!package_json_checker.has_found_name or !package_json_checker.has_found_version or log.errors > 0) return false;
+        if (log.errors > 0 or !package_json_checker.has_found_name) return false;
+        // workspaces aren't required to have a version
+        if (!package_json_checker.has_found_version and resolution_tag != .workspace) return false;
+
         const found_version = package_json_checker.found_version;
         // Check if the version matches
         if (!strings.eql(found_version, this.package_version)) {
@@ -9429,9 +9438,17 @@ pub const PackageManager = struct {
                 break :brk this.destination_dir_subpath_buf[0..alias.len :0];
             };
 
-            var resolution_buf: [512]u8 = undefined;
             const extern_string_buf = this.lockfile.buffers.extern_strings.items;
-            const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
+
+            var resolution_buf: [512]u8 = undefined;
+            const package_version = if (resolution.tag == .workspace) brk: {
+                if (this.manager.lockfile.workspace_versions.get(String.Builder.stringHash(name))) |workspace_version| {
+                    break :brk std.fmt.bufPrint(&resolution_buf, "{}", .{workspace_version.fmt(buf)}) catch unreachable;
+                }
+
+                // no version
+                break :brk "";
+            } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
             var installer = PackageInstall{
                 .progress = this.progress,
@@ -9441,11 +9458,10 @@ pub const PackageManager = struct {
                 .destination_dir_subpath_buf = &this.destination_dir_subpath_buf,
                 .allocator = this.lockfile.allocator,
                 .package_name = name,
-                .package_version = resolution_label,
+                .package_version = package_version,
                 .node_modules = &this.node_modules,
-                // .install_order = this.tree_iterator.order,
             };
-            debug("Installing {s}@{s}", .{ name, resolution_label });
+            debug("Installing {s}@{s}", .{ name, resolution.fmt(buf, .posix) });
 
             switch (resolution.tag) {
                 .npm => {

@@ -1780,7 +1780,7 @@ describe("workspaces", async () => {
       "installed what-bin@1.5.0 with binaries:",
       " - what-bin",
       "",
-      "2 packages installed",
+      "1 package installed",
     ]);
     expect(await exited).toBe(0);
     expect(await file(join(packageDir, "foo", "package.json")).json()).toEqual({
@@ -1907,11 +1907,9 @@ describe("workspaces", async () => {
     out = await Bun.readableStreamToText(stdout);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      "+ bar@workspace:packages/bar",
-      "",
       "installed no-deps@2.0.0",
       "",
-      "4 packages installed",
+      "1 package installed",
     ]);
     expect(await exited).toBe(0);
     expect(await file(join(packageDir, "package.json")).json()).toEqual({
@@ -1935,11 +1933,9 @@ describe("workspaces", async () => {
     out = await Bun.readableStreamToText(stdout);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      "+ pkg5@workspace:packages/pkg5",
-      "",
       "installed two-range-deps@1.0.0",
       "",
-      "6 packages installed",
+      "3 packages installed",
     ]);
     expect(await exited).toBe(0);
     expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
@@ -1972,11 +1968,9 @@ describe("workspaces", async () => {
     out = await Bun.readableStreamToText(stdout);
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
-      "+ pkg5@workspace:packages/pkg5",
-      "",
       "installed bar@0.0.7",
       "",
-      "4 packages installed",
+      "1 package installed",
     ]);
     expect(await exited).toBe(0);
     expect(await file(join(packageDir, "packages", "boba", "package.json")).json()).toEqual({
@@ -2120,9 +2114,7 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          `+ pkg2@workspace:packages/pkg2`,
-          "",
-          "2 packages installed",
+          "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
 
@@ -2167,9 +2159,7 @@ describe("workspaces", async () => {
         expect(err).not.toContain("error:");
         expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
           "",
-          `+ pkg2@workspace:packages/pkg2`,
-          "",
-          "2 packages installed",
+          "Checked 2 installs across 3 packages (no changes)",
         ]);
         expect(await exited).toBe(0);
       });
@@ -2244,7 +2234,10 @@ describe("workspaces", async () => {
       expect(err).not.toContain("Duplicate dependency");
       expect(err).not.toContain('workspace dependency "workspace-1" not found');
       expect(err).not.toContain("error:");
-      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        "",
+        "Checked 1 install across 2 packages (no changes)",
+      ]);
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({
         name: "workspace-1",
@@ -2298,9 +2291,7 @@ describe("workspaces", async () => {
       expect(err).not.toContain("error:");
       expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
         "",
-        `+ workspace-1@workspace:packages/workspace-1`,
-        "",
-        "1 package installed",
+        "Checked 1 install across 2 packages (no changes)",
       ]);
       expect(await exited).toBe(0);
       expect(await file(join(packageDir, "node_modules", "workspace-1", "package.json")).json()).toEqual({

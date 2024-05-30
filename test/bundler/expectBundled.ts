@@ -1309,7 +1309,7 @@ for (const [key, blob] of build.outputs) {
             });
             const map_tests = snapshotSourceMap?.[path.basename(file)];
             if (map_tests) {
-              expect(parsed.sources).toEqual(map_tests.files);
+              expect(parsed.sources.map(a => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
               for (let i = 0; i < parsed.sources; i++) {
                 const source = parsed.sources[i];
                 const sourcemap_content = parsed.sourceContent[i];

@@ -325,9 +325,6 @@ extern "C" JSC::JSInternalPromise* Bun__transpileFile(
     const BunString* typeAttribute,
     ErrorableResolvedSource* result, bool allowPromise);
 
-extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::CallFrame*);
-
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,

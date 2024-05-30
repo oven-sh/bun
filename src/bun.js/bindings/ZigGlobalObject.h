@@ -262,8 +262,6 @@ public:
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
-    JSFunction* bunSleepThenCallback() const { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
-
     Structure* globalObjectStructure() const { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
@@ -335,23 +333,16 @@ public:
         Bun__HTTPRequestContextDebugTLS__onRejectStream,
         Bun__HTTPRequestContextDebugTLS__onResolve,
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
-
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-
         Bun__TestScope__onReject,
         Bun__TestScope__onResolve,
-
-        CallbackJob__onResolve,
-        CallbackJob__onReject,
-
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
-
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
     };
-    static constexpr size_t promiseFunctionsSize = 26;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -547,7 +538,6 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
-    LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;

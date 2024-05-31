@@ -21,7 +21,6 @@ error: ## stage beforeAll ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
 Ran 1 tests across 1 files.
 "
 `;
@@ -41,7 +40,6 @@ error: ## stage beforeEach ##
 
  0 pass
  1 fail
- 1 expect() calls
 Ran 1 tests across 1 files.
 "
 `;
@@ -67,7 +65,6 @@ error: ## stage afterEach ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
 Ran 1 tests across 1 files.
 "
 `;
@@ -93,7 +90,6 @@ error: ## stage afterAll ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
 Ran 1 tests across 1 files.
 "
 `;
@@ -120,7 +116,6 @@ error: ## stage describe ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
 Ran 1 tests across 1 files.
 "
 `;

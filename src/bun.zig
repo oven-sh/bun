@@ -3277,13 +3277,28 @@ pub fn getRoughTickCount() timespec {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
-        const CLOCK_MONOTONIC_RAW_APPROX = 5;
         var spec = timespec{
             .nsec = 0,
             .sec = 0,
         };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.c.clock_getres(C.CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = C.CLOCK_MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = C.CLOCK_MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+
         // We use this one because we can avoid reading the mach timebase info ourselves.
-        _ = std.c.clock_gettime(CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&spec));
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
         return spec;
     }
 
@@ -3292,7 +3307,22 @@ pub fn getRoughTickCount() timespec {
             .nsec = 0,
             .sec = 0,
         };
-        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&spec));
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                } else {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
         return spec;
     }
 

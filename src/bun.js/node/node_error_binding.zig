@@ -27,7 +27,7 @@ pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValu
             }
             const arg0 = arguments.ptr[0].toString(globalThis);
             const arg1 = arguments.ptr[1].toString(globalThis);
-            const arg2 = arguments.ptr[2].toString(globalThis);
+            const arg2 = arguments.ptr[2].jsTypeString(globalThis);
             return createTypeError(globalThis, .ERR_INVALID_ARG_TYPE, "The \"{}\" argument must be of type {}. Received {}", .{ arg0, arg1, arg2 });
         }
     };

@@ -88,9 +88,9 @@ async function runTests(target) {
       const summaryPath = join(cwd, "summary.md");
       appendFileSync(summaryPath, stripAnsi(summary));
       const logsPath = join(cwd, "logs");
-      mkdirSync(logsPath, { recursive: true });
       for (const [title, { stdout }] of Object.entries(results)) {
         const logPath = join(logsPath, `${title}.log`);
+        mkdirSync(dirname(logPath), { recursive: true });
         writeFileSync(logPath, stripAnsi(stdout));
       }
     }

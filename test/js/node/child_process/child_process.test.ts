@@ -379,11 +379,11 @@ it("it accepts stdio passthrough", async () => {
     stdio: ["ignore", "pipe", "pipe"],
     env: bunEnv,
   }));
-
   const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
   try {
+    // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
     expect(err.split("\n")).toEqual(["$ run-p echo-hello echo-world", "$ echo hello", "$ echo world", ""]);
-    expect(out.split("\n")).toEqual(["hello", "world", ""]);
+    expect(out.split("\n").slice(0, -1).sort()).toStrictEqual(["hello", "world"].sort());
     expect(exitCode).toBe(0);
   } catch (e) {
     console.error({ exitCode });

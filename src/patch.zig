@@ -1342,3 +1342,147 @@ pub const JS = struct {
         return .true;
     }
 };
+
+pub fn gitDiff(allocator: std.mem.Allocator, old_folder: []const u8, new_folder: []const u8) !std.ArrayList(u8) {
+    var child_proc = std.ChildProcess.init(
+        &[_][]const u8{
+            "git",
+            "-c",
+            "core.safecrlf=false",
+            "diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--ignore-cr-at-eol",
+            "--irreversible-delete",
+            "--full-index",
+            "--no-index",
+            old_folder,
+            new_folder,
+        },
+        allocator,
+    );
+    // unfortunately, git diff returns non-zero exit codes even when it succeeds.
+    // we have to check that stderr was not empty to know if it failed
+    child_proc.stdout_behavior = .Pipe;
+    child_proc.stderr_behavior = .Pipe;
+    var map = std.process.EnvMap.init(allocator);
+    defer map.deinit();
+    if (bun.getenvZ("PATH")) |v| try map.put("PATH", v);
+    try map.put("GIT_CONFIG_NOSYSTEM", "1");
+    try map.put("HOME", "");
+    try map.put("XDG_CONFIG_HOME", "");
+    try map.put("USERPROFILE", "");
+
+    child_proc.env_map = &map;
+    var stdout = std.ArrayList(u8).init(allocator);
+    var stderr = std.ArrayList(u8).init(allocator);
+    defer stderr.deinit();
+    try child_proc.spawn();
+    try child_proc.collectOutput(&stdout, &stderr, 1024 * 1024 * 4);
+    _ = try child_proc.wait();
+    if (stderr.items.len > 0) {
+        @panic("TODO zack git diff failed");
+    }
+
+    try gitDiffPostprocess(&stdout, old_folder, new_folder);
+    return stdout;
+}
+
+/// Now we need to do the equivalent of these regex subtitutions.
+///
+/// Assume that:
+///   aFolder = old_folder = "the_old_folder"
+///   bFolder = new_folder = "the_new_folder"
+///
+/// We use the --src-prefix=a/ and --dst-prefix=b/ options with git diff,
+/// so the paths end up looking like so:
+///
+/// - a/the_old_folder/package.json
+/// - b/the_old_folder/package.json
+/// - a/the_older_folder/src/index.js
+/// - b/the_older_folder/src/index.js
+///
+/// We need to strip out all references to "the_old_folder" and "the_new_folder":
+/// - a/package.json
+/// - b/package.json
+/// - a/src/index.js
+/// - b/src/index.js
+///
+/// The operations look roughy like the following sequence of substitutions and regexes:
+///     .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
+///     .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
+fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_folder: []const u8) !void {
+    const old_folder_trimmed = std.mem.trim(u8, old_folder, "/");
+    const new_folder_trimmed = std.mem.trim(u8, new_folder, "/");
+
+    var old_buf: bun.PathBuffer = undefined;
+    var new_buf: bun.PathBuffer = undefined;
+
+    const @"a/$old_folder/", const @"b/$new_folder/" = brk: {
+        old_buf[0] = 'a';
+        old_buf[1] = '/';
+        @memcpy(old_buf[2..][0..old_folder_trimmed.len], old_folder_trimmed);
+        old_buf[2 + old_folder_trimmed.len] = '/';
+
+        new_buf[0] = 'b';
+        new_buf[1] = '/';
+        @memcpy(new_buf[2..][0..new_folder_trimmed.len], new_folder_trimmed);
+        new_buf[2 + new_folder_trimmed.len] = '/';
+
+        break :brk .{ old_buf[0 .. 2 + old_folder_trimmed.len + 1], new_buf[0 .. 2 + old_folder_trimmed.len + 1] };
+    };
+
+    std.debug.print("\n\n{s}\n\n", .{stdout.items});
+
+    var line_iter = std.mem.splitScalar(u8, stdout.items, '\n');
+    while (line_iter.next()) |line| {
+        if (shouldSkipLine(line)) continue;
+        if (std.mem.indexOf(u8, line, @"a/$old_folder/")) |idx| {
+            const @"$old_folder/ start" = idx + 2;
+            const line_start = line_iter.index.? - 1 - line.len;
+            line_iter.index.? -= 1 + line.len;
+            try stdout.replaceRange(line_start + @"$old_folder/ start", old_folder_trimmed.len + 1, "");
+            continue;
+        }
+        if (std.mem.indexOf(u8, line, @"b/$new_folder/")) |idx| {
+            const @"$new_folder/ start" = idx + 2;
+            const line_start = line_iter.index.? - 1 - line.len;
+            try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
+            line_iter.index.? -= new_folder_trimmed.len + 1;
+        }
+    }
+}
+
+/// We need to remove occurences of "a/" and "b/" and "$old_folder/" and
+/// "$new_folder/" but we don't want to remove them from the actual patch
+/// content (maybe someone had a/$old_folder/foo.txt in the changed files).
+///
+/// To do that we have to skip the lines in the patch file that correspond
+/// to changes.
+///
+/// ```patch
+///
+/// diff --git a/numbers.txt b/banana.txt
+/// old mode 100644
+/// new mode 100755
+/// similarity index 96%
+/// rename from numbers.txt
+/// rename to banana.txt
+/// index fbf1785..92d2c5f
+/// --- a/numbers.txt
+/// +++ b/banana.txt
+/// @@ -1,4 +1,4 @@
+/// -one
+/// +ne
+///
+///  two
+/// ```
+fn shouldSkipLine(line: []const u8) bool {
+    return line.len == 0 or
+        (switch (line[0]) {
+        ' ', '-', '+' => true,
+        else => false,
+    } and
+        // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
+        (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
+}

@@ -101,6 +101,7 @@ pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
 pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -483,7 +484,7 @@ pub const Arguments = struct {
         }
 
         // if (cmd == .PatchCommand) {
-        //     ctx.patch_options.edit_dir = args.option("--edit-dir") orelse "";
+        //     ctx.eatch_options.edit_dir = args.option("--edit-dir") orelse "";
         //     ctx.patch_options.ignore_existing = args.flag("--ignore-existing");
         // }
 
@@ -1348,6 +1349,7 @@ pub const Command = struct {
 
             RootCommandMatcher.case("update") => .UpdateCommand,
             RootCommandMatcher.case("patch") => .PatchCommand,
+            RootCommandMatcher.case("patch-commit") => .PatchCommitCommand,
 
             RootCommandMatcher.case("r"),
             RootCommandMatcher.case("remove"),
@@ -1487,6 +1489,13 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .PatchCommand);
 
                 try PatchCommand.exec(ctx);
+                return;
+            },
+            .PatchCommitCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommitCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommitCommand);
+
+                try PatchCommitCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -2055,6 +2064,7 @@ pub const Command = struct {
         ReservedCommand,
         ExecCommand,
         PatchCommand,
+        PatchCommitCommand,
 
         /// Used by crash reports.
         ///
@@ -2086,6 +2096,7 @@ pub const Command = struct {
                 .ExecCommand => 'e',
                 // TODO: @dave should we make this function return [2]u8 instead of u8, running out of letters in alphabet
                 .PatchCommand => 'x',
+                .PatchCommitCommand => 'z',
             };
         }
 
@@ -2311,7 +2322,7 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
                 else => false,
             };
         }
@@ -2327,6 +2338,7 @@ pub const Command = struct {
                 .RemoveCommand,
                 .UpdateCommand,
                 .PatchCommand,
+                .PatchCommitCommand,
                 => true,
                 else => false,
             };
@@ -2340,6 +2352,7 @@ pub const Command = struct {
             .RemoveCommand = true,
             .UpdateCommand = true,
             .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
@@ -2355,6 +2368,7 @@ pub const Command = struct {
             .RemoveCommand = true,
             .UpdateCommand = true,
             .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -2366,6 +2380,7 @@ pub const Command = struct {
             .RemoveCommand = false,
             .UpdateCommand = false,
             .PatchCommand = false,
+            .PatchCommitCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,

@@ -13,6 +13,30 @@ const assert = bun.assert;
 
 pub const Source = @import("./source.zig").Source;
 
+pub fn writeAll(fd: bun.FileDescriptor, buf: []const u8) bun.sys.Maybe(void) {
+    var written: usize = 0;
+    while (written < buf.len) {
+        written += switch (bun.sys.write(fd, buf[written..])) {
+            .result => |v| v,
+            .err => |e| if (e.getErrno() == bun.C.E.INTR) 0 else return .{ .err = e },
+        };
+    }
+    return bun.sys.Maybe(void).success;
+}
+
+/// Read all data from `fd` into `buf` until `buf` is filled or EOF is returned.
+///
+pub fn readIntoBuf(fd: bun.FileDescriptor, buf: anytype) bun.sys.Maybe([]u8) {
+    var read: usize = 0;
+    while (read < buf.len) {
+        read += switch (bun.sys.read(fd, buf[read..])) {
+            .result => |v| if (v == 0) break else v,
+            .err => |e| if (e.getErrno() == bun.C.E.INTR) 0 else return .{ .err = e },
+        };
+    }
+    return .{ .result = buf[0..read] };
+}
+
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,

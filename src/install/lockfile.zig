@@ -1075,14 +1075,6 @@ const Cloner = struct {
         // package ids and dependency ids have changed
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
-        for (this.lockfile.packages.items(.dependencies), 0..) |deps, i| {
-            std.debug.print("new 2 package id {d}: deps {d} - {d}\n", .{
-                i,
-                deps.off,
-                deps.len,
-            });
-        }
-
         if (this.lockfile.packages.len != 0) {
             try this.hoist(this.lockfile);
         }

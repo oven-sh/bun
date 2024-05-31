@@ -2877,6 +2877,10 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime @hasDecl(T, "is_bun.New()")) {
+        // You will get weird memory bugs in debug builds if you use the wrong allocator.
+        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
+    }
     if (comptime is_heap_breakdown_enabled) {
         const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
         ptr.* = t;
@@ -2887,6 +2891,9 @@ pub inline fn new(comptime T: type, t: T) *T {
     ptr.* = t;
     return ptr;
 }
+
+pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
 
 pub inline fn dupe(comptime T: type, t: *T) *T {
     if (comptime is_heap_breakdown_enabled) {
@@ -2900,24 +2907,10 @@ pub inline fn dupe(comptime T: type, t: *T) *T {
     return ptr;
 }
 
-/// Free a globally-allocated a value
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            destroy(t);
-            return;
-        }
-    }
-
-    allocator.destroy(t);
-}
-
 pub fn New(comptime T: type) type {
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        pub const @"is_bun.New()" = true;
 
         pub inline fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
@@ -3046,18 +3039,6 @@ pub inline fn destroy(t: anytype) void {
     } else {
         default_allocator.destroy(t);
     }
-}
-
-pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            return new(T, t);
-        }
-    }
-
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
 }
 
 pub fn exitThread() noreturn {
@@ -3296,13 +3277,28 @@ pub fn getRoughTickCount() timespec {
     if (comptime Environment.isMac) {
         // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
-        const CLOCK_MONOTONIC_RAW_APPROX = 5;
         var spec = timespec{
             .nsec = 0,
             .sec = 0,
         };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.c.clock_getres(C.CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = C.CLOCK_MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = C.CLOCK_MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+
         // We use this one because we can avoid reading the mach timebase info ourselves.
-        _ = std.c.clock_gettime(CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&spec));
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
         return spec;
     }
 
@@ -3311,7 +3307,22 @@ pub fn getRoughTickCount() timespec {
             .nsec = 0,
             .sec = 0,
         };
-        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&spec));
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                } else {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
         return spec;
     }
 

@@ -497,6 +497,7 @@ function generateConstructorHeader(typeName) {
 
         // Must be defined for each specialization class.
         static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+        static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
 
         DECLARE_EXPORT_INFO;
     private:
@@ -528,7 +529,7 @@ void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${protot
 }
 
 ${name}::${name}(JSC::VM& vm, JSC::Structure* structure) : Base(vm, structure, ${
-    obj.call ? classSymbolName(typeName, "call") : "construct"
+    obj.call ? classSymbolName(typeName, "call") : "call"
   }, construct) {
 
   }
@@ -541,17 +542,41 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
     return ptr;
 }
 
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM &vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr || scope.exception())) {
+      return JSValue::encode(JSC::jsUndefined());
+    }
+
+    Structure* structure = globalObject->${className(typeName)}Structure();
+    ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
+    RETURN_IF_EXCEPTION(scope, {});
+  ${
+    obj.estimatedSize
+      ? `
+      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
+      vm.heap.reportExtraMemoryAllocated(instance, size);`
+      : ""
+  }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+}
+
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* newTarget = asObject(callFrame->newTarget());
     auto* constructor = globalObject->${className(typeName)}Constructor();
     Structure* structure = globalObject->${className(typeName)}Structure();
-    if (constructor != newTarget) {
-      auto scope = DECLARE_THROW_SCOPE(vm);
-
+    if (UNLIKELY(constructor != newTarget)) {
       auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
         // ShadowRealm functions belong to a different global object.
         getFunctionRealm(globalObject, newTarget)
@@ -566,7 +591,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
-    if (UNLIKELY(!ptr)) {
+    if (UNLIKELY(!ptr || scope.exception())) {
       return JSValue::encode(JSC::jsUndefined());
     }
 
@@ -579,7 +604,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
       : ""
   }
 
-    return JSValue::encode(instance);
+    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
 }
 
 void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
@@ -1326,7 +1351,7 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
     output += `
 ${name}::~${name}()
 {
-    if (m_ctx) {
+    if (LIKELY(m_ctx)) {
         ${classSymbolName(typeName, "finalize")}(m_ctx);
     }
 }

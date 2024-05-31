@@ -37,7 +37,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
   $(. /etc/os-release && echo "bullseye") stable" | \
   tee /etc/apt/sources.list.d/docker.list > /dev/null
 curl -fsSL https://keys.openpgp.org/vks/v1/by-fingerprint/32A37959C2FA5C3C99EFBC32A79206696452D198 \
-  | gpg --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg
+  | gpg --yes --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/buildkite-agent-archive-keyring.gpg] https://apt.buildkite.com/buildkite-agent stable main" \
   | tee /etc/apt/sources.list.d/buildkite-agent.list > /dev/null
 

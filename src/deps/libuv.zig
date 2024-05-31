@@ -297,7 +297,6 @@ pub const uv_tcp_accept_s = struct_uv_tcp_accept_s;
 pub const uv_tcp_s = struct_uv_tcp_s;
 pub const uv_udp_s = struct_uv_udp_s;
 pub const uv_pipe_accept_s = struct_uv_pipe_accept_s;
-pub const uv_timer_s = struct_uv_timer_s;
 pub const uv_write_s = struct_uv_write_s;
 pub const uv_tty_s = struct_uv_tty_s;
 pub const uv_poll_s = struct_uv_poll_s;
@@ -1156,8 +1155,8 @@ const union_unnamed_411 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_timer_cb = ?*const fn (*uv_timer_t) callconv(.C) void;
-pub const struct_uv_timer_s = extern struct {
+pub const uv_timer_cb = ?*const fn (*Timer) callconv(.C) void;
+pub const Timer = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
     type: uv_handle_type,
@@ -1199,7 +1198,6 @@ pub const struct_uv_timer_s = extern struct {
         uv_ref(@alignCast(@ptrCast(this)));
     }
 };
-pub const uv_timer_t = struct_uv_timer_s;
 const struct_unnamed_413 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -1262,7 +1260,7 @@ const union_unnamed_415 = extern union {
     dummy: u64,
 };
 const struct_unnamed_410 = extern struct {
-    eof_timer: [*c]uv_timer_t,
+    eof_timer: [*c]Timer,
     dummy: uv_write_t,
     ipc_remote_pid: DWORD,
     ipc_data_frame: union_unnamed_415,
@@ -2201,13 +2199,13 @@ pub extern fn uv_idle_start(idle: [*c]uv_idle_t, cb: uv_idle_cb) c_int;
 pub extern fn uv_idle_stop(idle: [*c]uv_idle_t) c_int;
 pub extern fn uv_async_init(*uv_loop_t, @"async": *uv_async_t, async_cb: uv_async_cb) c_int;
 pub extern fn uv_async_send(@"async": *uv_async_t) c_int;
-pub extern fn uv_timer_init(*uv_loop_t, handle: *uv_timer_t) c_int;
-pub extern fn uv_timer_start(handle: *uv_timer_t, cb: uv_timer_cb, timeout: u64, repeat: u64) c_int;
-pub extern fn uv_timer_stop(handle: *uv_timer_t) c_int;
-pub extern fn uv_timer_again(handle: *uv_timer_t) c_int;
-pub extern fn uv_timer_set_repeat(handle: *uv_timer_t, repeat: u64) void;
-pub extern fn uv_timer_get_repeat(handle: *const uv_timer_t) u64;
-pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
+pub extern fn uv_timer_init(*uv_loop_t, handle: *Timer) c_int;
+pub extern fn uv_timer_start(handle: *Timer, cb: uv_timer_cb, timeout: u64, repeat: u64) c_int;
+pub extern fn uv_timer_stop(handle: *Timer) c_int;
+pub extern fn uv_timer_again(handle: *Timer) c_int;
+pub extern fn uv_timer_set_repeat(handle: *Timer, repeat: u64) void;
+pub extern fn uv_timer_get_repeat(handle: *const Timer) u64;
+pub extern fn uv_timer_get_due_in(handle: *const Timer) u64;
 pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: *uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*:0]const u8, service: [*:0]const u8, hints: ?*const anyopaque) ReturnCode;
 pub extern fn uv_freeaddrinfo(ai: *anyopaque) void;
 pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
@@ -2547,7 +2545,7 @@ pub const union_uv_any_handle = extern union {
     process: uv_process_t,
     stream: uv_stream_t,
     tcp: uv_tcp_t,
-    timer: uv_timer_t,
+    timer: Timer,
     tty: uv_tty_t,
     udp: uv_udp_t,
     signal: uv_signal_t,

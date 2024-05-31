@@ -1548,10 +1548,18 @@ pub const BundleV2 = struct {
         }
     }
 
+    pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
+
     pub fn generateInNewThreadWrap(instance: *BundleThread) void {
         Output.Source.configureNamedThread("Bundler");
 
         instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
+
+        var timer: bun.windows.libuv.Timer = undefined;
+        if (bun.Environment.isWindows) {
+            timer.init(instance.waker.?.loop.uv_loop);
+            timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
+        }
 
         var has_bundled = false;
         while (true) {

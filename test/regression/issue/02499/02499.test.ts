@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { join } from "path";
-import { bunEnv, bunExe } from "../../harness.js";
+import { bunEnv, bunExe } from "harness";
 
 // https://github.com/oven-sh/bun/issues/2499
 it("onAborted() and onWritable are not called after receiving an empty response body due to a promise rejection", async testDone => {
@@ -34,7 +34,7 @@ it("onAborted() and onWritable are not called after receiving an empty response 
     let bunProcess;
     try {
       bunProcess = spawn({
-        cmd: [bunExe(), "run", join(import.meta.dir, "./02499-repro.ts")],
+        cmd: [bunExe(), "run", join(import.meta.dir, "./02499.fixture.ts")],
         stdin: "pipe",
         stderr: "ignore",
         stdout: "pipe",

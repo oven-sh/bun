@@ -6,8 +6,9 @@ import { join } from "path";
 
 let x_dir: string;
 
+let testNumber = 0;
 beforeEach(async () => {
-  x_dir = tmpdirSync();
+  x_dir = tmpdirSync(`cr8-${testNumber++}`);
 });
 
 describe("should not crash", async () => {
@@ -33,14 +34,16 @@ describe("should not crash", async () => {
 });
 
 it("should create selected template with @ prefix", async () => {
-  const { stderr } = spawn({
+  const { stderr, exited } = spawn({
     cmd: [bunExe(), "create", "@quick-start/some-template"],
     cwd: x_dir,
-    stdout: "pipe",
-    stdin: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
+
+  await exited;
 
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain(
@@ -49,11 +52,11 @@ it("should create selected template with @ prefix", async () => {
 });
 
 it("should create selected template with @ prefix implicit `/create`", async () => {
-  const { stderr } = spawn({
+  const { stderr, exited } = spawn({
     cmd: [bunExe(), "create", "@second-quick-start"],
     cwd: x_dir,
-    stdout: "pipe",
-    stdin: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
@@ -62,14 +65,15 @@ it("should create selected template with @ prefix implicit `/create`", async () 
   expect(err.split(/\r?\n/)).toContain(
     `error: package "@second-quick-start/create" not found registry.npmjs.org/@second-quick-start%2fcreate 404`,
   );
+  await exited;
 });
 
 it("should create selected template with @ prefix implicit `/create` with version", async () => {
-  const { stderr } = spawn({
+  const { stderr, exited } = spawn({
     cmd: [bunExe(), "create", "@second-quick-start"],
     cwd: x_dir,
-    stdout: "pipe",
-    stdin: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "pipe",
     env,
   });
@@ -78,25 +82,28 @@ it("should create selected template with @ prefix implicit `/create` with versio
   expect(err.split(/\r?\n/)).toContain(
     `error: package "@second-quick-start/create" not found registry.npmjs.org/@second-quick-start%2fcreate 404`,
   );
+
+  await exited;
 });
 
 it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";
 
-  await mkdir(`${bunCreateDir}/${testTemplate}`, { recursive: true });
+  await mkdir(join(bunCreateDir, testTemplate), { recursive: true });
+
   const { exited } = spawn({
     cmd: [bunExe(), "create", testTemplate],
     cwd: x_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
+    stdout: "inherit",
+    stdin: "inherit",
+    stderr: "inherit",
     env: { ...env, BUN_CREATE_DIR: bunCreateDir },
   });
 
   await exited;
 
-  const dirStat = await stat(`${x_dir}/${testTemplate}`);
+  const dirStat = await stat(join(x_dir, testTemplate));
   expect(dirStat.isDirectory()).toBe(true);
 });
 

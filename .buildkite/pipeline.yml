@@ -687,6 +687,8 @@ steps:
         artifact_paths:
           - "logs/*"
           - "summary.md"
+        env:
+          CHERE_INVOKING: "1"
         command:
           - 'C:\\cygwin64\\bin\\bash --login -c ''node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64'''
 
@@ -781,5 +783,7 @@ steps:
         artifact_paths:
           - "logs/*"
           - "summary.md"
+        env:
+          CHERE_INVOKING: "1"
         command:
           - 'C:\\cygwin64\\bin\\bash --login -c ''node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64-baseline'''

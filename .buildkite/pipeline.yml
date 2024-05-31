@@ -688,7 +688,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - 'powershell -command "node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64"'
+          - 'C:\\cygwin64\\bin\\bash --login -c ''node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64'''
 
   - key: "build-windows-x64-baseline-ci"
     group: ":windows: x64-baseline"
@@ -782,4 +782,4 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - 'powershell -command "node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64-baseline"'
+          - 'C:\\cygwin64\\bin\\bash --login -c ''node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64-baseline'''

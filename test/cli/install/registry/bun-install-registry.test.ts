@@ -36,7 +36,7 @@ beforeAll(async () => {
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: "bun" },
+    { silent: true, execPath: bunExe() },
   );
 
   await new Promise<void>(done => {

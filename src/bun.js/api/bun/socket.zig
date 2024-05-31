@@ -1225,6 +1225,8 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
+            // if we SSL and handshake is not done, we should not call the callback
+            if (ssl and this.authorized == false) return;
             var vm = handlers.vm;
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
@@ -1519,6 +1521,9 @@ fn NewSocket(comptime ssl: bool) type {
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
                 result = callback.callWithThis(globalObject, this_value, &[_]JSValue{this_value});
+                // clean onOpen callback so only called in the first handshake and not in every renegotiation
+                this.handlers.onOpen.unprotect();
+                this.handlers.onOpen = .zero;
             } else {
                 // call handhsake callback with authorized and authorization error if has one
                 var authorization_error: JSValue = undefined;

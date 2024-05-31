@@ -477,3 +477,24 @@ it("should connect directly when using an ip address", async () => {
   await promise;
   expect(opened).toBe(true);
 });
+
+it("should not call drain before handshake", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = await Bun.connect({
+    hostname: "www.example.com",
+    tls: true,
+    port: 443,
+    socket: {
+      drain() {
+        if (!socket.authorized) {
+          reject(new Error("Socket not authorized"));
+        }
+      },
+      handshake() {
+        resolve();
+      },
+    },
+  });
+  await promise;
+  expect(socket.authorized).toBe(true);
+});

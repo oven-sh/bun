@@ -1,8 +1,6 @@
 #! /bin/bash
 # Script to bootstrap a macOS environment for CI.
 
-set -eo pipefail
-
 # Install brew
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
@@ -35,7 +33,7 @@ brew install --force --overwrite \
   node@${NODE_VERSION} \
   pnpm@${PNPM_VERSION} \
   oven-sh/bun/bun@${BUN_VERSION} \
-  buildkite/buildkite/buildkite-agent || true
+  buildkite/buildkite/buildkite-agent
 
 # Ensure that specific version of LLVM is used
 brew link --force --overwrite llvm@${LLVM_VERSION}

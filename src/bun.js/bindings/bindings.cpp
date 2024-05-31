@@ -3893,7 +3893,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
     // Does the code block have a user-defined name property?
     JSC::JSValue name = callee->getDirect(vm, vm.propertyNames->name);
     if (name && name.isString()) {
-        frame->function_name = Bun::toStringRef(name.toWTFString(m_codeBlock->globalObject()));
+        frame->function_name = Bun::toStringRef(name.toWTFString(callee->globalObject()));
     } else {
         frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
     }

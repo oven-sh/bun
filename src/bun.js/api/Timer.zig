@@ -30,8 +30,8 @@ pub const All = struct {
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.uv_timer_t else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.uv_timer_t) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void =
+        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -72,16 +72,24 @@ pub const All = struct {
         }
 
         if (this.timers.peek()) |timer| {
+            uv.uv_update_time(vm.uvLoop());
             const now = timespec.now();
             const wait = if (timer.next.greater(&now))
                 timer.next.duration(&now)
             else
                 timespec{ .nsec = 0, .sec = 0 };
-            this.uv_timer.start(wait.ns() / std.time.ns_per_ms, 0, &onUVTimer);
+
+            this.uv_timer.start(wait.ms(), 0, &onUVTimer);
+
+            if (this.active_timer_count > 0) {
+                this.uv_timer.ref();
+            } else {
+                this.uv_timer.unref();
+            }
         }
     }
 
-    pub fn onUVTimer(uv_timer_t: *uv.uv_timer_t) callconv(.C) void {
+    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
         const all = @fieldParentPtr(All, "uv_timer", uv_timer_t);
         const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", all);
         all.drainTimers(vm);
@@ -101,10 +109,17 @@ pub const All = struct {
         this.active_timer_count = new;
 
         if (old <= 0 and new > 0) {
-            vm.uwsLoop().ref();
+            if (comptime Environment.isWindows) {
+                this.uv_timer.ref();
+            } else {
+                vm.uwsLoop().ref();
+            }
         } else if (old > 0 and new <= 0) {
-            // We no longer have an active timer.
-            vm.uwsLoop().unref();
+            if (comptime Environment.isWindows) {
+                this.uv_timer.unref();
+            } else {
+                vm.uwsLoop().unref();
+            }
         }
     }
 

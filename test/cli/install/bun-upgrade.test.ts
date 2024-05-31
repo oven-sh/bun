@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { beforeEach, expect, it, setDefaultTimeout, beforeAll } from "bun:test";
 import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
 import { join } from "path";
-import { copyFileSync } from "js/node/fs/export-star-from";
+import { copyFileSync } from "node:fs";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 

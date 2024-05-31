@@ -462,6 +462,7 @@ pub const Tree = struct {
         log: *logger.Log,
         lockfile: *Lockfile,
         prefer_dev_dependencies: bool = false,
+        manager: *PackageManager,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -607,10 +608,16 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            const mismatch = builder.resolutions[dep_id] != package_id;
+
+            if (builder.resolutions[dep_id] == package_id) {
+                // this dependency is the same package as the other, hoist
+                return hoisted; // 1
+            }
 
             if (comptime as_defined) {
-                if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                // same dev dependency as another package in the same package.json, but different version.
+                // choose dev dep over other if enabled
+                if (dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
                         return hoisted; // 1
                     }
@@ -619,38 +626,39 @@ pub const Tree = struct {
                 }
             }
 
-            if (mismatch) {
-                if (dependency.behavior.isPeer()) {
-                    if (dependency.version.tag == .npm) {
-                        const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
-                        if (resolution.tag == .npm and dependency.version.value.npm.version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
-                            return hoisted; // 1
-                        }
-                    }
+            // now we either keep the dependency at this place in the tree,
+            // or hoist if peer version allows it
 
-                    // Root dependencies are manually chosen by the user. Allow them
-                    // to hoist other peers even if they don't satisfy the version
-                    if (PackageManager.instance.isRootDependency(dep_id)) {
-                        // TODO: warning about peer dependency version mismatch
+            if (dependency.behavior.isPeer()) {
+                if (dependency.version.tag == .npm) {
+                    const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+                    const version = dependency.version.value.npm.version;
+                    if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
                         return hoisted; // 1
                     }
                 }
 
-                if (as_defined and !dep.behavior.isPeer()) {
-                    builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
-                        builder.packageName(package_id),
-                        builder.packageVersion(package_id),
-                        builder.packageName(builder.resolutions[dep_id]),
-                        builder.packageVersion(builder.resolutions[dep_id]),
-                        dependency.name.fmt(builder.buf()),
-                        dependency.version.literal.fmt(builder.buf()),
-                    });
-                    return error.DependencyLoop;
+                // Root dependencies are manually chosen by the user. Allow them
+                // to hoist other peers even if they don't satisfy the version
+                if (builder.lockfile.isRootDependency(builder.manager, dep_id)) {
+                    // TODO: warning about peer dependency version mismatch
+                    return hoisted; // 1
                 }
-                // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop; // 3
             }
-            return hoisted; // 1
+
+            if (as_defined and !dep.behavior.isPeer()) {
+                builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+                    builder.packageName(package_id),
+                    builder.packageVersion(package_id),
+                    builder.packageName(builder.resolutions[dep_id]),
+                    builder.packageVersion(builder.resolutions[dep_id]),
+                    dependency.name.fmt(builder.buf()),
+                    dependency.version.literal.fmt(builder.buf()),
+                });
+                return error.DependencyLoop;
+            }
+
+            return dependency_loop; // 3
         }
 
         if (this.parent < error_id) {
@@ -792,6 +800,16 @@ pub fn clean(
     }
 
     return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
+}
+
+/// Is this a direct dependency of the workspace root package.json?
+pub fn isWorkspaceRootDependency(this: *Lockfile, id: DependencyID) bool {
+    return this.packages.items(.dependencies)[0].contains(id);
+}
+
+/// Is this a direct dependency of the workspace the install is taking place in?
+pub fn isRootDependency(this: *Lockfile, manager: *PackageManager, id: DependencyID) bool {
+    return this.packages.items(.dependencies)[manager.root_package_id.get(this, manager.workspace_name_hash)].contains(id);
 }
 
 pub fn cleanWithLogger(
@@ -938,7 +956,7 @@ pub fn cleanWithLogger(
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
-        const workspace_package_id = manager.root_package_id.get(manager);
+        const workspace_package_id = manager.root_package_id.get(new, manager.workspace_name_hash);
 
         const dep_list = slice.items(.dependencies)[workspace_package_id];
         const res_list = slice.items(.resolutions)[workspace_package_id];
@@ -1057,6 +1075,14 @@ const Cloner = struct {
         // package ids and dependency ids have changed
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
+        for (this.lockfile.packages.items(.dependencies), 0..) |deps, i| {
+            std.debug.print("new 2 package id {d}: deps {d} - {d}\n", .{
+                i,
+                deps.off,
+                deps.len,
+            });
+        }
+
         if (this.lockfile.packages.len != 0) {
             try this.hoist(this.lockfile);
         }
@@ -1080,6 +1106,7 @@ const Cloner = struct {
             .log = this.log,
             .lockfile = lockfile,
             .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
+            .manager = this.manager,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);

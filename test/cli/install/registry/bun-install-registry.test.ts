@@ -1,6 +1,7 @@
 import { file, spawn, write } from "bun";
 import {
   bunExe,
+  nodeExe,
   bunEnv as env,
   isLinux,
   isWindows,
@@ -36,7 +37,13 @@ beforeAll(async () => {
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: bunExe() },
+    {
+      silent: true,
+      // Prefer using Node.js if it's available,
+      // since the debug version of Bun may be slower
+      // and may have other bugs that make it harder to debug.
+      execPath: nodeExe() || bunExe(),
+    },
   );
 
   await new Promise<void>(done => {

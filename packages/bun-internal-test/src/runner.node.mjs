@@ -13,8 +13,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readdirSync } from "node:fs";
-import { tmpdir, cpus, hostname } from "node:os";
+import { tmpdir, hostname } from "node:os";
 import { join, resolve, basename, dirname, relative } from "node:path";
+import { normalize as normalizeWindows } from "node:path/win32";
 import { inspect } from "node:util";
 import readline from "node:readline/promises";
 
@@ -394,19 +395,15 @@ function getTmpdir() {
       return "/tmp";
     }
   }
-  for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
-    const tmpdir = process.env[key];
-    if (!tmpdir || !existsSync(tmpdir)) {
-      continue;
-    }
-    if (isWindows) {
+  if (isWindows) {
+    for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
+      const tmpdir = process.env[key] || "";
       if (!/^\/[a-zA-Z]\//.test(tmpdir)) {
         continue;
       }
-      const driveLetter = tmpdir[1].toUpperCase();
-      return path.win32.normalize(`${driveLetter}:${tmpdir.substring(2)}`);
+      const driveLetter = tmpdir[1];
+      return normalizeWindows(`${driveLetter.toUpperCase()}:${tmpdir.substring(2)}`);
     }
-    return tmpdir;
   }
   return tmpdir();
 }

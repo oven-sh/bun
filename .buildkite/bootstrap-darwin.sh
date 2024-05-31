@@ -37,6 +37,9 @@ brew install --force --overwrite \
   oven-sh/bun/bun@${BUN_VERSION} \
   buildkite/buildkite/buildkite-agent || true
 
+# Ensure that specific version of LLVM is used
+brew link --force --overwrite llvm@${LLVM_VERSION}
+
 # Read the buildkite token
 BUILDKITE_TOKEN="${1}"
 if [ -z "$BUILDKITE_TOKEN" ]; then

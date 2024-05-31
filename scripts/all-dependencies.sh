@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 FORCE=
 
@@ -19,11 +19,9 @@ while getopts "f" opt; do
 done
 
 BUILT_ANY=0
-
 SUBMODULES=
 CACHE_DIR=
 CACHE=0
-BUN_DEPS_CACHE_DIR="${BUN_DEPS_CACHE_DIR:-$BUN_DEPS_OUT_DIR}"
 if [ -n "$BUN_DEPS_CACHE_DIR" ]; then
     CACHE_DIR="$BUN_DEPS_CACHE_DIR"
     CACHE=1

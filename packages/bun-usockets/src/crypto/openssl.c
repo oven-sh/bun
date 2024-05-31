@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-// clang-format off
+
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -607,9 +607,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
     return 0;
   }
 
-  if (s->handshake_state == HANDSHAKE_COMPLETED) {
-    s = context->on_writable(s);
-  }
+  s = context->on_writable(s);
 
   return s;
 }

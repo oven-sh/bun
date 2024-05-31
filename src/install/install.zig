@@ -59,6 +59,8 @@ pub const Lockfile = @import("./lockfile.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 const Walker = @import("../walker_skippable.zig");
 
+const anyhow = bun.anyhow;
+
 const bun_hash_tag = ".bun-tag-";
 const max_hex_hash_len: comptime_int = brk: {
     var buf: [128]u8 = undefined;
@@ -284,7 +286,7 @@ pub const PatchTask = struct {
         task_id: ?Task.Id.Type = null,
         dependency_id: ?DependencyID = null,
 
-        result: ?Maybe(void) = null,
+        result: ?bun.anyhow.Error = null,
     };
 
     fn deinit(this: *PatchTask) void {
@@ -324,10 +326,14 @@ pub const PatchTask = struct {
         }
     }
 
-    fn runFromMainThread(this: *PatchTask, manager: *PackageManager) void {
+    fn runFromMainThread(
+        this: *PatchTask,
+        manager: *PackageManager,
+        comptime log_level: PackageManager.Options.LogLevel,
+    ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         switch (this.callback) {
-            .calc_hash => this.runFromMainThreadCalcHash(manager),
+            .calc_hash => try this.runFromMainThreadCalcHash(manager, log_level),
             .apply => this.runFromMainThreadApply(manager),
         }
     }
@@ -335,25 +341,40 @@ pub const PatchTask = struct {
     fn runFromMainThreadApply(this: *PatchTask, manager: *PackageManager) void {
         _ = this; // autofix
         _ = manager; // autofix
-
     }
 
-    fn runFromMainThreadCalcHash(this: *PatchTask, manager: *PackageManager) void {
+    fn runFromMainThreadCalcHash(
+        this: *PatchTask,
+        manager: *PackageManager,
+        comptime log_level: PackageManager.Options.LogLevel,
+    ) !void {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
         const hash = switch (calc_hash.result orelse @panic("bad")) {
             .result => |h| h,
             .err => |e| {
-                std.debug.print("ERROR: {s} {s}\n", .{ @tagName(e.errno), if (e.path) |p| p else "idk" });
-                @panic("TODO zack handle error gracefully");
+                if (comptime log_level != .silent) {
+                    const fmt = "\n<r><red>error<r>: {s}{s} while calculating hash for patchfile: <b>{s}<r>\n";
+                    const args = .{ @tagName(e.errno), if (e.path) |p| p else "", this.callback.calc_hash.patchfile_path };
+                    if (comptime log_level.showProgress()) {
+                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+                    } else {
+                        Output.prettyErrorln(
+                            fmt,
+                            args,
+                        );
+                        Output.flush();
+                    }
+                }
+                return;
             },
         };
 
         var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
         if (gop.found_existing) {
             gop.value_ptr.setPatchfileHash(hash);
-        } else @panic("TODO zack this means a bug");
+        } else @panic("No entry for patched dependency, this is a bug in Bun.");
 
         if (calc_hash.state) |state| {
             const url = state.url;
@@ -372,7 +393,7 @@ pub const PatchTask = struct {
                 },
                 .extract => {
                     debug("pkg: {s} extract", .{pkg.name.slice(manager.lockfile.buffers.string_bytes.items)});
-                    const network_task = manager.generateNetworkTaskForTarball(
+                    const network_task = try manager.generateNetworkTaskForTarball(
                         // TODO: not just npm package
                         Task.Id.forNPMPackage(
                             manager.lockfile.str(&pkg.name),
@@ -382,7 +403,7 @@ pub const PatchTask = struct {
                         dep_id,
                         pkg,
                         this.callback.calc_hash.name_and_version_hash,
-                    ) catch @panic("TODO zack") orelse unreachable;
+                    ) orelse unreachable;
                     if (manager.getPreinstallState(pkg.meta.id) == .extract) {
                         manager.setPreinstallState(pkg.meta.id, manager.lockfile, .extracting);
                         manager.enqueueNetworkTask(network_task);
@@ -412,7 +433,7 @@ pub const PatchTask = struct {
     // 4. Apply patches to pkg in temp dir
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
-    fn apply(this: *PatchTask) Maybe(void) {
+    fn apply(this: *PatchTask) ?bun.anyhow.Error {
         debug("apply patch task", .{});
         bun.assert(this.callback == .apply);
 
@@ -423,26 +444,28 @@ pub const PatchTask = struct {
         const patchfile_path = patch.patchfilepath;
 
         // 1. Parse the patch file
-        const absolute_patchfile_path = bun.path.join(&[_][]const u8{
+        const absolute_patchfile_path = bun.path.joinZ(&[_][]const u8{
             dir,
             patchfile_path,
         }, .auto);
         // TODO: can the patch file be anything other than utf-8?
-        const patchfile_txt = std.fs.cwd().readFileAlloc(
+        const patchfile_txt = switch (bun.io.readFileAt(
             this.manager.allocator,
+            bun.toFD(std.fs.cwd().fd),
             absolute_patchfile_path,
             1024 * 1024 * 1024 * 4,
-        ) catch @panic("TODO zack");
+        )) {
+            .result => |txt| txt,
+            .err => |e| return e.withPath(absolute_patchfile_path).toSystemError().toAnyhowError(),
+        };
         defer this.manager.allocator.free(patchfile_txt);
-        var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch @panic("TODO zack");
+        var patchfile = bun.patch.parsePatchFile(patchfile_txt) catch |e| return anyhow.Error.fromZigErr(e, "while parsing patch file");
         defer patchfile.deinit(bun.default_allocator);
 
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
-        const tempdir_name = bun.span(bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch @panic("TODO zack"));
-        const system_tmpdir = bun.fs.FileSystem.instance.tmpdir() catch @panic("TODO zack");
-        // var tmpdir = system_tmpdir.makeOpenPath(tempdir_name, .{}) catch @panic("TODO zack");
-        // defer tmpdir.close();
+        const tempdir_name = bun.span(bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch bun.outOfMemory());
+        const system_tmpdir = bun.fs.FileSystem.instance.tmpdir() catch |e| return anyhow.Error.fromZigErr(e, "creating temp dir");
 
         const pkg_name = this.callback.apply.pkgname;
 
@@ -470,22 +493,17 @@ pub const PatchTask = struct {
 
         switch (pkg_install.installImpl(true, system_tmpdir, .copyfile)) {
             .success => {},
-            .fail => {
-                @panic("TODO print the error nicely");
+            .fail => |reason| {
+                return anyhow.Error.fmt("{s} while executing step: {s}", .{ @errorName(reason.err), reason.step.name() });
             },
         }
 
-        var patch_pkg_dir = system_tmpdir.openDir(tempdir_name, .{}) catch @panic("TODO zack");
+        var patch_pkg_dir = system_tmpdir.openDir(tempdir_name, .{}) catch |e| return anyhow.Error.fromZigErr(e, "while trying to open temporary dir to apply patch to package");
         defer patch_pkg_dir.close();
 
         // 4. apply patch
         if (patchfile.apply(this.manager.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
-            defer e.deref();
-            std.debug.print("LOL: {}\n", .{e});
-            // return .{
-            //     .fail = .{ .err = bun.errnoToZigErr(e.getErrno()), .step = .patching },
-            // };
-            @panic("TODO zack");
+            return anyhow.fromSys(e);
         }
 
         // 5. Add bun tag
@@ -497,8 +515,7 @@ pub const PatchTask = struct {
         const buntagfd = switch (bun.sys.openat(bun.toFD(patch_pkg_dir.fd), buntagbuf[0 .. bun_tag_prefix.len + hashlen :0], std.os.O.RDWR | std.os.O.CREAT, 0o666)) {
             .result => |fd| fd,
             .err => |e| {
-                std.debug.print("ERROR: {}\n", .{e.toSystemError()});
-                @panic("TODO zack");
+                return anyhow.fromSys(e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0]).toSystemError());
             },
         };
         _ = bun.sys.close(buntagfd);
@@ -532,7 +549,8 @@ pub const PatchTask = struct {
                 .{
                     .exclude = true,
                 },
-            ).asErr()) |e| {
+            ).asErr()) |e_| {
+                var e = e_;
                 if (switch (e.getErrno()) {
                     bun.C.E.NOTEMPTY, bun.C.E.EXIST, bun.C.E.OPNOTSUPP => true,
                     else => false,
@@ -546,22 +564,15 @@ pub const PatchTask = struct {
                             .exchange = true,
                         },
                     )) {
-                        .err => {},
+                        .err => |ee| e = ee,
                         .result => break :worked,
                     }
                 }
-
-                // return .{
-                //     .fail = .{
-                //         .err = bun.errnoToZigErr(e.getErrno()),
-                //         .step = .patching,
-                //     },
-                // };
-                @panic("TODO zack");
+                return anyhow.fromSys(e.toSystemError());
             }
         }
 
-        return Maybe(void).success;
+        return null;
     }
 
     fn calcHash(this: *PatchTask) Maybe(u64) {
@@ -1152,12 +1163,11 @@ const Task = struct {
             if (this.status == .success) {
                 if (this.apply_patch_task) |pt| {
                     defer pt.deinit();
-                    const result = pt.apply();
-                    if (result.asErr()) |e| {
-                        std.debug.print("ERROR: {}\n", .{e});
-                        @panic("TODO zack handle result");
+                    var result = pt.apply();
+                    if (result) |*e| {
+                        defer e.deinit();
+                        this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
                     }
-                    // TODO zack check result
                 }
             }
             manager.resolve_tasks.push(this);
@@ -6432,7 +6442,7 @@ pub const PackageManager = struct {
             if (comptime Environment.allow_assert) bun.assert(manager.pendingTaskCount() > 0);
             _ = manager.decrementPendingTasks();
             defer ptask.deinit();
-            ptask.runFromMainThread(manager);
+            try ptask.runFromMainThread(manager, log_level);
             if (ptask.callback == .apply) {
                 if (comptime @TypeOf(callbacks.onExtract) != void) {
                     if (ptask.callback.apply.task_id) |task_id| {
@@ -10430,7 +10440,12 @@ pub const PackageManager = struct {
                     break :brk pkg_id;
                 } else i = manager.lockfile.packages.len;
             }
-            @panic("TODO zack print nice error: package not found");
+            Output.prettyErrorln(
+                "\n<r><red>error<r>: could not find package: <b>{s}<r>\n",
+                .{@"pkg + maybe version to patch"},
+            );
+            Output.flush();
+            return;
         };
 
         const pkg = manager.lockfile.packages.get(pkg_id);
@@ -10468,8 +10483,16 @@ pub const PackageManager = struct {
 
         switch (pkg_install.installWithMethod(true, tmpdir, .copyfile)) {
             .success => {},
-            .fail => {
-                @panic("TODO zack print the error nicely");
+            .fail => |reason| {
+                Output.prettyErrorln(
+                    "\n<r><red>error<r>: failed to copy package to temp directory: <b>{s}<r>, during step: {s}\n",
+                    .{
+                        @errorName(reason.err),
+                        reason.step.name(),
+                    },
+                );
+                Output.flush();
+                return;
             },
         }
 
@@ -10477,8 +10500,14 @@ pub const PackageManager = struct {
         const pkg_to_patch_dir = switch (bun.sys.getFdPath(bun.toFD(destination_dir.fd), &pathbuf)) {
             .result => |fd| fd,
             .err => |e| {
-                std.debug.print("ERROR: {}\n", .{e.toSystemError()});
-                @panic("TODO zack print the error nicely");
+                Output.prettyErrorln(
+                    "\n<r><red>error<r>: {}\n",
+                    .{
+                        e.toSystemError(),
+                    },
+                );
+                Output.flush();
+                return;
             },
         };
 
@@ -10540,23 +10569,13 @@ pub const PackageManager = struct {
         }
 
         const patched_pkg_folder = manager.options.positionals[1];
-        if (patched_pkg_folder.len >= bun.MAX_PATH_BYTES) @panic("TODO zack name too long");
+        if (patched_pkg_folder.len >= bun.MAX_PATH_BYTES) {
+            Output.prettyError("<r><red>error<r>: argument provided is too long<r>\n", .{});
+            Output.flush();
+            Global.crash();
+        }
         @memcpy(pathbuf[0..patched_pkg_folder.len], patched_pkg_folder);
         pathbuf[patched_pkg_folder.len] = 0;
-
-        // var versionbuf: [1024]u8 = undefined;
-        // const version = switch (patchCommitGetVersion(
-        //     &versionbuf,
-        //     bun.path.joinZ(&[_][]const u8{ patched_pkg_folder, ".bun-patch-tag" }, .auto),
-        // )) {
-        //     .result => |v| v,
-        //     .err => |e| {
-        //         std.debug.print("ERROR {}\n", .{e.toSystemError()});
-        //         @panic("TODO zack handle");
-        //     },
-        // };
-        // @memcpy(versionbuf[version.len .. version.len + ".patch".len], ".patch");
-        // const patch_filename = versionbuf[0 .. version.len + ".patch".len];
 
         var versionbuf: [1024]u8 = undefined;
         const version = switch (patchCommitGetVersion(
@@ -10565,8 +10584,9 @@ pub const PackageManager = struct {
         )) {
             .result => |v| v,
             .err => |e| {
-                std.debug.print("ERROR {}\n", .{e.toSystemError()});
-                @panic("TODO zack handle");
+                Output.prettyError("<r><red>error<r>: failed to get bun patch tag: {}<r>\n", .{e.toSystemError()});
+                Output.flush();
+                Global.crash();
             },
         };
 
@@ -10579,21 +10599,33 @@ pub const PackageManager = struct {
             const stat = switch (bun.sys.stat(pkgjsonpath)) {
                 .result => |s| s,
                 .err => |e| {
-                    std.debug.print("ERROR {}\n", .{e.toSystemError()});
-                    @panic("TODO zack handle");
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to read package.json: {}<r>\n",
+                        .{e.withPath(pkgjsonpath).toSystemError()},
+                    );
+                    Output.flush();
+                    Global.crash();
                 },
             };
             const fd = switch (bun.sys.open(pkgjsonpath, std.os.O.RDONLY, 0)) {
                 .result => |s| s,
                 .err => |e| {
-                    std.debug.print("ERROR {}\n", .{e.toSystemError()});
-                    @panic("TODO zack handle");
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to open package.json: {}<r>\n",
+                        .{e.withPath(pkgjsonpath).toSystemError()},
+                    );
+                    Output.flush();
+                    Global.crash();
                 },
             };
             var buf = manager.allocator.alloc(u8, @intCast(stat.size)) catch bun.outOfMemory();
             if (bun.io.readIntoBuf(fd, buf[0..]).asErr()) |e| {
-                std.debug.print("ERROR {}\n", .{e.toSystemError()});
-                @panic("TODO zack handle");
+                Output.prettyError(
+                    "<r><red>error<r>: failed to read from package.json: {}<r>\n",
+                    .{e.withPath(pkgjsonpath).toSystemError()},
+                );
+                Output.flush();
+                Global.crash();
             }
             break :brk buf;
         };
@@ -10617,7 +10649,11 @@ pub const PackageManager = struct {
                         break :brk pkg;
                     }
                 }
-                @panic("TODO zack handle");
+                Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
+                    package.name.slice(lockfile.buffers.string_bytes.items),
+                });
+                Output.flush();
+                Global.crash();
             },
         };
         const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{actual_package.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
@@ -10630,8 +10666,12 @@ pub const PackageManager = struct {
                 const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(stuff.cache_dir.fd), &buf2)) {
                     .result => |s| s,
                     .err => |e| {
-                        std.debug.print("ERROR {}\n", .{e.toSystemError()});
-                        @panic("TODO zack handle");
+                        Output.prettyError(
+                            "<r><red>error<r>: failed to read from cache {}<r>\n",
+                            .{e.toSystemError()},
+                        );
+                        Output.flush();
+                        Global.crash();
                     },
                 };
                 break :old_folder bun.path.join(&[_][]const u8{
@@ -10640,8 +10680,12 @@ pub const PackageManager = struct {
                 }, .auto);
             };
             break :brk bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
-                std.debug.print("ERRR: {s}\n", .{@errorName(e)});
-                @panic("nice");
+                Output.prettyError(
+                    "<r><red>error<r>: failed to read make diff {s}<r>\n",
+                    .{@errorName(e)},
+                );
+                Output.flush();
+                Global.crash();
             };
         };
         defer patchfile_contents.deinit();
@@ -10658,15 +10702,23 @@ pub const PackageManager = struct {
         )) {
             .result => |fd| fd,
             .err => |e| {
-                std.debug.print("ERROR {}\n", .{e.toSystemError()});
-                @panic("TODO zack handle");
+                Output.prettyError(
+                    "<r><red>error<r>: failed to open temp file {}<r>\n",
+                    .{e.toSystemError()},
+                );
+                Output.flush();
+                Global.crash();
             },
         };
         defer _ = bun.sys.close(tmpfd);
 
         if (bun.io.writeAll(tmpfd, patchfile_contents.items).asErr()) |e| {
-            std.debug.print("ERROR {}\n", .{e.toSystemError()});
-            @panic("TODO zack handle");
+            Output.prettyError(
+                "<r><red>error<r>: failed to write patch to temp file {}<r>\n",
+                .{e.toSystemError()},
+            );
+            Output.flush();
+            Global.crash();
         }
 
         // const patches_dir_fd = switch (bun.sys.openat(bun.toFD(std.fs.cwd().fd), manager.options.patch_features.commit.patches_dir, std.os.O.CREAT | std.os.O.DIRECTORY, 0o666)) {
@@ -10699,8 +10751,12 @@ pub const PackageManager = struct {
             .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
         };
         if (nodefs.mkdirRecursive(args, .sync).asErr()) |e| {
-            std.debug.print("ERROR {}\n", .{e.toSystemError()});
-            @panic("TODO zack handle");
+            Output.prettyError(
+                "<r><red>error<r>: failed to make patches dir {}<r>\n",
+                .{e.toSystemError()},
+            );
+            Output.flush();
+            Global.crash();
         }
 
         // rename to patches dir
@@ -10711,9 +10767,12 @@ pub const PackageManager = struct {
             path_in_patches_dir,
             .{ .exclude = true },
         ).asErr()) |e| {
-            // TODO: bun.C.E.NOTEMPTY, bun.C.E.EXIST, bun.C.E.OPNOTSUPP
-            std.debug.print("ERROR {}\n", .{e.toSystemError()});
-            @panic("TODO zack handle");
+            Output.prettyError(
+                "<r><red>error<r>: failed to renaming patch file to patches dir {}<r>\n",
+                .{e.toSystemError()},
+            );
+            Output.flush();
+            Global.crash();
         }
 
         const patch_key = std.fmt.allocPrint(manager.allocator, "{s}@{s}", .{ name, resolution_label }) catch bun.outOfMemory();
@@ -11339,6 +11398,7 @@ pub const PackageManager = struct {
             } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
             const patch_patch, const patch_contents_hash, const patch_name_and_version_hash = brk: {
+                if (this.manager.lockfile.patched_dependencies.entries.len == 0) break :brk .{ null, null, null };
                 var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, package_version }) catch unreachable;
                 defer sfb.get().free(name_and_version);

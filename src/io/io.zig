@@ -13,6 +13,39 @@ const assert = bun.assert;
 
 pub const Source = @import("./source.zig").Source;
 
+pub fn readFileAt(
+    allocator: std.mem.Allocator,
+    dirfd: bun.FileDescriptor,
+    path: [:0]const u8,
+    max_bytes: usize,
+) bun.sys.Maybe([]u8) {
+    const fd = switch (bun.sys.openat(dirfd, path, std.os.O.RDONLY, 0)) {
+        .err => |e| return .{ .err = e.withPath(path) },
+        .result => |fd| fd,
+    };
+    defer _ = bun.sys.close(fd);
+    return readFile(allocator, fd, max_bytes);
+}
+
+pub fn readFile(
+    allocator: std.mem.Allocator,
+    fd: bun.FileDescriptor,
+    max_bytes: usize,
+) bun.sys.Maybe([]u8) {
+    const stat = switch (bun.sys.fstat(fd)) {
+        .result => |s| s,
+        .err => |e| return .{ .err = e },
+    };
+    const size: usize = @intCast(stat.size);
+    if (size > max_bytes) return .{ .err = bun.sys.Error.fromCode(bun.C.E.@"2BIG", .read).withFd(fd) };
+    const buf = allocator.alloc(u8, size) catch bun.outOfMemory();
+    const read = switch (readIntoBuf(fd, buf)) {
+        .err => |e| return .{ .err = e },
+        .result => |r| r,
+    };
+    return .{ .result = read };
+}
+
 pub fn writeAll(fd: bun.FileDescriptor, buf: []const u8) bun.sys.Maybe(void) {
     var written: usize = 0;
     while (written < buf.len) {

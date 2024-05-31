@@ -62,3 +62,4 @@ sed -i '' "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 
 # Start buildkite
 brew services start buildkite-agent
+brew services restart buildkite-agent

@@ -433,15 +433,40 @@ WTF::String Bun::formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject
 
         sb.append("    at "_s);
 
+        WTF::String functionName;
+
         if (auto codeblock = frame.codeBlock()) {
             if (codeblock->isConstructor()) {
                 sb.append("new "_s);
             }
 
-            // TODO: async
+            // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
+            // We check the errorInstance to see if we are allowed to access this memory.
+            if (errorInstance) {
+                switch (codeblock->codeType()) {
+                case JSC::CodeType::FunctionCode:
+                case JSC::CodeType::EvalCode: {
+                    if (auto* callee = frame.callee()) {
+                        if (callee->isObject()) {
+                            JSValue functionNameValue = callee->getObject()->getDirect(vm, vm.propertyNames->name);
+                            if (functionNameValue && functionNameValue.isString()) {
+                                functionName = functionNameValue.toWTFString(globalObject);
+                            }
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    break;
+                }
+                }
+            }
         }
 
-        WTF::String functionName = frame.functionName(vm);
+        if (functionName.isEmpty()) {
+            functionName = frame.functionName(vm);
+        }
+
         if (functionName.isEmpty()) {
             sb.append("<anonymous>"_s);
         } else {

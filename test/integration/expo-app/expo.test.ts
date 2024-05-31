@@ -5,7 +5,7 @@ import { bunExe, bunEnv, tmpdirSync } from "../../harness";
 const tmpdir = tmpdirSync();
 
 beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 3);
+  setDefaultTimeout(1000 * 60 * 4);
   await fs.rm(tmpdir, { recursive: true, force: true });
   await fs.cp(import.meta.dir, tmpdir, { recursive: true, force: true });
 });

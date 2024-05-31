@@ -90,7 +90,7 @@ it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";
 
-  await mkdir(join(bunCreateDir, testTemplate), { recursive: true });
+  await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "hi");
 
   const { exited } = spawn({
     cmd: [bunExe(), "create", testTemplate],
@@ -101,10 +101,11 @@ it("should create template from local folder", async () => {
     env: { ...env, BUN_CREATE_DIR: bunCreateDir },
   });
 
-  await exited;
+  expect(await exited).toBe(0);
 
   const dirStat = await stat(join(x_dir, testTemplate));
   expect(dirStat.isDirectory()).toBe(true);
+  expect(await exists(join(x_dir, testTemplate, "index.js"))).toBeTrue();
 });
 
 for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"]) {

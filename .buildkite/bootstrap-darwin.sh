@@ -1,13 +1,7 @@
 #! /bin/bash
+# Script to bootstrap a macOS environment for CI.
 
 set -eo pipefail
-
-# Read the buildkite token
-BUILDKITE_TOKEN=$1
-if [ -z "$BUILDKITE_TOKEN" ]; then
-  echo "No buildkite token."
-  exit 1
-fi
 
 # Install brew
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -41,11 +35,32 @@ brew install --force \
   node@${NODE_VERSION} \
   pnpm@${PNPM_VERSION} \
   oven-sh/bun/bun@${BUN_VERSION} \
-  buildkite/buildkite/buildkite-agent
+  buildkite/buildkite/buildkite-agent || true
+
+# Read the buildkite token
+BUILDKITE_TOKEN="${1}"
+if [ -z "$BUILDKITE_TOKEN" ]; then
+  echo "No buildkite token."
+  exit 1
+fi
+
+# Read the buildkite tags
+BUILDKITE_TAGS=""
+for tag in $(echo "${@:2}" | tr ',' ' '); do
+  if [ -z "${BUILDKITE_TAGS}" ]; then
+    BUILDKITE_TAGS="${tag}"
+  else
+    BUILDKITE_TAGS="${BUILDKITE_TAGS},${tag}"
+  fi
+done
+
+echo "Building with tags: ${BUILDKITE_TAGS}"
 
 # Configure buildkite
 BUILDKITE_PATH="$(brew --prefix)/etc/buildkite-agent/buildkite-agent.cfg"
 sed -i '' "s/xxx/${BUILDKITE_TOKEN}/g" "${BUILDKITE_PATH}"
+sed -i '' "s/# tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
+sed -i '' "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 
 # Start buildkite
 brew services start buildkite-agent

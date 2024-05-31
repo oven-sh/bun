@@ -187,14 +187,17 @@ describe("ChildProcess spawn bad stdio", () => {
       var __originalSpawn = ChildProcess.prototype.spawn;
       ChildProcess.prototype.spawn = function () {
         const err = __originalSpawn.apply(this, arguments);
-
         this.stdout.destroy();
         this.stderr.destroy();
 
         return err;
       };
 
-      let cmd = `${bunExe()} ${import.meta.dir}/spawned-child.js`;
+      let cmd =
+        target === "sleep"
+          ? // The process can exit before returning which breaks tests.
+            ((target = ""), `${bunExe()} -e "setTimeout(() => {}, 100)"`)
+          : `${bunExe()} ${path.join(import.meta.dir, "spawned-child.js")}`;
       if (target) cmd += " " + target;
       const child = exec(cmd, options, async (err, stdout, stderr) => {
         try {
@@ -230,11 +233,15 @@ describe("ChildProcess spawn bad stdio", () => {
   });
 
   it("should handle killed process", async () => {
-    await createChild({ timeout: 1 }, (err, stdout, stderr) => {
-      strictEqual(err.killed, true);
-      strictEqual(stdout, "");
-      strictEqual(stderr, "");
-    });
+    await createChild(
+      { timeout: 1 },
+      (err, stdout, stderr) => {
+        strictEqual(err.killed, true);
+        strictEqual(stdout, "");
+        strictEqual(stderr, "");
+      },
+      "sleep",
+    );
   });
 });
 

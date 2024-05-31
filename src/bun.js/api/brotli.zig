@@ -125,7 +125,7 @@ pub const BrotliEncoder = struct {
         });
 
         if (result.toError()) |err| {
-            this.globalThis.bunVM().runErrorHandler(err, null);
+            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
         }
     }
 
@@ -430,7 +430,7 @@ pub const BrotliDecoder = struct {
         });
 
         if (result.toError()) |err| {
-            this.globalThis.bunVM().runErrorHandler(err, null);
+            _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
         }
     }
 

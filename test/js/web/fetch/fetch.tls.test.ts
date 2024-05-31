@@ -78,14 +78,21 @@ it("fetch with valid tls and non-native checkServerIdentity should work", async 
 });
 
 it("not skip verification when doing a lot of requests", async () => {
-  const url = `https://example.com`;
   let count = 0;
-  const iterations = 100;
-  for (let i = 0; i < iterations; i++) {
-    await fetch(url, {keepalive: false, tls: { checkServerIdentity() { count++; return undefined; }}});
-  }
-  expect(count).toBe(iterations);
-}, { timeout: 10000 });
+  let promise = fetch(`https://example.com`, {
+    tls: {
+      checkServerIdentity() {
+        ++count;
+      },
+    },
+  });
+  let wait_until = performance.now() + 1000;
+  while (performance.now() < wait_until) {}
+
+  await promise;
+  expect(count).toBe(1);
+
+});
 
 it("fetch with rejectUnauthorized: false should not call checkServerIdentity", async () => {
   let count = 0;

@@ -104,6 +104,9 @@ for tag in $(echo "${@:2}" | tr ',' ' '); do
   fi
 done
 
+# Enable buildkite
+systemctl enable buildkite-agent
+
 # Configure buildkite
 BUILDKITE_PATH="/etc/buildkite-agent/buildkite-agent.cfg"
 sed -i '' "s/xxx/${BUILDKITE_TOKEN}/g" "${BUILDKITE_PATH}"
@@ -111,6 +114,5 @@ sed -i '' "s/# tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 sed -i '' "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 
 # Start buildkite
-systemctl enable buildkite-agent
 systemctl start buildkite-agent
 systemctl restart buildkite-agent

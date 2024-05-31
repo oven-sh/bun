@@ -1701,7 +1701,7 @@ pub const Fetch = struct {
             defer task.mutex.unlock();
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
 
-            task.result = result;
+            task.result.merge(result);
 
             // metadata should be provided only once so we preserve it until we consume it
             if (result.metadata) |metadata| {

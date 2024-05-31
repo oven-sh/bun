@@ -3106,6 +3106,54 @@ pub const HTTPClientResult = struct {
             };
         }
     };
+
+    pub fn merge(this: *HTTPClientResult, other: HTTPClientResult) void {
+        if (other.body != null) {
+            if (this.body == null) {
+                this.body = other.body;
+            } else {
+                if (comptime Environment.allow_assert) {
+                    bun.assert(this.body == other.body);
+                }
+            }
+        }
+
+        if (!other.has_more) {
+            this.has_more = false;
+        }
+
+        if (other.fail != null) {
+            this.fail = other.fail;
+        }
+
+        if (other.metadata != null) {
+            if (this.metadata == null) {
+                this.metadata = other.metadata;
+            } else {
+                if (comptime Environment.allow_assert) {
+                    @panic("duplicate http metadata");
+                }
+            }
+        }
+
+        if (other.body_size != .unknown) {
+            this.body_size = other.body_size;
+        }
+
+        if (other.redirected) {
+            this.redirected = true;
+        }
+
+        if (other.certificate_info != null) {
+            if (this.certificate_info == null) {
+                this.certificate_info = other.certificate_info;
+            } else {
+                if (comptime Environment.allow_assert) {
+                    @panic("duplicate http certificate info");
+                }
+            }
+        }
+    }
 };
 
 pub fn toResult(this: *HTTPClient) HTTPClientResult {

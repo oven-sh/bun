@@ -1,0 +1,785 @@
+agents:
+  queue: "ci"
+
+steps:
+  - key: "build-darwin-aarch64-ci"
+    group: ":darwin: aarch64"
+    steps:
+      - key: "bun-darwin-aarch64-deps"
+        label: ":darwin: aarch64 - bun-deps"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "src/deps/*"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+        command:
+          - "./scripts/all-dependencies.sh"
+      - key: "bun-darwin-aarch64-zig"
+        label: ":darwin: aarch64 - bun-zig"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh darwin aarch64"
+      - key: "bun-darwin-aarch64-cpp"
+        label: ":darwin: aarch64 - bun-cpp"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-cpp.sh"
+      - key: "bun-darwin-aarch64"
+        label: ":darwin: aarch64 - bun"
+        depends_on:
+          - "bun-darwin-aarch64-deps"
+          - "bun-darwin-aarch64-zig"
+          - "bun-darwin-aarch64-cpp"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-darwin-aarch64.zip"
+          - "bun-darwin-aarch64-profile.zip"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command: |
+          mkdir -p release
+          buildkite-agent artifact download '**' release --step bun-darwin-aarch64-deps
+          buildkite-agent artifact download '**' release --step bun-darwin-aarch64-zig
+          buildkite-agent artifact download '**' release --step bun-darwin-aarch64-cpp
+          source scripts/env.sh
+          cmake \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
+            -DBUN_LINK_ONLY=1 \
+            -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+            -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
+            -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
+          chmod +x bun-profile bun
+          mkdir -p bun-darwin-aarch64-profile/ bun-darwin-aarch64/
+          mv bun-profile bun-darwin-aarch64-profile/bun-profile
+          mv bun bun-darwin-aarch64/bun
+          zip -r bun-darwin-aarch64-profile.zip bun-darwin-aarch64-profile
+          zip -r bun-darwin-aarch64.zip bun-darwin-aarch64
+      - key: "bun-darwin-aarch64-test"
+        label: ":darwin: aarch64 - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-darwin-aarch64"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - "node packages/bun-internal-test/src/runner.node.mjs bun-darwin-aarch64"
+
+  - key: "build-darwin-x64-ci"
+    group: ":darwin: x64"
+    steps:
+      - key: "bun-darwin-x64-deps"
+        label: ":darwin: x64 - bun-deps"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "src/deps/*"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+        command:
+          - "./scripts/all-dependencies.sh"
+      - key: "bun-darwin-x64-zig"
+        label: ":darwin: x64 - bun-zig"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh darwin x64"
+      - key: "bun-darwin-x64-cpp"
+        label: ":darwin: x64 - bun-cpp"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-cpp.sh"
+      - key: "bun-darwin-x64"
+        label: ":darwin: x64 - bun"
+        depends_on:
+          - "bun-darwin-x64-deps"
+          - "bun-darwin-x64-zig"
+          - "bun-darwin-x64-cpp"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "bun-darwin-x64.zip"
+          - "bun-darwin-x64-profile.zip"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command: |
+          mkdir -p release
+          buildkite-agent artifact download '**' release --step bun-darwin-x64-deps
+          buildkite-agent artifact download '**' release --step bun-darwin-x64-zig
+          buildkite-agent artifact download '**' release --step bun-darwin-x64-cpp
+          source scripts/env.sh
+          cmake \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
+            -DBUN_LINK_ONLY=1 \
+            -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+            -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
+            -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
+          chmod +x bun-profile bun
+          mkdir -p bun-darwin-x64-profile/ bun-darwin-x64/
+          mv bun-profile bun-darwin-x64-profile/bun-profile
+          mv bun bun-darwin-x64/bun
+          zip -r bun-darwin-x64-profile.zip bun-darwin-x64-profile
+          zip -r bun-darwin-x64.zip bun-darwin-x64
+      - key: "bun-darwin-x64-test"
+        label: ":darwin: x64 - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-darwin-x64"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - "node packages/bun-internal-test/src/runner.node.mjs bun-darwin-x64"
+
+  - key: "build-darwin-x64-baseline-ci"
+    group: ":darwin: x64-baseline"
+    steps:
+      - key: "bun-darwin-x64-baseline-deps"
+        label: ":darwin: x64-baseline - bun-deps"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "src/deps/*"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+        command:
+          - "./scripts/all-dependencies.sh"
+      - key: "bun-darwin-x64-baseline-zig"
+        label: ":darwin: x64-baseline - bun-zig"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh darwin x64"
+      - key: "bun-darwin-x64-baseline-cpp"
+        label: ":darwin: x64-baseline - bun-cpp"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-cpp.sh"
+      - key: "bun-darwin-x64-baseline"
+        label: ":darwin: x64-baseline - bun"
+        depends_on:
+          - "bun-darwin-x64-baseline-deps"
+          - "bun-darwin-x64-baseline-zig"
+          - "bun-darwin-x64-baseline-cpp"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "bun-darwin-x64-baseline.zip"
+          - "bun-darwin-x64-baseline-profile.zip"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command: |
+          mkdir -p release
+          buildkite-agent artifact download '**' release --step bun-darwin-x64-baseline-deps
+          buildkite-agent artifact download '**' release --step bun-darwin-x64-baseline-zig
+          buildkite-agent artifact download '**' release --step bun-darwin-x64-baseline-cpp
+          source scripts/env.sh
+          cmake \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
+            -DBUN_LINK_ONLY=1 \
+            -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+            -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
+            -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
+          chmod +x bun-profile bun
+          mkdir -p bun-darwin-x64-baseline-profile/ bun-darwin-x64-baseline/
+          mv bun-profile bun-darwin-x64-baseline-profile/bun-profile
+          mv bun bun-darwin-x64-baseline/bun
+          zip -r bun-darwin-x64-baseline-profile.zip bun-darwin-x64-baseline-profile
+          zip -r bun-darwin-x64-baseline.zip bun-darwin-x64-baseline
+      - key: "bun-darwin-x64-baseline-test"
+        label: ":darwin: x64-baseline - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-darwin-x64-baseline"
+        agents:
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - "node packages/bun-internal-test/src/runner.node.mjs bun-darwin-x64-baseline"
+
+  - key: "build-linux-aarch64-ci"
+    group: ":linux: aarch64"
+    steps:
+      - key: "bun-linux-aarch64-deps"
+        label: ":linux: aarch64 - bun-deps"
+        agents:
+          os: "linux"
+          arch: "aarch64"
+        artifact_paths:
+          - "src/deps/*"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+        command:
+          - "./scripts/all-dependencies.sh"
+      - key: "bun-linux-aarch64-zig"
+        label: ":linux: aarch64 - bun-zig"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh linux aarch64"
+      - key: "bun-linux-aarch64-cpp"
+        label: ":linux: aarch64 - bun-cpp"
+        agents:
+          os: "linux"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-cpp.sh"
+      - key: "bun-linux-aarch64"
+        label: ":linux: aarch64 - bun"
+        depends_on:
+          - "bun-linux-aarch64-deps"
+          - "bun-linux-aarch64-zig"
+          - "bun-linux-aarch64-cpp"
+        agents:
+          os: "linux"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-linux-aarch64.zip"
+          - "bun-linux-aarch64-profile.zip"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command: |
+          mkdir -p release
+          buildkite-agent artifact download '**' release --step bun-linux-aarch64-deps
+          buildkite-agent artifact download '**' release --step bun-linux-aarch64-zig
+          buildkite-agent artifact download '**' release --step bun-linux-aarch64-cpp
+          source scripts/env.sh
+          cmake \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
+            -DBUN_LINK_ONLY=1 \
+            -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+            -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
+            -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
+          chmod +x bun-profile bun
+          mkdir -p bun-linux-aarch64-profile/ bun-linux-aarch64/
+          mv bun-profile bun-linux-aarch64-profile/bun-profile
+          mv bun bun-linux-aarch64/bun
+          zip -r bun-linux-aarch64-profile.zip bun-linux-aarch64-profile
+          zip -r bun-linux-aarch64.zip bun-linux-aarch64
+      - key: "bun-linux-aarch64-test"
+        label: ":linux: aarch64 - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-linux-aarch64"
+        agents:
+          os: "linux"
+          arch: "aarch64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - "node packages/bun-internal-test/src/runner.node.mjs bun-linux-aarch64"
+
+  - key: "build-linux-x64-ci"
+    group: ":linux: x64"
+    steps:
+      - key: "bun-linux-x64-deps"
+        label: ":linux: x64 - bun-deps"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "src/deps/*"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+        command:
+          - "./scripts/all-dependencies.sh"
+      - key: "bun-linux-x64-zig"
+        label: ":linux: x64 - bun-zig"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh linux x64"
+      - key: "bun-linux-x64-cpp"
+        label: ":linux: x64 - bun-cpp"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-cpp.sh"
+      - key: "bun-linux-x64"
+        label: ":linux: x64 - bun"
+        depends_on:
+          - "bun-linux-x64-deps"
+          - "bun-linux-x64-zig"
+          - "bun-linux-x64-cpp"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-linux-x64.zip"
+          - "bun-linux-x64-profile.zip"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command: |
+          mkdir -p release
+          buildkite-agent artifact download '**' release --step bun-linux-x64-deps
+          buildkite-agent artifact download '**' release --step bun-linux-x64-zig
+          buildkite-agent artifact download '**' release --step bun-linux-x64-cpp
+          source scripts/env.sh
+          cmake \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
+            -DBUN_LINK_ONLY=1 \
+            -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+            -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
+            -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
+          chmod +x bun-profile bun
+          mkdir -p bun-linux-x64-profile/ bun-linux-x64/
+          mv bun-profile bun-linux-x64-profile/bun-profile
+          mv bun bun-linux-x64/bun
+          zip -r bun-linux-x64-profile.zip bun-linux-x64-profile
+          zip -r bun-linux-x64.zip bun-linux-x64
+      - key: "bun-linux-x64-test"
+        label: ":linux: x64 - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-linux-x64"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - "node packages/bun-internal-test/src/runner.node.mjs bun-linux-x64"
+
+  - key: "build-linux-x64-baseline-ci"
+    group: ":linux: x64-baseline"
+    steps:
+      - key: "bun-linux-x64-baseline-deps"
+        label: ":linux: x64-baseline - bun-deps"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "src/deps/*"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+        command:
+          - "./scripts/all-dependencies.sh"
+      - key: "bun-linux-x64-baseline-zig"
+        label: ":linux: x64-baseline - bun-zig"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh linux x64"
+      - key: "bun-linux-x64-baseline-cpp"
+        label: ":linux: x64-baseline - bun-cpp"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-cpp.sh"
+      - key: "bun-linux-x64-baseline"
+        label: ":linux: x64-baseline - bun"
+        depends_on:
+          - "bun-linux-x64-baseline-deps"
+          - "bun-linux-x64-baseline-zig"
+          - "bun-linux-x64-baseline-cpp"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-linux-x64-baseline.zip"
+          - "bun-linux-x64-baseline-profile.zip"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command: |
+          mkdir -p release
+          buildkite-agent artifact download '**' release --step bun-linux-x64-baseline-deps
+          buildkite-agent artifact download '**' release --step bun-linux-x64-baseline-zig
+          buildkite-agent artifact download '**' release --step bun-linux-x64-baseline-cpp
+          source scripts/env.sh
+          cmake \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LTO=ON \
+            -DBUN_LINK_ONLY=1 \
+            -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+            -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
+            -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+            -DNO_CONFIGURE_DEPENDS=1
+          ninja -v
+          chmod +x bun-profile bun
+          mkdir -p bun-linux-x64-baseline-profile/ bun-linux-x64-baseline/
+          mv bun-profile bun-linux-x64-baseline-profile/bun-profile
+          mv bun bun-linux-x64-baseline/bun
+          zip -r bun-linux-x64-baseline-profile.zip bun-linux-x64-baseline-profile
+          zip -r bun-linux-x64-baseline.zip bun-linux-x64-baseline
+      - key: "bun-linux-x64-baseline-test"
+        label: ":linux: x64-baseline - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-linux-x64-baseline"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - "node packages/bun-internal-test/src/runner.node.mjs bun-linux-x64-baseline"
+
+  - key: "build-windows-x64-ci"
+    group: ":windows: x64"
+    steps:
+      - key: "bun-windows-x64-deps"
+        label: ":windows: x64 - bun-deps"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "src\\deps\\*.lib"
+        env:
+          CPU_TARGET: "haswell"
+        command:
+          - "powershell -command \".\\scripts\\all-dependencies.ps1\""
+      - key: "bun-windows-x64-zig"
+        label: ":windows: x64 - bun-zig"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh windows x64"
+      - key: "bun-windows-x64-codegen"
+        label: ":windows: x64 - bun-codegen"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "codegen/**/*"
+          - "js/**/*"
+        env:
+          CPU_TARGET: "haswell"
+        command:
+          - "./scripts/cross-compile-codegen.sh win32 x64"
+          - "mv build-codegen-win32-x64/js js"
+          - "mv build-codegen-win32-x64/codegen codegen"
+      - key: "bun-windows-x64-cpp"
+        label: ":windows: x64 - bun-cpp"
+        depends_on:
+          - "bun-windows-x64-codegen"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "haswell"
+        command:
+          - "mkdir build"
+          - 'buildkite-agent artifact download "**" build --step bun-windows-x64-codegen'
+          - "powershell -command \".\\scripts\\build-cpp.ps1\" -IsBaseline $$False"
+          - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
+      - key: "bun-windows-x64"
+        label: ":windows: x64 - bun"
+        depends_on:
+          - "bun-windows-x64-deps"
+          - "bun-windows-x64-zig"
+          - "bun-windows-x64-cpp"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "bun-windows-x64.zip"
+          - "bun-windows-x64-profile.zip"
+          - "features.json"
+        env:
+          CPU_TARGET: "haswell"
+        command:
+          - "mkdir -p release"
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-codegen'
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-zig'
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-cpp'
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-deps'
+          - "powershell -command \".\\scripts\\link-buildkite.ps1 -IsBaseline $$False\""
+      - key: "bun-windows-x64-test"
+        label: ":windows: x64 - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-windows-x64"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - 'powershell -command "node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64"'
+
+  - key: "build-windows-x64-baseline-ci"
+    group: ":windows: x64-baseline"
+    steps:
+      - key: "bun-windows-x64-baseline-deps"
+        label: ":windows: x64-baseline - bun-deps"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "src\\deps\\*.lib"
+        env:
+          CPU_TARGET: "nehalem"
+        command:
+          - "powershell -command \".\\scripts\\all-dependencies.ps1\""
+      - key: "bun-windows-x64-baseline-zig"
+        label: ":windows: x64-baseline - bun-zig"
+        agents:
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-zig.o"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/build-zig.sh windows x64"
+      - key: "bun-windows-x64-baseline-codegen"
+        label: ":windows: x64-baseline - bun-codegen"
+        agents:
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "codegen/**/*"
+          - "js/**/*"
+        env:
+          CPU_TARGET: "nehalem"
+        command:
+          - "./scripts/cross-compile-codegen.sh win32 x64"
+          - "mv build-codegen-win32-x64/js js"
+          - "mv build-codegen-win32-x64/codegen codegen"
+      - key: "bun-windows-x64-baseline-cpp"
+        label: ":windows: x64-baseline - bun-cpp"
+        depends_on:
+          - "bun-windows-x64-baseline-codegen"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "nehalem"
+        command:
+          - "mkdir build"
+          - 'buildkite-agent artifact download "**" build --step bun-windows-x64-baseline-codegen'
+          - "powershell -command \".\\scripts\\build-cpp.ps1\" -IsBaseline $$True"
+          - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
+      - key: "bun-windows-x64-baseline"
+        label: ":windows: x64-baseline - bun"
+        depends_on:
+          - "bun-windows-x64-baseline-deps"
+          - "bun-windows-x64-baseline-zig"
+          - "bun-windows-x64-baseline-cpp"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "bun-windows-x64-baseline.zip"
+          - "bun-windows-x64-baseline-profile.zip"
+          - "features.json"
+        env:
+          CPU_TARGET: "nehalem"
+        command:
+          - "mkdir -p release"
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-codegen'
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-zig'
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-cpp'
+          - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-deps'
+          - "powershell -command \".\\scripts\\link-buildkite.ps1 -IsBaseline $$True\""
+      - key: "bun-windows-x64-baseline-test"
+        label: ":windows: x64-baseline - bun-test-%n"
+        parallelism: 5
+        depends_on:
+          - "bun-windows-x64-baseline"
+        agents:
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "logs/*"
+          - "summary.md"
+        command:
+          - 'powershell -command "node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64-baseline"'

@@ -197,12 +197,22 @@ const Handlers = struct {
     // corker: Corker = .{},
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return;
+        }
+
         const promise = this.promise.trySwap() orelse return;
         const anyPromise = promise.asAnyPromise() orelse return;
         anyPromise.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return true;
+        }
+
         const promise = this.promise.trySwap() orelse return false;
         const anyPromise = promise.asAnyPromise() orelse return false;
         anyPromise.reject(this.globalObject, value);
@@ -233,17 +243,24 @@ const Handlers = struct {
     }
 
     pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, err: []const JSValue) bool {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return false;
+        }
+
+        const globalObject = this.globalObject;
         const onError = this.onError;
+
         if (onError == .zero) {
             if (err.len > 0)
-                _ = this.vm.uncaughtException(this.globalObject, err[0], false);
+                _ = vm.uncaughtException(globalObject, err[0], false);
 
             return false;
         }
 
-        const result = onError.callWithThis(this.globalObject, thisValue, err);
+        const result = onError.callWithThis(globalObject, thisValue, err);
         if (result.isAnyError()) {
-            _ = this.vm.uncaughtException(this.globalObject, result, false);
+            _ = vm.uncaughtException(globalObject, result, false);
         }
 
         return true;
@@ -303,6 +320,10 @@ const Handlers = struct {
     }
 
     pub fn unprotect(this: *Handlers) void {
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+
         if (comptime Environment.allow_assert) {
             bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
@@ -1154,6 +1175,7 @@ fn NewSocket(comptime ssl: bool) type {
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         owned_protos: bool = true,
+        did_call_open: bool = false,
         server_name: ?[]const u8 = null,
 
         // TODO: switch to something that uses `visitAggregate` and have the
@@ -1226,6 +1248,9 @@ fn NewSocket(comptime ssl: bool) type {
             const callback = handlers.onWritable;
             if (callback == .zero) return;
             var vm = handlers.vm;
+            if (vm.isShuttingDown()) {
+                return;
+            }
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
 
@@ -1250,6 +1275,9 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
             if (callback == .zero) return;
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1275,6 +1303,9 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
+            if (vm.isShuttingDown()) {
+                return;
+            }
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
@@ -1350,7 +1381,6 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 this.is_active = false;
                 const vm = this.handlers.vm;
-
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .Release);
@@ -1460,7 +1490,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
 
             const callback = handlers.onEnd;
-            if (callback == .zero) {
+            if (callback == .zero or handlers.vm.isShuttingDown()) {
                 this.poll_ref.unref(handlers.vm);
 
                 // If you don't handle TCP fin, we assume you're done.
@@ -1496,6 +1526,10 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             var callback = handlers.onHandshake;
             var is_open = false;
+
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             // Use open callback when handshake is not provided
             if (callback == .zero) {
@@ -1555,11 +1589,17 @@ fn NewSocket(comptime ssl: bool) type {
             defer this.markInactive();
 
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
+            const vm = handlers.vm;
+            this.poll_ref.unref(vm);
 
             const callback = handlers.onClose;
+
             if (callback == .zero)
                 return;
+
+            if (vm.isShuttingDown()) {
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1586,6 +1626,9 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onData;
             if (callback == .zero) return;
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);

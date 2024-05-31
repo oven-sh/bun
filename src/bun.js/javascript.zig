@@ -755,7 +755,7 @@ pub const VirtualMachine = struct {
         return this.debugger != null;
     }
 
-    pub inline fn isShuttingDown(this: *const VirtualMachine) bool {
+    pub fn isShuttingDown(this: *const VirtualMachine) bool {
         return this.is_shutting_down;
     }
 
@@ -927,6 +927,11 @@ pub const VirtualMachine = struct {
     extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
 
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
+        if (this.isShuttingDown()) {
+            Output.debugWarn("unhandledRejection during shutdown.", .{});
+            return true;
+        }
+
         if (isBunTest) {
             this.unhandled_error_counter += 1;
             this.onUnhandledRejection(this, globalObject, reason);
@@ -942,6 +947,11 @@ pub const VirtualMachine = struct {
     }
 
     pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool {
+        if (this.isShuttingDown()) {
+            Output.debugWarn("uncaughtException during shutdown.", .{});
+            return true;
+        }
+
         if (isBunTest) {
             this.unhandled_error_counter += 1;
             this.onUnhandledRejection(this, globalObject, err);
@@ -1069,9 +1079,13 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn scriptExecutionStatus(this: *VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+    pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+        if (this.is_shutting_down) {
+            return .stopped;
+        }
+
         if (this.worker) |worker| {
-            if (worker.requested_terminate) {
+            if (worker.hasRequestedTerminate()) {
                 return .stopped;
             }
         }
@@ -2466,7 +2480,7 @@ pub const VirtualMachine = struct {
             .Internal = promise,
         });
         if (this.worker) |worker| {
-            if (worker.requested_terminate) {
+            if (worker.hasRequestedTerminate()) {
                 return error.WorkerTerminated;
             }
         }

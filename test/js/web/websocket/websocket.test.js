@@ -53,6 +53,40 @@ describe("WebSocket", () => {
     await closed;
     Bun.gc(true);
   });
+  it("should handle shutdown properly", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: COMMON_CERT,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Upgrade failed :(", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          // echo
+          ws.send(message);
+        },
+        open(ws) {},
+      },
+    });
+
+    const websockets = [];
+
+    for (let i = 0; i < 10_000; i++) {
+      const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      ws.onopen = () => {
+        ws.send("message");
+        resolve();
+      };
+      ws.onerror = reject;
+
+      websockets.push(promise);
+    }
+    await Promise.all(websockets);
+  }, 60_000);
 
   it("should connect many times over https", async () => {
     using server = Bun.serve({
@@ -72,21 +106,18 @@ describe("WebSocket", () => {
         open(ws) {},
       },
     });
-    {
-      for (let i = 0; i < 1000; i++) {
-        const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
-        await new Promise((resolve, reject) => {
-          ws.onopen = resolve;
-          ws.onerror = reject;
-        });
-        var closed = new Promise((resolve, reject) => {
-          ws.onclose = resolve;
-        });
-
-        ws.close();
-        await closed;
+    for (let i = 0; i < 1000; i++) {
+      const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+      {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        ws.onopen = resolve;
+        ws.onerror = reject;
+        await promise;
       }
-      Bun.gc(true);
+      const { promise: closed, resolve: resolveOnClose } = Promise.withResolvers();
+      ws.onclose = resolveOnClose;
+      ws.close();
+      await closed;
     }
   });
 

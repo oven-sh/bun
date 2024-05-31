@@ -8253,7 +8253,6 @@ pub const PackageManager = struct {
         clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
-        clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
@@ -8270,6 +8269,7 @@ pub const PackageManager = struct {
     };
 
     pub const update_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     };
 
@@ -8389,6 +8389,12 @@ pub const PackageManager = struct {
                         \\<b>Examples:<r>
                         \\  <d>Update all dependencies:<r>
                         \\  <b><green>bun update<r>
+                        \\
+                        \\  <d>Update all dependencies to latest:<r>
+                        \\  <b><green>bun update --latest<r>
+                        \\
+                        \\  <d>Update specific packages:<r>
+                        \\  <b><green>bun update zod jquery@3<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
                     ;
@@ -8605,7 +8611,9 @@ pub const PackageManager = struct {
                 };
             }
 
-            cli.latest = args.flag("--latest");
+            if (comptime subcommand == .update) {
+                cli.latest = args.flag("--latest");
+            }
 
             const specified_backend: ?PackageInstall.Method = brk: {
                 if (args.option("--backend")) |backend_| {

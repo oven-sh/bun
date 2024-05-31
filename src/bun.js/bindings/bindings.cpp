@@ -3890,7 +3890,13 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
     JSC::JSObject* callee = JSC::jsCast<JSC::JSObject*>(calleeCell);
 
-    frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
+    // Does the code block have a user-defined name property?
+    JSC::JSValue name = callee->getDirect(vm, vm.propertyNames->name);
+    if (name && name.isString()) {
+        frame->function_name = Bun::toStringRef(name.toWTFString(callee->globalObject()));
+    } else {
+        frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
+    }
 }
 // Based on
 // https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/src/shim/JSCStackTrace.cpp#L298

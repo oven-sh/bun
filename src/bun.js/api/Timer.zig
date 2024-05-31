@@ -30,8 +30,8 @@ pub const All = struct {
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.uv_timer_t else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.uv_timer_t) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void =
+        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -89,7 +89,7 @@ pub const All = struct {
         }
     }
 
-    pub fn onUVTimer(uv_timer_t: *uv.uv_timer_t) callconv(.C) void {
+    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
         const all = @fieldParentPtr(All, "uv_timer", uv_timer_t);
         const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", all);
         all.drainTimers(vm);

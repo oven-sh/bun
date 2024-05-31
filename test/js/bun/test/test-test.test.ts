@@ -712,7 +712,12 @@ test("my-test", () => {
             if (a.includes("bun test v")) return false;
             return true;
           })
-          .map(a => a.trimEnd().replace(/((\d+)(\.?)\d+\s?ms)/, "xx ms"))
+          .map(a =>
+            a
+              .trimEnd()
+              .replace(/\[((\d+)(\.?)\d+\s?ms)\]/, "")
+              .trimEnd(),
+          )
           .join("\n"),
       ).toMatchSnapshot();
     });

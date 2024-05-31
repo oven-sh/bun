@@ -71,7 +71,7 @@ function isInt32(value) {
 
 function validateFunction(cb, name) {
   if (typeof cb !== "function") {
-    throw ERR_INVALID_ARG_TYPE(name, "function", typeof cb);
+    throw ERR_INVALID_ARG_TYPE(name, "function", cb);
   }
 }
 

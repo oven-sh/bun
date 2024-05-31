@@ -19,6 +19,8 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+
 const BIND_STATE_UNBOUND = 0;
 const BIND_STATE_BINDING = 1;
 const BIND_STATE_BOUND = 2;
@@ -57,13 +59,6 @@ class ERR_BUFFER_OUT_OF_BOUNDS extends Error {
   constructor() {
     super("Buffer offset or length is out of bounds");
     this.code = "ERR_BUFFER_OUT_OF_BOUNDS";
-  }
-}
-
-class ERR_INVALID_ARG_TYPE extends Error {
-  constructor(argName, expected, actual) {
-    super(`The "${argName}" argument must be of type ${expected}. Received type ${typeof actual}`);
-    this.code = "ERR_INVALID_ARG_TYPE";
   }
 }
 
@@ -129,18 +124,18 @@ function isInt32(value) {
 
 function validateAbortSignal(signal, name) {
   if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+    throw ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
 hideFromStack(validateAbortSignal);
 
 function validateString(value, name) {
-  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 hideFromStack(validateString);
 
-function validateNumber(value, name, min = undefined, max) {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+function validateNumber(value, name, min?, max?) {
+  if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
 
   if (
     (min != null && value < min) ||
@@ -171,7 +166,7 @@ function validatePort(port, name = "Port", allowZero = true) {
 hideFromStack(validatePort);
 
 function validateFunction(value, name) {
-  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "function") throw ERR_INVALID_ARG_TYPE(name, "Function", value);
 }
 hideFromStack(validateFunction);
 
@@ -506,7 +501,7 @@ function sliceBuffer(buffer, offset, length) {
   if (typeof buffer === "string") {
     buffer = Buffer.from(buffer);
   } else if (!ArrayBuffer.isView(buffer)) {
-    throw new ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw ERR_INVALID_ARG_TYPE("buffer", "Buffer, TypedArray, DataView, or string", buffer);
   }
 
   offset = offset >>> 0;
@@ -612,12 +607,12 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
     if (typeof buffer === "string") {
       list = [Buffer.from(buffer)];
     } else if (!ArrayBuffer.isView(buffer)) {
-      throw new ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+      throw ERR_INVALID_ARG_TYPE("buffer", "Buffer, TypedArray, DataView, or string", buffer);
     } else {
       list = [buffer];
     }
   } else if (!(list = fixBufferList(buffer))) {
-    throw new ERR_INVALID_ARG_TYPE("buffer list arguments", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw ERR_INVALID_ARG_TYPE("buffer list arguments", "Buffer, TypedArray, DataView, or string", buffer);
   }
 
   if (!connected) port = validatePort(port, "Port", false);

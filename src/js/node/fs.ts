@@ -5,6 +5,8 @@ const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
 
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
@@ -23,9 +25,7 @@ var _fs = Symbol.for("#fs");
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
-    const err = new TypeError("Callback must be a function");
-    err.code = "ERR_INVALID_ARG_TYPE";
-    throw err;
+    throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 
   return callback;
@@ -149,9 +149,7 @@ var access = function access(...args) {
     } else if (callback == undefined) {
       fs.close(fd).then(() => {});
     } else {
-      const err = new TypeError("Callback must be a function");
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
+      throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
   },
   rm = function rm(...args) {
@@ -166,9 +164,7 @@ var access = function access(...args) {
   },
   exists = function exists(path, callback) {
     if (typeof callback !== "function") {
-      const err = new TypeError("Callback must be a function");
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
+      throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
     try {
       fs.exists.$apply(fs, [path]).then(

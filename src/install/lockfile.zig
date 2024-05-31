@@ -640,7 +640,7 @@ pub const Tree = struct {
 
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
-                if (builder.lockfile.isRootDependency(builder.manager, dep_id)) {
+                if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
                     // TODO: warning about peer dependency version mismatch
                     return hoisted; // 1
                 }

@@ -1404,6 +1404,72 @@ describe("hoisting", async () => {
     expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
   });
 
+  test("root workspace (other than root) dependency will not hoist incorrect peer", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["bar"],
+        }),
+      ),
+      write(
+        join(packageDir, "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          dependencies: {
+            "peer-deps-fixed": "1.0.0",
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    let { exited, stdout } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "ignore",
+      stdout: "pipe",
+      env,
+    });
+
+    let out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
+    expect(await exited).toBe(0);
+
+    // now run the install again but from the workspace and with `no-deps@2.0.0`
+    await write(
+      join(packageDir, "bar", "package.json"),
+      JSON.stringify({
+        name: "bar",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "2.0.0",
+        },
+      }),
+    );
+
+    ({ exited, stdout } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "bar"),
+      stderr: "ignore",
+      stdout: "pipe",
+      env,
+    }));
+
+    out = await Bun.readableStreamToText(stdout);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ no-deps@2.0.0",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+    expect(await exited).toBe(0);
+  });
+
   test("hoisting/using incorrect peer dep on initial install", async () => {
     await writeFile(
       join(packageDir, "package.json"),

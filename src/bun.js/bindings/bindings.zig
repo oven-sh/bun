@@ -2676,23 +2676,9 @@ pub const JSFunction = extern struct {
         constructor: ?*const JSHostFunctionType = null,
     };
 
-    extern fn JSFunction__createFromZig(
-        global: *JSGlobalObject,
-        fn_name: bun.String,
-        implementation: *const JSHostFunctionType,
-        arg_count: u32,
-        implementation_visibility: ImplementationVisibility,
-        intrinsic: Intrinsic,
-        constructor: ?*const JSHostFunctionType,
-    ) JSValue;
+    extern fn JSFunction__createFromZig(global: *JSGlobalObject, fn_name: bun.String, implementation: *const JSHostFunctionType, arg_count: u32, implementation_visibility: ImplementationVisibility, intrinsic: Intrinsic, constructor: ?*const JSHostFunctionType) JSValue;
 
-    pub fn create(
-        global: *JSGlobalObject,
-        fn_name: anytype,
-        implementation: *const JSHostFunctionType,
-        function_length: u32,
-        options: CreateJSFunctionOptions,
-    ) JSValue {
+    pub fn create(global: *JSGlobalObject, fn_name: anytype, implementation: *const JSHostFunctionType, function_length: u32, options: CreateJSFunctionOptions) JSValue {
         return JSFunction__createFromZig(
             global,
             switch (@TypeOf(fn_name)) {
@@ -2915,6 +2901,12 @@ pub const JSGlobalObject = extern struct {
         } else {
             return ZigString.static(fmt).toTypeErrorInstance(this);
         }
+    }
+
+    pub fn createTypeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
+        var err = this.createTypeErrorInstance(fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        return err;
     }
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
@@ -3296,6 +3288,7 @@ pub const JSMap = opaque {
 };
 
 pub const JSValueReprInt = i64;
+
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = 0xa,
@@ -5931,8 +5924,8 @@ pub const CallFrame = opaque {
 
     fn Arguments(comptime max: usize) type {
         return struct {
-            ptr: [max]JSC.JSValue,
-            len: usize,
+            ptr: [max]JSC.JSValue = .{.undefined} ** max,
+            len: usize = 0,
             pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
                 var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
                 args[0..comptime i].* = ptr[0..i].*;
@@ -5953,7 +5946,7 @@ pub const CallFrame = opaque {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
-            0 => .{ .ptr = undefined, .len = 0 },
+            0 => .{},
             inline 1...8 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };
@@ -6008,6 +6001,9 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
+
+pub const JSBuiltinFunctionType = fn (*JSGlobalObject) callconv(.C) JSValue;
+pub const JSBuiltinFunctionPtr = *const JSHostFunctionType;
 
 pub const JSArray = opaque {
     // TODO(@paperdave): this can throw

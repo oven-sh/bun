@@ -50,4 +50,14 @@ export default {
   hideFromStack,
   warnNotImplementedOnce,
   fileSinkSymbol,
+  guessHandleType,
 };
+
+// \/ more stuff from node
+
+const _guessHandleType = $zig("node_util_binding.zig", "guessHandleType");
+const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
+function guessHandleType(fd) {
+  const type = _guessHandleType(fd);
+  return handleTypes[type];
+}

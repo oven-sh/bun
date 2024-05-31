@@ -91,7 +91,6 @@ it("not skip verification when doing a lot of requests", async () => {
 
   await promise;
   expect(count).toBe(1);
-
 });
 
 it("fetch with rejectUnauthorized: false should not call checkServerIdentity", async () => {

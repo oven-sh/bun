@@ -16,13 +16,12 @@ error: ## stage beforeAll ##
       at <dir>/my-test.test.js:5:11
 -------------------------------
 
-(pass) my-test [xx ms]
+(pass) my-test
 
  1 pass
  0 fail
  1 error
- 1 expect() calls
-Ran 1 tests across 1 files. [xx ms]
+Ran 1 tests across 1 files.
 "
 `;
 
@@ -37,12 +36,11 @@ my-test.test.js:
               ^
 error: ## stage beforeEach ##
       at <dir>/my-test.test.js:5:11
-(fail) my-test [xx ms]
+(fail) my-test
 
  0 pass
  1 fail
- 1 expect() calls
-Ran 1 tests across 1 files. [xx ms]
+Ran 1 tests across 1 files.
 "
 `;
 
@@ -67,8 +65,7 @@ error: ## stage afterEach ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
-Ran 1 tests across 1 files. [xx ms]
+Ran 1 tests across 1 files.
 "
 `;
 
@@ -93,8 +90,7 @@ error: ## stage afterAll ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
-Ran 1 tests across 1 files. [xx ms]
+Ran 1 tests across 1 files.
 "
 `;
 
@@ -120,8 +116,7 @@ error: ## stage describe ##
  1 pass
  0 fail
  1 error
- 1 expect() calls
-Ran 1 tests across 1 files. [xx ms]
+Ran 1 tests across 1 files.
 "
 `;
 

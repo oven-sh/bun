@@ -1506,6 +1506,10 @@ redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
+progress_string_buf: []u8 = undefined,
+downloaded_bytes: u64 = 0,
+estimated_content_length: u64 = 0,
+
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
 disable_decompression: bool = false,
@@ -2710,6 +2714,15 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             // we save the successful parsed response
             this.state.pending_response = response;
 
+            // For requests that have progress nodes, check for content-length header to provide better download estimates.
+            if (this.progress_node != null) {
+                if (response.getHeader("content-length")) |length_str| {
+                    if (std.fmt.parseInt(u64, length_str, 10)) |estimated_length| {
+                        this.estimated_content_length = estimated_length;
+                    } else |_| {}
+                }
+            }
+
             const body_buf = to_read[@min(@as(usize, @intCast(response.bytes_read)), to_read.len)..];
             // handle the case where we have a 100 Continue
             if (response.status_code == 100) {
@@ -3133,6 +3146,22 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
     };
 }
 
+fn updateProgress(this: *HTTPClient) void {
+    // Zig 0.12's progress API does not support floating point or percentage progresses,
+    // only integers. To get around this, the items' name is adjusted with the desired
+    // format message.
+    if (this.progress_node) |progress| {
+        progress.activate();
+        progress.setName(
+            std.fmt.bufPrint(this.progress_string_buf, "Downloading [{s:.2} / {s:.2}]", .{
+                bun.fmt.size(this.downloaded_bytes),
+                bun.fmt.size(this.estimated_content_length),
+            }) catch "Downloading",
+        );
+        progress.context.maybeRefresh();
+    }
+}
+
 // preallocate a buffer for the body no more than 256 MB
 // the intent is to avoid an OOM caused by a malicious server
 // reporting gigantic Conten-Length and then
@@ -3156,11 +3185,10 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
         this.state.total_body_received += incoming_data.len;
     }
     defer {
-        if (this.progress_node) |progress| {
-            progress.activate();
-            progress.setCompletedItems(incoming_data.len);
-            progress.context.maybeRefresh();
-        }
+        this.downloaded_bytes += incoming_data.len;
+
+        if (this.progress_node != null)
+            this.updateProgress();
     }
     // we can ignore the body data in redirects
     if (this.state.is_redirect_pending) return;
@@ -3211,23 +3239,20 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     }
 
     this.state.total_body_received += remainder.len;
+    this.downloaded_bytes += incoming_data.len;
 
-    if (this.progress_node) |progress| {
-        progress.activate();
-        progress.setCompletedItems(this.state.total_body_received);
-        progress.context.maybeRefresh();
-    }
+    if (this.progress_node != null)
+        this.updateProgress();
 
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
         const processed = try this.state.processBodyBuffer(buffer.*);
 
-        if (this.progress_node) |progress| {
-            progress.activate();
-            progress.setCompletedItems(this.state.total_body_received);
-            progress.context.maybeRefresh();
-        }
+        this.downloaded_bytes = this.state.total_body_received;
+        if (this.progress_node != null)
+            this.updateProgress();
+
         return is_done or processed;
     }
     return false;
@@ -3279,11 +3304,10 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
         -1 => return error.InvalidHTTPResponse,
         // Needs more data
         -2 => {
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.list.items.len);
-                progress.context.maybeRefresh();
-            }
+            this.downloaded_bytes = buffer.list.items.len;
+            if (this.progress_node != null)
+                this.updateProgress();
+
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
                 return try this.state.processBodyBuffer(buffer);
@@ -3298,11 +3322,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
                 buffer,
             );
 
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.list.items.len);
-                progress.context.maybeRefresh();
-            }
+            this.downloaded_bytes = buffer.list.items.len;
+            if (this.progress_node != null)
+                this.updateProgress();
 
             return true;
         },
@@ -3354,11 +3376,10 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         },
         // Needs more data
         -2 => {
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.len);
-                progress.context.maybeRefresh();
-            }
+            this.downloaded_bytes += buffer.len;
+            if (this.progress_node != null)
+                this.updateProgress();
+
             const body_buffer = this.state.getBodyBuffer();
             try body_buffer.appendSliceExact(buffer);
 
@@ -3375,11 +3396,9 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             try this.handleResponseBodyFromSinglePacket(buffer);
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
-            if (this.progress_node) |progress| {
-                progress.activate();
-                progress.setCompletedItems(buffer.len);
-                progress.context.maybeRefresh();
-            }
+            this.downloaded_bytes += buffer.len;
+            if (this.progress_node != null)
+                this.updateProgress();
 
             return true;
         },

@@ -13,7 +13,7 @@ PNPM_VERSION=9
 BUN_VERSION=1.1.8
 
 # Install dependencies
-brew install --force \
+brew install --force --overwrite \
   ca-certificates \
   curl \
   automake \
@@ -53,8 +53,6 @@ for tag in $(echo "${@:2}" | tr ',' ' '); do
     BUILDKITE_TAGS="${BUILDKITE_TAGS},${tag}"
   fi
 done
-
-echo "Building with tags: ${BUILDKITE_TAGS}"
 
 # Configure buildkite
 BUILDKITE_PATH="$(brew --prefix)/etc/buildkite-agent/buildkite-agent.cfg"

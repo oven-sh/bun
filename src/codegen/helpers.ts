@@ -105,3 +105,11 @@ export function pathToUpperSnakeCase(filepath: string) {
     .join("_")
     .toUpperCase();
 }
+
+export function camelCase(string: string) {
+  return `${string[0].toLowerCase()}${string.slice(1)}`;
+}
+
+export function pascalCase(string: string) {
+  return `${string[0].toUpperCase()}${string.slice(1)}`;
+}

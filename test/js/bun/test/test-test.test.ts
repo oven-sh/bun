@@ -710,9 +710,19 @@ test("my-test", () => {
           .filter(a => {
             if (a.includes("(:")) return false;
             if (a.includes("bun test v")) return false;
+
+            // Timers are a little inconsistent on macOS vs Linux
+            // On Linux, it might not run in time, but on macOS it will
+            if (a.includes(" expect() calls")) return false;
+
             return true;
           })
-          .map(a => a.trimEnd().replace(/((\d+)(\.?)\d+\s?ms)/, "xx ms"))
+          .map(a =>
+            a
+              .trimEnd()
+              .replace(/\[((\d+)(\.?)\d+\s?ms)\]/, "")
+              .trimEnd(),
+          )
           .join("\n"),
       ).toMatchSnapshot();
     });

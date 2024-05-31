@@ -22,6 +22,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -43,6 +44,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -68,6 +70,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -87,6 +90,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -106,6 +110,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -125,6 +130,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -145,6 +151,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -170,6 +177,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -196,6 +204,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -215,6 +224,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -234,6 +244,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -253,6 +264,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -272,6 +284,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -292,6 +305,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -317,6 +331,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -342,6 +357,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -361,6 +377,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -380,6 +397,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -399,6 +417,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -418,6 +437,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -438,6 +458,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -463,6 +484,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -488,6 +510,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -508,6 +531,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -527,6 +551,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -547,6 +572,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -571,6 +597,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },
@@ -585,6 +612,7 @@
       "console": "internalConsole",
       "sourceMap": {
         "/build/bun": "${workspaceFolder}",
+        "${workspaceFolder}": "${workspaceFolder}",
         "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
         "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
       },

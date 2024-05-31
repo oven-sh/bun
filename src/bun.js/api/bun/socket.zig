@@ -1225,7 +1225,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
-            // if we SSL and handshake is not done, we should not call the callback
+            // if we are a SSL Socket and handshake is not done, we should not call the callback
             if (ssl and this.authorized == false) return;
             var vm = handlers.vm;
             vm.eventLoop().enter();

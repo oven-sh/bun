@@ -1,3 +1,4 @@
+// inspired by https://github.com/dtolnay/anyhow/
 const bun = @import("root").bun;
 const std = @import("std");
 

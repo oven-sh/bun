@@ -1432,8 +1432,6 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
         break :brk .{ old_buf[0 .. 2 + old_folder_trimmed.len + 1], new_buf[0 .. 2 + old_folder_trimmed.len + 1] };
     };
 
-    std.debug.print("\n\n{s}\n\n", .{stdout.items});
-
     var line_iter = std.mem.splitScalar(u8, stdout.items, '\n');
     while (line_iter.next()) |line| {
         if (shouldSkipLine(line)) continue;

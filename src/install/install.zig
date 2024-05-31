@@ -5396,10 +5396,6 @@ pub const PackageManager = struct {
         switch (version.tag) {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
-                    const lolname = name.slice(this.lockfile.buffers.string_bytes.items);
-                    if (std.mem.eql(u8, lolname, "is-even")) {
-                        std.debug.print("LOLhere \n", .{});
-                    }
                     var resolve_result_ = this.getOrPutResolvedPackage(
                         name_hash,
                         name,
@@ -10721,14 +10717,6 @@ pub const PackageManager = struct {
             Global.crash();
         }
 
-        // const patches_dir_fd = switch (bun.sys.openat(bun.toFD(std.fs.cwd().fd), manager.options.patch_features.commit.patches_dir, std.os.O.CREAT | std.os.O.DIRECTORY, 0o666)) {
-        //     .result => |fd| fd,
-        //     .err => |e| {
-        //         std.debug.print("ERROR {}\n", .{e.toSystemError()});
-        //         @panic("TODO zack handle");
-        //     },
-        // };
-
         @memcpy(resolution_buf[resolution_label.len .. resolution_label.len + ".patch".len], ".patch");
         var patch_filename: []const u8 = resolution_buf[0 .. resolution_label.len + ".patch".len];
         var deinit = false;
@@ -11370,12 +11358,6 @@ pub const PackageManager = struct {
             // pending packages if we're already draining them.
             comptime is_pending_package_install: bool,
         ) void {
-            if (std.mem.eql(u8, name, "is-even")) {
-                std.debug.print("HI!\n", .{});
-            }
-            if (std.mem.eql(u8, name, "is-odd")) {
-                std.debug.print("IN HERE!\n", .{});
-            }
             const buf = this.lockfile.buffers.string_bytes.items;
 
             const alias = this.lockfile.buffers.dependencies.items[dependency_id].name.slice(buf);
@@ -11671,9 +11653,6 @@ pub const PackageManager = struct {
                     if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
                 }
 
-                if (std.mem.eql(u8, name, "is-odd")) {
-                    std.debug.print("IN HERE!\n", .{});
-                }
                 const install_result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => installer.install(this.skip_delete, destination_dir),

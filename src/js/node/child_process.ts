@@ -1098,8 +1098,15 @@ class ChildProcess extends EventEmitter {
     switch (i) {
       case 0: {
         switch (io) {
-          case "pipe":
-            return new NativeWritable(this.#handle.stdin);
+          case "pipe": {
+            const stdin = this.#handle.stdin;
+
+            if (!stdin)
+              // This can happen if the process was already killed.
+              return new ShimmedStdin();
+
+            return new NativeWritable(stdin);
+          }
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -1112,7 +1119,13 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const pipe = ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
+            const value = this.#handle[fdToStdioName(i)];
+
+            if (!value)
+              // This can happen if the process was already killed.
+              return new ShimmedStdioOutStream();
+
+            const pipe = ReadableFromWeb(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

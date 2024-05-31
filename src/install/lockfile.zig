@@ -778,6 +778,16 @@ pub fn clean(
     return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
 }
 
+/// Is this a direct dependency of the workspace root package.json?
+pub fn isWorkspaceRootDependency(this: *Lockfile, id: DependencyID) bool {
+    return this.packages.items(.dependencies)[0].contains(id);
+}
+
+/// Is this a direct dependency of the workspace the install is taking place in?
+pub fn isRootDependency(this: *Lockfile, manager: *PackageManager, id: DependencyID) bool {
+    return this.packages.items(.dependencies)[manager.root_package_id.get(this, manager.workspace_name_hash)].contains(id);
+}
+
 pub fn cleanWithLogger(
     old: *Lockfile,
     manager: *PackageManager,
@@ -922,7 +932,7 @@ pub fn cleanWithLogger(
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
-        const workspace_package_id = manager.root_package_id.get(manager);
+        const workspace_package_id = manager.root_package_id.get(new, manager.workspace_name_hash);
 
         const dep_list = slice.items(.dependencies)[workspace_package_id];
         const res_list = slice.items(.resolutions)[workspace_package_id];
@@ -1572,7 +1582,7 @@ pub const Printer = struct {
                     }
 
                     try writer.print(
-                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>", enable_ansi_colors),
+                        comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
                         .{
                             package_name,
                             resolved[package_id].fmt(string_buf, .auto),

@@ -102,7 +102,7 @@ it("zero arguments, should succeed", async () => {
     async fetch() {
       return new Response(
         JSON.stringify({
-          "tag_name": "bun-v1.1.4",
+          "tag_name": `bun-v${Bun.version}`,
           "assets": [
             {
               "url": "foo",

@@ -509,12 +509,12 @@ pub const CreateCommand = struct {
                             var infile = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
-                            // Assumption: you only really care about making sure something that was executable is still executable
-                            switch (bun.sys.fstat(bun.toFD(infile.handle))) {
-                                .err => {},
-                                .result => |stat| {
-                                    _ = bun.sys.fchmod(bun.toFD(outfile.handle), @intCast(stat.mode));
-                                },
+                            if (comptime Environment.isPosix) {
+                                // Assumption: you only really care about making sure something that was executable is still executable
+                                const stat = infile.stat() catch continue;
+                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                            } else {
+                                @panic("TODO on Windows");
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {

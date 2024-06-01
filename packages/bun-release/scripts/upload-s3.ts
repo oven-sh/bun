@@ -97,7 +97,7 @@ for (const asset of release.assets) {
     let data = Bun.spawnSync({
       cmd: [
         join(temp, local.replace(".zip", ""), "bun"),
-        "-e",
+        "--print",
         'JSON.stringify(require("bun:internal-for-testing").crash_handler.getFeatureData())',
       ],
       cwd: temp,

@@ -195,10 +195,7 @@ pub const SavedSourceMap = struct {
         pub fn print() void {
             if (seen_invalid) return;
             if (path) |note| {
-                Output.note(
-                    "missing sourcemaps for {s}",
-                    .{note},
-                );
+                Output.note("missing sourcemaps for {s}", .{note});
                 Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
             }
         }
@@ -2967,7 +2964,8 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                var log = logger.Log.init(default_allocator);
+                var log = logger.Log.init(bun.default_allocator);
+                defer log.deinit();
                 var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
                 must_reset_parser_arena_later.* = true;
                 break :code original_source.source_code.toUTF8(bun.default_allocator);

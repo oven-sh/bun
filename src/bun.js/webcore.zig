@@ -676,51 +676,6 @@ pub const Crypto = struct {
         return str.toJS(globalThis);
     }
 
-    pub fn randomInt(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        const arguments = callframe.arguments(3).slice();
-
-        var at_least: u52 = 0;
-        var at_most: u52 = std.math.maxInt(u52);
-        var callback: JSValue = .undefined;
-
-        switch (arguments.len) {
-            0 => {
-                return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", .undefined);
-            },
-            1 => {
-                //max
-                if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", arguments[0]);
-                at_most = arguments[0].to(u52);
-            },
-            2 => {
-                //min, max
-                if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
-                if (!arguments[1].isNumber()) return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", arguments[1]);
-                at_least = arguments[0].to(u52);
-                at_most = arguments[1].to(u52);
-            },
-            3 => {
-                //min, max, callback
-                if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
-                if (!arguments[1].isNumber()) return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", arguments[1]);
-                if (!arguments[2].isCallable(globalThis.vm())) return globalThis.throwInvalidArgumentTypeValue("callback", "function", arguments[2]);
-                at_least = arguments[0].to(u52);
-                at_most = arguments[1].to(u52);
-                callback = arguments[2];
-            },
-            else => unreachable,
-        }
-
-        const the_number = JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
-
-        if (callback != .undefined) {
-            _ = callback.call(globalThis, &.{ .null, the_number });
-            return .undefined;
-        }
-
-        return the_number;
-    }
-
     pub fn randomUUIDWithoutTypeChecks(
         _: *Crypto,
         globalThis: *JSC.JSGlobalObject,

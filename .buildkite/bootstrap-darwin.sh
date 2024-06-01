@@ -38,11 +38,15 @@ brew install --force --overwrite \
 # Ensure that specific version of LLVM is used
 brew link --force --overwrite llvm@${LLVM_VERSION}
 
+# Re-install ca-certificates due to errors in CI:
+# 'unable to get local issuer certificate'
+brew reinstall --force ca-certificates
+
 # Read the buildkite token
 BUILDKITE_TOKEN="${1}"
 if [ -z "$BUILDKITE_TOKEN" ]; then
   echo "No buildkite token."
-  exit 1
+  exit 0
 fi
 
 # Read the buildkite tags

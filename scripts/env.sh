@@ -7,9 +7,6 @@ if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
     export PATH="$BUN_INSTALL/bin:$PATH"
     export PATH="$(brew --prefix llvm@16)/bin:$PATH"
   fi
-  if [[ $(uname -s) == 'Linux' ]]; then
-    source ~/.bashrc || true
-  fi
 fi
 
 # this is the environment script for building bun's dependencies
@@ -20,8 +17,8 @@ export BUN_DEPS_DIR=${BUN_DEPS_DIR:-$BUN_BASE_DIR/src/deps}
 export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/src/deps}
 
 # Silence a perl script warning
-export LC_CTYPE="en_US.UTF-8"
-export LC_ALL="en_US.UTF-8"
+# export LC_CTYPE="en_US.UTF-8"
+# export LC_ALL="en_US.UTF-8"
 
 # this compiler detection could be better
 export CC=${CC:-$(which clang-16 || which clang || which cc)}

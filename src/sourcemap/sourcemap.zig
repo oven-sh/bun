@@ -286,6 +286,7 @@ pub const Mapping = struct {
                     base_filename,
                     lookup.source_map.underlying_provider.load_hint,
                     .{ .source_only = @intCast(index) },
+                    null,
                 )) |parsed|
                     if (parsed.source_contents) |contents|
                         break :bytes contents;
@@ -722,6 +723,7 @@ pub const SourceProviderMap = opaque {
         source_filename: []const u8,
         load_hint: SourceMapLoadHint,
         result: ParseUrlResultHint,
+        log: ?*Logger.Log,
     ) ?SourceMap.ParseUrl {
         var sfb = std.heap.stackFallback(65536, bun.default_allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
@@ -779,10 +781,17 @@ pub const SourceProviderMap = opaque {
                         data,
                         result,
                     ) catch |err| {
-                        bun.Output.warn("Could not decode sourcemap '{s}': {s}", .{
-                            source_filename,
-                            @errorName(err),
-                        });
+                        if (log) |l|
+                            l.addWarningFmt(
+                                null,
+                                Logger.Loc.Empty,
+                                bun.default_allocator,
+                                "Could not decode sourcemap '{s}': {s}",
+                                .{
+                                    source_filename,
+                                    @errorName(err),
+                                },
+                            ) catch {};
                         // Disable the "try using --sourcemap=external" hint
                         bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                         return null;
@@ -791,10 +800,17 @@ pub const SourceProviderMap = opaque {
             }
 
             if (inline_err) |err| {
-                bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
-                    source_filename,
-                    @errorName(err),
-                });
+                if (log) |l|
+                    l.addWarningFmt(
+                        null,
+                        Logger.Loc.Empty,
+                        bun.default_allocator,
+                        "Could not decode sourcemap in '{s}': {s}",
+                        .{
+                            source_filename,
+                            @errorName(err),
+                        },
+                    ) catch {};
                 // Disable the "try using --sourcemap=external" hint
                 bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
                 return null;

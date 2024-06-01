@@ -216,7 +216,8 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 std.math.maxInt(u64),
             ) catch "";
 
-            const w = file.writer();
+            var bufw = std.io.bufferedWriter(file.writer());
+            const w = bufw.writer();
             try w.print(
                 \\{{
                 \\  "version": 3,

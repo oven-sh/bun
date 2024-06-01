@@ -634,6 +634,46 @@ pub const Mapping = struct {
 
             allocator.destroy(this);
         }
+
+        pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
+            var last_col: i32 = 0;
+            var last_src: i32 = 0;
+            var last_ol: i32 = 0;
+            var last_oc: i32 = 0;
+            var current_line: i32 = 0;
+            for (
+                map.mappings.items(.generated),
+                map.mappings.items(.original),
+                map.mappings.items(.source_index),
+                0..,
+            ) |gen, orig, source_index, i| {
+                if (current_line != gen.lines) {
+                    assert(gen.lines > current_line);
+                    const inc = gen.lines - current_line;
+                    try writer.writeByteNTimes(';', @intCast(inc));
+                    current_line = gen.lines;
+                    last_col = 0;
+                } else if (i != 0) {
+                    try writer.writeByte(',');
+                }
+                try encodeVLQ(gen.columns - last_col).writeTo(writer);
+                last_col = gen.columns;
+                try encodeVLQ(source_index - last_src).writeTo(writer);
+                last_src = source_index;
+                try encodeVLQ(orig.lines - last_ol).writeTo(writer);
+                last_ol = orig.lines;
+                try encodeVLQ(orig.columns - last_oc).writeTo(writer);
+                last_oc = orig.columns;
+            }
+        }
+
+        pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
+            return .{ .data = map };
+        }
+
+        fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+            try map.writeVLQs(w);
+        }
     };
 };
 
@@ -662,7 +702,7 @@ pub const SourceProviderMap = opaque {
     extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
 
     fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
-        const needle = comptime bun.strings.literal(T, "//# sourceMappingURL=");
+        const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
         const found = bun.strings.indexOfT(T, source, needle) orelse return null;
         const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
         const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
@@ -688,6 +728,8 @@ pub const SourceProviderMap = opaque {
         defer arena.deinit();
 
         const new_load_hint: SourceMapLoadHint, const parsed = parsed: {
+            var inline_err: ?anyerror = null;
+
             // try to get an inline source map
             if (load_hint != .is_external_map) try_inline: {
                 const source = ZigSourceProvider__getSourceSlice(provider);
@@ -709,13 +751,8 @@ pub const SourceProviderMap = opaque {
                         found_url.slice(),
                         result,
                     ) catch |err| {
-                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
-                            source_filename,
-                            @errorName(err),
-                        });
-                        // Disable the "try using --sourcemap=external" hint
-                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
-                        return null;
+                        inline_err = err;
+                        break :try_inline;
                     },
                 };
             }
@@ -751,6 +788,16 @@ pub const SourceProviderMap = opaque {
                         return null;
                     },
                 };
+            }
+
+            if (inline_err) |err| {
+                bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                    source_filename,
+                    @errorName(err),
+                });
+                // Disable the "try using --sourcemap=external" hint
+                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                return null;
             }
 
             return null;

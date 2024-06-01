@@ -37,7 +37,6 @@ jobs:
             package.json
             bun.lockb
             test
-            packages/bun-internal-test
             packages/bun-types
       - name: Setup Environment
         shell: bash
@@ -88,12 +87,6 @@ jobs:
           bun install --cwd test
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install Dependencies (runner)
-        timeout-minutes: 5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bun install --cwd packages/bun-internal-test
       - name: Run Tests
         id: test
         timeout-minutes: 90
@@ -111,7 +104,7 @@ jobs:
           SHELLOPTS: igncr
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node packages/bun-internal-test/src/runner.node.mjs $(which bun)
+          node test/runner.node.mjs $(which bun)
       - if: ${{ always() }}
         name: Upload Results
         uses: actions/upload-artifact@v4

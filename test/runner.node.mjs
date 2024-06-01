@@ -1,3 +1,5 @@
+#! /usr/bin/env node
+
 import { spawn, spawnSync } from "node:child_process";
 import {
   readFileSync,
@@ -72,7 +74,7 @@ async function runTests(target) {
 
   let results = {};
   for (const testPath of tests.slice(firstTest, lastTest)) {
-    const title = relative(cwd, join(testsPath, testPath));
+    const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
     const result = await runAndReportTest({ cwd, execPath, testPath, tmpPath: tmp });
     results[title] = result;
   }
@@ -129,12 +131,14 @@ async function runTest({ cwd, execPath, testPath, tmpPath }) {
           [isWindows ? "TEMP" : "TMPDIR"]: tmp,
           GITHUB_ACTIONS: "true", // always true so annotations are parsed
           FORCE_COLOR: "1",
+          IS_BUN_CI: "1",
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
           BUN_GARBAGE_COLLECTOR_LEVEL: "1",
           BUN_ENABLE_CRASH_REPORTING: "1",
           BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
           BUN_INSTALL_CACHE_DIR: join(tmp, "cache"),
+          SHELLOPTS: "igncr",
         },
       });
       let doneCalls = 0;

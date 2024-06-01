@@ -99,7 +99,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - "node packages/bun-internal-test/src/runner.node.mjs bun-darwin-aarch64"
+          - "node test/runner.node.mjs bun-darwin-aarch64"
 
   - key: "build-darwin-x64-ci"
     group: ":darwin: x64"
@@ -198,7 +198,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - "node packages/bun-internal-test/src/runner.node.mjs bun-darwin-x64"
+          - "node test/runner.node.mjs bun-darwin-x64"
 
   - key: "build-darwin-x64-baseline-ci"
     group: ":darwin: x64-baseline"
@@ -297,7 +297,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - "node packages/bun-internal-test/src/runner.node.mjs bun-darwin-x64-baseline"
+          - "node test/runner.node.mjs bun-darwin-x64-baseline"
 
   - key: "build-linux-aarch64-ci"
     group: ":linux: aarch64"
@@ -396,7 +396,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - "node packages/bun-internal-test/src/runner.node.mjs bun-linux-aarch64"
+          - "node test/runner.node.mjs bun-linux-aarch64"
 
   - key: "build-linux-x64-ci"
     group: ":linux: x64"
@@ -495,7 +495,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - "node packages/bun-internal-test/src/runner.node.mjs bun-linux-x64"
+          - "node test/runner.node.mjs bun-linux-x64"
 
   - key: "build-linux-x64-baseline-ci"
     group: ":linux: x64-baseline"
@@ -594,7 +594,7 @@ steps:
           - "logs/*"
           - "summary.md"
         command:
-          - "node packages/bun-internal-test/src/runner.node.mjs bun-linux-x64-baseline"
+          - "node test/runner.node.mjs bun-linux-x64-baseline"
 
   - key: "build-windows-x64-ci"
     group: ":windows: x64"
@@ -690,7 +690,7 @@ steps:
         env:
           CHERE_INVOKING: "1"
         command:
-          - 'C:\\cygwin64\\bin\\bash --login -c ''node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64'''
+          - 'C:\\cygwin64\\bin\\bash --login -c ''node test/runner.node.mjs bun-windows-x64'''
 
   - key: "build-windows-x64-baseline-ci"
     group: ":windows: x64-baseline"
@@ -786,4 +786,4 @@ steps:
         env:
           CHERE_INVOKING: "1"
         command:
-          - 'C:\\cygwin64\\bin\\bash --login -c ''node packages/bun-internal-test/src/runner.node.mjs bun-windows-x64-baseline'''
+          - 'C:\\cygwin64\\bin\\bash --login -c ''node test/runner.node.mjs bun-windows-x64-baseline'''

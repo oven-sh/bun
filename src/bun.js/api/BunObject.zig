@@ -2661,6 +2661,14 @@ pub const Crypto = struct {
             .{ "shake256", std.crypto.hash.sha3.Shake256 },
         };
 
+        inline fn digestLength(Algorithm: type) comptime_int {
+            return switch (Algorithm) {
+                std.crypto.hash.sha3.Shake128 => 16,
+                std.crypto.hash.sha3.Shake256 => 32,
+                else => Algorithm.digest_length,
+            };
+        }
+
         pub fn hashByName(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
@@ -2700,7 +2708,7 @@ pub const Crypto = struct {
             }
 
             var h = Algorithm.init(.{});
-            const digest_length_comptime = Algorithm.digest_length;
+            const digest_length_comptime = digestLength(Algorithm);
 
             if (output) |output_buf| {
                 if (output_buf.byteSlice().len < digest_length_comptime) {
@@ -2715,7 +2723,7 @@ pub const Crypto = struct {
                 h.final(output_buf.slice()[0..digest_length_comptime]);
                 return output_buf.value;
             } else {
-                var out: [Algorithm.digest_length]u8 = undefined;
+                var out: [digestLength(Algorithm)]u8 = undefined;
                 h.final(&out);
                 // Clone to GC-managed memory
                 return JSC.ArrayBuffer.createBuffer(globalThis, &out);
@@ -2728,7 +2736,7 @@ pub const Crypto = struct {
                     return CryptoHasher.new(.{ .zig = .{
                         .algorithm = @field(EVP.Algorithm, item[0]),
                         .state = bun.new(item[1], item[1].init(.{})),
-                        .digest_length = item[1].digest_length,
+                        .digest_length = digestLength(item[1]),
                     } });
                 }
             }

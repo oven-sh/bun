@@ -275,9 +275,9 @@ export interface SourceMapTests {
    * for byte snapshots will not be sustainable. Instead, we will sample a few mappings to make sure
    * the map is correct. This can be used to test for a single mapping.
    */
-  mappings: MappingSnapshot[];
+  mappings?: MappingSnapshot[];
   /** For small files it is acceptable to inline all of the mappings. */
-  mappingsExactMatch: string;
+  mappingsExactMatch?: string;
 }
 
 /** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more consise */
@@ -1309,7 +1309,7 @@ for (const [key, blob] of build.outputs) {
             });
             const map_tests = snapshotSourceMap?.[path.basename(file)];
             if (map_tests) {
-              expect(parsed.sources.map(a => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
+              expect(parsed.sources.map((a: string) => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
               for (let i = 0; i < parsed.sources; i++) {
                 const source = parsed.sources[i];
                 const sourcemap_content = parsed.sourceContent[i];

@@ -1104,6 +1104,38 @@ describe("bundler", () => {
       },
     },
   });
+  // chunk-concat forgets to de-duplicate source indicies
+  // chunk-concat ignores all but the first instance of a chunk
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        const a = new TextEncoder();
+        console.log('hey!')
+        const d = new TextEncoder();
+
+        const b = { hello: 'world' };
+
+        const c = new Set([
+        ]);
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../entry.js"],
+        mappingsExactMatch:
+          "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
+      },
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

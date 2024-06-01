@@ -142,7 +142,6 @@ pub const Async = struct {
     };
 
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
-        _ = Function; // autofix
         return struct {
             promise: JSC.JSPromise.Strong,
             args: ArgumentType,

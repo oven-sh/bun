@@ -141,7 +141,6 @@ pub fn build(b: *Build) !void {
     target_query.glibc_version = getOSGlibCVersion(os);
 
     const target = b.resolveTargetQuery(target_query);
-    std.log.info("targeting {s}", .{try target.result.zigTriple(b.allocator)});
 
     const generated_code_dir = b.pathFromRoot(
         b.option([]const u8, "generated-code", "Set the generated code directory") orelse

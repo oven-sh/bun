@@ -2461,7 +2461,7 @@ pub const Fetch = struct {
             });
 
             return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
-        };
+        }
 
         if (url.protocol.len > 0) {
             if (!(url.isHTTP() or url.isHTTPS())) {

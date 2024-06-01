@@ -764,10 +764,10 @@ pub fn normalizeStringGenericTZ(
             if (path_[1] != ':') {
                 // UNC paths
                 if (options.add_nt_prefix) {
-                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literal(T, "UNC" ++ sep_str));
+                    @memcpy(buf[buf_i .. buf_i + 4], comptime strings.literal(T, "UNC" ++ sep_str));
                     buf_i += 2;
                 } else {
-                    @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literal(T, sep_str ++ sep_str));
+                    @memcpy(buf[buf_i .. buf_i + 2], comptime strings.literal(T, sep_str ++ sep_str));
                 }
                 @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                 buf[buf_i + indexOfThirdUNCSlash] = options.separator;

@@ -9138,12 +9138,12 @@ pub const PackageManager = struct {
             const workspace_package_json_file = (try bun.sys.File.openat(
                 bun.invalid_fd,
                 manager.original_package_json_path,
-                std.os.O.RDWR,
+                bun.O.RDWR,
                 0,
             ).unwrap()).handle.asFile();
 
             try workspace_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.os.ftruncate(workspace_package_json_file.handle, new_package_json_source.len) catch {};
+            std.posix.ftruncate(workspace_package_json_file.handle, new_package_json_source.len) catch {};
             workspace_package_json_file.close();
 
             if (subcommand == .remove) {

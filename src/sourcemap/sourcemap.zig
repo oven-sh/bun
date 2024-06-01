@@ -682,14 +682,14 @@ pub const Mapping = struct {
 /// bother loading source code into memory. Most uses of source maps only care
 /// about filenames and source mappings, and we should avoid loading contents
 /// whenever possible.
-pub const SourceContentHandling = enum {
+pub const SourceContentHandling = enum(u1) {
     no_source_contents,
     source_contents,
 };
 
 /// For some sourcemap loading code, this enum is used as a hint if we already
 /// know if the sourcemap is located on disk or inline in the source code.
-pub const SourceMapLoadHint = enum {
+pub const SourceMapLoadHint = enum(u2) {
     none,
     is_inline_map,
     is_external_map,

@@ -2372,16 +2372,16 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
 pub fn setNonblocking(fd: bun.FileDescriptor) Maybe(void) {
     const flags = switch (bun.sys.fcntl(
         fd,
-        std.os.F.GETFL,
+        std.posix.F.GETFL,
         0,
     )) {
         .result => |f| f,
         .err => |err| return .{ .err = err },
     };
 
-    const new_flags = flags | std.os.O.NONBLOCK;
+    const new_flags = flags | bun.O.NONBLOCK;
 
-    switch (bun.sys.fcntl(fd, std.os.F.SETFL, new_flags)) {
+    switch (bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags)) {
         .err => |err| return .{ .err = err },
         .result => {},
     }
@@ -2639,7 +2639,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
 
     while (true) {
         // This is racy but it's fine if we call linkat() with an empty path multiple times.
-        const current_status = CAP_DAC_READ_SEARCH.status.load(.Monotonic);
+        const current_status = CAP_DAC_READ_SEARCH.status.load(.monotonic);
 
         const rc = if (current_status != -1) std.os.linux.linkat(
             tmpfd.cast(),
@@ -2656,7 +2656,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
             var procfs_buf: ["/proc/self/fd/-2147483648".len + 1:0]u8 = undefined;
             const path = std.fmt.bufPrintZ(&procfs_buf, "/proc/self/fd/{d}", .{tmpfd.cast()}) catch unreachable;
 
-            break :brk std.posix.linux.linkat(
+            break :brk std.os.linux.linkat(
                 posix.AT.FDCWD,
                 path,
                 dirfd.cast(),
@@ -2671,7 +2671,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
                 .ISDIR, .NOENT, .OPNOTSUPP, .PERM, .INVAL => {
                     // CAP_DAC_READ_SEARCH is required to linkat with an empty path.
                     if (current_status == 0) {
-                        CAP_DAC_READ_SEARCH.status.store(-1, .Monotonic);
+                        CAP_DAC_READ_SEARCH.status.store(-1, .monotonic);
                         continue;
                     }
                 },
@@ -2682,7 +2682,7 @@ pub fn linkatTmpfile(tmpfd: bun.FileDescriptor, dirfd: bun.FileDescriptor, name:
         }
 
         if (current_status == 0) {
-            CAP_DAC_READ_SEARCH.status.store(1, .Monotonic);
+            CAP_DAC_READ_SEARCH.status.store(1, .monotonic);
         }
 
         return Maybe(void).success;

@@ -15,7 +15,7 @@ pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
 const libuv = bun.windows.libuv;
 
-pub const AF = std.os.AF;
+pub const AF = std.posix.AF;
 
 pub const NSClass = enum(c_int) {
     /// Cookie.
@@ -634,7 +634,7 @@ pub const Channel = opaque {
         return ares_getnameinfo(
             this,
             sa,
-            if (sa.*.family == AF.INET) @sizeOf(std.os.sockaddr.in) else @sizeOf(std.os.sockaddr.in6),
+            if (sa.*.family == AF.INET) @sizeOf(std.posix.sockaddr.in) else @sizeOf(std.posix.sockaddr.in6),
             // node returns ENOTFOUND for addresses like 255.255.255.255:80
             // So, it requires setting the ARES_NI_NAMEREQD flag
             ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE,
@@ -1588,7 +1588,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     };
 
     {
-        const in: *std.os.sockaddr.in = @as(*std.os.sockaddr.in, @alignCast(@ptrCast(sa)));
+        const in: *std.posix.sockaddr.in = @alignCast(@ptrCast(sa));
         if (ares_inet_pton(AF.INET, addr_ptr, &in.addr) == 1) {
             in.*.family = AF.INET;
             in.*.port = std.mem.nativeToBig(u16, port);
@@ -1596,7 +1596,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
         }
     }
     {
-        const in6: *std.os.sockaddr.in6 = @as(*std.os.sockaddr.in6, @alignCast(@ptrCast(sa)));
+        const in6: *std.posix.sockaddr.in6 = @alignCast(@ptrCast(sa));
         if (ares_inet_pton(AF.INET6, addr_ptr, &in6.addr) == 1) {
             in6.*.family = AF.INET6;
             in6.*.port = std.mem.nativeToBig(u16, port);

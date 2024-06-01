@@ -15,6 +15,7 @@
 .vs
 .vscode/clang*
 .vscode/cpp*
+.zig-cache
 *.a
 *.bc
 *.big

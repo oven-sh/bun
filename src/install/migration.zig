@@ -54,7 +54,12 @@ pub fn detectAndLoadOtherLockfile(
         @memcpy(buf[dirname.len .. dirname.len + npm_lockfile_name.len], npm_lockfile_name);
         buf[dirname.len + npm_lockfile_name.len] = 0;
         var timer = std.time.Timer.start() catch unreachable;
-        const lockfile = bun.sys.openat(bun.FD.cwd(), buf[0 .. dirname.len + npm_lockfile_name.len :0], std.os.O.RDONLY, 0).unwrap() catch break :npm;
+        const lockfile = bun.sys.openat(
+            bun.FD.cwd(),
+            buf[0 .. dirname.len + npm_lockfile_name.len :0],
+            bun.O.RDONLY,
+            0,
+        ).unwrap() catch break :npm;
         defer _ = bun.sys.close(lockfile);
         var lockfile_path_buf: bun.PathBuffer = undefined;
         const lockfile_path = bun.getFdPathZ(lockfile, &lockfile_path_buf) catch break :npm;

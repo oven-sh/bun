@@ -703,20 +703,20 @@ pub const PackageManifest = struct {
 
             var is_using_o_tmpfile = if (Environment.isLinux) false else {};
             const file = brk: {
-                const flags = std.os.O.WRONLY;
+                const flags = bun.O.WRONLY;
                 const mask = if (Environment.isPosix) 0o664 else 0;
 
                 // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
                 // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
                 if (Environment.isLinux) {
-                    switch (bun.sys.File.openat(cache_dir, ".", flags | std.os.linux.O.TMPFILE, mask)) {
+                    switch (bun.sys.File.openat(cache_dir, ".", flags | bun.O.TMPFILE, mask)) {
                         .err => {
                             const warner = struct {
                                 var did_warn = std.atomic.Value(bool).init(false);
 
                                 pub fn warnOnce() void {
-                                    if (!did_warn.swap(true, .Monotonic)) {
+                                    if (!did_warn.swap(true, .monotonic)) {
                                         // This is not an error. Nor is it really a warning.
                                         Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});
                                         Output.flush();
@@ -733,7 +733,12 @@ pub const PackageManifest = struct {
                     }
                 }
 
-                break :brk try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, flags | std.os.O.CREAT | std.os.O.TRUNC, if (Environment.isPosix) 0o664 else 0).unwrap();
+                break :brk try bun.sys.File.openat(
+                    tmpdir,
+                    path_to_use_for_opening_file,
+                    flags | bun.O.CREAT | bun.O.TRUNC,
+                    if (Environment.isPosix) 0o664 else 0,
+                ).unwrap();
             };
 
             {
@@ -810,7 +815,7 @@ pub const PackageManifest = struct {
                 pub usingnamespace bun.New(@This());
 
                 pub fn run(task: *bun.ThreadPool.Task) void {
-                    const save_task: *@This() = @fieldParentPtr(@This(), "task", task);
+                    const save_task: *@This() = @fieldParentPtr("task", task);
                     defer {
                         save_task.destroy();
                     }

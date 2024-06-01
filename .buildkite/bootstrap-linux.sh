@@ -7,6 +7,16 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# Get the user who is running the script
+USER="${SUDO_USER:-$(whoami)}"
+HOME="/home/${USER}"
+
+# Check that the home directory is correct
+if [ ! -d "${HOME}" ]; then
+  echo "The user '${USER}' does not exist?"
+  exit 1
+fi
+
 # Pin versions for some dependencies
 LLVM_VERSION=16
 NODE_VERSION=22
@@ -15,7 +25,7 @@ BUN_VERSION=1.1.8
 
 # Install dependencies
 apt-get update
-apt-get install -y \
+apt-get install -y --reinstall --no-install-recommends \
   ca-certificates \
   apt-transport-https \
   dirmngr \
@@ -43,7 +53,7 @@ echo "deb [signed-by=/usr/share/keyrings/buildkite-agent-archive-keyring.gpg] ht
 
 # Install dependencies
 apt-get update
-apt-get install -y --no-install-recommends \
+apt-get install -y --reinstall --no-install-recommends \
   bash \
   software-properties-common \
   build-essential \
@@ -89,12 +99,15 @@ npm install -g \
   bun@${BUN_VERSION}
 
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+for bin in 'cargo' 'rustc' 'rustup'; do
+  ln -sf "${HOME}/.cargo/bin/${bin}" "/usr/bin/${bin}"
+done
 
 # Read the buildkite token
 BUILDKITE_TOKEN="${1}"
 if [ -z "$BUILDKITE_TOKEN" ]; then
   echo "No buildkite token."
-  exit 1
+  exit 0
 fi
 
 # Read the buildkite tags
@@ -119,7 +132,6 @@ sed -i "s/# tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 sed -i "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 
 # Change buildkite user
-USER="${SUDO_USER:-$(whoami)}"
 sed -i "s/\\/var\\/lib\\/buildkite-agent/\\/home\\/${USER}\\/buildkite-agent/g" "${BUILDKITE_PATH}"
 sed -i "s/User=admin/User=${USER}/g" "${BUILDKITE_SERVICE_PATH}"
 sed -i "s/Environment=HOME=\\/var\\/lib\\/buildkite-agent/Environment=HOME=\\/home\\/${USER}\\/buildkite-agent/g" "${BUILDKITE_SERVICE_PATH}"

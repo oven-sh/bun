@@ -18,7 +18,7 @@ const server = Bun.serve({
     if (path === "/abc") return Response.redirect("/source", 301);
 
     // send back a file (in this case, *this* file)
-    if (path === "/source") return new Response(Bun.file(import.meta.file));
+    if (path === "/source") return new Response(Bun.file(import.meta.path));
 
     // respond with JSON
     if (path === "/api") return Response.json({ some: "buns", for: "you" });

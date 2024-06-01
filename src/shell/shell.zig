@@ -2484,7 +2484,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
                             if (self.chars.state == .Single) break :escaped;
                             if (self.in_subshell == .backtick) {
-                                try self.break_word(true);
+                                try self.break_word_operator();
                                 if (self.last_tok_tag()) |toktag| {
                                     if (toktag != .Delimit) try self.tokens.append(.Delimit);
                                 }
@@ -2590,7 +2590,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('|');
 
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_operator();
 
                             const next = self.peek() orelse {
                                 self.add_error("Unexpected EOF");
@@ -2612,7 +2612,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('>');
 
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word_impl(true, false, true);
+                            try self.break_word_operator();
                             const redirect = self.eat_simple_redirect(.out);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
@@ -2621,7 +2621,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('<');
 
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word_impl(true, false, true);
+                            try self.break_word_operator();
                             const redirect = self.eat_simple_redirect(.in);
                             try self.tokens.append(.{ .Redirect = redirect });
                             continue;
@@ -2630,7 +2630,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             comptime assertSpecialChar('&');
 
                             if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
-                            try self.break_word(true);
+                            try self.break_word_operator();
 
                             const next = self.peek() orelse {
                                 try self.tokens.append(.Ampersand);
@@ -2753,13 +2753,18 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             return try self.break_word_impl(add_delimiter, false, false);
         }
 
+        /// NOTE: this adds a delimiter
+        fn break_word_operator(self: *@This()) !void {
+            return try self.break_word_impl(true, false, true);
+        }
+
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
             return (self.chars.state == .Double and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
                 (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
         }
 
-        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_redirect_operator: bool) !void {
+        fn break_word_impl(self: *@This(), add_delimiter: bool, in_normal_space: bool, in_operator: bool) !void {
             const start: u32 = self.word_start;
             const end: u32 = self.j;
             if (start != end or
@@ -2775,7 +2780,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 if (add_delimiter) {
                     try self.tokens.append(.Delimit);
                 }
-            } else if ((in_normal_space or in_redirect_operator) and self.tokens.items.len > 0 and
+            } else if ((in_normal_space or in_operator) and self.tokens.items.len > 0 and
                 // whether or not to add a delimiter token
                 switch (self.tokens.items[self.tokens.items.len - 1]) {
                 .Var,

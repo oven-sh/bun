@@ -30,8 +30,8 @@ pub const BrotliDecoder = opaque {
     const brotli_decoder_metadata_start_func = ?*const fn (?*anyopaque, usize) callconv(.C) void;
     const brotli_decoder_metadata_chunk_func = ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.C) void;
 
-    pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int {
-        return BrotliDecoderSetParameter(state, param, value);
+    pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) bool {
+        return BrotliDecoderSetParameter(state, param, value) > 0;
     }
 
     pub fn attachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data: []const u8) callconv(.C) c_int {

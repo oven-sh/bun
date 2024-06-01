@@ -224,6 +224,7 @@ bun upgrade --canary
   - [Build an HTTP server using StricJS and Bun](https://bun.sh/guides/ecosystem/stric)
   - [Containerize a Bun application with Docker](https://bun.sh/guides/ecosystem/docker)
   - [Create a Discord bot](https://bun.sh/guides/ecosystem/discordjs)
+  - [Deploy a Bun application on Render](https://bun.sh/guides/ecosystem/render)
   - [Read and write data to MongoDB using Mongoose and Bun](https://bun.sh/guides/ecosystem/mongoose)
   - [Run Bun as a daemon with PM2](https://bun.sh/guides/ecosystem/pm2)
   - [Run Bun as a daemon with systemd](https://bun.sh/guides/ecosystem/systemd)
@@ -233,6 +234,7 @@ bun upgrade --canary
   - [Use Neon's Serverless Postgres with Bun](https://bun.sh/guides/ecosystem/neon-serverless-postgres)
   - [Use Prisma with Bun](https://bun.sh/guides/ecosystem/prisma)
   - [Use React and JSX](https://bun.sh/guides/ecosystem/react)
+  - [Add Sentry to a Bun app](https://bun.sh/guides/ecosystem/sentry)
 
 - HTTP 
   - [Common HTTP server usage](https://bun.sh/guides/http/server)

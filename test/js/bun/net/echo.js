@@ -35,7 +35,9 @@ function createOptions(type, message, closeOnDone) {
   }
 
   return {
-    hostname: "localhost",
+    // we don't use localhost here to ensure that only one connection is made
+    // because we perform exact matching on the printed output
+    hostname: "127.0.0.1",
     port: 0,
     socket: {
       close() {

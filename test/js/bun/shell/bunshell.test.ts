@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -37,6 +37,40 @@ afterAll(async () => {
 const BUN = bunExe();
 
 describe("bunshell", () => {
+  describe("exit codes", async () => {
+    const failing_cmds = [
+      process.platform === "win32" ? "cat ldkfjsldf" : null,
+      "touch -alskdjfakjfhasjfh",
+      "mkdir",
+      "export",
+      "cd lskfjlsdkjf",
+      process.platform !== "win32" ? "echo hi > /dev/full" : null,
+      "pwd sldfkj sfks jdflks flksd f",
+      "which",
+      "rm lskdjfskldjfksdjflkjsldfj",
+      "mv lskdjflskdjf lskdjflskjdlf",
+      "ls lksdjflksdjf",
+      "exit sldkfj sdjf ls f",
+      // "true",
+      // "false",
+      // "yes",
+      // "seq",
+      "dirname",
+      "basename",
+      "cp ksdjflksjdfks lkjsdflksjdfl",
+    ];
+
+    failing_cmds.forEach(cmdstr =>
+      !!cmdstr
+        ? TestBuilder.command`${{ raw: cmdstr }}`
+            .exitCode(c => c !== 0)
+            .stdout(() => {})
+            .stderr(() => {})
+            .runAsTest(cmdstr)
+        : "",
+    );
+  });
+
   describe("concurrency", () => {
     test("writing to stdout", async () => {
       await Promise.all([
@@ -343,6 +377,14 @@ describe("bunshell", () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 
     expect(stdout.toString()).toEqual("LMAO\n");
+  });
+
+  describe("operators no spaces", async () => {
+    TestBuilder.command`echo LMAO|cat`.stdout("LMAO\n").runAsTest("pipeline");
+    TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");
+    TestBuilder.command`echo foo||echo hi`.stdout("foo\n").runAsTest("||");
+    TestBuilder.command`echo foo>hi.txt`.ensureTempDir().fileEquals("hi.txt", "foo\n").runAsTest("||");
+    TestBuilder.command`echo hifriends#lol`.stdout("hifriends#lol\n").runAsTest("#");
   });
 
   test("cmd subst", async () => {
@@ -1055,7 +1097,8 @@ describe("deno_task", () => {
     }
   });
 
-  test("stacktrace", async () => {
+  // https://github.com/oven-sh/bun/issues/11305
+  test.todoIf(isWindows)("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
     const code = /* ts */ `import { $ } from 'bun'
 
@@ -1177,17 +1220,17 @@ fi
   "private": true,
   "name": "bun",
   "dependencies": {
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
+    "@vscode/debugadapter": "1.61.0",
+    "esbuild": "0.17.15",
+    "eslint": "8.20.0",
+    "eslint-config-prettier": "8.5.0",
+    "mitata": "0.1.3",
     "peechy": "0.4.34",
-    "prettier": "^3.2.5",
+    "prettier": "3.2.5",
     "react": "next",
     "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
+    "source-map-js": "1.0.2",
+    "typescript": "5.0.2"
   },
   "devDependencies": {
   },
@@ -1998,7 +2041,7 @@ describe("subshell", () => {
     "module": "index.ts",
     "type": "module",
     "dependencies": {
-      "sharp": "^0.33.3"
+      "sharp": "0.33.3"
     }
   }`;
 

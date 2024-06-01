@@ -4,6 +4,8 @@ permissions:
   contents: read
 env:
   LLVM_VERSION: 16
+  LC_CTYPE: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
 
 on:
   workflow_call:
@@ -15,7 +17,7 @@ on:
 jobs:
   lint-cpp:
     name: Lint C++
-    runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
+    runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-xlarge' || 'macos-12' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -44,15 +46,16 @@ jobs:
       - name: Bun install
         run: |
           bun install
-      - name: Format
+      - name: clang-tidy
         id: format
         env:
           CPU_TARGET: native
+          BUN_SILENT: 1
         run: |
           rm -f did_fail format.log
           echo "${{ inputs.pr-number }}" > pr-number.txt
           echo "pr_number=$(cat pr-number.txt)" >> $GITHUB_OUTPUT
-          bun run build:tidy &> >(tee -p format.log) && echo 0 > did_succeed.txt
+          bun run --silent build:tidy &> >(tee -p format.log) && echo 0 > did_succeed.txt
           # Upload format.log as github artifact for the workflow
           if [ -f did_succeed.txt ]; then
             echo "0" > did_fail.txt
@@ -76,3 +79,6 @@ jobs:
         with:
           name: did_fail.txt
           path: did_fail.txt
+      - name: Fail if formatting failed
+        if: ${{ steps.format.outputs.did_fail == '1' }}
+        run: exit 1

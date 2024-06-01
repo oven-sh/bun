@@ -3,12 +3,10 @@ const std = @import("std");
 const sys = bun.sys;
 const linux = std.os.linux;
 const Environment = bun.Environment;
-const heap = @import("./heap.zig");
+pub const heap = @import("./heap.zig");
 const JSC = bun.JSC;
 
 const log = bun.Output.scoped(.loop, false);
-
-const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
 
 const posix = std.posix;
 const assert = bun.assert;
@@ -19,8 +17,6 @@ pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,
     epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) .zero else 0,
-
-    timers: TimerHeap = .{ .context = {} },
 
     cached_now: posix.timespec = .{
         .tv_nsec = 0,
@@ -109,7 +105,7 @@ pub const Loop = struct {
                         .readable => |readable| {
                             switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, readable.fd)) {
                                 .err => |err| {
-                                    readable.onError(request, err);
+                                    readable.onError(readable.ctx, err);
                                 },
                                 .result => {
                                     this.active += 1;
@@ -119,7 +115,7 @@ pub const Loop = struct {
                         .writable => |writable| {
                             switch (writable.poll.registerForEpoll(writable.tag, this, .poll_writable, true, writable.fd)) {
                                 .err => |err| {
-                                    writable.onError(request, err);
+                                    writable.onError(writable.ctx, err);
                                 },
                                 .result => {
                                     this.active += 1;
@@ -131,49 +127,9 @@ pub const Loop = struct {
                             this.active -= 1;
                             close.onDone(close.ctx);
                         },
-                        .timer_cancelled => {},
-                        .timer => |timer| {
-                            while (true) {
-                                switch (timer.state) {
-                                    .PENDING => {
-                                        timer.state = .ACTIVE;
-                                        this.timers.insert(timer);
-                                        this.active += 1;
-                                    },
-                                    .ACTIVE => {
-                                        @panic("timer is already active");
-                                    },
-                                    .CANCELLED => {
-                                        timer.deinit();
-                                        this.active -= 1;
-                                        break;
-                                    },
-                                    .FIRED => {
-                                        @panic("timer has already fired");
-                                    },
-                                }
-                                break;
-                            }
-                        },
                     }
                 }
             }
-
-            this.drainExpiredTimers();
-
-            // Determine our next timeout based on the timers
-            const timeout: i32 = if (this.active == 0) 0 else timeout: {
-                const t = this.timers.peek() orelse break :timeout -1;
-
-                // Determine the time in milliseconds.
-                const ms_now = @as(u64, @intCast(this.cached_now.tv_sec)) * std.time.ms_per_s +
-                    @as(u64, @intCast(this.cached_now.tv_nsec)) / std.time.ns_per_ms;
-                const ms_next = @as(u64, @intCast(t.next.tv_sec)) * std.time.ms_per_s +
-                    @as(u64, @intCast(t.next.tv_nsec)) / std.time.ns_per_ms;
-                const out = @as(i32, @intCast(ms_next -| ms_now));
-
-                break :timeout @max(out, 0);
-            };
 
             var events: [256]EventType = undefined;
 
@@ -181,7 +137,7 @@ pub const Loop = struct {
                 this.pollfd().cast(),
                 &events,
                 @intCast(events.len),
-                timeout,
+                std.math.maxInt(i32),
             );
 
             switch (bun.C.getErrno(rc)) {
@@ -286,55 +242,11 @@ pub const Loop = struct {
                             }
                             close.onDone(close.ctx);
                         },
-                        .timer_cancelled => {},
-                        .timer => |timer| {
-                            while (true) {
-                                switch (timer.state) {
-                                    .PENDING => {
-                                        timer.state = .ACTIVE;
-                                        this.timers.insert(timer);
-                                        this.active += 1;
-                                    },
-                                    .ACTIVE => {
-                                        @panic("timer is already active");
-                                    },
-                                    .CANCELLED => {
-                                        timer.deinit();
-                                        this.active -= 1;
-                                        break;
-                                    },
-                                    .FIRED => {
-                                        @panic("timer has already fired");
-                                    },
-                                }
-                                break;
-                            }
-                        },
                     }
                 }
             }
 
-            this.drainExpiredTimers();
             const change_count = events_list.items.len;
-
-            // Determine our next timeout based on the timers
-            const timeout: ?std.posix.timespec = timeout: {
-                const t = this.timers.peek() orelse break :timeout null;
-                var out: std.posix.timespec = undefined;
-                out.tv_sec = t.next.tv_sec -| this.cached_now.tv_sec;
-                out.tv_nsec = t.next.tv_nsec -| this.cached_now.tv_nsec;
-
-                if (out.tv_nsec < 0) {
-                    out.tv_sec -= 1;
-                    out.tv_nsec += std.time.ns_per_s;
-                }
-
-                if (out.tv_sec < 0) {
-                    break :timeout null;
-                }
-
-                break :timeout out;
-            };
 
             const rc = posix.system.kevent64(
                 this.pollfd().cast(),
@@ -346,7 +258,7 @@ pub const Loop = struct {
                 // registration, it becomes errno
                 @intCast(events_list.capacity),
                 0,
-                if (timeout) |*t| t else null,
+                null,
             );
 
             switch (bun.C.getErrno(rc)) {
@@ -363,41 +275,6 @@ pub const Loop = struct {
             for (current_events) |event| {
                 Poll.onUpdateKQueue(event);
             }
-        }
-    }
-
-    fn drainExpiredTimers(this: *Loop) void {
-        const now = Timer{ .next = this.cached_now };
-
-        var current_batch = JSC.ConcurrentTask.Queue.Batch{};
-        var prev_event_loop: ?*JSC.EventLoop = null;
-
-        // Run our expired timers
-        while (this.timers.peek()) |t| {
-            if (!Timer.less({}, t, &now)) break;
-
-            // Remove the timer
-            assert(this.timers.deleteMin().? == t);
-
-            // Mark completion as done
-            t.state = .FIRED;
-
-            switch (t.fire(
-                &current_batch,
-                &prev_event_loop,
-            )) {
-                .disarm => {},
-                .rearm => |new| {
-                    t.next = new;
-                    t.reset = null;
-                    t.state = .ACTIVE;
-                    this.timers.insert(t);
-                },
-            }
-        }
-
-        if (prev_event_loop) |event_loop| {
-            event_loop.enqueueTaskConcurrentBatch(current_batch);
         }
     }
 
@@ -439,8 +316,6 @@ pub const Action = union(enum) {
     readable: FileAction,
     writable: FileAction,
     close: CloseAction,
-    timer: *Timer,
-    timer_cancelled: void,
 
     pub const FileAction = struct {
         fd: bun.FileDescriptor,
@@ -505,137 +380,6 @@ const Pollable = struct {
     pub fn ptr(this: Pollable) *anyopaque {
         return this.value.to();
     }
-};
-
-const TimerReference = bun.JSC.BunTimer.Timeout.TimerReference;
-
-pub const Timer = struct {
-    /// The absolute time to fire this timer next.
-    next: posix.timespec,
-
-    /// Only used internally. If this is non-null and timer is
-    /// CANCELLED, then the timer is rearmed automatically with this
-    /// as the next time. The callback will not be called on the
-    /// cancellation.
-    reset: ?posix.timespec = null,
-
-    /// Internal heap fields.
-    heap: heap.IntrusiveField(Timer) = .{},
-
-    state: State = .PENDING,
-
-    tag: Tag = .TimerCallback,
-
-    pub const Tag = enum {
-        TimerCallback,
-        TimerReference,
-
-        pub fn Type(comptime T: Tag) type {
-            return switch (T) {
-                .TimerCallback => TimerCallback,
-                .TimerReference => TimerReference,
-            };
-        }
-    };
-
-    const TimerCallback = struct {
-        callback: *const fn (*TimerCallback) Arm,
-        ctx: *anyopaque,
-        timer: Timer,
-    };
-
-    pub const State = enum {
-        /// The timer is waiting to be enabled.
-        PENDING,
-
-        /// The timer is active and will fire at the next time.
-        ACTIVE,
-
-        /// The timer has been cancelled and will not fire.
-        CANCELLED,
-
-        /// The timer has fired and the callback has been called.
-        FIRED,
-    };
-
-    fn less(_: void, a: *const Timer, b: *const Timer) bool {
-        return a.ns() < b.ns();
-    }
-
-    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
-    /// 584 years so if we get any overflows we just use maxInt(u64). If
-    /// any software is running in 584 years waiting on this timer...
-    /// shame on me I guess... but I'll be dead.
-    fn ns(self: *const Timer) u64 {
-        assert(self.next.tv_sec >= 0);
-        assert(self.next.tv_nsec >= 0);
-
-        const max = std.math.maxInt(u64);
-        const s_ns = std.math.mul(
-            u64,
-            @as(u64, @intCast(self.next.tv_sec)),
-            std.time.ns_per_s,
-        ) catch return max;
-        return std.math.add(u64, s_ns, @as(u64, @intCast(self.next.tv_nsec))) catch
-            return max;
-    }
-
-    pub const Arm = union(enum) {
-        rearm: std.posix.timespec,
-        disarm,
-    };
-
-    pub fn fire(this: *Timer, batch: *JSC.ConcurrentTask.Queue.Batch, event_loop: *?*JSC.EventLoop) Arm {
-        if (comptime Environment.allow_assert) {
-            if (comptime Environment.isPosix) {
-                const timer = std.time.Instant{ .timestamp = this.next };
-                var now = std.time.Instant{ .timestamp = undefined };
-                Loop.updateTimespec(&now.timestamp);
-
-                if (timer.order(now) != .lt) {
-                    bun.Output.panic("Timer fired {} too early", .{bun.fmt.fmtDuration(timer.since(now))});
-                }
-            }
-        }
-
-        switch (this.tag) {
-            inline else => |t| {
-                var container: *t.Type() = @fieldParentPtr("timer", this);
-                if (comptime @hasDecl(t.Type(), "callback")) {
-                    const concurrent_task = container.concurrent_task.from(container, .manual_deinit);
-                    if (event_loop.*) |loop| {
-                        // If they are different event loops, we have to drain the batch right here.
-                        if (loop != container.event_loop) {
-                            loop.enqueueTaskConcurrentBatch(batch.*);
-                            batch.* = .{};
-                            event_loop.* = container.event_loop;
-                        }
-
-                        if (batch.front == null) {
-                            batch.front = concurrent_task;
-                        }
-                    } else {
-                        batch.front = concurrent_task;
-                        event_loop.* = container.event_loop;
-                    }
-
-                    if (batch.last) |last| {
-                        bun.assert(last.next == null);
-                        last.next = concurrent_task;
-                    }
-
-                    batch.last = concurrent_task;
-
-                    batch.count += 1;
-                    return container.callback();
-                }
-
-                return container.callback(container);
-            },
-        }
-    }
-
-    pub fn deinit(_: *Timer) void {}
 };
 
 pub const Poll = struct {

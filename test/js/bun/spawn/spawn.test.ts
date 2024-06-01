@@ -5,6 +5,7 @@ import {
   gcTick as _gcTick,
   bunEnv,
   bunExe,
+  getMaxFD,
   isMacOS,
   isPosix,
   isWindows,
@@ -666,8 +667,9 @@ describe("should not hang", () => {
   for (let sleep of ["0", "0.1"]) {
     it(
       "sleep " + sleep,
-      () => {
+      async () => {
         const runs = [];
+        let initialMaxFD = -1;
         for (let order of [
           ["sleep", "kill", "unref", "exited"],
           ["sleep", "unref", "kill", "exited"],
@@ -687,14 +689,26 @@ describe("should not hang", () => {
           ["exited"],
         ]) {
           runs.push(
-            runTest(sleep, order).catch(err => {
-              console.error("For order", JSON.stringify(order, null, 2));
-              throw err;
-            }),
+            runTest(sleep, order)
+              .then(a => {
+                if (initialMaxFD === -1) {
+                  initialMaxFD = getMaxFD();
+                }
+
+                return a;
+              })
+              .catch(err => {
+                console.error("For order", JSON.stringify(order, null, 2));
+                throw err;
+              }),
           );
         }
 
-        return Promise.all(runs);
+        return await Promise.all(runs).then(ret => {
+          // assert we didn't leak any file descriptors
+          expect(initialMaxFD).toBe(getMaxFD());
+          return ret;
+        });
       },
       128_000,
     );
@@ -702,8 +716,8 @@ describe("should not hang", () => {
 });
 
 it("#3480", async () => {
-  try {
-    var server = Bun.serve({
+  {
+    using server = Bun.serve({
       port: 0,
       fetch: (req, res) => {
         Bun.spawnSync(["node", "-e", "console.log('1')"], {});
@@ -714,8 +728,6 @@ it("#3480", async () => {
     const response = await fetch("http://" + server.hostname + ":" + server.port);
     expect(await response.text()).toBe("Hello world!");
     expect(response.ok);
-  } finally {
-    server!.stop(true);
   }
 });
 

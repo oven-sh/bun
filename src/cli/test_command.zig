@@ -31,8 +31,8 @@ const Command = @import("../cli.zig").Command;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: bun.PathBuffer = undefined;
+var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
 const is_bindgen = false;
 const HTTPThread = bun.http.HTTPThread;
@@ -376,8 +376,8 @@ const Scanner = struct {
     dirs_to_scan: Fifo,
     results: *std.ArrayList(bun.PathString),
     fs: *FileSystem,
-    open_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
-    scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    open_dir_buf: bun.PathBuffer = undefined,
+    scan_dir_buf: bun.PathBuffer = undefined,
     options: *options.BundleOptions,
     has_iterated: bool = false,
     search_count: usize = 0,
@@ -884,6 +884,10 @@ pub const TestCommand = struct {
             }
 
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
+            if (reporter.jest.unhandled_errors_between_tests > 0) {
+                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+            }
+
             var print_expect_calls = reporter.summary.expectations > 0;
             if (reporter.jest.snapshots.total > 0) {
                 const passed = reporter.jest.snapshots.passed;
@@ -949,6 +953,8 @@ pub const TestCommand = struct {
 
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
+        } else if (reporter.jest.unhandled_errors_between_tests > 0) {
+            Global.exitWide(@intCast(reporter.jest.unhandled_errors_between_tests));
         }
     }
 
@@ -973,6 +979,7 @@ pub const TestCommand = struct {
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
                         TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
+                        reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
@@ -1029,6 +1036,9 @@ pub const TestCommand = struct {
 
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
+        vm.onUnhandledRejectionCtx = null;
+        vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
                 Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });

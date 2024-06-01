@@ -18,7 +18,7 @@ if ($env:VSINSTALLDIR -eq $null) {
   if (!(Test-Path $vswhere)) {
       throw "Visual Studio installer directory not found."
   }
-  $vsDir = (& $vswhere -latest -property installationPath)
+  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
       throw "Visual Studio directory not found."
   } 

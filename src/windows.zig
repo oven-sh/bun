@@ -23,6 +23,7 @@ pub const FILE_BEGIN = windows.FILE_BEGIN;
 pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
+pub const ULONGLONG = windows.ULONGLONG;
 pub const UINT = windows.UINT;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
 pub const UNICODE_STRING = windows.UNICODE_STRING;
@@ -3095,7 +3096,39 @@ pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
     CompletionPort: HANDLE,
 };
 
+pub const JOBOBJECT_EXTENDED_LIMIT_INFORMATION = extern struct {
+    BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    ///Reserved
+    IoInfo: IO_COUNTERS,
+    ProcessMemoryLimit: usize,
+    JobMemoryLimit: usize,
+    PeakProcessMemoryUsed: usize,
+    PeakJobMemoryUsed: usize,
+};
+
+pub const IO_COUNTERS = extern struct {
+    ReadOperationCount: ULONGLONG,
+    WriteOperationCount: ULONGLONG,
+    OtherOperationCount: ULONGLONG,
+    ReadTransferCount: ULONGLONG,
+    WriteTransferCount: ULONGLONG,
+    OtherTransferCount: ULONGLONG,
+};
+
+pub const JOBOBJECT_BASIC_LIMIT_INFORMATION = extern struct {
+    PerProcessUserTimeLimit: LARGE_INTEGER,
+    PerJobUserTimeLimit: LARGE_INTEGER,
+    LimitFlags: DWORD,
+    MinimumWorkingSetSize: usize,
+    MaximumWorkingSetSize: usize,
+    ActiveProcessLimit: DWORD,
+    Affinity: *ULONG,
+    PriorityClass: DWORD,
+    SchedulingClass: DWORD,
+};
+
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+pub const JobObjectExtendedLimitInformation: DWORD = 9;
 
 pub extern "kernel32" fn SetInformationJobObject(
     hJob: HANDLE,
@@ -3526,3 +3559,34 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
 
 pub const EXCEPTION_CONTINUE_EXECUTION = -1;
 pub const MS_VC_EXCEPTION = 0x406d1388;
+
+pub const STARTUPINFOEXW = extern struct {
+    StartupInfo: std.os.windows.STARTUPINFOW,
+    lpAttributeList: [*]u8,
+};
+
+pub extern "kernel32" fn InitializeProcThreadAttributeList(
+    lpAttributeList: ?[*]u8,
+    dwAttributeCount: DWORD,
+    dwFlags: DWORD,
+    size: *usize,
+) BOOL;
+
+pub extern "kernel32" fn UpdateProcThreadAttribute(
+    lpAttributeList: [*]u8, // [in, out]
+    dwFlags: DWORD, // [in]
+    Attribute: windows.DWORD_PTR, // [in]
+    lpValue: *const anyopaque, // [in]
+    cbSize: usize, // [in]
+    lpPreviousValue: ?*anyopaque, // [out, optional]
+    lpReturnSize: ?*usize, // [in, optional]
+) BOOL;
+
+pub extern "kernel32" fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *BOOL) BOOL;
+
+pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
+pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
+pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;
+pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;

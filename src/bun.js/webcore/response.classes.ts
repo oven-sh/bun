@@ -13,6 +13,7 @@ export default [
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
+      bytes: { fn: "getBytes" },
       body: { getter: "getBody", cache: true },
       arrayBuffer: { fn: "getArrayBuffer" },
       formData: { fn: "getFormData" },
@@ -90,6 +91,7 @@ export default [
 
       text: { fn: "getText" },
       json: { fn: "getJSON" },
+      bytes: { fn: "getBytes" },
       arrayBuffer: { fn: "getArrayBuffer" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
@@ -139,6 +141,9 @@ export default [
       stream: { fn: "getStream", length: 1 },
       formData: { fn: "getFormData" },
       exists: { fn: "getExists", length: 0 },
+
+      // Non-standard, but consistent!
+      bytes: { fn: "getBytes" },
 
       type: {
         getter: "getType",

@@ -13,7 +13,7 @@ on:
 
 jobs:
   comment-lint:
-    if: ${{ github.repository_owner == 'oven-sh' && github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.repository_owner == 'oven-sh' }}
     name: Comment
     runs-on: ubuntu-latest
     steps:
@@ -41,7 +41,11 @@ jobs:
         run: |
           # Copy to outputs
           echo "pr-number=$(cat pr-number.txt)" >> $GITHUB_OUTPUT
-          echo "text_output=$(cat format.log)" >> $GITHUB_OUTPUT
+          {
+            echo 'text_output<<EOF'
+            cat format.log
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
           echo "did_fail=$(cat did_fail.txt)" >> $GITHUB_OUTPUT
 
       - name: Find Comment
@@ -58,12 +62,13 @@ jobs:
           comment-id: ${{ steps.comment.outputs.comment-id }}
           issue-number: ${{ steps.env.outputs.pr-number }}
           body: |
-            @${{ github.actor }}, C++ linting failed!
+            @${{ github.actor }}, `clang-tidy` had something to share with you about your code:
 
-            Logs:
             ```cpp
             ${{ steps.env.outputs.text_output }}
             ```
+
+            Commit: ${{ github.event.workflow_run.head_sha || github.sha }}
 
             <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
           edit-mode: replace
@@ -74,7 +79,7 @@ jobs:
           comment-id: ${{ steps.comment.outputs.comment-id }}
           issue-number: ${{ steps.env.outputs.pr-number }}
           body: |
-            @${{ github.actor }}, C++ lint errors fixed! Thank you.
+            clang-tidy nits are fixed! Thank you.
 
             <!-- generated-comment lint-cpp-workflow=${{ github.workflow }} -->
           edit-mode: replace

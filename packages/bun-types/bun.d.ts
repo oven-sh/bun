@@ -15,7 +15,7 @@
  */
 declare module "bun" {
   import type { Encoding as CryptoEncoding } from "crypto";
-
+  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   interface Env {
     NODE_ENV?: string;
     /**
@@ -411,6 +411,19 @@ declare module "bun" {
     arrayBuffer(): ArrayBuffer;
 
     /**
+     * Read from stdout as an Uint8Array
+     *
+     * @returns Stdout as an Uint8Array
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.bytes()); // Uint8Array { byteLength: 6 }
+     * ```
+     */
+    bytes(): Uint8Array;
+
+    /**
      * Read from stdout as a Blob
      *
      * @returns Stdout as a blob
@@ -688,7 +701,17 @@ declare module "bun" {
    * This function is faster because it uses uninitialized memory when copying. Since the entire
    * length of the buffer is known, it is safe to use uninitialized memory.
    */
-  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>): ArrayBuffer;
+  function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>, maxLength?: number): ArrayBuffer;
+  function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
+    maxLength: number,
+    asUint8Array: false,
+  ): ArrayBuffer;
+  function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>,
+    maxLength: number,
+    asUint8Array: true,
+  ): Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -704,6 +727,21 @@ declare module "bun" {
   function readableStreamToArrayBuffer(
     stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
   ): Promise<ArrayBuffer> | ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   *
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
+   * chunks of different types, consider {@link readableStreamToBlob}
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as a {@link Uint8Array}.
+   */
+  function readableStreamToBytes(
+    stream: ReadableStream<ArrayBufferView | ArrayBufferLike>,
+  ): Promise<Uint8Array> | Uint8Array;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -960,6 +998,41 @@ declare module "bun" {
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
+
+    /**
+     *
+     * **Experimental API**
+     *
+     * Prefetch a hostname.
+     *
+     * This will be used by fetch() and Bun.connect() to avoid DNS lookups.
+     *
+     * @param hostname The hostname to prefetch
+     *
+     * @example
+     * ```js
+     * import { dns } from 'bun';
+     * dns.prefetch('example.com');
+     * // ... something expensive
+     * await fetch('https://example.com');
+     * ```
+     */
+    prefetch(hostname: string): void;
+
+    /**
+     * **Experimental API**
+     */
+    getCacheStats(): {
+      /**
+       * The number of times a cached DNS entry that was already resolved was used.
+       */
+      cacheHitsCompleted: number;
+      cacheHitsInflight: number;
+      cacheMisses: number;
+      size: number;
+      errors: number;
+      totalCount: number;
+    };
   };
 
   interface DNSLookup {
@@ -2414,7 +2487,7 @@ declare module "bun" {
     extends WebSocketServeOptions<WebSocketDataType>,
       TLSOptions {
     unix?: never;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
@@ -2424,7 +2497,7 @@ declare module "bun" {
      * (Cannot be used with hostname+port)
      */
     unix: string;
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
   interface ErrorLike extends Error {
     code?: string;
@@ -2454,6 +2527,19 @@ declare module "bun" {
      * @default false
      */
     lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     */
+    requestCert?: boolean;
 
     /**
      * Optionally override the trusted CA certificates. Default is to trust
@@ -2493,11 +2579,11 @@ declare module "bun" {
   }
 
   interface TLSServeOptions extends ServeOptions, TLSOptions {
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
-    tls?: TLSOptions | Array<TLSOptions>;
+    tls?: TLSOptions | TLSOptions[];
   }
 
   interface SocketAddress {
@@ -2526,7 +2612,7 @@ declare module "bun" {
    *
    * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
    */
-  interface Server {
+  interface Server extends Disposable {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
@@ -3079,7 +3165,9 @@ declare module "bun" {
     | "sha3-224"
     | "sha3-256"
     | "sha3-384"
-    | "sha3-512";
+    | "sha3-512"
+    | "shake128"
+    | "shake256";
 
   /**
    * Hardware-accelerated cryptographic hash functions
@@ -3128,7 +3216,8 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    digest(hashInto?: NodeJS.TypedArray): NodeJS.TypedArray;
+    digest(): Buffer;
+    digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
 
     /**
      * Run the hash over the given data
@@ -3137,10 +3226,11 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
+    static hash(algorithm: SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer;
     static hash(
       algorithm: SupportedCryptoAlgorithms,
       input: Bun.BlobOrStringOrBuffer,
-      hashInto?: NodeJS.TypedArray,
+      hashInto: NodeJS.TypedArray,
     ): NodeJS.TypedArray;
 
     /**
@@ -3829,6 +3919,181 @@ declare module "bun" {
      * local port connected to the socket
      */
     readonly localPort: number;
+
+    /**
+     * This property is `true` if the peer certificate was signed by one of the CAs
+     * specified when creating the `Socket` instance, otherwise `false`.
+     */
+    readonly authorized: boolean;
+
+    /**
+     * String containing the selected ALPN protocol.
+     * Before a handshake has completed, this value is always null.
+     * When a handshake is completed but not ALPN protocol was selected, socket.alpnProtocol equals false.
+     */
+    readonly alpnProtocol: string | false | null;
+
+    /**
+     * Disables TLS renegotiation for this `Socket` instance. Once called, attempts
+     * to renegotiate will trigger an `error` handler on the `Socket`.
+     *
+     * There is no support for renegotiation as a server. (Attempts by clients will result in a fatal alert so that ClientHello messages cannot be used to flood a server and escape higher-level limits.)
+     */
+    disableRenegotiation(): void;
+
+    /**
+     * Keying material is used for validations to prevent different kind of attacks in
+     * network protocols, for example in the specifications of IEEE 802.1X.
+     *
+     * Example
+     *
+     * ```js
+     * const keyingMaterial = socket.exportKeyingMaterial(
+     *   128,
+     *   'client finished');
+     *
+     * /*
+     *  Example return value of keyingMaterial:
+     *  <Buffer 76 26 af 99 c5 56 8e 42 09 91 ef 9f 93 cb ad 6c 7b 65 f8 53 f1 d8 d9
+     *     12 5a 33 b8 b5 25 df 7b 37 9f e0 e2 4f b8 67 83 a3 2f cd 5d 41 42 4c 91
+     *     74 ef 2c ... 78 more bytes>
+     *
+     * ```
+     *
+     * @param length number of bytes to retrieve from keying material
+     * @param label an application specific label, typically this will be a value from the [IANA Exporter Label
+     * Registry](https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#exporter-labels).
+     * @param context Optionally provide a context.
+     * @return requested bytes of the keying material
+     */
+    exportKeyingMaterial(length: number, label: string, context: Buffer): Buffer;
+
+    /**
+     * Returns the reason why the peer's certificate was not been verified. This
+     * property is set only when `socket.authorized === false`.
+     */
+    getAuthorizationError(): Error | null;
+
+    /**
+     * Returns an object representing the local certificate. The returned object has
+     * some properties corresponding to the fields of the certificate.
+     *
+     * If there is no local certificate, an empty object will be returned. If the
+     * socket has been destroyed, `null` will be returned.
+     */
+    getCertificate(): PeerCertificate | object | null;
+
+    /**
+     * Returns an object containing information on the negotiated cipher suite.
+     *
+     * For example, a TLSv1.2 protocol with AES256-SHA cipher:
+     *
+     * ```json
+     * {
+     *     "name": "AES256-SHA",
+     *     "standardName": "TLS_RSA_WITH_AES_256_CBC_SHA",
+     *     "version": "SSLv3"
+     * }
+     * ```
+     *
+     */
+    getCipher(): CipherNameAndProtocol;
+
+    /**
+     * Returns an object representing the type, name, and size of parameter of
+     * an ephemeral key exchange in `perfect forward secrecy` on a client
+     * connection. It returns an empty object when the key exchange is not
+     * ephemeral. As this is only supported on a client socket; `null` is returned
+     * if called on a server socket. The supported types are `'DH'` and `'ECDH'`. The`name` property is available only when type is `'ECDH'`.
+     *
+     * For example: `{ type: 'ECDH', name: 'prime256v1', size: 256 }`.
+     */
+    getEphemeralKeyInfo(): EphemeralKeyInfo | object | null;
+
+    /**
+     * Returns an object representing the peer's certificate. If the peer does not
+     * provide a certificate, an empty object will be returned. If the socket has been
+     * destroyed, `null` will be returned.
+     *
+     * If the full certificate chain was requested, each certificate will include an`issuerCertificate` property containing an object representing its issuer's
+     * certificate.
+     * @return A certificate object.
+     */
+    getPeerCertificate(): PeerCertificate;
+
+    /**
+     * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
+     * @since v12.11.0
+     * @return List of signature algorithms shared between the server and the client in the order of decreasing preference.
+     */
+    getSharedSigalgs(): string[];
+
+    /**
+     * As the `Finished` messages are message digests of the complete handshake
+     * (with a total of 192 bits for TLS 1.0 and more for SSL 3.0), they can
+     * be used for external authentication procedures when the authentication
+     * provided by SSL/TLS is not desired or is not enough.
+     *
+     * @return The latest `Finished` message that has been sent to the socket as part of a SSL/TLS handshake, or `undefined` if no `Finished` message has been sent yet.
+     */
+    getTLSFinishedMessage(): Buffer | undefined;
+
+    /**
+     * As the `Finished` messages are message digests of the complete handshake
+     * (with a total of 192 bits for TLS 1.0 and more for SSL 3.0), they can
+     * be used for external authentication procedures when the authentication
+     * provided by SSL/TLS is not desired or is not enough.
+     *
+     * @return The latest `Finished` message that is expected or has actually been received from the socket as part of a SSL/TLS handshake, or `undefined` if there is no `Finished` message so
+     * far.
+     */
+    getTLSPeerFinishedMessage(): Buffer | undefined;
+
+    /**
+     * For a client, returns the TLS session ticket if one is available, or`undefined`. For a server, always returns `undefined`.
+     *
+     * It may be useful for debugging.
+     *
+     * See `Session Resumption` for more information.
+     */
+    getTLSTicket(): Buffer | undefined;
+
+    /**
+     * Returns a string containing the negotiated SSL/TLS protocol version of the
+     * current connection. The value `'unknown'` will be returned for connected
+     * sockets that have not completed the handshaking process. The value `null` will
+     * be returned for server sockets or disconnected client sockets.
+     *
+     * Protocol versions are:
+     *
+     * * `'SSLv3'`
+     * * `'TLSv1'`
+     * * `'TLSv1.1'`
+     * * `'TLSv1.2'`
+     * * `'TLSv1.3'`
+     *
+     */
+    getTLSVersion(): string;
+
+    /**
+     * See `Session Resumption` for more information.
+     * @return `true` if the session was reused, `false` otherwise.
+     */
+    isSessionReused(): boolean;
+
+    /**
+     * The `socket.setMaxSendFragment()` method sets the maximum TLS fragment size.
+     * Returns `true` if setting the limit succeeded; `false` otherwise.
+     *
+     * Smaller fragment sizes decrease the buffering latency on the client: larger
+     * fragments are buffered by the TLS layer until the entire fragment is received
+     * and its integrity is verified; large fragments can span multiple roundtrips
+     * and their processing can be delayed due to packet loss or reordering. However,
+     * smaller fragments add extra TLS framing bytes and CPU overhead, which may
+     * decrease overall server throughput.
+     * @param [size=16384] The maximum TLS fragment size. The maximum value is `16384`.
+     */
+    setMaxSendFragment(size: number): boolean;
   }
 
   interface SocketListener<Data = undefined> {
@@ -4221,6 +4486,15 @@ declare module "bun" {
       ): void;
 
       /**
+       * The serialization format to use for IPC messages. Defaults to `"advanced"`.
+       *
+       * To communicate with Node.js processes, use `"json"`.
+       *
+       * When `ipc` is not specified, this is ignored.
+       */
+      serialization?: "json" | "advanced";
+
+      /**
        * If true, the subprocess will have a hidden window.
        */
       windowsHide?: boolean;
@@ -4365,7 +4639,7 @@ declare module "bun" {
     In extends SpawnOptions.Writable = SpawnOptions.Writable,
     Out extends SpawnOptions.Readable = SpawnOptions.Readable,
     Err extends SpawnOptions.Readable = SpawnOptions.Readable,
-  > {
+  > extends AsyncDisposable {
     readonly stdin: SpawnOptions.WritableToIO<In>;
     readonly stdout: SpawnOptions.ReadableToIO<Out>;
     readonly stderr: SpawnOptions.ReadableToIO<Err>;

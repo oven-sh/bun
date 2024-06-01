@@ -24,7 +24,7 @@ pub const VersionedURL = extern struct {
 
     pub fn clone(this: VersionedURL, buf: []const u8, comptime Builder: type, builder: Builder) VersionedURL {
         return VersionedURL{
-            .version = this.version.clone(buf, Builder, builder),
+            .version = this.version.append(buf, Builder, builder),
             .url = builder.append(String, this.url.slice(buf)),
         };
     }

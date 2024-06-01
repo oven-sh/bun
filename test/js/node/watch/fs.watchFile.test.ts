@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "path";
 import { tempDirWithFiles } from "harness";
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
@@ -11,9 +11,12 @@ function repeat(fn: any) {
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;
-const testDir = tempDirWithFiles("watch", {
-  "watch.txt": "hello",
-  [encodingFileName]: "hello",
+let testDir = "";
+beforeEach(() => {
+  testDir = tempDirWithFiles("watch", {
+    "watch.txt": "hello",
+    [encodingFileName]: "hello",
+  });
 });
 
 describe("fs.watchFile", () => {
@@ -55,8 +58,8 @@ describe("fs.watchFile", () => {
     fs.unwatchFile(path.join(testDir, "watch.txt"));
 
     expect(entries.length).toBeGreaterThan(0);
-
-    expect(entries[0][0].size).toBe(6);
+    console.log(entries);
+    expect(entries[0][0].size).toBeGreaterThan(5);
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
@@ -98,7 +101,7 @@ describe("fs.watchFile", () => {
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
     });
     await promise;
     clearInterval(interval);

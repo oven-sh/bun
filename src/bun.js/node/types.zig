@@ -169,6 +169,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .err = e };
         }
 
+        pub inline fn initErrWithP(e: C.SystemErrno, syscall: Syscall.Tag, path: anytype) Maybe(ReturnType, ErrorType) {
+            return .{ .err = .{
+                .errno = @intFromEnum(e),
+                .syscall = syscall,
+                .path = path,
+            } };
+        }
+
         pub inline fn asErr(this: *const @This()) ?ErrorType {
             if (this.* == .err) return this.err;
             return null;
@@ -1749,6 +1757,7 @@ pub const Stats = union(enum) {
 /// @since v12.12.0
 pub const Dirent = struct {
     name: bun.String,
+    path: bun.String,
     // not publicly exposed
     kind: Kind,
 
@@ -1767,6 +1776,10 @@ pub const Dirent = struct {
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return this.name.toJS(globalObject);
+    }
+
+    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return this.path.toJS(globalThis);
     }
 
     pub fn isBlockDevice(
@@ -1819,8 +1832,13 @@ pub const Dirent = struct {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 
-    pub fn finalize(this: *Dirent) callconv(.C) void {
+    pub fn deref(this: *const Dirent) void {
         this.name.deref();
+        this.path.deref();
+    }
+
+    pub fn finalize(this: *Dirent) callconv(.C) void {
+        this.deref();
         bun.destroy(this);
     }
 };
@@ -4756,7 +4774,7 @@ pub const Path = struct {
             buf[3] = CHAR_BACKWARD_SLASH;
             return MaybeSlice(T){ .result = buf[0..bufSize] };
         }
-        return MaybeSlice(T){ .result = path };
+        return MaybeSlice(T){ .result = resolvedPath };
     }
 
     pub inline fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T, buf2: []T) JSC.JSValue {

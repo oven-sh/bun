@@ -22,7 +22,7 @@ Bun.serve<{ socketId: number }>({
   websocket: {
     // define websocket handlers
     async message(ws, message) {
-      // the contextual dta is available as the `data` property
+      // the contextual data is available as the `data` property
       // on the WebSocket instance
       console.log(`Received ${message} from ${ws.data.socketId}}`);
     },

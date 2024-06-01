@@ -2213,6 +2213,11 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
     JSC::JSGlobalObject* globalObject = toJS(ctx);
     JSC::VM& vm = globalObject->vm();
 
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
+
     if (UNLIKELY(!object))
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -2262,6 +2267,11 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSLockHolder lock(vm);
+
+#if BUN_DEBUG
+    // This is a redundant check, but we add it to make the error message clearer.
+    ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
+#endif
 
     if (!object)
         return JSC::JSValue::encode(JSC::JSValue());
@@ -2455,14 +2465,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
 {
     JSC::VM& vm = globalObject->vm();
     ZigString code = *arg1;
-    JSC::JSObject* rangeError = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
-    static const char* range_error_name = "RangeError";
-
-    rangeError->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying({ range_error_name, 10 })))),
-        0);
+    JSC::JSObject* rangeError = Zig::getRangeErrorInstance(message, globalObject).asCell()->getObject();
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
@@ -2478,14 +2481,7 @@ JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigSt
 {
     JSC::VM& vm = globalObject->vm();
     ZigString code = *arg1;
-    JSC::JSObject* typeError = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
-    static const char* range_error_name = "TypeError";
-
-    typeError->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(
-            vm, WTF::String(WTF::StringImpl::createWithoutCopying({ range_error_name, 9 })))),
-        0);
+    JSC::JSObject* typeError = Zig::getTypeErrorInstance(message, globalObject).asCell()->getObject();
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
@@ -3894,7 +3890,13 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
     JSC::JSObject* callee = JSC::jsCast<JSC::JSObject*>(calleeCell);
 
-    frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
+    // Does the code block have a user-defined name property?
+    JSC::JSValue name = callee->getDirect(vm, vm.propertyNames->name);
+    if (name && name.isString()) {
+        frame->function_name = Bun::toStringRef(name.toWTFString(callee->globalObject()));
+    } else {
+        frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
+    }
 }
 // Based on
 // https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/src/shim/JSCStackTrace.cpp#L298

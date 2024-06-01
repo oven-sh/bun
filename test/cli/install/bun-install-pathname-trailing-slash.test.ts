@@ -12,7 +12,7 @@ beforeEach(() => {
 test("custom registry doesn't have multiple trailing slashes in pathname", async () => {
   const urls: string[] = [];
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(req) {
       urls.push(req.url);
@@ -48,7 +48,6 @@ registry = "http://${hostname}:${port}/prefixed-route/"
     stdin: "ignore",
   });
 
-  server.stop(true);
   expect(urls.length).toBe(1);
   expect(urls).toEqual([`http://${hostname}:${port}/prefixed-route/react`]);
 });

@@ -45,6 +45,7 @@
     "sinon": "6.0.0",
     "socket.io": "4.7.1",
     "socket.io-client": "4.7.1",
+    "source-map": "0.7.4",
     "st": "3.0.0",
     "string-width": "7.0.0",
     "stripe": "15.4.0",

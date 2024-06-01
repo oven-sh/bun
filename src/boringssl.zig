@@ -92,9 +92,9 @@ pub fn canonicalizeIP(addr_str: []const u8, outIP: *[INET6_ADDRSTRLEN + 1]u8) ?[
 
     var af: c_int = std.posix.AF.INET;
     // get the standard text representation of the IP
-    if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
+    if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) <= 0) {
         af = std.posix.AF.INET6;
-        if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) != 1) {
+        if (c_ares.ares_inet_pton(af, outIP, &ip_std_text) <= 0) {
             return null;
         }
     }

@@ -1,15 +1,16 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
 import path from "path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, joinP } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
 import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
 function dedent(str: string | TemplateStringsArray, ...args: any[]) {
@@ -104,7 +105,7 @@ const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
 export const RUN_UNCHECKED_TESTS = false;
 
-const tempDirectoryTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
   mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
@@ -262,7 +263,34 @@ export interface BundlerTestInput {
 
   /* TODO: remove this from the tests after this is implemented */
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
+
+  snapshotSourceMap?: Record<string, SourceMapTests>;
 }
+
+export interface SourceMapTests {
+  /** Should be verbaitim equal to the input */
+  files: string[];
+  /**
+   * some tests do not use bun snapshots because they are huge, and doing byte
+   * for byte snapshots will not be sustainable. Instead, we will sample a few mappings to make sure
+   * the map is correct. This can be used to test for a single mapping.
+   */
+  mappings?: MappingSnapshot[];
+  /** For small files it is acceptable to inline all of the mappings. */
+  mappingsExactMatch?: string;
+}
+
+/** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more consise */
+export type MappingSnapshot = [
+  // format a string like "file:line:col", for example
+  //    "index.ts:5:2"
+  // If column is left out, it is the first non-whitespace character
+  //    "index.ts:5"
+  // If column is quoted text, find the token and use the column of it
+  //    "index.ts:5:'abc'"
+  source_code: string,
+  generated_mapping: string,
+];
 
 export interface BundlerTestBundleAPI {
   root: string;
@@ -307,6 +335,10 @@ export interface BundlerTestRunOptions {
   runtime?: "bun" | "node";
 
   setCwd?: boolean;
+  /** Expect a certain non-zero exit code */
+  exitCode?: number;
+  /** Run a function with stdout and stderr. Use expect to assert exact outputs */
+  validate?: (ctx: { stdout: string; stderr: string }) => void;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -359,6 +391,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    conditions,
     dce,
     dceKeepMarkerCount,
     define,
@@ -382,26 +415,26 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    todo: notImplemented,
     onAfterBundle,
-    root: outbase,
     outdir,
     outfile,
     outputPaths,
     plugins,
     publicPath,
+    root: outbase,
     run,
     runtimeFiles,
     serverComponents = false,
     skipOnEsbuild,
+    snapshotSourceMap,
     sourceMap,
     splitting,
     target,
+    todo: notImplemented,
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
-    conditions,
     // @ts-expect-error
     _referenceFn,
     ...unknownProps
@@ -482,7 +515,9 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(tempDirectory, id);
+    let root = path.join(tempDirectory, id);
+    mkdirSync(root, { recursive: true });
+    root = realpathSync(root);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -497,7 +532,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir || "", path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file).replace(/\.[jt]sx?$/, ".js")))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -1076,7 +1111,7 @@ for (const [key, blob] of build.outputs) {
     if (dce && typeof dceKeepMarkerCount !== "number" && dceKeepMarkerCount !== false) {
       for (const file of Object.entries(files)) {
         keepMarkers[outfile ? outfile : path.join(outdir!, file[0]).slice(root.length).replace(/\.ts$/, ".js")] ??= [
-          ...file[1].matchAll(/KEEP/gi),
+          ...String(file[1]).matchAll(/KEEP/gi),
         ].length;
       }
     }
@@ -1243,6 +1278,72 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
+    // Check that all source maps are valid
+    if (opts.sourceMap === "external" && outdir) {
+      for (const file_input of readdirSync(outdir, { recursive: true })) {
+        const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
+        if (file.endsWith(".map")) {
+          const parsed = await Bun.file(path.join(outdir, file)).json();
+          const mappedLocations = new Map();
+          await SourceMapConsumer.with(parsed, null, async map => {
+            map.eachMapping(m => {
+              expect(m.source).toBeDefined();
+              expect(m.generatedLine).toBeGreaterThanOrEqual(1);
+              expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
+              expect(m.originalLine).toBeGreaterThanOrEqual(1);
+              expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+
+              const loc_key = `${m.generatedLine}:${m.generatedColumn}`;
+              if (mappedLocations.has(loc_key)) {
+                const fmtLoc = (loc: any) =>
+                  `${loc.generatedLine}:${m.generatedColumn} -> ${m.originalLine}:${m.originalColumn} [${m.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
+
+                const a = fmtLoc(mappedLocations.get(loc_key));
+                const b = fmtLoc(m);
+
+                // We only care about duplicates that point to
+                // multiple source locations.
+                if (a !== b) throw new Error("Duplicate mapping in source-map for " + loc_key + "\n" + a + "\n" + b);
+              }
+              mappedLocations.set(loc_key, { ...m });
+            });
+            const map_tests = snapshotSourceMap?.[path.basename(file)];
+            if (map_tests) {
+              expect(parsed.sources.map((a: string) => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
+              for (let i = 0; i < parsed.sources; i++) {
+                const source = parsed.sources[i];
+                const sourcemap_content = parsed.sourceContent[i];
+                const actual_content = readFileSync(path.resolve(path.join(outdir!, file), source), "utf-8");
+                expect(sourcemap_content).toBe(actual_content);
+              }
+
+              const generated_code = await Bun.file(path.join(outdir!, file.replace(".map", ""))).text();
+
+              if (map_tests.mappings)
+                for (const mapping of map_tests.mappings) {
+                  const src = parseSourceMapStrSource(outdir!, parsed, mapping[0]);
+                  const dest = parseSourceMapStrGenerated(generated_code, mapping[1]);
+                  const pos = map.generatedPositionFor(src);
+                  if (!dest.matched) {
+                    const real_generated = generated_code
+                      .split("\n")
+                      [pos.line! - 1].slice(pos.column!)
+                      .slice(0, dest.expected!.length);
+                    expect(`${pos.line}:${pos.column}:${real_generated}`).toBe(mapping[1]);
+                    throw new Error("Not matched");
+                  }
+                  expect(pos.line === dest.line);
+                  expect(pos.column === dest.column);
+                }
+              if (map_tests.mappingsExactMatch) {
+                expect(parsed.mappings).toBe(map_tests.mappingsExactMatch);
+              }
+            }
+          });
+        }
+      }
+    }
+
     // Runtime checks!
     if (run) {
       const runs = Array.isArray(run) ? run : [run];
@@ -1259,13 +1360,15 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
 
-        const { success, stdout, stderr } = Bun.spawnSync({
-          cmd: [
-            ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
-            ...(run.bunArgs ?? []),
-            file,
-            ...(run.args ?? []),
-          ] as [string, ...string[]],
+        const args = [
+          ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
+          ...(run.bunArgs ?? []),
+          file,
+          ...(run.args ?? []),
+        ] as [string, ...string[]];
+
+        const { success, stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+          cmd: args,
           env: {
             ...bunEnv,
             FORCE_COLOR: "0",
@@ -1274,6 +1377,10 @@ for (const [key, blob] of build.outputs) {
           stdio: ["ignore", "pipe", "pipe"],
           cwd: run.setCwd ? root : undefined,
         });
+
+        if (signalCode === "SIGTRAP") {
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        }
 
         if (run.error) {
           if (success) {
@@ -1326,7 +1433,15 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          if (run.exitCode) {
+            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
+          } else {
+            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          }
+        }
+
+        if (run.validate) {
+          run.validate({ stderr: stderr.toUnixString(), stdout: stdout.toUnixString() });
         }
 
         if (run.stdout !== undefined) {
@@ -1393,25 +1508,19 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      // it.todo(id, () => {
-      //   throw error;
-      // });
       return ref;
     }
   }
 
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
-    // it(id, async () => {
-    //   try {
-    //     await expectBundled(id, opts as any);
-    //   } catch (error) {
-    //     return;
-    //   }
-    //   throw new Error(`Expected test to fail but it passed.`);
-    // });
   } else {
-    it(id, () => expectBundled(id, opts as any));
+    it(
+      id,
+      () => expectBundled(id, opts as any),
+      // sourcemap code is slow
+      opts.snapshotSourceMap ? 20_000 : undefined,
+    );
   }
   return ref;
 }
@@ -1430,4 +1539,95 @@ function formatError(err: ErrorMeta) {
 
 function filterMatches(id: string) {
   return FILTER === id || FILTER + "Dev" === id || FILTER + "Prod" === id;
+}
+
+interface SourceMapDecodedLocation {
+  line: number;
+  column: number;
+  source: string;
+}
+
+interface SourceMap {
+  sourcesContent: string[];
+  sources: string[];
+}
+
+function parseSourceMapStrSource(root: string, source_map: SourceMap, string: string) {
+  const split = string.split(":");
+  if (split.length < 2)
+    throw new Error("Test is invalid; Invalid source location. See MappingSnapshot typedef for more info.");
+  const [file, line_raw, col_raw] = split;
+  const source_id = source_map.sources.findIndex(x => x.endsWith(file));
+  if (source_id === -1)
+    throw new Error("Test is invalid; Invalid file " + file + ". See MappingSnapshot typedef for more info.");
+
+  const line = Number(line_raw);
+  if (!Number.isInteger(line))
+    throw new Error(
+      "Test is invalid; Invalid source line " +
+        JSON.stringify(line_raw) +
+        ". See MappingSnapshot typedef for more info.",
+    );
+
+  let col = Number(col_raw);
+  if (!Number.isInteger(col)) {
+    const text = source_map.sourcesContent[source_id].split("\n")[line - 1];
+    if (col_raw === "") {
+      col = text.split("").findIndex(x => x != " " && x != "\t");
+    } else if (col_raw[0] == "'" && col_raw[col_raw.length - 1] == "'") {
+      col = text.indexOf(col_raw.slice(1, -1));
+      if (col == -1) {
+        throw new Error(
+          `Test is invalid; String "${col_raw.slice(1, -1)}" is not present on line ${line} of ${path.join(root, source_map.sources[source_id])}`,
+        );
+      }
+    } else {
+      throw new Error(
+        "Test is invalid; Invalid source column " +
+          JSON.stringify(col_raw) +
+          ". See MappingSnapshot typedef for more info.",
+      );
+    }
+    if (col > text.length) {
+      throw new Error(
+        `Test is invalid; Line ${line} is only ${text.length} columns long, snapshot points to column ${col}`,
+      );
+    }
+  }
+
+  return { line, column: col, source: source_map.sources[source_id] };
+}
+
+function parseSourceMapStrGenerated(source_code: string, string: string) {
+  const split = string.split(":");
+  if (split.length != 3)
+    throw new Error("Test is invalid; Invalid generated location. See MappingSnapshot typedef for more info.");
+  const [line_raw, col_raw, ...match] = split;
+  const line = Number(line_raw);
+  if (!Number.isInteger(line))
+    throw new Error(
+      "Test is invalid; Invalid generated line " +
+        JSON.stringify(line_raw) +
+        ". See MappingSnapshot typedef for more info.",
+    );
+
+  let column = Number(col_raw);
+  if (!Number.isInteger(column)) {
+    throw new Error(
+      "Test is invalid; Invalid generated column " +
+        JSON.stringify(col_raw) +
+        ". See MappingSnapshot typedef for more info.",
+    );
+  }
+
+  if (match.length > 0) {
+    let str = match.join(":");
+    const text = source_code.split("\n")[line - 1];
+    const actual = text.slice(column, column + str.length);
+    if (actual !== str) {
+      return { matched: false, line, column, actual, expected: str };
+    }
+  }
+
+  return { matched: true, line, column };
 }

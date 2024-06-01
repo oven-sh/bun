@@ -118,7 +118,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         };
     } else {
         var parts = [_]string{ from_path, "src/js/out/" ++ moduleFolder ++ "/" ++ input };
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
         file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
@@ -154,11 +154,17 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
 ///
 /// This can technically fail if concurrent access across processes happens, or permission issues.
 /// Errors here should always be ignored.
-fn dumpSource(specifier: string, printer: anytype) void {
-    dumpSourceString(specifier, printer.ctx.getWritten());
+fn dumpSource(vm: *VirtualMachine, specifier: string, printer: anytype) void {
+    dumpSourceString(vm, specifier, printer.ctx.getWritten());
 }
 
-fn dumpSourceString(specifier: string, written: []const u8) void {
+fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8) void {
+    dumpSourceStringFailiable(vm, specifier, written) catch |e| {
+        Output.debugWarn("Failed to dump source string: {}", .{e});
+    };
+}
+
+fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
 
     const BunDebugHolder = struct {
@@ -174,7 +180,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             else => "/tmp/bun-debug-src/",
             .windows => brk: {
                 const temp = bun.fs.FileSystem.RealFS.platformTempDir();
-                var win_temp_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var win_temp_buffer: bun.PathBuffer = undefined;
                 @memcpy(win_temp_buffer[0..temp.len], temp);
                 const suffix = "\\bun-debug-src";
                 @memcpy(win_temp_buffer[temp.len .. temp.len + suffix.len], suffix);
@@ -182,10 +188,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
                 break :brk win_temp_buffer[0 .. temp.len + suffix.len :0];
             },
         };
-        const dir = std.fs.cwd().makeOpenPath(base_name, .{}) catch |e| {
-            Output.debug("Failed to dump source string: {}", .{e});
-            return;
-        };
+        const dir = try std.fs.cwd().makeOpenPath(base_name, .{});
         BunDebugHolder.dir = dir;
         break :dir dir;
     };
@@ -195,15 +198,43 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             else => "/".len,
             .windows => bun.path.windowsFilesystemRoot(dir_path).len,
         };
-        var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
-            Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
-            return;
-        };
+        var parent = try dir.makeOpenPath(dir_path[root_len..], .{});
         defer parent.close();
         parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
-            Output.debug("Failed to dump source string: writeFile {}", .{e});
+            Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
+        if (vm.source_mappings.get(specifier)) |mappings| {
+            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(map_path);
+            const file = try parent.createFile(map_path, .{});
+            defer file.close();
+
+            const source_file = parent.readFileAlloc(
+                bun.default_allocator,
+                specifier,
+                std.math.maxInt(u64),
+            ) catch "";
+
+            var bufw = std.io.bufferedWriter(file.writer());
+            const w = bufw.writer();
+            try w.print(
+                \\{{
+                \\  "version": 3,
+                \\  "file": {},
+                \\  "sourceRoot": "",
+                \\  "sources": [{}],
+                \\  "sourcesContent": [{}],
+                \\  "names": [],
+                \\  "mappings": "{}"
+                \\}}
+            , .{
+                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                js_printer.formatJSONStringUTF8(specifier),
+                js_printer.formatJSONStringUTF8(source_file),
+                mappings.formatVLQs(),
+            });
+        }
     } else {
         dir.writeFile(std.fs.path.basename(specifier), written) catch return;
     }
@@ -562,7 +593,7 @@ pub const RuntimeTranspilerStore = struct {
                 }) catch {};
 
                 if (comptime Environment.dump_source) {
-                    dumpSourceString(specifier, entry.output_code.byteSlice());
+                    dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
                 this.resolved_source = ResolvedSource{
@@ -592,6 +623,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = duped,
                     .source_url = duped.createIfDifferent(path.text),
+                    .already_bundled = true,
                     .hash = 0,
                 };
                 this.resolved_source.source_code.ensureHash();
@@ -661,7 +693,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer);
+                dumpSource(this.vm, specifier, &printer);
             }
 
             const duped = String.createUTF8(specifier);
@@ -731,7 +763,7 @@ pub const ModuleLoader = struct {
         }
 
         // atomically write to a tmpfile and then move it to the final destination
-        var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var tmpname_buf: bun.PathBuffer = undefined;
         const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
 
         const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
@@ -1432,7 +1464,7 @@ pub const ModuleLoader = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer);
+                dumpSource(jsc_vm, specifier, &printer);
             }
 
             const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1796,7 +1828,7 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-
+                        .already_bundled = true,
                         .hash = 0,
                     };
                 }
@@ -1808,7 +1840,7 @@ pub const ModuleLoader = struct {
                     }) catch {};
 
                     if (comptime Environment.allow_assert) {
-                        dumpSourceString(specifier, entry.output_code.byteSlice());
+                        dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                     }
 
                     return ResolvedSource{
@@ -1910,7 +1942,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (comptime Environment.dump_source) {
-                    dumpSource(specifier, &printer);
+                    dumpSource(jsc_vm, specifier, &printer);
                 }
 
                 const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);

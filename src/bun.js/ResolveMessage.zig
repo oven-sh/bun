@@ -48,6 +48,23 @@ pub const ResolveMessage = struct {
         }
     }
 
+    // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
+    pub fn getColumn(this: *ResolveMessage, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (this.msg.data.location) |location| {
+            return JSC.JSValue.jsNumber(@max(location.column - 1, 0));
+        }
+
+        return JSC.JSValue.jsNumber(@as(i32, 0));
+    }
+
+    pub fn getLine(this: *ResolveMessage, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if (this.msg.data.location) |location| {
+            return JSC.JSValue.jsNumber(@max(location.line - 1, 0));
+        }
+
+        return JSC.JSValue.jsNumber(@as(i32, 0));
+    }
+
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {

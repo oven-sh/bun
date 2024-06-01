@@ -5,7 +5,6 @@ const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("root").bun;
-pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
@@ -280,6 +279,11 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     const i = @intFromPtr(start) - @intFromPtr(self_ptr);
     bun.unsafeAssert(i < self_len);
     return @as(usize, @intCast(i));
+}
+
+pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
+    if (T == u8) return indexOf(haystack, needle);
+    return std.mem.indexOf(T, haystack, needle);
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {
@@ -1663,7 +1667,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
 
     var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
 
@@ -1693,7 +1697,7 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {
@@ -4858,7 +4862,7 @@ pub fn isIPAddress(input: []const u8) bool {
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
 
-    return bun.c_ares.ares_inet_pton(std.posix.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.posix.AF.INET, ip_addr_str.ptr, &sockaddr) > 0 or bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
@@ -4871,7 +4875,7 @@ pub fn isIPV6Address(input: []const u8) bool {
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
-    return bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn cloneNormalizingSeparators(

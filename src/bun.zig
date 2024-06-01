@@ -1258,7 +1258,7 @@ fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 pub const getcwd = std.posix.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }
@@ -1302,6 +1302,12 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 
         return err;
     };
+}
+
+pub fn getFdPathZ(fd_: anytype, buf: *PathBuffer) ![:0]u8 {
+    const path_ = try getFdPath(fd_, buf);
+    buf[path_.len] = 0;
+    return buf[0..path_.len :0];
 }
 
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
@@ -1458,8 +1464,9 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
+pub const StringJoiner = @import("./StringJoiner.zig");
+pub const NullableAllocator = @import("./NullableAllocator.zig");
 
-pub const Joiner = @import("./string_joiner.zig");
 pub const renamer = @import("./renamer.zig");
 pub const sourcemap = struct {
     pub usingnamespace @import("./sourcemap/sourcemap.zig");
@@ -2232,8 +2239,34 @@ pub const win32 = struct {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
         C.windows_enable_stdio_inheritance();
+        const job = windows.CreateJobObjectA(null, null) orelse Output.panic(
+            "Could not create watcher Job Object: {s}",
+            .{@tagName(std.os.windows.kernel32.GetLastError())},
+        );
+        var jeli = std.mem.zeroes(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+        jeli.BasicLimitInformation.LimitFlags =
+            windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+            windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
+            windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |
+            windows.JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+        if (windows.SetInformationJobObject(
+            job,
+            windows.JobObjectExtendedLimitInformation,
+            &jeli,
+            @sizeOf(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+        ) == 0) {
+            Output.panic(
+                "Could not configure watcher Job Object: {s}",
+                .{@tagName(std.os.windows.kernel32.GetLastError())},
+            );
+        }
+
         while (true) {
-            spawnWatcherChild(allocator, &procinfo) catch |err| {
+            spawnWatcherChild(allocator, &procinfo, job) catch |err| {
+                handleErrorReturnTrace(err, @errorReturnTrace());
+                if (err == error.Win32Error) {
+                    Output.panic("Failed to spawn process: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
+                }
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
             };
             w.WaitForSingleObject(procinfo.hProcess, w.INFINITE) catch |err| {
@@ -2259,8 +2292,29 @@ pub const win32 = struct {
     pub fn spawnWatcherChild(
         allocator: std.mem.Allocator,
         procinfo: *std.os.windows.PROCESS_INFORMATION,
+        job: w.HANDLE,
     ) !void {
-        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
+        // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
+        var attr_size: usize = undefined;
+        _ = windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
+        const p = try allocator.alloc(u8, attr_size);
+        defer allocator.free(p);
+        if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) == 0) {
+            return error.Win32Error;
+        }
+        if (windows.UpdateProcThreadAttribute(
+            p.ptr,
+            0,
+            windows.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            @ptrCast(&job),
+            @sizeOf(w.HANDLE),
+            null,
+            null,
+        ) == 0) {
+            return error.Win32Error;
+        }
+
+        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT;
 
         const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
@@ -2298,25 +2352,28 @@ pub const win32 = struct {
         envbuf[size + watcherChildEnv.len + 2] = 0;
         envbuf[size + watcherChildEnv.len + 3] = 0;
 
-        var startupinfo = w.STARTUPINFOW{
-            .cb = @sizeOf(w.STARTUPINFOW),
-            .lpReserved = null,
-            .lpDesktop = null,
-            .lpTitle = null,
-            .dwX = 0,
-            .dwY = 0,
-            .dwXSize = 0,
-            .dwYSize = 0,
-            .dwXCountChars = 0,
-            .dwYCountChars = 0,
-            .dwFillAttribute = 0,
-            .dwFlags = w.STARTF_USESTDHANDLES,
-            .wShowWindow = 0,
-            .cbReserved2 = 0,
-            .lpReserved2 = null,
-            .hStdInput = std.io.getStdIn().handle,
-            .hStdOutput = std.io.getStdOut().handle,
-            .hStdError = std.io.getStdErr().handle,
+        var startupinfo = windows.STARTUPINFOEXW{
+            .StartupInfo = .{
+                .cb = @sizeOf(windows.STARTUPINFOEXW),
+                .lpReserved = null,
+                .lpDesktop = null,
+                .lpTitle = null,
+                .dwX = 0,
+                .dwY = 0,
+                .dwXSize = 0,
+                .dwYSize = 0,
+                .dwXCountChars = 0,
+                .dwYCountChars = 0,
+                .dwFillAttribute = 0,
+                .dwFlags = w.STARTF_USESTDHANDLES,
+                .wShowWindow = 0,
+                .cbReserved2 = 0,
+                .lpReserved2 = null,
+                .hStdInput = std.io.getStdIn().handle,
+                .hStdOutput = std.io.getStdOut().handle,
+                .hStdError = std.io.getStdErr().handle,
+            },
+            .lpAttributeList = p.ptr,
         };
         @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
@@ -2328,12 +2385,15 @@ pub const win32 = struct {
             flags,
             envbuf.ptr,
             null,
-            &startupinfo,
+            @ptrCast(&startupinfo),
             procinfo,
         );
         if (rc == 0) {
-            Output.panic("Unexpected error while reloading process\n", .{});
+            return error.Win32Error;
         }
+        var is_in_job: w.BOOL = 0;
+        _ = windows.IsProcessInJob(procinfo.hProcess, job, &is_in_job);
+        assert(is_in_job != 0);
         _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
@@ -2486,6 +2546,16 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
         };
         component = it.next() orelse return;
     }
+}
+
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePathW(dir: std.fs.Dir, sub_path: []const u16) !void {
+    // was going to copy/paste makePath and use all W versions but they didn't all exist
+    // and this buffer was needed anyway
+    var buf: PathBuffer = undefined;
+    const buf_len = simdutf.convert.utf16.to.utf8.le(sub_path, &buf);
+    return makePath(dir, buf[0..buf_len]);
 }
 
 pub const Async = @import("async");
@@ -2800,6 +2870,12 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    const ptr = allocator.create(T) catch outOfMemory();
+    ptr.* = t;
+    return ptr;
+}
+
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
 
 pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
@@ -2812,6 +2888,10 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime @hasDecl(T, "is_bun.New()")) {
+        // You will get weird memory bugs in debug builds if you use the wrong allocator.
+        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
+    }
     if (comptime is_heap_breakdown_enabled) {
         const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
         ptr.* = t;
@@ -2822,6 +2902,9 @@ pub inline fn new(comptime T: type, t: T) *T {
     ptr.* = t;
     return ptr;
 }
+
+pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
 
 pub inline fn dupe(comptime T: type, t: *T) *T {
     if (comptime is_heap_breakdown_enabled) {
@@ -2835,24 +2918,10 @@ pub inline fn dupe(comptime T: type, t: *T) *T {
     return ptr;
 }
 
-/// Free a globally-allocated a value
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            destroy(t);
-            return;
-        }
-    }
-
-    allocator.destroy(t);
-}
-
 pub fn New(comptime T: type) type {
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        pub const @"is_bun.New()" = true;
 
         pub inline fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
@@ -2981,18 +3050,6 @@ pub inline fn destroy(t: anytype) void {
     } else {
         default_allocator.destroy(t);
     }
-}
-
-pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            return new(T, t);
-        }
-    }
-
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
 }
 
 pub fn exitThread() noreturn {
@@ -3226,3 +3283,189 @@ pub inline fn unsafeAssert(condition: bool) void {
 }
 
 pub const dns = @import("./dns.zig");
+
+pub fn getRoughTickCount() timespec {
+    if (comptime Environment.isMac) {
+        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
+        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.c.clock_getres(C.CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = C.CLOCK_MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = C.CLOCK_MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+
+        // We use this one because we can avoid reading the mach timebase info ourselves.
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isLinux) {
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                } else {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isWindows) {
+        const ms = getRoughTickCountMs();
+        return timespec{
+            .sec = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * 1_000_000),
+        };
+    }
+
+    return 0;
+}
+
+/// When you don't need a super accurate timestamp, this is a fast way to get one.
+///
+/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
+///
+/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
+pub fn getRoughTickCountMs() u64 {
+    if (Environment.isWindows) {
+        const GetTickCount64 = struct {
+            pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
+        }.GetTickCount64;
+        return GetTickCount64();
+    }
+
+    const spec = getRoughTickCount();
+    return spec.ns() / std.time.ns_per_ms;
+}
+
+pub const timespec = extern struct {
+    sec: isize = 0,
+    nsec: isize = 0,
+
+    pub fn eql(this: *const timespec, other: *const timespec) bool {
+        return this.sec == other.sec and this.nsec == other.nsec;
+    }
+
+    pub fn toInstant(this: *const timespec) std.time.Instant {
+        if (comptime Environment.isPosix) {
+            return std.time.Instant{
+                .timestamp = @bitCast(this.*),
+            };
+        }
+
+        if (comptime Environment.isWindows) {
+            return std.time.Instant{
+                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
+            };
+        }
+    }
+
+    // TODO: this is wrong!
+    pub fn duration(this: *const timespec, other: *const timespec) timespec {
+        var sec_diff = this.sec - other.sec;
+        var nsec_diff = this.nsec - other.nsec;
+
+        if (nsec_diff < 0) {
+            sec_diff -= 1;
+            nsec_diff += std.time.ns_per_s;
+        }
+
+        return timespec{
+            .sec = sec_diff,
+            .nsec = nsec_diff,
+        };
+    }
+
+    pub fn order(a: *const timespec, b: *const timespec) std.math.Order {
+        const sec_order = std.math.order(a.sec, b.sec);
+        if (sec_order != .eq) return sec_order;
+        return std.math.order(a.nsec, b.nsec);
+    }
+
+    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
+    /// 584 years so if we get any overflows we just use maxInt(u64). If
+    /// any software is running in 584 years waiting on this timer...
+    /// shame on me I guess... but I'll be dead.
+    pub fn ns(this: *const timespec) u64 {
+        if (this.sec <= 0) {
+            return @max(this.nsec, 0);
+        }
+
+        assert(this.sec >= 0);
+        assert(this.nsec >= 0);
+
+        const max = std.math.maxInt(u64);
+        const s_ns = std.math.mul(
+            u64,
+            @as(u64, @intCast(this.sec)),
+            std.time.ns_per_s,
+        ) catch return max;
+
+        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+            return max;
+    }
+
+    pub fn ms(this: *const timespec) u64 {
+        return this.ns() / std.time.ns_per_ms;
+    }
+
+    pub fn greater(a: *const timespec, b: *const timespec) bool {
+        return a.order(b) == .gt;
+    }
+
+    pub fn now() timespec {
+        return getRoughTickCount();
+    }
+
+    pub fn sinceNow(start: *const timespec) u64 {
+        return now().duration(start).ns();
+    }
+
+    pub fn addMs(this: *const timespec, interval: i64) timespec {
+        const sec_inc = @divTrunc(interval, std.time.ms_per_s);
+        const nsec_inc = @rem(interval, std.time.ms_per_s) * std.time.ns_per_ms;
+
+        var new_timespec = this.*;
+
+        new_timespec.sec += sec_inc;
+        new_timespec.nsec += nsec_inc;
+
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec += 1;
+            new_timespec.nsec -= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
+
+    pub fn msFromNow(interval: i64) timespec {
+        return now().addMs(interval);
+    }
+};

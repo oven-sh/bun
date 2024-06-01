@@ -462,7 +462,6 @@ pub const Tree = struct {
         log: *logger.Log,
         lockfile: *Lockfile,
         prefer_dev_dependencies: bool = false,
-        manager: *PackageManager,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -1100,7 +1099,6 @@ const Cloner = struct {
             .log = this.log,
             .lockfile = lockfile,
             .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
-            .manager = this.manager,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);

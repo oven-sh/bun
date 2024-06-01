@@ -7027,7 +7027,6 @@ const LinkerContext = struct {
             {
                 const index = source_indices[0];
                 var path = sources[index].path;
-                std.debug.print("{} - {s} - {d}\n", .{ source_indices[0], path.text, 0 });
                 try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {

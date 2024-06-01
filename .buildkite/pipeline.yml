@@ -89,7 +89,7 @@ steps:
           zip -r bun-darwin-aarch64.zip bun-darwin-aarch64
       - key: "bun-darwin-aarch64-test"
         label: ":darwin: aarch64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-darwin-aarch64"
         agents:
@@ -188,7 +188,7 @@ steps:
           zip -r bun-darwin-x64.zip bun-darwin-x64
       - key: "bun-darwin-x64-test"
         label: ":darwin: x64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-darwin-x64"
         agents:
@@ -287,7 +287,7 @@ steps:
           zip -r bun-darwin-x64-baseline.zip bun-darwin-x64-baseline
       - key: "bun-darwin-x64-baseline-test"
         label: ":darwin: x64-baseline - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-darwin-x64-baseline"
         agents:
@@ -386,7 +386,7 @@ steps:
           zip -r bun-linux-aarch64.zip bun-linux-aarch64
       - key: "bun-linux-aarch64-test"
         label: ":linux: aarch64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-linux-aarch64"
         agents:
@@ -485,7 +485,7 @@ steps:
           zip -r bun-linux-x64.zip bun-linux-x64
       - key: "bun-linux-x64-test"
         label: ":linux: x64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-linux-x64"
         agents:
@@ -584,7 +584,7 @@ steps:
           zip -r bun-linux-x64-baseline.zip bun-linux-x64-baseline
       - key: "bun-linux-x64-baseline-test"
         label: ":linux: x64-baseline - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-linux-x64-baseline"
         agents:
@@ -678,7 +678,7 @@ steps:
           - "powershell -command \".\\scripts\\link-buildkite.ps1 -IsBaseline $$False\""
       - key: "bun-windows-x64-test"
         label: ":windows: x64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-windows-x64"
         agents:
@@ -774,7 +774,7 @@ steps:
           - "powershell -command \".\\scripts\\link-buildkite.ps1 -IsBaseline $$True\""
       - key: "bun-windows-x64-baseline-test"
         label: ":windows: x64-baseline - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-windows-x64-baseline"
         agents:

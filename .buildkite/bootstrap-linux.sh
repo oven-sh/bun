@@ -110,9 +110,9 @@ systemctl start buildkite-agent
 
 # Configure buildkite
 BUILDKITE_PATH="/etc/buildkite-agent/buildkite-agent.cfg"
-sed "s/xxx/${BUILDKITE_TOKEN}/g" "${BUILDKITE_PATH}"
-sed "s/# tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
-sed "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
+sed -i "s/xxx/${BUILDKITE_TOKEN}/g" "${BUILDKITE_PATH}"
+sed -i "s/# tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
+sed -i "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 
 # Restart buildkite
 systemctl restart buildkite-agent

@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
 </p>
-<h1 align="center">Bun!</h1>
+<h1 align="center">Bun</h1>
 
 <p align="center">
 <a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>

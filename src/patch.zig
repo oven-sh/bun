@@ -220,11 +220,6 @@ pub const PatchFile = struct {
             .result => |stat| stat,
         };
 
-        // if (stat.size <= PAGE_SIZE) {
-        //     // try applyPatchSmall(patch);
-        //     @panic("wait");
-        // }
-
         // Purposefully use `bun.default_allocator` here because if the file size is big like
         // 1gb we don't want to have 1gb hanging around in memory until arena is cleared
         //

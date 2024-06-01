@@ -3120,7 +3120,7 @@ pub const PackageManager = struct {
     network_task_fifo: NetworkQueue = undefined,
     patch_apply_batch: ThreadPool.Batch = .{},
     patch_calc_hash_batch: ThreadPool.Batch = .{},
-    patch_task_fifo: PatchTaskFifo = undefined,
+    patch_task_fifo: PatchTaskFifo = PatchTaskFifo.init(),
     patch_task_queue: PatchTaskQueue = .{},
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
@@ -6441,7 +6441,7 @@ pub const PackageManager = struct {
                         //     }
                         // }
                     } else if (ExtractCompletionContext == *PackageInstaller) {
-                        extract_ctx.installPackage(ptask.callback.apply.dependency_id.?, log_level);
+                        extract_ctx.installPackageImpl(ptask.callback.apply.dependency_id.?, log_level, false);
                     }
                 }
             }
@@ -8764,6 +8764,7 @@ pub const PackageManager = struct {
         manager.* = PackageManager{
             .options = options,
             .network_task_fifo = NetworkQueue.init(),
+            .patch_task_fifo = PatchTaskFifo.init(),
             .allocator = ctx.allocator,
             .log = ctx.log,
             .root_dir = entries_option.entries,
@@ -11486,7 +11487,7 @@ pub const PackageManager = struct {
 
                         Output.flush();
                         this.summary.fail += 1;
-                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                         return;
                     };
 
@@ -11517,7 +11518,7 @@ pub const PackageManager = struct {
                     if (comptime Environment.allow_assert) {
                         @panic("Internal assertion failure: unexpected resolution tag");
                     }
-                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                    if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
                 },
             }
@@ -11603,7 +11604,7 @@ pub const PackageManager = struct {
                             if (comptime Environment.allow_assert) {
                                 @panic("unreachable, handled above");
                             }
-                            this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                            if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                             this.summary.fail += 1;
                         },
                     }
@@ -11645,7 +11646,7 @@ pub const PackageManager = struct {
                         });
                     }
                     this.summary.fail += 1;
-                    this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                    if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
                 };
 
@@ -11757,7 +11758,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     },
                     .fail => |cause| {
                         if (comptime Environment.allow_assert) {
@@ -11766,7 +11767,7 @@ pub const PackageManager = struct {
 
                         // even if the package failed to install, we still need to increment the install
                         // counter for this tree
-                        this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
                         if (cause.err == error.DanglingSymlink) {
                             Output.prettyErrorln(
@@ -11825,7 +11826,7 @@ pub const PackageManager = struct {
                     },
                 }
             } else {
-                defer this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                defer if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
 
                 var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                     if (log_level != .silent) {
@@ -11949,6 +11950,15 @@ pub const PackageManager = struct {
             dependency_id: DependencyID,
             comptime log_level: Options.LogLevel,
         ) void {
+            this.installPackageImpl(dependency_id, log_level, true);
+        }
+
+        pub fn installPackageImpl(
+            this: *PackageInstaller,
+            dependency_id: DependencyID,
+            comptime log_level: Options.LogLevel,
+            comptime increment_tree_count: bool,
+        ) void {
             const package_id = this.lockfile.buffers.resolutions.items[dependency_id];
             const meta = &this.metas[package_id];
             const is_pending_package_install = false;
@@ -11957,7 +11967,7 @@ pub const PackageManager = struct {
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
-                this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                if (comptime increment_tree_count) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                 return;
             }
 

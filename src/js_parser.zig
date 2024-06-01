@@ -10491,7 +10491,7 @@ fn NewParser_(
         fn discardScopesUpTo(p: *P, scope_index: usize) void {
             // Remove any direct children from their parent
             const scope = p.current_scope;
-            var children = scope.children;
+            const children = &scope.children;
 
             for (p.scopes_in_order.items[scope_index..]) |_child| {
                 const child = _child orelse continue;
@@ -20037,7 +20037,10 @@ fn NewParser_(
 
                                         for (func.func.args, 0..) |arg, i| {
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
-                                                var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
+                                                var decorators = if (is_constructor)
+                                                    class.ts_decorators.listManaged(p.allocator)
+                                                else
+                                                    prop.ts_decorators.listManaged(p.allocator);
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
                                                 args[0] = p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(i)) }, arg_decorator.loc);
                                                 args[1] = arg_decorator;

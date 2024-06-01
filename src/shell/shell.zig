@@ -4238,6 +4238,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 .heap => {
                     var list = this.heap.listManaged(bun.default_allocator);
                     _ = list.orderedRemove(idx);
+                    this.heap.update(list);
                 },
                 .inlined => {
                     _ = this.inlined.orderedRemove(idx);
@@ -4250,6 +4251,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 .heap => {
                     var list = this.heap.listManaged(bun.default_allocator);
                     _ = list.swapRemove(idx);
+                    this.heap.update(list);
                 },
                 .inlined => {
                     _ = this.inlined.swapRemove(idx);

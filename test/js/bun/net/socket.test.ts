@@ -480,7 +480,7 @@ it("should connect directly when using an ip address", async () => {
 
 it("should not call drain before handshake", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
-  const socket = await Bun.connect({
+  using socket = await Bun.connect({
     hostname: "www.example.com",
     tls: true,
     port: 443,

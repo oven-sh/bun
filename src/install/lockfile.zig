@@ -607,10 +607,16 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            const mismatch = builder.resolutions[dep_id] != package_id;
+
+            if (builder.resolutions[dep_id] == package_id) {
+                // this dependency is the same package as the other, hoist
+                return hoisted; // 1
+            }
 
             if (comptime as_defined) {
-                if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                // same dev dependency as another package in the same package.json, but different version.
+                // choose dev dep over other if enabled
+                if (dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
                         return hoisted; // 1
                     }
@@ -619,24 +625,42 @@ pub const Tree = struct {
                 }
             }
 
-            if (mismatch and !dependency.behavior.isPeer()) {
-                if (as_defined and !dep.behavior.isPeer()) {
-                    builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
-                        builder.packageName(package_id),
-                        builder.packageVersion(package_id),
-                        builder.packageName(builder.resolutions[dep_id]),
-                        builder.packageVersion(builder.resolutions[dep_id]),
-                        dependency.name.fmt(builder.buf()),
-                        dependency.version.literal.fmt(builder.buf()),
-                    });
-                    return error.DependencyLoop;
+            // now we either keep the dependency at this place in the tree,
+            // or hoist if peer version allows it
+
+            if (dependency.behavior.isPeer()) {
+                if (dependency.version.tag == .npm) {
+                    const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+                    const version = dependency.version.value.npm.version;
+                    if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
+                        return hoisted; // 1
+                    }
                 }
-                // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop; // 3
+
+                // Root dependencies are manually chosen by the user. Allow them
+                // to hoist other peers even if they don't satisfy the version
+                if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
+                    // TODO: warning about peer dependency version mismatch
+                    return hoisted; // 1
+                }
             }
-            return hoisted; // 1
+
+            if (as_defined and !dep.behavior.isPeer()) {
+                builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+                    builder.packageName(package_id),
+                    builder.packageVersion(package_id),
+                    builder.packageName(builder.resolutions[dep_id]),
+                    builder.packageVersion(builder.resolutions[dep_id]),
+                    dependency.name.fmt(builder.buf()),
+                    dependency.version.literal.fmt(builder.buf()),
+                });
+                return error.DependencyLoop;
+            }
+
+            return dependency_loop; // 3
         }
 
+        // this dependency was not found in this tree, try hoisting or placing in the next parent
         if (this.parent < error_id) {
             const id = trees[this.parent].hoistDependency(
                 false,
@@ -650,6 +674,7 @@ pub const Tree = struct {
             if (!as_defined or id != dependency_loop) return id; // 1 or 2
         }
 
+        // place the dependency in the current tree
         return this.id; // 2
     }
 };
@@ -1051,8 +1076,9 @@ const Cloner = struct {
         // package ids and dependency ids have changed
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
-        if (this.lockfile.buffers.dependencies.items.len > 0)
+        if (this.lockfile.packages.len != 0) {
             try this.hoist(this.lockfile);
+        }
 
         // capacity is used for calculating byte size
         // so we need to make sure it's exact
@@ -1061,8 +1087,6 @@ const Cloner = struct {
     }
 
     fn hoist(this: *Cloner, lockfile: *Lockfile) anyerror!void {
-        if (lockfile.packages.len == 0) return;
-
         const allocator = lockfile.allocator;
         var slice = lockfile.packages.slice();
         var builder = Tree.Builder{

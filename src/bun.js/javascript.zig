@@ -195,10 +195,7 @@ pub const SavedSourceMap = struct {
         pub fn print() void {
             if (seen_invalid) return;
             if (path) |note| {
-                Output.note(
-                    "missing sourcemaps for {s}",
-                    .{note},
-                );
+                Output.note("missing sourcemaps for {s}", .{note});
                 Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
             }
         }
@@ -288,6 +285,7 @@ pub const SavedSourceMap = struct {
         this: *SavedSourceMap,
         path: string,
         hint: SourceMap.ParseUrlResultHint,
+        log: ?*logger.Log,
     ) SourceMap.ParseUrl {
         const hash = bun.hash(path);
         const mapping = this.map.getEntry(hash) orelse return .{};
@@ -309,7 +307,7 @@ pub const SavedSourceMap = struct {
             Value.Tag.SourceProviderMap => {
                 var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
 
-                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                if (ptr.getSourceMap(path, .none, hint, log)) |parse|
                     if (parse.map) |map| {
                         mapping.value_ptr.* = Value.init(map).ptr();
                         return parse;
@@ -334,7 +332,7 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
-        return this.getWithContent(path, .mappings_only).map;
+        return this.getWithContent(path, .mappings_only, null).map;
     }
 
     pub fn resolveMapping(
@@ -343,6 +341,7 @@ pub const SavedSourceMap = struct {
         line: i32,
         column: i32,
         source_handling: SourceMap.SourceContentHandling,
+        log: ?*logger.Log,
     ) ?SourceMap.Mapping.Lookup {
         this.mutex.lock();
         defer this.mutex.unlock();
@@ -350,7 +349,7 @@ pub const SavedSourceMap = struct {
         const parse = this.getWithContent(path, switch (source_handling) {
             .no_source_contents => .mappings_only,
             .source_contents => .{ .all = .{ .line = line, .column = column } },
-        });
+        }, log);
         const map = parse.map orelse return null;
         const mapping = parse.mapping orelse
             SourceMap.Mapping.find(map.mappings, line, column) orelse
@@ -2826,6 +2825,7 @@ pub const VirtualMachine = struct {
                 @max(frame.position.line, 0),
                 @max(frame.position.column_start, 0),
                 .no_source_contents,
+                null,
             )) |lookup| {
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
                     frame.source_url.deref();
@@ -2928,6 +2928,12 @@ pub const VirtualMachine = struct {
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
 
+        var log = logger.Log.init(bun.default_allocator);
+        defer log.deinit();
+        defer {
+            log.printForLogLevel(Output.errorWriter()) catch {};
+        }
+
         const maybe_lookup = if (top.remapped)
             SourceMap.Mapping.Lookup{
                 .mapping = .{
@@ -2948,6 +2954,7 @@ pub const VirtualMachine = struct {
                 @max(top.position.line, 0),
                 @max(top.position.column_start, 0),
                 .source_contents,
+                &log,
             );
 
         if (maybe_lookup) |lookup| {
@@ -2967,7 +2974,6 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                var log = logger.Log.init(default_allocator);
                 var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
                 must_reset_parser_arena_later.* = true;
                 break :code original_source.source_code.toUTF8(bun.default_allocator);
@@ -3028,6 +3034,7 @@ pub const VirtualMachine = struct {
                     @max(frame.position.line, 0),
                     @max(frame.position.column_start, 0),
                     .no_source_contents,
+                    null,
                 )) |lookup| {
                     if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
                         frame.source_url.deref();

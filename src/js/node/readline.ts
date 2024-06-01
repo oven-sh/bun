@@ -28,6 +28,10 @@
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const ObjectValues = Object.values;
+const PromiseReject = Promise.reject;
 
 var isWritable;
 
@@ -38,57 +42,56 @@ var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
 // Section: Preamble
 // ----------------------------------------------------------------------------
 
-var SymbolAsyncIterator = Symbol.asyncIterator;
-var SymbolIterator = Symbol.iterator;
-var SymbolFor = Symbol.for;
-var SymbolReplace = Symbol.replace;
-var ArrayFrom = Array.from;
-var ArrayIsArray = Array.isArray;
-var ArrayPrototypeFilter = Array.prototype.filter;
-var ArrayPrototypeSort = Array.prototype.sort;
-var ArrayPrototypeIndexOf = Array.prototype.indexOf;
-var ArrayPrototypeJoin = Array.prototype.join;
-var ArrayPrototypeMap = Array.prototype.map;
-var ArrayPrototypePop = Array.prototype.pop;
-var ArrayPrototypePush = Array.prototype.push;
-var ArrayPrototypeSlice = Array.prototype.slice;
-var ArrayPrototypeSplice = Array.prototype.splice;
-var ArrayPrototypeReverse = Array.prototype.reverse;
-var ArrayPrototypeShift = Array.prototype.shift;
-var ArrayPrototypeUnshift = Array.prototype.unshift;
-var RegExpPrototypeExec = RegExp.prototype.exec;
-var RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
-var StringFromCharCode = String.fromCharCode;
-var StringPrototypeCharCodeAt = String.prototype.charCodeAt;
-var StringPrototypeCodePointAt = String.prototype.codePointAt;
-var StringPrototypeSlice = String.prototype.slice;
-var StringPrototypeToLowerCase = String.prototype.toLowerCase;
-var StringPrototypeEndsWith = String.prototype.endsWith;
-var StringPrototypeRepeat = String.prototype.repeat;
-var StringPrototypeStartsWith = String.prototype.startsWith;
-var StringPrototypeTrim = String.prototype.trim;
-var StringPrototypeNormalize = String.prototype.normalize;
-var NumberIsNaN = Number.isNaN;
-var NumberIsFinite = Number.isFinite;
-var NumberIsInteger = Number.isInteger;
-var NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-var NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
-var MathCeil = Math.ceil;
-var MathFloor = Math.floor;
-var MathMax = Math.max;
-var DateNow = Date.now;
-var FunctionPrototype = Function.prototype;
-var StringPrototype = String.prototype;
-var StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
-var StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
-var ObjectSetPrototypeOf = Object.setPrototypeOf;
-var ObjectDefineProperty = Object.defineProperty;
-var ObjectDefineProperties = Object.defineProperties;
-var ObjectFreeze = Object.freeze;
-var ObjectAssign = Object.assign;
-var ObjectCreate = Object.create;
-var ObjectKeys = Object.keys;
-var ObjectSeal = Object.seal;
+const SymbolAsyncIterator = Symbol.asyncIterator;
+const SymbolIterator = Symbol.iterator;
+const SymbolFor = Symbol.for;
+const SymbolReplace = Symbol.replace;
+const ArrayFrom = Array.from;
+const ArrayPrototypeFilter = Array.prototype.filter;
+const ArrayPrototypeSort = Array.prototype.sort;
+const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
+const ArrayPrototypePop = Array.prototype.pop;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeSplice = Array.prototype.splice;
+const ArrayPrototypeReverse = Array.prototype.reverse;
+const ArrayPrototypeShift = Array.prototype.shift;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
+const StringFromCharCode = String.fromCharCode;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeCodePointAt = String.prototype.codePointAt;
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+const StringPrototypeEndsWith = String.prototype.endsWith;
+const StringPrototypeRepeat = String.prototype.repeat;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeTrim = String.prototype.trim;
+const StringPrototypeNormalize = String.prototype.normalize;
+const NumberIsNaN = Number.isNaN;
+const NumberIsFinite = Number.isFinite;
+const NumberIsInteger = Number.isInteger;
+const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const NumberMIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
+const MathCeil = Math.ceil;
+const MathFloor = Math.floor;
+const MathMax = Math.max;
+const DateNow = Date.now;
+const FunctionPrototype = Function.prototype;
+const StringPrototype = String.prototype;
+const StringPrototypeSymbolIterator = StringPrototype[SymbolIterator];
+const StringIteratorPrototypeNext = StringPrototypeSymbolIterator.$call("").next;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectDefineProperties = Object.defineProperties;
+const ObjectFreeze = Object.freeze;
+const ObjectAssign = Object.assign;
+const ObjectCreate = Object.create;
+const ObjectKeys = Object.keys;
+const ObjectSeal = Object.seal;
 
 var createSafeIterator = (factory, next) => {
   class SafeIterator {
@@ -152,7 +155,7 @@ function promisify(original) {
   validateFunction(original, "original");
 
   if (original[kCustomPromisifiedSymbol]) {
-    var fn = original[kCustomPromisifiedSymbol];
+    let fn = original[kCustomPromisifiedSymbol];
 
     validateFunction(fn, "util.promisify.custom");
 
@@ -183,7 +186,7 @@ function promisify(original) {
           resolve(values[0]);
         }
       });
-      ReflectApply(original, this, args);
+      original.$apply(this, args);
     });
   }
 
@@ -211,11 +214,10 @@ promisify.custom = kCustomPromisifiedSymbol;
 
 // Constants
 
-var kUTF16SurrogateThreshold = 0x10000; // 2 ** 16
-var kEscape = "\x1b";
-var kSubstringSearch = Symbol("kSubstringSearch");
-
-var kIsNodeError = Symbol("kIsNodeError");
+const kUTF16SurrogateThreshold = 0x10000; // 2 ** 16
+const kEscape = "\x1b";
+const kSubstringSearch = Symbol("kSubstringSearch");
+const kIsNodeError = Symbol("kIsNodeError");
 
 // Errors
 var errorBases = {};
@@ -336,7 +338,7 @@ function validateAbortSignal(signal, name) {
  */
 function validateArray(value, name, minLength = 0) {
   // var validateArray = hideStackFrames((value, name, minLength = 0) => {
-  if (!ArrayIsArray(value)) {
+  if (!$isJSArray(value)) {
     throw new ERR_INVALID_ARG_TYPE(name, "Array", value);
   }
   if (value.length < minLength) {
@@ -382,7 +384,7 @@ function validateObject(value, name, options = null) {
   var nullable = options?.nullable ?? false;
   if (
     (!nullable && value === null) ||
-    (!allowArray && ArrayIsArray.$call(value)) ||
+    (!allowArray && $isJSArray.$call(null, value)) ||
     (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);
@@ -448,7 +450,7 @@ CSI.kClearScreenDown = kClearScreenDown = CSI`0J`;
 CSI.kClearToLineBeginning = kClearToLineBeginning = CSI`1K`;
 CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
 
-function charLengthLeft(str, i) {
+function charLengthLeft(str: string, i: number) {
   if (i <= 0) return 0;
   if (
     (i > 1 && StringPrototypeCodePointAt.$call(str, i - 2) >= kUTF16SurrogateThreshold) ||
@@ -918,7 +920,9 @@ function* emitKeys(stream) {
       keyMeta = escaped;
     } else if (!escaped && ch <= "\x1a") {
       // ctrl+letter
-      keyName = StringFromCharCode(StringPrototypeCharCodeAt.$call(ch) + StringPrototypeCharCodeAt.$call("a") - 1);
+      keyName = StringFromCharCode(
+        StringPrototypeCharCodeAt.$call(ch, 0) + StringPrototypeCharCodeAt.$call("a", 0) - 1,
+      );
       keyCtrl = true;
     } else if (RegExpPrototypeExec.$call(/^[0-9A-Za-z]$/, ch) !== null) {
       // Letter, number, shift+letter
@@ -1014,7 +1018,7 @@ function cursorTo(stream, x, y, callback) {
  * moves the cursor relative to its current location
  */
 
-function moveCursor(stream, dx, dy, callback) {
+function moveCursor(stream, dx, dy, callback?) {
   if (callback !== undefined) {
     validateFunction(callback, "callback");
   }
@@ -1335,7 +1339,7 @@ function onKeyPress(s, key) {
     // If the keySeq is half of a surrogate pair
     // (>= 0xd800 and <= 0xdfff), refresh the line so
     // the character is displayed appropriately.
-    var ch = StringPrototypeCodePointAt.$call(key.sequence, 0);
+    var ch = StringPrototypeCodePointAt.$call(key.sequence, 0)!;
     if (ch >= 0xd800 && ch <= 0xdfff) this[kRefreshLine]();
   }
 }
@@ -2847,7 +2851,7 @@ function _ttyWriteDumb(s, key) {
 
   if (this[kSawReturnAt] && key.name !== "enter") this[kSawReturnAt] = 0;
 
-  if (keyCtrl) {
+  if (key.ctrl) {
     if (key.name === "c") {
       if (this.listenerCount("SIGINT") > 0) {
         this.emit("SIGINT");
@@ -2985,10 +2989,11 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    return new Promise(resolve => {
-      this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
-      this.#todo = [];
-    });
+    const { resolve, promise } = $newPromiseCapability(Promise);
+    this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
+    this.#todo = [];
+
+    return promise;
   }
 
   /**
@@ -3015,21 +3020,21 @@ var PromisesInterface = class Interface extends _Interface {
         return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
       }
     }
-    return new Promise((resolve, reject) => {
-      var cb = resolve;
-      if (options?.signal) {
-        var onAbort = () => {
-          this[kQuestionCancel]();
-          reject(new AbortError(undefined, { cause: signal.reason }));
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        cb = answer => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(answer);
-        };
-      }
-      this[kQuestion](query, cb);
-    });
+    const { promise, resolve, reject } = $newPromiseCapability(Promise);
+    var cb = resolve;
+    if (options?.signal) {
+      var onAbort = () => {
+        this[kQuestionCancel]();
+        reject(new AbortError(undefined, { cause: signal.reason }));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      cb = answer => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(answer);
+      };
+    }
+    this[kQuestion](query, cb);
+    return promise;
   }
 };
 

@@ -5,7 +5,7 @@ import { rmSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { rmdirSync } from "js/node/fs/export-star-from";
-import { isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
+import { isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { w } from "vitest/dist/types-2b1c412e.js";
 
 $.nothrow();
@@ -29,6 +29,11 @@ function writeFixture(path: string) {
   fs.chmodSync(script_name, "755");
 }
 
+test("which rlly long", async () => {
+  const longstr = "a".repeat(100000);
+  expect(() => which(longstr)).toThrow("bin path is too long");
+});
+
 if (isWindows) {
   test("which", () => {
     expect(which("cmd")).toBe("C:\\Windows\\system32\\cmd.exe");
@@ -51,7 +56,7 @@ if (isWindows) {
       }
     }
 
-    let basedir = join(tmpdir(), "which-test-" + Math.random().toString(36).slice(2));
+    let basedir = tmpdirSync();
 
     rmSync(basedir, { recursive: true, force: true });
     mkdirSync(basedir, { recursive: true });

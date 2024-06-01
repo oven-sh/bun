@@ -36,3 +36,17 @@ describe("basename", async () => {
 
   TestBuilder.command`basename /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
 });
+
+describe("basename without stdout", async () => {
+  TestBuilder.command`echo $(basename js/bun/shell/commands/basename.test.ts)`
+    .exitCode(0)
+    .stdout("basename.test.ts\n")
+    .stderr("")
+    .runAsTest("works relative without stdout");
+
+  TestBuilder.command`echo $(basename /home/tux/example.txt)`
+    .exitCode(0)
+    .stdout("example.txt\n")
+    .stderr("")
+    .runAsTest("works absolute without stdout");
+});

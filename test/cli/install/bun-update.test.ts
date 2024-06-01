@@ -63,17 +63,15 @@ it("should update to latest version of dependency", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + baz@0.0.3",
+    "+ baz@0.0.3",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
@@ -107,18 +105,16 @@ it("should update to latest version of dependency", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " installed baz@0.0.5 with binaries:",
-    "  - baz-exec",
+    "installed baz@0.0.5 with binaries:",
+    " - baz-exec",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
@@ -132,6 +128,12 @@ it("should update to latest version of dependency", async () => {
     version: "0.0.5",
     bin: {
       "baz-exec": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      baz: "^0.0.5",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -176,18 +178,16 @@ it("should update to latest versions of dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + @barn/moo@0.1.0",
-    " + baz@0.0.3",
+    "+ @barn/moo@0.1.0",
+    "+ baz@0.0.3",
     "",
-    " 2 packages installed",
+    "2 packages installed",
   ]);
   expect(await exited1).toBe(0);
   expect(urls.sort()).toEqual([
@@ -228,18 +228,17 @@ it("should update to latest versions of dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
   expect(err2).toContain("Saved lockfile");
-  expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + @barn/moo@0.1.0",
-    " + baz@0.0.5",
+    "^ baz 0.0.3 -> 0.0.5",
     "",
-    " 2 packages installed",
+    "+ @barn/moo@0.1.0",
+    "",
+    "2 packages installed",
   ]);
   expect(await exited2).toBe(0);
   expect(urls.sort()).toEqual([
@@ -260,6 +259,13 @@ it("should update to latest versions of dependencies", async () => {
     version: "0.0.5",
     bin: {
       "baz-exec": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      "@barn/moo": "^0.1.0",
+      baz: "^0.0.5",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -298,13 +304,12 @@ it("lockfile should not be modified when there are no version changes, issue#588
   const err1 = await new Response(stderr).text();
   expect(err1).not.toContain("error:");
   expect(err1).toContain("Saved lockfile");
-  expect(stdout).toBeDefined();
   const out1 = await new Response(stdout).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + baz@0.0.3",
+    "+ baz@0.0.3",
     "",
-    " 1 package installed",
+    "1 package installed",
   ]);
 
   // Test if the lockb has been modified by `bun update`.
@@ -320,6 +325,14 @@ it("lockfile should not be modified when there are no version changes, issue#588
     expect(await exited).toBe(0);
     return await readFile(join(package_dir, "bun.lockb"));
   };
+
+  // no changes
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      baz: "0.0.3",
+    },
+  });
 
   let prev = await getLockbContent();
   urls.length = 0;

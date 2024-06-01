@@ -18,130 +18,145 @@
 #include "libusockets.h"
 #include "internal/internal.h"
 
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_ecn(buf, index);
-}
+// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index) {
+//     return bsd_udp_packet_buffer_ecn((struct udp_recvbuf *)buf, index);
+// }
 
 int us_udp_packet_buffer_local_ip(struct us_udp_packet_buffer_t *buf, int index, char *ip) {
-    return bsd_udp_packet_buffer_local_ip(buf, index, ip);
+    return bsd_udp_packet_buffer_local_ip((struct udp_recvbuf *)buf, index, ip);
 }
 
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_peer(buf, index);
+    return bsd_udp_packet_buffer_peer((struct udp_recvbuf *)buf, index);
 }
 
 char *us_udp_packet_buffer_payload(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_payload(buf, index);
+    return bsd_udp_packet_buffer_payload((struct udp_recvbuf *)buf, index);
 }
 
 int us_udp_packet_buffer_payload_length(struct us_udp_packet_buffer_t *buf, int index) {
-    return bsd_udp_packet_buffer_payload_length(buf, index);
+    return bsd_udp_packet_buffer_payload_length((struct udp_recvbuf *)buf, index);
 }
 
-// what should we return? number of sent datagrams?
-int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int num) {
+int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num) {
+    if (num == 0) return 0;
     int fd = us_poll_fd((struct us_poll_t *) s);
 
-    // we need to poll out if we failed
+    struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.send_buf;
 
-    return bsd_sendmmsg(fd, buf, num, 0);
+    int total_sent = 0;
+    while (total_sent < num) {
+        int count = bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num);
+        payloads += count;
+        lengths += count;
+        addresses += count;
+        num -= count;
+        // TODO nohang flag?
+        int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
+        if (sent < 0) { 
+            return sent;
+        }
+        total_sent += sent;
+        if (0 <= sent && sent < num) {
+            // if we couldn't send all packets, register a writable event so we can call the drain callback
+            us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        }
+    }
+    return total_sent;
 }
-
-int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf) {
-    int fd = us_poll_fd((struct us_poll_t *) s);
-    return bsd_recvmmsg(fd, buf, LIBUS_UDP_MAX_NUM, 0, 0);
-}
-
-void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr) {
-    bsd_udp_buffer_set_packet_payload(send_buf, index, offset, payload, length, peer_addr);
-}
-
-struct us_udp_packet_buffer_t *us_create_udp_packet_buffer() {
-    return (struct us_udp_packet_buffer_t *) bsd_create_udp_packet_buffer();
-}
-
-struct us_internal_udp_t {
-    struct us_internal_callback_t cb;
-    struct us_udp_packet_buffer_t *receive_buf;
-    void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int);
-    void (*drain_cb)(struct us_udp_socket_t *);
-    void *user;
-    /* An UDP socket can only ever be bound to one single port regardless of how
-     * many interfaces it may listen to. Therefore we cache the port after creation
-     * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
-    int port;
-};
 
 int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
-    return ((struct us_internal_udp_t *) s)->port;
+    return ((struct us_udp_socket_t *) s)->port;
 }
 
-/* Internal wrapper, move from here */
-void internal_on_udp_read(struct us_udp_socket_t *s) {
+void us_udp_socket_bound_ip(struct us_udp_socket_t *s, char *buf, int *length) {
+  struct bsd_addr_t addr;
+  if (bsd_local_addr(us_poll_fd((struct us_poll_t *)s), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    *length = 0;
+  } else {
+    *length = bsd_addr_get_ip_length(&addr);
+    memcpy(buf, bsd_addr_get_ip(&addr), *length);
+  }
+}
 
-    // lookup receive buffer and callback here
-    struct us_internal_udp_t *udp = (struct us_internal_udp_t *) s;
-
-    int packets = us_udp_socket_receive(s, udp->receive_buf);
-    //printf("Packets: %d\n", packets);
-
-    // we need to get the socket data and lookup its callback here
-
-
-    udp->data_cb(s, udp->receive_buf, packets);
+void us_udp_socket_remote_ip(struct us_udp_socket_t *s, char *buf, int *length) {
+  struct bsd_addr_t addr;
+  if (bsd_remote_addr(us_poll_fd((struct us_poll_t *)s), &addr) || *length < bsd_addr_get_ip_length(&addr)) {
+    *length = 0;
+  } else {
+    *length = bsd_addr_get_ip_length(&addr);
+    memcpy(buf, bsd_addr_get_ip(&addr), *length);
+  }
 }
 
 void *us_udp_socket_user(struct us_udp_socket_t *s) {
-    struct us_internal_udp_t *udp = (struct us_internal_udp_t *) s;
+    struct us_udp_socket_t *udp = (struct us_udp_socket_t *) s;
 
     return udp->user;
 }
 
-struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user) {
-    
+void us_udp_socket_close(struct us_udp_socket_t *s) {
+    struct us_loop_t *loop = s->loop;
+    struct us_poll_t *p = (struct us_poll_t *) s;
+    us_poll_stop(p, loop);
+    bsd_close_socket(us_poll_fd(p));
+    s->closed = 1;
+    s->next = loop->data.closed_udp_head;
+    loop->data.closed_udp_head = s;
+    s->on_close(s);
+}
+
+int us_udp_socket_connect(struct us_udp_socket_t *s, const char* host, unsigned short port) {
+    return bsd_connect_udp_socket(us_poll_fd((struct us_poll_t *)s), host, port);
+}
+
+int us_udp_socket_disconnect(struct us_udp_socket_t *s) {
+    return bsd_disconnect_udp_socket(us_poll_fd((struct us_poll_t *)s));
+}
+
+struct us_udp_socket_t *us_create_udp_socket(
+    struct us_loop_t *loop, 
+    void (*data_cb)(struct us_udp_socket_t *, void *, int), 
+    void (*drain_cb)(struct us_udp_socket_t *), 
+    void (*close_cb)(struct us_udp_socket_t *),
+    const char *host, 
+    unsigned short port, 
+    void *user
+) {
+
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;
     }
 
-    /* If buf is 0 then create one here */
-    if (!buf) {
-        buf = us_create_udp_packet_buffer();
-    }
-
     int ext_size = 0;
     int fallthrough = 0;
 
-    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_udp_t) + ext_size);
-    us_poll_init(p, fd, POLL_TYPE_CALLBACK);
+    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
+    us_poll_init(p, fd, POLL_TYPE_UDP);
 
-    struct us_internal_udp_t *cb = (struct us_internal_udp_t *) p;
-    cb->cb.loop = loop;
-    cb->cb.cb_expects_the_loop = 0;
-    cb->cb.leave_poll_ready = 1;
+    struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
 
     /* Get and store the port once */
-    struct bsd_addr_t tmp;
+    struct bsd_addr_t tmp = {0};
     bsd_local_addr(fd, &tmp);
-    cb->port = bsd_addr_get_port(&tmp);
-
-    printf("The port of UDP is: %d\n", cb->port);
+    udp->port = bsd_addr_get_port(&tmp);
+    udp->loop = loop;
 
     /* There is no udp socket context, only user data */
     /* This should really be ext like everything else */
-    cb->user = user;
+    udp->user = user;
 
-    cb->data_cb = data_cb;
-    cb->receive_buf = buf;
-    cb->drain_cb = drain_cb;
+    udp->closed = 0;
+    udp->connected = 0;
+    udp->on_data = data_cb;
+    udp->on_drain = drain_cb;
+    udp->on_close = close_cb;
+    udp->next = NULL;
 
-    cb->cb.cb = (void (*)(struct us_internal_callback_t *)) internal_on_udp_read;
-
-    us_poll_start((struct us_poll_t *) cb, cb->cb.loop, LIBUS_SOCKET_READABLE);
+    us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     
-    return (struct us_udp_socket_t *) cb;
+    return (struct us_udp_socket_t *) udp;
 }

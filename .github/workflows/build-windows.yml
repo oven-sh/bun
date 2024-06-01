@@ -1,11 +1,15 @@
 name: Build Windows
 
+permissions:
+  contents: read
+  actions: write
+
 on:
   workflow_call:
     inputs:
       runs-on:
         type: string
-        default: windows-latest
+        default: windows
       tag:
         type: string
         required: true
@@ -21,11 +25,17 @@ on:
         type: boolean
       no-cache:
         type: boolean
+      bun-version:
+        type: string
+        default: 1.1.7
 
 env:
   # Must specify exact version of LLVM for Windows
   LLVM_VERSION: 16.0.6
-  BUN_VERSION: 1.1.2
+  BUN_VERSION: ${{ inputs.bun-version }}
+  BUN_GARBAGE_COLLECTOR_LEVEL: 1
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: 1
+  CI: true
 
 jobs:
   build-submodules:
@@ -63,7 +73,7 @@ jobs:
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
@@ -112,7 +122,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - name: Codegen
         run: |
           ./scripts/cross-compile-codegen.sh win32 x64
@@ -141,7 +151,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
@@ -150,7 +160,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
         uses: actions/cache@v4
@@ -220,7 +230,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@1a3da29f56261a1e1f937ec88f0856a9b8321d7e
+        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
         with:
           version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
@@ -229,7 +239,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - name: Download bun-${{ inputs.tag }}-deps
         uses: actions/download-artifact@v4
         with:
@@ -290,6 +300,7 @@ jobs:
           cp -r build\bun.exe "$Dist\bun.exe"
           cp -r build\bun.pdb "$Dist\bun.pdb"
           Compress-Archive -Force "$Dist" "$Dist.zip"
+          .\build\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json
       - name: Upload bun-${{ inputs.tag }}
         uses: actions/upload-artifact@v4
         with:
@@ -302,6 +313,13 @@ jobs:
           name: bun-${{ inputs.tag }}-profile
           path: bun-${{ inputs.tag }}-profile.zip
           if-no-files-found: error
+      - name: Upload bun-feature-data
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-feature-data
+          path: features.json
+          if-no-files-found: error
+          overwrite: true
   on-failure:
     if: ${{ github.repository_owner == 'oven-sh' && failure() }}
     name: On Failure
@@ -313,10 +331,11 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
+          color: "#FF0000"
           title: ""
           description: |
             ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 
-            **[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.run_id }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**

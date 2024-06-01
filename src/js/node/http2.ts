@@ -27,6 +27,7 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const FunctionPrototypeBind = primordials.FunctionPrototypeBind;
+const StringPrototypeSlice = String.prototype.slice;
 
 const proxySocketHandler = {
   get(session, prop) {
@@ -624,6 +625,7 @@ class ClientHttp2Stream extends Duplex {
     }
   }
 }
+
 function connectWithProtocol(protocol: string, options: Http2ConnectOptions | string | URL, listener?: Function) {
   if (protocol === "http:") {
     return net.connect(options, listener);
@@ -652,31 +654,29 @@ function emitStreamNT(self, streams, streamId) {
 
 function emitStreamErrorNT(self, streams, streamId, error, destroy) {
   const stream = streams.get(streamId);
-  const error_instance = streamErrorFromCode(error);
+
   if (stream) {
     if (!stream[bunHTTP2Closed]) {
       stream[bunHTTP2Closed] = true;
     }
     stream.rstCode = error;
+
+    const error_instance = streamErrorFromCode(error);
     stream.emit("error", error_instance);
-    if (destroy) stream.destroy(error_instance);
+    if (destroy) stream.destroy(error_instance, error);
   }
-  self.emit("streamError", error_instance);
 }
 
 function emitAbortedNT(self, streams, streamId, error) {
   const stream = streams.get(streamId);
-  const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
   if (stream) {
     if (!stream[bunHTTP2Closed]) {
       stream[bunHTTP2Closed] = true;
     }
 
     stream.rstCode = constants.NGHTTP2_CANCEL;
-    stream.emit("aborted", error);
-    stream.emit("error", error_instance);
+    stream.emit("aborted");
   }
-  self.emit("streamError", error_instance);
 }
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
@@ -723,8 +723,8 @@ class ClientHttp2Session extends Http2Session {
           stream[bunHTTP2Closed] = true;
         }
         stream.rstCode = error;
+
         stream.emit("error", error_instance);
-        self.emit("streamError", error_instance);
       } else {
         process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
       }
@@ -734,13 +734,13 @@ class ClientHttp2Session extends Http2Session {
       var stream = self.#streams.get(streamId);
       if (stream) {
         self.#connections--;
+        self.#streams.delete(streamId);
         stream[bunHTTP2Closed] = true;
         stream[bunHTTP2Session] = null;
         stream.rstCode = 0;
-        stream.destroy();
         stream.emit("end");
         stream.emit("close");
-        self.#streams.delete(streamId);
+        stream.destroy();
       }
       if (self.#connections === 0 && self.#closed) {
         self.destroy();
@@ -832,15 +832,12 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
-        const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
         if (!stream[bunHTTP2Closed]) {
           stream[bunHTTP2Closed] = true;
         }
 
         stream.rstCode = constants.NGHTTP2_CANCEL;
-        stream.emit("aborted", error);
-        stream.emit("error", error_instance);
-        self.emit("streamError", error_instance);
+        stream.emit("aborted");
       } else {
         process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }
@@ -861,7 +858,7 @@ class ClientHttp2Session extends Http2Session {
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
           stream.rstCode = errorCode;
-          stream.destroy(sessionErrorFromCode(errorCode));
+          stream.destroy(sessionErrorFromCode(errorCode), errorCode);
         }
       }
       self[bunHTTP2Socket]?.end();
@@ -1060,7 +1057,7 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
-  constructor(url: string | URL, options?: Http2ConnectOptions) {
+  constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     super();
 
     if (typeof url === "string") {
@@ -1069,11 +1066,20 @@ class ClientHttp2Session extends Http2Session {
     if (!(url instanceof URL)) {
       throw new Error("ERR_HTTP2: Invalid URL");
     }
+    if (typeof options === "function") {
+      listener = options;
+      options = undefined;
+    }
     this.#isServer = true;
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
+
+    function onConnect() {
+      this.#onConnect(arguments);
+      listener?.$apply(this, arguments);
+    }
 
     // h2 with ALPNProtocols
     let socket;
@@ -1081,11 +1087,11 @@ class ClientHttp2Session extends Http2Session {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
       if (socket.secureConnecting === true) {
-        socket.on("secureConnect", this.#onConnect.bind(this));
+        socket.on("secureConnect", onConnect.bind(this));
       } else if (socket.connecting === true) {
-        socket.on("connect", this.#onConnect.bind(this));
+        socket.on("connect", onConnect.bind(this));
       } else {
-        process.nextTick(this.#onConnect.bind(this));
+        process.nextTick(onConnect.bind(this));
       }
     } else {
       socket = connectWithProtocol(
@@ -1102,7 +1108,7 @@ class ClientHttp2Session extends Http2Session {
               port,
               ALPNProtocols: ["h2", "http/1.1"],
             },
-        this.#onConnect.bind(this),
+        onConnect.bind(this),
       );
       this[bunHTTP2Socket] = socket;
     }
@@ -1242,11 +1248,8 @@ class ClientHttp2Session extends Http2Session {
     req.emit("ready");
     return req;
   }
-  static connect(url: string | URL, options?: Http2ConnectOptions) {
-    if (options) {
-      return new ClientHttp2Session(url, options);
-    }
-    return new ClientHttp2Session(url);
+  static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+    return new ClientHttp2Session(url, options, listener);
   }
 
   get [bunHTTP2Native]() {
@@ -1254,29 +1257,26 @@ class ClientHttp2Session extends Http2Session {
   }
 }
 
-function connect(url: string | URL, options?: Http2ConnectOptions) {
-  if (options) {
-    return ClientHttp2Session.connect(url, options);
-  }
-  return ClientHttp2Session.connect(url);
+function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+  return ClientHttp2Session.connect(url, options, listener);
 }
 
 function createServer() {
-  throwNotImplemented("node:http2 createServer", 887);
+  throwNotImplemented("node:http2 createServer", 8823);
 }
 function createSecureServer() {
-  throwNotImplemented("node:http2 createSecureServer", 887);
+  throwNotImplemented("node:http2 createSecureServer", 8823);
 }
 function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
 function Http2ServerRequest() {
-  throwNotImplemented("node:http2 Http2ServerRequest", 887);
+  throwNotImplemented("node:http2 Http2ServerRequest", 8823);
 }
 Http2ServerRequest.prototype = {};
 function Http2ServerResponse() {
-  throwNotImplemented("node:http2 Http2ServerResponse", 887);
+  throwNotImplemented("node:http2 Http2ServerResponse", 8823);
 }
 Http2ServerResponse.prototype = {};
 

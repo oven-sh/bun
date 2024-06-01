@@ -77,7 +77,7 @@ pub const JSONOptions = struct {
     always_decode_escape_sequences: bool = false,
 };
 
-pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
+pub fn decodeStringLiteralEscapeSequencesToUTF16(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
     var log = logger.Log.init(allocator);
     defer log.deinit();
     const source = logger.Source.initEmptyFile("");
@@ -3457,32 +3457,4 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
     }
 
     return null;
-}
-
-test "isIdentifier" {
-    const expect = std.testing.expect;
-    try expect(!isIdentifierStart(0x2029));
-    try expect(!isIdentifierStart(0));
-    try expect(!isIdentifierStart(1));
-    try expect(!isIdentifierStart(2));
-    try expect(!isIdentifierStart(3));
-    try expect(!isIdentifierStart(4));
-    try expect(!isIdentifierStart(5));
-    try expect(!isIdentifierStart(6));
-    try expect(!isIdentifierStart(7));
-    try expect(!isIdentifierStart(8));
-    try expect(!isIdentifierStart(9));
-    try expect(!isIdentifierStart(0x2028));
-    try expect(!isIdentifier("\\u2028"));
-    try expect(!isIdentifier("\\u2029"));
-
-    try expect(!isIdentifierContinue(':'));
-    try expect(!isIdentifier("javascript:"));
-
-    try expect(isIdentifier("javascript"));
-
-    try expect(!isIdentifier(":2"));
-    try expect(!isIdentifier("2:"));
-    try expect(isIdentifier("$"));
-    try expect(!isIdentifier("$:"));
 }

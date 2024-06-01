@@ -1,5 +1,9 @@
 name: Build Darwin
 
+permissions:
+  contents: read
+  actions: write
+
 on:
   workflow_call:
     inputs:
@@ -24,7 +28,9 @@ on:
 
 env:
   LLVM_VERSION: 16
-  BUN_VERSION: 1.1.2
+  BUN_VERSION: 1.1.8
+  LC_CTYPE: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
 
 jobs:
   build-submodules:
@@ -74,7 +80,8 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
-            gnu-sed --force
+            golang \
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -130,7 +137,8 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
-            gnu-sed --force
+            golang \
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -211,7 +219,8 @@ jobs:
             automake \
             openssl@1.1 \
             ninja \
-            gnu-sed --force
+            golang \
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -293,10 +302,11 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
+          color: "#FF0000"
           title: ""
           description: |
             ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
 
             @${{ github.actor }}, the build for bun-${{ inputs.tag }} failed.
 
-            **[View logs](https://github.com/oven-sh/bun/actions/runs/${{ github.run_id }})**
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**

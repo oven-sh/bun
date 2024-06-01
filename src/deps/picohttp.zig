@@ -197,6 +197,15 @@ pub const Response = struct {
         const response = try parseParts(buf, src, &offset);
         return response;
     }
+
+    pub fn getHeader(response: Response, name: []const u8) ?[]const u8 {
+        for (response.headers) |header| {
+            if (bun.strings.eqlInsensitive(name, header.name)) {
+                return header.value;
+            }
+        }
+        return null;
+    }
 };
 
 pub const Headers = struct {

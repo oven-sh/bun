@@ -186,17 +186,7 @@ pub const Expect = struct {
                     const vm = globalThis.vm();
                     promise.setHandled(vm);
 
-                    const now = std.time.Instant.now() catch unreachable;
-                    const remaining = if (Jest.runner) |runner| remaining: {
-                        const elapsed = if (runner.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
-                        break :remaining @as(u32, @truncate(runner.last_test_timeout_timer_duration -| elapsed));
-                    } else std.math.maxInt(u32);
-
-                    if (!globalThis.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                        if (Jest.runner) |runner| if (runner.pending_test) |pending_test|
-                            pending_test.timeout();
-                        return null;
-                    }
+                    globalThis.bunVM().waitForPromise(promise);
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
@@ -2692,7 +2682,7 @@ pub const Expect = struct {
                         .skip_empty_name = false,
 
                         .include_value = true,
-                    }).init(globalObject, value.asObjectRef());
+                    }).init(globalObject, value);
                     defer props_iter.deinit();
                     pass = props_iter.len == 0;
                 }
@@ -4289,8 +4279,110 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub const toHaveReturned = notImplementedJSCFn;
-    pub const toHaveReturnedTimes = notImplementedJSCFn;
+    const ReturnStatus = enum {
+        throw,
+        @"return",
+        incomplete,
+
+        pub const Map = bun.ComptimeEnumMap(ReturnStatus);
+    };
+
+    inline fn toHaveReturnedTimesFn(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, comptime known_index: ?i32) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        const thisValue = callframe.this();
+        const arguments = callframe.arguments(1).slice();
+        defer this.postMatch(globalObject);
+
+        const name = comptime if (known_index != null and known_index.? == 0) "toHaveReturned" else "toHaveReturnedTimes";
+
+        const value: JSValue = this.getValue(globalObject, thisValue, name, if (known_index != null and known_index.? == 0) "" else "<green>expected<r>") orelse return .zero;
+
+        incrementExpectCallCounter();
+
+        const returns = JSMockFunction__getReturns(value);
+
+        if (returns == .zero or !returns.jsType().isArray()) {
+            globalObject.throw("Expected value must be a mock function: {}", .{value});
+            return .zero;
+        }
+
+        const return_count: i32 = if (known_index) |index| index else brk: {
+            if (arguments.len < 1 or !arguments[0].isUInt32AsAnyInt()) {
+                globalObject.throwInvalidArguments(name ++ "() requires 1 non-negative integer argument", .{});
+                return .zero;
+            }
+
+            break :brk arguments[0].coerce(i32, globalObject);
+        };
+
+        var pass = false;
+        const index: u32 = @as(u32, @intCast(return_count)) -| 1;
+
+        const times_value = returns.getDirectIndex(
+            globalObject,
+            index,
+        );
+
+        const total_count = returns.getLength(globalObject);
+
+        const return_status: ReturnStatus = brk: {
+            // Returns is an array of:
+            //
+            //  { type: "throw" | "incomplete" | "return", value: any}
+            //
+            if (total_count >= return_count and times_value.isCell()) {
+                if (times_value.get(globalObject, "type")) |type_string| {
+                    if (type_string.isString()) {
+                        break :brk ReturnStatus.Map.fromJS(globalObject, type_string) orelse {
+                            if (!globalObject.hasException())
+                                globalObject.throw("Expected value must be a mock function with returns: {}", .{value});
+                            return .zero;
+                        };
+                    }
+                }
+            }
+
+            break :brk ReturnStatus.incomplete;
+        };
+        if (globalObject.hasException())
+            return .zero;
+
+        pass = return_status == ReturnStatus.@"return";
+
+        const not = this.flags.not;
+        if (not) pass = !pass;
+        if (pass) return .undefined;
+
+        if (!pass and return_status == ReturnStatus.throw) {
+            const signature = comptime getSignature(name, "<green>expected<r>", false);
+            const fmt = signature ++ "\n\n" ++ "Function threw an exception\n{any}\n";
+            var formatter = JSC.ConsoleObject.Formatter{
+                .globalThis = globalObject,
+                .quote_strings = true,
+            };
+            globalObject.throwPretty(fmt, .{times_value.get(globalObject, "value").?.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        switch (not) {
+            inline else => |is_not| {
+                const signature = comptime getSignature(name, "<green>expected<r>", is_not);
+                const fmt = signature ++ "\n\n" ++ "Expected number of successful calls: <green>{d}<r>\n" ++ "Received number of calls: <red>{d}<r>\n";
+                globalObject.throwPretty(fmt, .{ return_count, total_count });
+                return .zero;
+            },
+        }
+    }
+
+    pub fn toHaveReturned(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        return toHaveReturnedTimesFn(this, globalObject, callframe, 1);
+    }
+
+    pub fn toHaveReturnedTimes(this: *Expect, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        return toHaveReturnedTimesFn(this, globalObject, callframe, null);
+    }
+
     pub const toHaveReturnedWith = notImplementedJSCFn;
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
@@ -4354,12 +4446,12 @@ pub const Expect = struct {
         const matchers_to_register = args[0];
         {
             var iter = JSC.JSPropertyIterator(.{
-                .skip_empty_name = true,
+                .skip_empty_name = false,
                 .include_value = true,
-            }).init(globalObject, matchers_to_register.asObjectRef());
+            }).init(globalObject, matchers_to_register);
             defer iter.deinit();
 
-            while (iter.next()) |matcher_name| {
+            while (iter.next()) |*matcher_name| {
                 const matcher_fn: JSValue = iter.value;
 
                 if (!matcher_fn.jsType().isFunction()) {
@@ -4372,11 +4464,11 @@ pub const Expect = struct {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, &matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
+                const wrapper_fn = Bun__JSWrappingFunction__create(globalObject, matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
 
-                expect_proto.put(globalObject, &matcher_name, wrapper_fn);
-                expect_constructor.put(globalObject, &matcher_name, wrapper_fn);
-                expect_static_proto.put(globalObject, &matcher_name, wrapper_fn);
+                expect_proto.put(globalObject, matcher_name, wrapper_fn);
+                expect_constructor.put(globalObject, matcher_name, wrapper_fn);
+                expect_static_proto.put(globalObject, matcher_name, wrapper_fn);
             }
         }
 
@@ -4477,16 +4569,8 @@ pub const Expect = struct {
             const vm = globalObject.vm();
             promise.setHandled(vm);
 
-            const now = std.time.Instant.now() catch unreachable;
-            const elapsed = if (Jest.runner.?.pending_test) |pending_test| @divFloor(now.since(pending_test.started_at), std.time.ns_per_ms) else 0;
-            const remaining = @as(u32, @truncate(Jest.runner.?.last_test_timeout_timer_duration -| elapsed));
+            globalObject.bunVM().waitForPromise(promise);
 
-            if (!globalObject.bunVM().waitForPromiseWithTimeout(promise, remaining)) {
-                if (Jest.runner.?.pending_test) |pending_test|
-                    pending_test.timeout();
-                globalObject.throw("Timed out while awaiting the promise returned by matcher \"{s}\"", .{matcher_name});
-                return false;
-            }
             result = promise.result(vm);
             result.ensureStillAlive();
             assert(!result.isEmpty());
@@ -4494,8 +4578,8 @@ pub const Expect = struct {
                 .Pending => unreachable,
                 .Fulfilled => {},
                 .Rejected => {
-                    // TODO throw the actual rejection error
-                    globalObject.bunVM().runErrorHandler(result, null);
+                    // TODO: rewrite this code to use .then() instead of blocking the event loop
+                    JSC.VirtualMachine.get().runErrorHandler(result, null);
                     globalObject.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
                     return false;
                 },
@@ -4631,7 +4715,9 @@ pub const Expect = struct {
         for (0..args_count) |i| matcher_args.appendAssumeCapacity(args_ptr[i]);
 
         // call the matcher, which will throw a js exception when failed
-        _ = executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false);
+        if (!executeCustomMatcher(globalObject, matcher_name, matcher_fn, matcher_args.items, expect.flags, false) or globalObject.hasException()) {
+            return .zero;
+        }
 
         return thisValue;
     }
@@ -5289,7 +5375,7 @@ pub const ExpectMatcherContext = struct {
             return .zero;
         }
         const args = arguments.slice();
-        return JSValue.jsBoolean(args[0].deepEquals(args[1], globalObject));
+        return JSValue.jsBoolean(args[0].jestDeepEquals(args[1], globalObject));
     }
 };
 
@@ -5448,7 +5534,7 @@ extern fn JSMockFunction__getCalls(JSValue) JSValue;
 /// If there were no calls, it returns an empty JSArray*
 extern fn JSMockFunction__getReturns(JSValue) JSValue;
 
-extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const ZigString, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
+extern fn Bun__JSWrappingFunction__create(globalObject: *JSC.JSGlobalObject, symbolName: *const bun.String, functionPointer: JSC.JSHostFunctionPtr, wrappedFn: JSValue, strong: bool) JSValue;
 extern fn Bun__JSWrappingFunction__getWrappedFunction(this: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSValue;
 
 extern fn ExpectMatcherUtils__getSingleton(globalObject: *JSC.JSGlobalObject) JSC.JSValue;

@@ -310,7 +310,7 @@ pub const JSBundler = struct {
                 };
                 defer dir.close();
 
-                var rootdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var rootdir_buf: bun.PathBuffer = undefined;
                 this.rootdir.appendSliceExact(try bun.getFdPath(bun.toFD(dir.fd), &rootdir_buf)) catch unreachable;
             }
 
@@ -390,7 +390,7 @@ pub const JSBundler = struct {
                 var define_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
-                }).init(globalThis, define.asObjectRef());
+                }).init(globalThis, define);
                 defer define_iter.deinit();
 
                 while (define_iter.next()) |prop| {
@@ -423,7 +423,7 @@ pub const JSBundler = struct {
                 var loader_iter = JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
                     .include_value = true,
-                }).init(globalThis, loaders.asObjectRef());
+                }).init(globalThis, loaders);
                 defer loader_iter.deinit();
 
                 var loader_names = try allocator.alloc(string, loader_iter.len);
@@ -432,7 +432,7 @@ pub const JSBundler = struct {
                 errdefer allocator.free(loader_values);
 
                 while (loader_iter.next()) |prop| {
-                    if (!prop.hasPrefixChar('.') or prop.len < 2) {
+                    if (!prop.hasPrefixComptime(".") or prop.length() < 2) {
                         globalThis.throwInvalidArguments("loader property names must be file extensions, such as '.txt'", .{});
                         return error.JSException;
                     }

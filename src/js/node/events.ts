@@ -43,7 +43,7 @@ EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
 EventEmitterPrototype.constructor = EventEmitter;
 
 EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
-  return this._maxListeners ?? defaultMaxListeners;
+  return this?._maxListeners ?? defaultMaxListeners;
 };
 
 function emitError(emitter, args) {
@@ -323,38 +323,39 @@ function once(emitter, type, options) {
   if (signal?.aborted) {
     throw new AbortError(undefined, { cause: signal?.reason });
   }
-  return new Promise((resolve, reject) => {
-    const errorListener = err => {
-      emitter.removeListener(type, resolver);
-      if (signal != null) {
-        eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
-      }
-      reject(err);
-    };
-    const resolver = (...args) => {
-      if (typeof emitter.removeListener === "function") {
-        emitter.removeListener("error", errorListener);
-      }
-      if (signal != null) {
-        eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
-      }
-      resolve(args);
-    };
-    eventTargetAgnosticAddListener(emitter, type, resolver, { once: true });
-    if (type !== "error" && typeof emitter.once === "function") {
-      // EventTarget does not have `error` event semantics like Node
-      // EventEmitters, we listen to `error` events only on EventEmitters.
-      emitter.once("error", errorListener);
+  const { resolve, reject, promise } = $newPromiseCapability(Promise);
+  const errorListener = err => {
+    emitter.removeListener(type, resolver);
+    if (signal != null) {
+      eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
-    function abortListener() {
-      eventTargetAgnosticRemoveListener(emitter, type, resolver);
-      eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-      reject(new AbortError(undefined, { cause: signal?.reason }));
+    reject(err);
+  };
+  const resolver = (...args) => {
+    if (typeof emitter.removeListener === "function") {
+      emitter.removeListener("error", errorListener);
     }
     if (signal != null) {
-      eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
+      eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
-  });
+    resolve(args);
+  };
+  eventTargetAgnosticAddListener(emitter, type, resolver, { once: true });
+  if (type !== "error" && typeof emitter.once === "function") {
+    // EventTarget does not have `error` event semantics like Node
+    // EventEmitters, we listen to `error` events only on EventEmitters.
+    emitter.once("error", errorListener);
+  }
+  function abortListener() {
+    eventTargetAgnosticRemoveListener(emitter, type, resolver);
+    eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
+    reject(new AbortError(undefined, { cause: signal?.reason }));
+  }
+  if (signal != null) {
+    eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
+  }
+
+  return promise;
 }
 
 function on(emitter, event, options = {}) {
@@ -423,8 +424,9 @@ function on(emitter, event, options = {}) {
   return iterator();
 }
 
+const toStringTag = Symbol.toStringTag;
 function getEventListeners(emitter, type) {
-  if (emitter instanceof EventTarget) {
+  if (emitter?.[toStringTag] === "EventTarget") {
     throwNotImplemented("getEventListeners with an EventTarget", 2678);
   }
   return emitter.listeners(type);
@@ -446,7 +448,7 @@ function listenerCount(emitter, type) {
   return emitter.listenerCount(type);
 }
 
-function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
+function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
   } else {
@@ -466,7 +468,7 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
 class AbortError extends Error {
   constructor(message = "The operation was aborted", options = undefined) {
     if (options !== undefined && typeof options !== "object") {
-      throw new codes.ERR_INVALID_ARG_TYPE("options", "Object", options);
+      throw ERR_INVALID_ARG_TYPE("options", "Object", options);
     }
     super(message, options);
     this.code = "ABORT_ERR";
@@ -488,18 +490,18 @@ function ERR_OUT_OF_RANGE(name, range, value) {
 
 function validateAbortSignal(signal, name) {
   if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
+    throw ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
 
-function validateNumber(value, name, min = undefined, max) {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+function validateNumber(value, name, min?: number, max?: number) {
+  if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
   if (
     (min != null && value < min) ||
     (max != null && value > max) ||
     ((min != null || max != null) && Number.isNaN(value))
   ) {
-    throw new ERR_OUT_OF_RANGE(
+    throw ERR_OUT_OF_RANGE(
       name,
       `${min != null ? `>= ${min}` : ""}${min != null && max != null ? " && " : ""}${max != null ? `<= ${max}` : ""}`,
       value,
@@ -513,7 +515,44 @@ function checkListener(listener) {
   }
 }
 
+function validateBoolean(value, name) {
+  if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
+}
+
 let AsyncResource = null;
+
+function getMaxListeners(emitterOrTarget) {
+  // TODO: apparently EventTarget in Node can have a max number of listeners?
+  return emitterOrTarget?._maxListeners ?? defaultMaxListeners;
+}
+
+// Copy-pasta from Node.js source code
+function addAbortListener(signal, listener) {
+  if (signal === undefined) {
+    throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+  }
+
+  validateAbortSignal(signal, "signal");
+  if (typeof listener !== "function") {
+    throw ERR_INVALID_ARG_TYPE("listener", "function", listener);
+  }
+
+  let removeEventListener;
+  if (signal.aborted) {
+    queueMicrotask(() => listener());
+  } else {
+    signal.addEventListener("abort", listener, { __proto__: null, once: true });
+    removeEventListener = () => {
+      signal.removeEventListener("abort", listener);
+    };
+  }
+  return {
+    __proto__: null,
+    [Symbol.dispose]() {
+      removeEventListener?.();
+    },
+  };
+}
 
 class EventEmitterAsyncResource extends EventEmitter {
   triggerAsyncId;
@@ -577,14 +616,14 @@ Object.assign(EventEmitter, {
   once,
   on,
   getEventListeners,
-  // getMaxListeners,
+  getMaxListeners,
   setMaxListeners,
   EventEmitter,
   usingDomains: false,
   captureRejectionSymbol,
   EventEmitterAsyncResource,
   errorMonitor: kErrorMonitor,
-  setMaxListeners,
+  addAbortListener,
   init: EventEmitter,
   listenerCount,
 });

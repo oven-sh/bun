@@ -273,14 +273,14 @@ it("should allow large amounts of data to be sent and received", async () => {
 }, 60_000);
 
 it("it should not crash when getting a ReferenceError on client socket open", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 8080,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
     },
   });
-  try {
+  {
     const { resolve, reject, promise } = Promise.withResolvers();
     let client: Socket<undefined> | null = null;
     const timeout = setTimeout(() => {
@@ -310,20 +310,18 @@ it("it should not crash when getting a ReferenceError on client socket open", as
 
     const result: any = await promise;
     expect(result?.message).toBe("Can't find variable: bytes");
-  } finally {
-    server.stop(true);
   }
 });
 
 it("it should not crash when returning a Error on client socket open", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 8080,
     hostname: "localhost",
     fetch() {
       return new Response("Hello World");
     },
   });
-  try {
+  {
     const { resolve, reject, promise } = Promise.withResolvers();
     let client: Socket<undefined> | null = null;
     const timeout = setTimeout(() => {
@@ -352,7 +350,151 @@ it("it should not crash when returning a Error on client socket open", async () 
 
     const result: any = await promise;
     expect(result?.message).toBe("CustomError");
-  } finally {
-    server.stop(true);
   }
+});
+
+it("it should only call open once", async () => {
+  const server = Bun.listen({
+    port: 0,
+    hostname: "localhost",
+    socket: {
+      open(socket) {
+        socket.end("Hello");
+      },
+      data(socket, data) {},
+    },
+  });
+
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  let client: Socket<undefined> | null = null;
+  let opened = false;
+  client = await Bun.connect({
+    port: server.port,
+    hostname: "localhost",
+    socket: {
+      open(socket) {
+        expect(opened).toBe(false);
+        opened = true;
+      },
+      connectError(socket, error) {
+        expect().fail("connectError should not be called");
+      },
+      close(socket) {
+        server.stop();
+        resolve();
+      },
+      data(socket, data) {},
+    },
+  });
+
+  await promise;
+  expect(opened).toBe(true);
+});
+
+it.skipIf(isWindows)("should not leak file descriptors when connecting", async () => {
+  expect([fileURLToPath(new URL("./socket-leak-fixture.js", import.meta.url))]).toRun();
+});
+
+it("should not call open if the connection had an error", async () => {
+  const server = Bun.listen({
+    port: 0,
+    hostname: "0.0.0.0",
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data(socket, data) {},
+    },
+  });
+
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  let client: Socket<undefined> | null = null;
+  let hadError = false;
+  try {
+    client = await Bun.connect({
+      port: server.port,
+      hostname: "::1",
+      socket: {
+        open(socket) {
+          expect().fail("open should not be called, the connection should fail");
+        },
+        connectError(socket, error) {
+          expect(hadError).toBe(false);
+          hadError = true;
+          resolve();
+        },
+        close(socket) {
+          expect().fail("close should not be called, the connection should fail");
+        },
+        data(socket, data) {},
+      },
+    });
+  } catch (e) {}
+
+  await Bun.sleep(50);
+  await promise;
+  server.stop();
+  expect(hadError).toBe(true);
+});
+
+it("should connect directly when using an ip address", async () => {
+  const server = Bun.listen({
+    port: 0,
+    hostname: "127.0.0.1",
+    socket: {
+      open(socket) {
+        socket.end("Hello");
+      },
+      data(socket, data) {},
+    },
+  });
+
+  const { resolve, reject, promise } = Promise.withResolvers();
+
+  let client: Socket<undefined> | null = null;
+  let opened = false;
+  client = await Bun.connect({
+    port: server.port,
+    hostname: "127.0.0.1",
+    socket: {
+      open(socket) {
+        expect(opened).toBe(false);
+        opened = true;
+      },
+      connectError(socket, error) {
+        expect().fail("connectError should not be called");
+      },
+      close(socket) {
+        server.stop();
+        resolve();
+      },
+      data(socket, data) {},
+    },
+  });
+
+  await promise;
+  expect(opened).toBe(true);
+});
+
+it("should not call drain before handshake", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  using socket = await Bun.connect({
+    hostname: "www.example.com",
+    tls: true,
+    port: 443,
+    socket: {
+      drain() {
+        if (!socket.authorized) {
+          reject(new Error("Socket not authorized"));
+        }
+      },
+      handshake() {
+        resolve();
+      },
+    },
+  });
+  await promise;
+  expect(socket.authorized).toBe(true);
 });

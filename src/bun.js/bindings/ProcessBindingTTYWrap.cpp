@@ -29,6 +29,8 @@
 
 #if OS(WINDOWS)
 
+extern "C" int Source__setRawModeStdin(bool raw);
+
 namespace UV {
 
 class TTY {
@@ -49,18 +51,6 @@ public:
     }
 };
 
-}
-
-static uv_tty_t* getSharedHandle(int fd, uv_loop_t* loop)
-{
-    static thread_local uv_tty_t* sharedHandle = nullptr;
-
-    if (!sharedHandle) {
-        sharedHandle = new uv_tty_t;
-        memset(sharedHandle, 0, sizeof(uv_tty_t));
-        uv_tty_init(loop, sharedHandle, fd, 0);
-    }
-    return sharedHandle;
 }
 
 #endif
@@ -203,7 +193,13 @@ extern "C" int Bun__ttySetMode(int fd, int mode);
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 #if OS(WINDOWS)
-    RELEASE_ASSERT_NOT_REACHED();
+    ASSERT(callFrame->argumentCount() == 1);
+    auto flag = callFrame->argument(0);
+    bool raw = flag.asBoolean();
+
+    Zig::GlobalObject* global = jsCast<Zig::GlobalObject*>(globalObject);
+
+    return Source__setRawModeStdin(raw);
 #else
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -9,7 +9,7 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
-pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+pub fn z(input: []const u8, output: *bun.PathBuffer) [:0]const u8 {
     if (input.len > bun.MAX_PATH_BYTES) {
         if (comptime bun.Environment.allow_assert) @panic("path too long");
         return "";
@@ -57,10 +57,6 @@ inline fn @"is .."(slice: []const u8) bool {
 inline fn @"is .. with type"(comptime T: type, slice: []const T) bool {
     if (comptime T == u8) return @"is .."(slice);
     return slice.len >= 2 and slice[0] == '.' and slice[1] == '.';
-}
-
-inline fn isDotSlash(slice: []const u8) bool {
-    return @as(u16, @bitCast(slice[0..2].*)) == comptime std.mem.readInt(u16, "./", .little);
 }
 
 inline fn @"is ../"(slice: []const u8) bool {
@@ -413,7 +409,7 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = @as(usize, @intCast(@intFromBool(normalized_from[0] == separator))) + 1 + last_common_separator;
+        var i: usize = @as(usize, @intCast(@intFromBool(platform.isSeparator(normalized_from[0])))) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
@@ -431,13 +427,15 @@ pub fn relativeToCommonPath(
     if (normalized_to.len > last_common_separator + 1) {
         var tail = normalized_to[last_common_separator..];
         if (normalized_from.len > 0 and (last_common_separator == normalized_from.len or (last_common_separator == normalized_from.len - 1))) {
-            if (tail[0] == separator) {
+            if (platform.isSeparator(tail[0])) {
                 tail = tail[1..];
             }
         }
 
         // avoid making non-absolute paths absolute
-        const insert_leading_slash = tail[0] != separator and out_slice.len > 0 and out_slice[out_slice.len - 1] != separator;
+        const insert_leading_slash = !platform.isSeparator(tail[0]) and
+            out_slice.len > 0 and !platform.isSeparator(out_slice[out_slice.len - 1]);
+
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;
             out_slice.len += 1;
@@ -491,6 +489,17 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
     }
 }
 
+pub fn dirnameW(str: []const u16) []const u16 {
+    const separator = lastIndexOfSeparatorWindowsT(u16, str) orelse {
+        // return disk designator instead
+        if (str.len < 2) return &.{};
+        if (!(str[1] == ':')) return &.{};
+        if (!bun.path.isDriveLetterT(u16, str[0])) return &.{};
+        return str[0..2];
+    };
+    return str[0..separator];
+}
+
 threadlocal var relative_from_buf: bun.PathBuffer = undefined;
 threadlocal var relative_to_buf: bun.PathBuffer = undefined;
 
@@ -500,6 +509,13 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const normalized_from = if (platform.isAbsolute(from)) brk: {
+        if (platform == .loose and bun.Environment.isWindows) {
+            // we want to invoke the windows resolution behavior but end up with a
+            // string with forward slashes.
+            const normalized = normalizeStringBuf(from, relative_from_buf[1..], true, .windows, true);
+            platformToPosixInPlace(u8, normalized);
+            break :brk normalized;
+        }
         const path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_from_buf[0] = platform.separator();
@@ -514,6 +530,11 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
     );
 
     const normalized_to = if (platform.isAbsolute(to)) brk: {
+        if (platform == .loose and bun.Environment.isWindows) {
+            const normalized = normalizeStringBuf(to, relative_to_buf[1..], true, .windows, true);
+            platformToPosixInPlace(u8, normalized);
+            break :brk normalized;
+        }
         const path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_to_buf[0] = platform.separator();
@@ -600,6 +621,24 @@ pub fn isDriveLetterT(comptime T: type, c: T) bool {
     return 'a' <= c and c <= 'z' or 'A' <= c and c <= 'Z';
 }
 
+pub fn hasAnyIllegalChars(maybe_path: []const u8) bool {
+    if (!bun.Environment.isWindows) return false;
+    var maybe_path_ = maybe_path;
+    // check for disk discrimnator; remove it since it has a ':'
+    if (startsWithDiskDiscriminator(maybe_path_)) maybe_path_ = maybe_path_[2..];
+    // guard against OBJECT_NAME_INVALID => unreachable
+    return bun.strings.indexAnyComptime(maybe_path_, "<>:\"|?*") != null;
+}
+
+pub fn startsWithDiskDiscriminator(maybe_path: []const u8) bool {
+    if (!bun.Environment.isWindows) return false;
+    if (maybe_path.len < 3) return false;
+    if (!isDriveLetter(maybe_path[0])) return false;
+    if (maybe_path[1] != ':') return false;
+    if (maybe_path[2] != '\\') return false;
+    return true;
+}
+
 // path.relative lets you do relative across different share drives
 pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
     // minimum: `C:`
@@ -623,8 +662,10 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         path[2] != '.')
     {
         if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
-            // TODO: handle input "//abc//def" should be picked up as a unc path
-            return path[0 .. idx + 4];
+            if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
+                return path[0 .. idx + idx_second + 4];
+            }
+            return path[0..];
         }
     }
     if (isSepAnyT(T, path[0])) return path[0..1];
@@ -722,7 +763,12 @@ pub fn normalizeStringGenericTZ(
             }
             if (path_[1] != ':') {
                 // UNC paths
-                @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                if (options.add_nt_prefix) {
+                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "UNC" ++ sep_str));
+                    buf_i += 2;
+                } else {
+                    @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                }
                 @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                 buf[buf_i + indexOfThirdUNCSlash] = options.separator;
                 @memcpy(
@@ -1067,6 +1113,11 @@ pub const Platform = enum {
 pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) []u8 {
     return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
 }
+pub fn normalizeStringZ(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) [:0]u8 {
+    const normalized = normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
+    parser_buffer[normalized.len] = 0;
+    return parser_buffer[0..normalized.len :0];
+}
 
 pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []u8 {
     return normalizeBufT(u8, str, buf, _platform);
@@ -1201,11 +1252,18 @@ pub fn joinZBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [:0]co
     return buf[start_offset..][0..joined.len :0];
 }
 pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []const u8 {
+    return joinStringBufT(u8, buf, parts, _platform);
+}
+pub fn joinStringBufW(buf: []u16, parts: anytype, comptime _platform: Platform) []const u16 {
+    return joinStringBufT(u16, buf, parts, _platform);
+}
+
+pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _platform: Platform) []const T {
     const platform = comptime _platform.resolve();
 
     var written: usize = 0;
-    var temp_buf_: [4096]u8 = undefined;
-    var temp_buf: []u8 = &temp_buf_;
+    var temp_buf_: [4096]T = undefined;
+    var temp_buf: []T = &temp_buf_;
     var free_temp_buf = false;
     defer {
         if (free_temp_buf) {
@@ -1220,7 +1278,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(u8, count * 2) catch @panic("Out of memory");
+        temp_buf = bun.default_allocator.alloc(T, count * 2) catch @panic("Out of memory");
         free_temp_buf = true;
     }
 
@@ -1234,8 +1292,14 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
             written += 1;
         }
 
-        bun.copy(u8, temp_buf[written..], part);
-        written += part.len;
+        const Element = std.meta.Elem(@TypeOf(part));
+        if (comptime T == u16 and Element == u8) {
+            const wrote = bun.strings.convertUTF8toUTF16InBuffer(temp_buf[written..], part);
+            written += wrote.len;
+        } else {
+            bun.copy(T, temp_buf[written..], part);
+            written += part.len;
+        }
     }
 
     if (written == 0) {
@@ -1243,7 +1307,7 @@ pub fn joinStringBuf(buf: []u8, parts: anytype, comptime _platform: Platform) []
         return buf[0..1];
     }
 
-    return normalizeStringNode(temp_buf[0..written], buf, platform);
+    return normalizeStringNodeT(T, temp_buf[0..written], buf, platform);
 }
 
 pub fn joinAbsStringBuf(cwd: []const u8, buf: []u8, _parts: anytype, comptime _platform: Platform) []const u8 {
@@ -1501,8 +1565,7 @@ pub fn isSepPosix(char: u8) bool {
     return isSepPosixT(u8, char);
 }
 
-pub fn isSepPosixT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepPosixT");
+pub fn isSepPosixT(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_posix;
 }
 
@@ -1510,8 +1573,7 @@ pub fn isSepWin32(char: u8) bool {
     return isSepWin32T(u8, char);
 }
 
-pub fn isSepWin32T(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepWin32T");
+pub fn isSepWin32T(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_windows;
 }
 
@@ -1519,8 +1581,7 @@ pub fn isSepAny(char: u8) bool {
     return isSepAnyT(u8, char);
 }
 
-pub fn isSepAnyT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepAnyT");
+pub fn isSepAnyT(comptime T: type, char: T) bool {
     return @call(bun.callmod_inline, isSepPosixT, .{ T, char }) or @call(bun.callmod_inline, isSepWin32T, .{ T, char });
 }
 
@@ -1528,8 +1589,7 @@ pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
     return lastIndexOfSeparatorWindowsT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorWindowsT");
+pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfAny(T, slice, comptime strings.literal(T, "\\/"));
 }
 
@@ -1537,8 +1597,7 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
     return lastIndexOfSeparatorPosixT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorPosixT");
+pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfScalar(T, slice, std.fs.path.sep_posix);
 }
 
@@ -1557,8 +1616,7 @@ pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return lastIndexOfSeparatorLooseT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorLooseT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorLooseT");
+pub fn lastIndexOfSeparatorLooseT(comptime T: type, slice: []const T) ?usize {
     return lastIndexOfSepT(T, slice);
 }
 
@@ -1621,26 +1679,37 @@ pub fn normalizeStringNode(
     buf: []u8,
     comptime platform: Platform,
 ) []u8 {
+    return normalizeStringNodeT(u8, str, buf, platform);
+}
+
+pub fn normalizeStringNodeT(
+    comptime T: type,
+    str: []const T,
+    buf: []T,
+    comptime platform: Platform,
+) []const T {
     if (str.len == 0) {
         buf[0] = '.';
         return buf[0..1];
     }
 
-    const is_absolute = platform.isAbsolute(str);
-    const trailing_separator = platform.isSeparator(str[str.len - 1]);
+    const is_absolute = platform.isAbsoluteT(T, str);
+    const trailing_separator = platform.isSeparatorT(T, str[str.len - 1]);
 
     // `normalizeStringGeneric` handles absolute path cases for windows
     // we should not prefix with /
     var buf_ = if (platform == .windows) buf else buf[1..];
 
-    var out = if (!is_absolute) normalizeStringGeneric(
+    var out = if (!is_absolute) normalizeStringGenericT(
+        T,
         str,
         buf_,
         true,
         comptime platform.resolve().separator(),
         comptime platform.getSeparatorFuncT(),
         false,
-    ) else normalizeStringGeneric(
+    ) else normalizeStringGenericT(
+        T,
         str,
         buf_,
         false,
@@ -1656,7 +1725,8 @@ pub fn normalizeStringNode(
         }
 
         if (trailing_separator) {
-            buf[0..2].* = platform.trailingSeparator();
+            const sep = platform.trailingSeparator();
+            buf[0..2].* = .{ sep[0], sep[1] };
             return buf[0..2];
         }
 
@@ -1665,7 +1735,7 @@ pub fn normalizeStringNode(
     }
 
     if (trailing_separator) {
-        if (!platform.isSeparator(out[out.len - 1])) {
+        if (!platform.isSeparatorT(T, out[out.len - 1])) {
             buf_[out.len] = platform.separator();
             out = buf_[0 .. out.len + 1];
         }
@@ -1680,337 +1750,6 @@ pub fn normalizeStringNode(
     }
 
     return out;
-}
-
-test "joinAbsStringPosix" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app/";
-
-    _ = t.expect(
-        "/project/.pnpm/lodash@4.17.21/node_modules/lodash/eq",
-        try default_allocator.dupe(u8, joinAbsString(cwd, &[_]string{
-            "/project/.pnpm/lodash@4.17.21/node_modules/lodash/",
-            "./eq",
-        }, .posix)),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/foo/lodash/eq.js",
-        joinAbsString(cwd, &[_]string{ "/foo/lodash/", "./eq.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/foo/lodash/eq.js",
-        joinAbsString(cwd, &[_]string{ "/foo/lodash", "./eq.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/file.js",
-        joinAbsString(cwd, &[_]string{ "", "../../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .posix),
-        @src(),
-    );
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .posix),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .posix),
-        @src(),
-    );
-}
-
-test "joinAbsStringLoose" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    const string = []const u8;
-    const cwd = "/Users/jarredsumner/Code/app";
-
-    _ = t.expect(
-        "/bar/foo",
-        joinAbsString(cwd, &[_]string{
-            "/bar/foo",
-            "/bar/foo",
-        }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/bar/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "bar", "../file.js" }, .loose),
-        @src(),
-    );
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "foo", "./bar", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Users/jarredsumner/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ ".\\.\\.\\.\\foo", "././././bar././././", "..\\file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "././././bar././././", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/foo/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", ".", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-
-    _ = t.expect(
-        "/Code/app/file.js",
-        joinAbsString(cwd, &[_]string{ "/Code/app", "././././foo", "..", "././././bar././././", ".", "../file.js" }, .loose),
-        @src(),
-    );
-}
-
-test "joinStringBuf" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const fixtures = .{
-        .{ &[_][]const u8{ ".", "x/b", "..", "/b/c.js" }, "x/b/c.js" },
-        .{ &[_][]const u8{}, "." },
-        .{ &[_][]const u8{ "/.", "x/b", "..", "/b/c.js" }, "/x/b/c.js" },
-        .{ &[_][]const u8{ "/foo", "../../../bar" }, "/bar" },
-        .{ &[_][]const u8{ "foo", "../../../bar" }, "../../bar" },
-        .{ &[_][]const u8{ "foo/", "../../../bar" }, "../../bar" },
-        .{ &[_][]const u8{ "foo/x", "../../../bar" }, "../bar" },
-        .{ &[_][]const u8{ "foo/x", "./bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{ "foo/x/", "./bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{ "foo/x/", ".", "bar" }, "foo/x/bar" },
-        .{ &[_][]const u8{"./"}, "./" },
-        .{ &[_][]const u8{ ".", "./" }, "./" },
-        .{ &[_][]const u8{ ".", ".", "." }, "." },
-        .{ &[_][]const u8{ ".", "./", "." }, "." },
-        .{ &[_][]const u8{ ".", "/./", "." }, "." },
-        .{ &[_][]const u8{ ".", "/////./", "." }, "." },
-        .{ &[_][]const u8{"."}, "." },
-        .{ &[_][]const u8{ "", "." }, "." },
-        .{ &[_][]const u8{ "", "foo" }, "foo" },
-        .{ &[_][]const u8{ "foo", "/bar" }, "foo/bar" },
-        .{ &[_][]const u8{ "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "", "foo" }, "foo" },
-        .{ &[_][]const u8{ "foo", "" }, "foo" },
-        .{ &[_][]const u8{ "foo/", "" }, "foo/" },
-        .{ &[_][]const u8{ "foo", "", "/bar" }, "foo/bar" },
-        .{ &[_][]const u8{ "./", "..", "/foo" }, "../foo" },
-        .{ &[_][]const u8{ "./", "..", "..", "/foo" }, "../../foo" },
-        .{ &[_][]const u8{ ".", "..", "..", "/foo" }, "../../foo" },
-        .{ &[_][]const u8{ "", "..", "..", "/foo" }, "../../foo" },
-
-        .{ &[_][]const u8{"/"}, "/" },
-        .{ &[_][]const u8{ "/", "." }, "/" },
-        .{ &[_][]const u8{ "/", ".." }, "/" },
-        .{ &[_][]const u8{ "/", "..", ".." }, "/" },
-        .{ &[_][]const u8{""}, "." },
-        .{ &[_][]const u8{ "", "" }, "." },
-        .{ &[_][]const u8{" /foo"}, " /foo" },
-        .{ &[_][]const u8{ " ", "foo" }, " /foo" },
-        .{ &[_][]const u8{ " ", "." }, " " },
-        .{ &[_][]const u8{ " ", "/" }, " /" },
-        .{ &[_][]const u8{ " ", "" }, " " },
-        .{ &[_][]const u8{ "/", "foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "//foo" }, "/foo" },
-        .{ &[_][]const u8{ "/", "", "/foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "/", "foo" }, "/foo" },
-        .{ &[_][]const u8{ "", "/", "/foo" }, "/foo" },
-
-        .{ &[_][]const u8{ "", "..", "..", "..", "/foo" }, "../../../foo" },
-        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo" }, "../../bar/foo" },
-        .{ &[_][]const u8{ "", "..", "..", "bar", "/foo", "../" }, "../../bar/" },
-    };
-    inline for (fixtures) |fixture| {
-        const expected = fixture[1];
-        const buf = try default_allocator.alloc(u8, 2048);
-        _ = t.expect(expected, joinStringBuf(buf, fixture[0], .posix), @src());
-    }
-}
-
-test "normalizeStringPosix" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-    var buf: [2048]u8 = undefined;
-    var buf2: [2048]u8 = undefined;
-    // Don't mess up strings that
-    _ = t.expect("../../bar", normalizeStringNode("../foo../../../bar", &buf, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", true, .posix), @src());
-    _ = t.expect("foo/bar.txt", try normalizeStringAlloc(default_allocator, "/foo/bar.txt", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", true, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("/foo/bar", normalizeStringNode("/././foo/././././././bar/../bar/../bar", &buf2, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar//////", false, .posix), @src());
-    _ = t.expect("foo/bar", try normalizeStringAlloc(default_allocator, "/////foo/bar", false, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "/////", false, .posix), @src());
-    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "../boom/../", true, .posix), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "./", true, .posix), @src());
-}
-
-test "normalizeStringWindows" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    // Don't mess up strings that
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", true, .windows), @src());
-    _ = t.expect("foo\\bar.txt", try normalizeStringAlloc(default_allocator, "\\foo\\bar.txt", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\.\\.\\foo\\.\\.\\.\\.\\.\\.\\bar\\..\\bar\\..\\bar", true, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar\\\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("foo\\bar", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\foo\\bar", false, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, "\\\\\\\\\\", false, .windows), @src());
-    _ = t.expect("..", try normalizeStringAlloc(default_allocator, "..\\boom\\..\\", true, .windows), @src());
-    _ = t.expect("", try normalizeStringAlloc(default_allocator, ".\\", true, .windows), @src());
-}
-
-test "relative" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const fixtures = .{
-        .{ "/var/lib", "/var", ".." },
-        .{ "/var/lib", "/bin", "../../bin" },
-        .{ "/var/lib", "/var/lib", "" },
-        .{ "/var/lib", "/var/apache", "../apache" },
-        .{ "/var/", "/var/lib", "lib" },
-        .{ "/", "/var/lib", "var/lib" },
-        .{ "/foo/test", "/foo/test/bar/package.json", "bar/package.json" },
-        .{ "/Users/a/web/b/test/mails", "/Users/a/web/b", "../.." },
-        .{ "/foo/bar/baz-quux", "/foo/bar/baz", "../baz" },
-        .{ "/foo/bar/baz", "/foo/bar/baz-quux", "../baz-quux" },
-        .{ "/baz-quux", "/baz", "../baz" },
-        .{ "/baz", "/baz-quux", "../baz-quux" },
-        .{ "/page1/page2/foo", "/", "../../.." },
-    };
-
-    inline for (fixtures) |fixture| {
-        const from = fixture[0];
-        const to = fixture[1];
-        const expected = fixture[2];
-        _ = t.expect(expected, try relativeAlloc(default_allocator, from, to), @src());
-    }
-
-    _ = t.expect("index.js", try relativeAlloc(default_allocator, "/app/public/", "/app/public/index.js"), @src());
-    _ = t.expect("..", try relativeAlloc(default_allocator, "/app/public/index.js", "/app/public/"), @src());
-    _ = t.expect("../../src/bacon.ts", try relativeAlloc(default_allocator, "/app/public/index.html", "/app/src/bacon.ts"), @src());
-    _ = t.expect("../../../../bacon/foo/baz", try relativeAlloc(default_allocator, "/app/foo/bar/baz.js", "/bacon/foo/baz"), @src());
-}
-
-test "longestCommonPath" {
-    var t = tester.Tester.t(default_allocator);
-    defer t.report(@src());
-
-    const strs = [_][]const u8{
-        "/var/boo/foo/",
-        "/var/boo/foo/baz/",
-        "/var/boo/foo/beep/",
-        "/var/boo/foo/beep/bleep",
-        "/bar/baz",
-        "/bar/not-related",
-        "/bar/file.txt",
-    };
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..2]), @src());
-    _ = t.expect("/var/boo/foo/", longestCommonPath(strs[0..4]), @src());
-    _ = t.expect("/var/boo/foo/beep/", longestCommonPath(strs[2..3]), @src());
-    _ = t.expect("/bar/", longestCommonPath(strs[5..strs.len]), @src());
-    _ = t.expect("/", longestCommonPath(&strs), @src());
-
-    const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
-    _ = t.expect("/app/", longestCommonPath(&more), @src());
-    _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
 }
 
 pub fn basename(path: []const u8) []const u8 {
@@ -2257,8 +1996,8 @@ pub fn pathToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
     return buf[0..path.len];
 }
 
-pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
-    if (std.fs.path.sep == '/') return;
+pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []const T {
+    if (std.fs.path.sep == '/') return path;
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
         @memcpy(buf[idx..index], path[idx..index]);

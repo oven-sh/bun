@@ -1,7 +1,4 @@
 import { expect, it } from "bun:test";
-import tls from "tls";
-import type { Server, TLSSocket } from "node:tls";
-import type { AddressInfo } from "node:net";
 import { join } from "path";
 import { readFileSync } from "fs";
 
@@ -33,9 +30,8 @@ function checkServerIdentity(hostname: string, cert: any) {
 }
 
 async function connect(options: any) {
-  let server: ReturnType<Bun.serve> | null = null;
-  try {
-    server = Bun.serve({
+  {
+    using server = Bun.serve({
       tls: options.server,
       port: 0,
       fetch(req) {
@@ -49,8 +45,6 @@ async function connect(options: any) {
     if (result !== "Hello World!") {
       throw new Error("Unexpected response from server");
     }
-  } finally {
-    server?.stop(true);
   }
 }
 it.todo("complete cert chains sent to peer.", async () => {

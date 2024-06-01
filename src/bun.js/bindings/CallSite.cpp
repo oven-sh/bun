@@ -83,6 +83,22 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisCallSite->m_functionName);
     visitor.append(thisCallSite->m_sourceURL);
 }
+JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callFrame->argument(0));
+
+    return JSValue::encode(
+        JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
+}
+
+JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+
+    return JSC::JSFunction::create(vm, globalObject, 1, "nativeFrameForTesting"_s, nativeFrameForTesting, ImplementationVisibility::Public);
+}
 
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {

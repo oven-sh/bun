@@ -6,6 +6,7 @@ import { bunEnv } from "harness";
 
 const BUN = process.argv0;
 
+$.nothrow();
 describe("bun exec", () => {
   TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").runAsTest("it works");
   TestBuilder.command`${BUN} exec sldkfjslkdjflksdjflj`

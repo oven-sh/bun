@@ -1,13 +1,17 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isTypedArray } = require("node:util/types");
+const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
+
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const JSONParse = JSON.parse;
+const ObjectAssign = Object.assign;
 
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeSlice = String.prototype.slice;
@@ -130,7 +134,7 @@ function splitEscapedAltNames(altNames) {
       const match = RegExpPrototypeExec.$call(jsonStringPattern, StringPrototypeSubstring.$call(altNames, nextQuote));
       if (!match) {
         let error = new SyntaxError("ERR_TLS_CERT_ALTNAME_FORMAT: Invalid subject alternative name string");
-        error.name = ERR_TLS_CERT_ALTNAME_FORMAT;
+        error.code = "ERR_TLS_CERT_ALTNAME_FORMAT";
         throw error;
       }
       currentToken += JSON.parse(match[0]);
@@ -529,10 +533,25 @@ class Server extends NetServer {
   _requestCert;
   servername;
   ALPNProtocols;
+  #contexts: Map<string, typeof InternalSecureContext> | null = null;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
     this.setSecureContext(options);
+  }
+  addContext(hostname: string, context: typeof InternalSecureContext | object) {
+    if (typeof hostname !== "string") {
+      throw new TypeError("hostname must be a string");
+    }
+    if (!(context instanceof InternalSecureContext)) {
+      context = createSecureContext(context);
+    }
+    if (this[bunSocketInternal]) {
+      addServerName(this[bunSocketInternal], hostname, context);
+    } else {
+      if (!this.#contexts) this.#contexts = new Map();
+      this.#contexts.set(hostname, context as typeof InternalSecureContext);
+    }
   }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext) {
@@ -627,6 +646,7 @@ class Server extends NetServer {
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
+        contexts: this.#contexts,
       },
       SocketClass,
     ];
@@ -641,21 +661,41 @@ const DEFAULT_ECDH_CURVE = "auto",
   DEFAULT_CIPHERS =
     "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
   DEFAULT_MIN_VERSION = "TLSv1.2",
-  DEFAULT_MAX_VERSION = "TLSv1.3",
-  createConnection = (port, host, connectListener) => {
-    if (typeof port === "object") {
-      port.checkServerIdentity || checkServerIdentity;
-      const { ALPNProtocols } = port;
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, port);
-      }
-      // port is option pass Socket options and let connect handle connection options
-      return new TLSSocket(port).connect(port, host, connectListener);
-    }
-    // port is path or host, let connect handle this
-    return new TLSSocket().connect(port, host, connectListener);
-  },
-  connect = createConnection;
+  DEFAULT_MAX_VERSION = "TLSv1.3";
+
+function normalizeConnectArgs(listArgs) {
+  const args = net._normalizeArgs(listArgs);
+  const options = args[0];
+  const cb = args[1];
+
+  // If args[0] was options, then normalize dealt with it.
+  // If args[0] is port, or args[0], args[1] is host, port, we need to
+  // find the options and merge them in, normalize's options has only
+  // the host/port/path args that it knows about, not the tls options.
+  // This means that options.host overrides a host arg.
+  if (listArgs[1] !== null && typeof listArgs[1] === "object") {
+    ObjectAssign(options, listArgs[1]);
+  } else if (listArgs[2] !== null && typeof listArgs[2] === "object") {
+    ObjectAssign(options, listArgs[2]);
+  }
+
+  return cb ? [options, cb] : [options];
+}
+
+// tls.connect(options[, callback])
+// tls.connect(path[, options][, callback])
+// tls.connect(port[, host][, options][, callback])
+function connect(...args) {
+  if (typeof args[0] !== "object") {
+    return new TLSSocket().connect(...args);
+  }
+  let [options, callback] = normalizeConnectArgs(args);
+  const { ALPNProtocols } = options;
+  if (ALPNProtocols) {
+    convertALPNProtocols(ALPNProtocols, options);
+  }
+  return new TLSSocket(options).connect(options, callback);
+}
 
 function getCiphers() {
   return DEFAULT_CIPHERS.split(":");
@@ -713,7 +753,6 @@ export default {
   CLIENT_RENEG_WINDOW,
   connect,
   convertALPNProtocols,
-  createConnection,
   createSecureContext,
   createServer,
   DEFAULT_CIPHERS,

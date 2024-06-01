@@ -1,4 +1,82 @@
 // Hardcoded module "node:zlib"
+
+const stream = require("node:stream");
+
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+
+const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
+const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+
+function brotliCompress(buffer, opts, callback) {
+  if (typeof opts === "function") {
+    callback = opts;
+    opts = {};
+  }
+  if (typeof callback !== "function") throw new TypeError("BrotliEncoder callback is not callable");
+  const encoder = createBrotliEncoder(opts, {}, callback);
+  encoder.encode(buffer, undefined, true);
+}
+
+function brotliDecompress(buffer, opts, callback) {
+  if (typeof opts === "function") {
+    callback = opts;
+    opts = {};
+  }
+  if (typeof callback !== "function") throw new TypeError("BrotliDecoder callback is not callable");
+  const decoder = createBrotliDecoder(opts, {}, callback);
+  decoder.decode(buffer, undefined, true);
+}
+
+function brotliCompressSync(buffer, opts) {
+  const encoder = createBrotliEncoder(opts, {}, null);
+  return encoder.encodeSync(buffer, undefined, true);
+}
+
+function brotliDecompressSync(buffer, opts) {
+  const decoder = createBrotliDecoder(opts, {}, null);
+  return decoder.decodeSync(buffer, undefined, true);
+}
+
+function createBrotliCompress(opts) {
+  return new BrotliCompress(opts);
+}
+
+const kHandle = Symbol("kHandle");
+
+function BrotliCompress(opts) {
+  if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
+  this[kHandle] = createBrotliEncoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+BrotliCompress.prototype = {};
+ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);
+
+BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
+  callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
+};
+BrotliCompress.prototype._flush = function _flush(callback) {
+  callback(undefined, this[kHandle].encodeSync("", undefined, true));
+};
+
+function createBrotliDecompress(opts) {
+  return new BrotliDecompress(opts);
+}
+
+function BrotliDecompress(opts) {
+  if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
+  this[kHandle] = createBrotliDecoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+BrotliDecompress.prototype = {};
+ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);
+
+BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
+  callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
+};
+BrotliDecompress.prototype._flush = function (callback) {
+  callback(undefined, this[kHandle].decodeSync("", undefined, true));
+};
+
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads
@@ -2165,12 +2243,12 @@ var require_inftrees = __commonJS({
       var low;
       var mask;
       var next;
-      var base = null;
+      var base: number[] | null = null;
       var base_index = 0;
       var end;
       var count = new utils.Buf16(MAXBITS + 1);
       var offs = new utils.Buf16(MAXBITS + 1);
-      var extra = null;
+      var extra: number[] | null = null;
       var extra_index = 0;
       var here_bits, here_op, here_val;
       for (len = 0; len <= MAXBITS; len++) {
@@ -2254,8 +2332,8 @@ var require_inftrees = __commonJS({
           here_op = 0;
           here_val = work[sym];
         } else if (work[sym] > end) {
-          here_op = extra[extra_index + work[sym]];
-          here_val = base[base_index + work[sym]];
+          here_op = extra![extra_index + work[sym]];
+          here_val = base![base_index + work[sym]];
         } else {
           here_op = 32 + 64;
           here_val = 0;
@@ -3546,7 +3624,9 @@ var require_constants = __commonJS({
       Z_ERRNO: -1,
       Z_STREAM_ERROR: -2,
       Z_DATA_ERROR: -3,
+      Z_MEM_ERROR: -4,
       Z_BUF_ERROR: -5,
+      Z_VERSION_ERROR: -6,
       Z_NO_COMPRESSION: 0,
       Z_BEST_SPEED: 1,
       Z_BEST_COMPRESSION: 9,
@@ -3558,8 +3638,91 @@ var require_constants = __commonJS({
       Z_DEFAULT_STRATEGY: 0,
       Z_BINARY: 0,
       Z_TEXT: 1,
+      Z_ASCII: 1,
       Z_UNKNOWN: 2,
       Z_DEFLATED: 8,
+      DEFLATE: 1,
+      INFLATE: 2,
+      GZIP: 3,
+      GUNZIP: 4,
+      DEFLATERAW: 5,
+      INFLATERAW: 6,
+      UNZIP: 7,
+      BROTLI_DECODE: 8,
+      BROTLI_ENCODE: 9,
+      Z_MIN_WINDOWBITS: 8,
+      Z_MAX_WINDOWBITS: 15,
+      Z_DEFAULT_WINDOWBITS: 15,
+      Z_MIN_CHUNK: 64,
+      Z_MAX_CHUNK: Infinity,
+      Z_DEFAULT_CHUNK: 16384,
+      Z_MIN_MEMLEVEL: 1,
+      Z_MAX_MEMLEVEL: 9,
+      Z_DEFAULT_MEMLEVEL: 8,
+      Z_MIN_LEVEL: -1,
+      Z_MAX_LEVEL: 9,
+      Z_DEFAULT_LEVEL: -1,
+      BROTLI_OPERATION_PROCESS: 0,
+      BROTLI_OPERATION_FLUSH: 1,
+      BROTLI_OPERATION_FINISH: 2,
+      BROTLI_OPERATION_EMIT_METADATA: 3,
+      BROTLI_PARAM_MODE: 0,
+      BROTLI_MODE_GENERIC: 0,
+      BROTLI_MODE_TEXT: 1,
+      BROTLI_MODE_FONT: 2,
+      BROTLI_DEFAULT_MODE: 0,
+      BROTLI_PARAM_QUALITY: 1,
+      BROTLI_MIN_QUALITY: 0,
+      BROTLI_MAX_QUALITY: 11,
+      BROTLI_DEFAULT_QUALITY: 11,
+      BROTLI_PARAM_LGWIN: 2,
+      BROTLI_MIN_WINDOW_BITS: 10,
+      BROTLI_MAX_WINDOW_BITS: 24,
+      BROTLI_LARGE_MAX_WINDOW_BITS: 30,
+      BROTLI_DEFAULT_WINDOW: 22,
+      BROTLI_PARAM_LGBLOCK: 3,
+      BROTLI_MIN_INPUT_BLOCK_BITS: 16,
+      BROTLI_MAX_INPUT_BLOCK_BITS: 24,
+      BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING: 4,
+      BROTLI_PARAM_SIZE_HINT: 5,
+      BROTLI_PARAM_LARGE_WINDOW: 6,
+      BROTLI_PARAM_NPOSTFIX: 7,
+      BROTLI_PARAM_NDIRECT: 8,
+      BROTLI_DECODER_RESULT_ERROR: 0,
+      BROTLI_DECODER_RESULT_SUCCESS: 1,
+      BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT: 2,
+      BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT: 3,
+      BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: 0,
+      BROTLI_DECODER_PARAM_LARGE_WINDOW: 1,
+      BROTLI_DECODER_NO_ERROR: 0,
+      BROTLI_DECODER_SUCCESS: 1,
+      BROTLI_DECODER_NEEDS_MORE_INPUT: 2,
+      BROTLI_DECODER_NEEDS_MORE_OUTPUT: 3,
+      BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE: -1,
+      BROTLI_DECODER_ERROR_FORMAT_RESERVED: -2,
+      BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE: -3,
+      BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET: -4,
+      BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME: -5,
+      BROTLI_DECODER_ERROR_FORMAT_CL_SPACE: -6,
+      BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE: -7,
+      BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT: -8,
+      BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1: -9,
+      BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2: -10,
+      BROTLI_DECODER_ERROR_FORMAT_TRANSFORM: -11,
+      BROTLI_DECODER_ERROR_FORMAT_DICTIONARY: -12,
+      BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS: -13,
+      BROTLI_DECODER_ERROR_FORMAT_PADDING_1: -14,
+      BROTLI_DECODER_ERROR_FORMAT_PADDING_2: -15,
+      BROTLI_DECODER_ERROR_FORMAT_DISTANCE: -16,
+      BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET: -19,
+      BROTLI_DECODER_ERROR_INVALID_ARGUMENTS: -20,
+      BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES: -21,
+      BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS: -22,
+      BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP: -25,
+      BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1: -26,
+      BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2: -27,
+      BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES: -30,
+      BROTLI_DECODER_ERROR_UNREACHABLE: -31,
     };
   },
 });
@@ -4068,21 +4231,14 @@ var require_lib = __commonJS({
       return zlibBufferSync(new InflateRaw(opts), buffer);
     };
 
-    // not implemented, stubs
-    for (const method of [
-      "BrotliCompress",
-      "BrotliDecompress",
-      "brotliCompress",
-      "brotliCompressSync",
-      "brotliDecompress",
-      "brotliDecompressSync",
-      "createBrotliCompress",
-      "createBrotliDecompress",
-    ]) {
-      exports[method] = function (buffer, opts, callback) {
-        throw new Error(`zlib.${method} is not implemented`);
-      };
-    }
+    exports.brotliCompress = brotliCompress;
+    exports.brotliDecompress = brotliDecompress;
+    exports.brotliCompressSync = brotliCompressSync;
+    exports.brotliDecompressSync = brotliDecompressSync;
+    exports.createBrotliCompress = createBrotliCompress;
+    exports.BrotliCompress = BrotliCompress;
+    exports.createBrotliDecompress = createBrotliDecompress;
+    exports.BrotliDecompress = BrotliDecompress;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];
@@ -4317,7 +4473,7 @@ var require_lib = __commonJS({
       _close(this, callback);
       process.nextTick(emitCloseNT, this);
     };
-    function _close(engine, callback) {
+    function _close(engine, callback?) {
       if (callback) process.nextTick(callback);
       if (!engine._handle) return;
       engine._handle.close();

@@ -30,8 +30,8 @@ pub const BrotliDecoder = opaque {
     const brotli_decoder_metadata_start_func = ?*const fn (?*anyopaque, usize) callconv(.C) void;
     const brotli_decoder_metadata_chunk_func = ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.C) void;
 
-    pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) c_int {
-        return BrotliDecoderSetParameter(state, param, value);
+    pub fn setParameter(state: *BrotliDecoder, param: BrotliDecoderParameter, value: u32) callconv(.C) bool {
+        return BrotliDecoderSetParameter(state, param, value) > 0;
     }
 
     pub fn attachDictionary(state: *BrotliDecoder, @"type": BrotliSharedDictionaryType, data: []const u8) callconv(.C) c_int {
@@ -51,14 +51,7 @@ pub const BrotliDecoder = opaque {
     }
 
     pub fn decompressStream(state: *BrotliDecoder, available_in: *usize, next_in: *?[*]const u8, available_out: *usize, next_out: *?[*]u8, total_out: ?*usize) callconv(.C) BrotliDecoderResult {
-        return BrotliDecoderDecompressStream(
-            state,
-            available_in,
-            next_in,
-            available_out,
-            next_out,
-            total_out,
-        );
+        return BrotliDecoderDecompressStream(state, available_in, next_in, available_out, next_out, total_out);
     }
 
     pub fn hasMoreOutput(state: *const BrotliDecoder) callconv(.C) bool {

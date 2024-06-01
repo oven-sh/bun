@@ -91,6 +91,7 @@ it("should create template from local folder", async () => {
   const testTemplate = "test-template";
 
   await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "hi");
+  await Bun.write(join(bunCreateDir, testTemplate, "foo", "bar.js"), "hi");
 
   const { exited } = spawn({
     cmd: [bunExe(), "create", testTemplate],
@@ -105,7 +106,8 @@ it("should create template from local folder", async () => {
 
   const dirStat = await stat(join(x_dir, testTemplate));
   expect(dirStat.isDirectory()).toBe(true);
-  expect(await exists(join(x_dir, testTemplate, "index.js"))).toBeTrue();
+  expect(await Bun.file(join(x_dir, testTemplate, "index.js")).text()).toBe("hi");
+  expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
 for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"]) {

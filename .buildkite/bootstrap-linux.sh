@@ -133,10 +133,9 @@ sed -i "s/tags=.*/tags=\"${BUILDKITE_TAGS}\"/g" "${BUILDKITE_PATH}"
 
 # Change buildkite user
 sed -i "s/\\/var\\/lib\\/buildkite-agent/\\/home\\/${USER}\\/buildkite-agent/g" "${BUILDKITE_PATH}"
-sed -i "s/User=admin/User=${USER}/g" "${BUILDKITE_SERVICE_PATH}"
+sed -i "s/User=buildkite-agent/User=${USER}/g" "${BUILDKITE_SERVICE_PATH}"
 sed -i "s/Environment=HOME=\\/var\\/lib\\/buildkite-agent/Environment=HOME=\\/home\\/${USER}\\/buildkite-agent/g" "${BUILDKITE_SERVICE_PATH}"
 
 # Restart buildkite
-systemctl restart buildkite-agent
 systemctl daemon-reload
 systemctl restart buildkite-agent

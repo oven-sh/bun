@@ -43,6 +43,8 @@ for (let key in bunEnv) {
   }
 }
 
+delete bunEnv.NODE_ENV;
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;

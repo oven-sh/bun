@@ -43,7 +43,7 @@ echo "deb [signed-by=/usr/share/keyrings/buildkite-agent-archive-keyring.gpg] ht
 
 # Install dependencies
 apt-get update
-apt-get install -y \
+apt-get install -y --no-install-recommends \
   bash \
   software-properties-common \
   build-essential \
@@ -59,6 +59,7 @@ apt-get install -y \
   libc++abi-${LLVM_VERSION}-dev \
   make \
   cmake \
+  ccache \
   ninja-build \
   file \
   libc-dev \
@@ -86,6 +87,8 @@ apt-get install -y \
 npm install -g \
   pnpm@${PNPM_VERSION} \
   bun@${BUN_VERSION}
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # Read the buildkite token
 BUILDKITE_TOKEN="${1}"

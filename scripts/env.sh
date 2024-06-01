@@ -44,9 +44,8 @@ export CMAKE_FLAGS=(
   -DCMAKE_C_STANDARD_REQUIRED=ON
 )
 
-CCACHE=$(which ccache || which sccache)
+CCACHE=$(which ccache || which sccache || '')
 if [ -n "$CCACHE" ]; then
-  echo "Using ccache: $CCACHE"
   CMAKE_FLAGS+=(
     -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE"
     -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE"
@@ -71,7 +70,10 @@ mkdir -p $BUN_DEPS_OUT_DIR
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "C Compiler: ${CC}"
     echo "C++ Compiler: ${CXX}"
+    if [ -n "$CCACHE" ]; then
+      echo "Ccache: ${CCACHE}"
+    fi
     if [[ $(uname -s) == 'Darwin' ]]; then
-        echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
+      echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
     fi
 fi

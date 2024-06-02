@@ -3513,6 +3513,9 @@ pub const Package = extern struct {
                             for (j + 1..total_dependencies_count) |k| {
                                 dependencies[k - 1] = dependencies[k];
                             }
+
+                            // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
+                            // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
                             dependencies[total_dependencies_count - 1] = dependency;
                             continue :list;
                         }

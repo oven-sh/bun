@@ -69,7 +69,7 @@ Some methods are not optimized yet.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟢 Fully implemented.
+🟢 APIs are implemented, but `Agent` is not always used.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 

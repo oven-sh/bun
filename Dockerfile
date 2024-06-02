@@ -256,7 +256,7 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN install_packages autoconf automake libtool pkg-config 
 
-COPY .scripts ${BUN_DIR}/.scripts
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 WORKDIR $BUN_DIR

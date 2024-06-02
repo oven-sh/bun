@@ -1842,10 +1842,20 @@ pub const VirtualMachine = struct {
                             ext_for_loader = ".js";
                         } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
                             ext_for_loader = ".ts";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
+                            ext_for_loader = ".json";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
+                            ext_for_loader = ".jsonc";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
+                            ext_for_loader = ".jsonc";
+                        } else if (mime_type.category == .text) {
+                            ext_for_loader = ".txt";
                         } else {
+                            // Be maximally permissive.
                             ext_for_loader = ".tsx";
                         }
                     } else {
+                        // Be maximally permissive.
                         ext_for_loader = ".tsx";
                     }
 

@@ -1500,16 +1500,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         resp.writeStatus("200 OK");
                         ctx.flags.has_written_status = true;
 
-                        resp.writeHeader("content-type", MimeType.html.value);
-                        resp.writeHeader("content-encoding", "gzip");
-                        resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
+                        resp.writeHeader("Content-Type", MimeType.html.value);
+                        resp.writeHeader("Content-Encoding", "gzip");
+                        resp.writeHeaderInt("Content-Length", welcome_page_html_gz.len);
                         ctx.end(welcome_page_html_gz, ctx.shouldCloseConnection());
                         return;
                     }
                     const missing_content = "Welcome to Bun! To get started, return a Response object.";
                     resp.writeStatus("200 OK");
-                    resp.writeHeader("content-type", MimeType.text.value);
-                    resp.writeHeaderInt("content-length", missing_content.len);
+                    resp.writeHeader("Content-Type", MimeType.text.value);
+                    resp.writeHeaderInt("Content-Length", missing_content.len);
                     ctx.flags.has_written_status = true;
                     ctx.end(missing_content, ctx.shouldCloseConnection());
                 }
@@ -1528,7 +1528,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.has_written_status = true;
                 if (this.resp) |resp| {
                     resp.writeStatus("500 Internal Server Error");
-                    resp.writeHeader("content-type", MimeType.html.value);
+                    resp.writeHeader("Content-Type", MimeType.html.value);
                 }
             }
 
@@ -2981,7 +2981,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     else => {
                         if (!this.flags.has_written_status) {
                             resp.writeStatus("500 Internal Server Error");
-                            resp.writeHeader("content-type", "text/plain");
+                            resp.writeHeader("Content-Type", MimeType.text.value);
                             this.flags.has_written_status = true;
                         }
 
@@ -3234,7 +3234,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // we may not know the content-type when streaming
                 (!this.blob.isDetached() or content_type.value.ptr != MimeType.other.value.ptr))
             {
-                resp.writeHeader("content-type", content_type.value);
+                resp.writeHeader("Content-Type", content_type.value);
             }
 
             // automatically include the filename when:
@@ -3247,7 +3247,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var filename_buf: [1024]u8 = undefined;
 
                         resp.writeHeader(
-                            "content-disposition",
+                            "Content-Disposition",
                             std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
                         );
                     }
@@ -3255,7 +3255,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.flags.needs_content_length) {
-                resp.writeHeaderInt("content-length", size);
+                resp.writeHeaderInt("Content-Length", size);
                 this.flags.needs_content_length = false;
             }
 
@@ -3263,7 +3263,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 var content_range_buf: [1024]u8 = undefined;
 
                 resp.writeHeader(
-                    "content-range",
+                    "Content-Range",
                     std.fmt.bufPrint(
                         &content_range_buf,
                         // we omit the full size of the Blob because it could
@@ -5230,15 +5230,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             if (sec_websocket_key_str.len == 0) {
-                sec_websocket_key_str = ZigString.init(upgrader.req.header("sec-websocket-key") orelse "");
+                sec_websocket_key_str = ZigString.init(upgrader.req.header("Sec-WebSocket-Key") orelse "");
             }
 
             if (sec_websocket_key_str.len == 0) {
                 return JSC.jsBoolean(false);
             }
 
-            var sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
-            var sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
+            var sec_websocket_protocol = ZigString.init(upgrader.req.header("Sec-WebSocket-Protocol") orelse "");
+            var sec_websocket_extensions = ZigString.init(upgrader.req.header("Sec-WebSocket-Extensions") orelse "");
 
             if (sec_websocket_protocol.len > 0) {
                 sec_websocket_protocol.markUTF8();
@@ -5996,7 +5996,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer this.pending_requests -= 1;
             req.setYield(false);
 
-            if (req.header("open-in-editor") == null) {
+            if (req.header("Open-In-Editor") == null) {
                 resp.writeStatus("501 Not Implemented");
                 resp.end("Viewing source without opening in editor is not implemented yet!", false);
                 return;
@@ -6004,8 +6004,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
             ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
-            const line: ?string = req.header("editor-line");
-            const column: ?string = req.header("editor-column");
+            const line: ?string = req.header("Editor-Line");
+            const column: ?string = req.header("Editor-Column");
 
             if (ctx.editor) |editor| {
                 resp.writeStatus("200 Opened");
@@ -6058,7 +6058,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
-                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                    if (ctx.req.header("Sec-Fetch-Dest")) |fetch_dest| {
                         if (strings.eqlComptime(fetch_dest, "document")) {
                             break :brk true;
                         }
@@ -6073,7 +6073,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // we do this only for HTTP methods that support request bodies, so not GET, HEAD, OPTIONS, or CONNECT.
             if ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()) {
                 const req_len: usize = brk: {
-                    if (req.header("content-length")) |content_length| {
+                    if (req.header("Content-Length")) |content_length| {
                         break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
                     }
 
@@ -6088,7 +6088,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
 
                 ctx.request_body_content_len = req_len;
-                ctx.flags.is_transfer_encoding = req.header("transfer-encoding") != null;
+                ctx.flags.is_transfer_encoding = req.header("Transfer-Encoding") != null;
                 if (req_len > 0 or ctx.flags.is_transfer_encoding) {
                     // we defer pre-allocating the body until we receive the first chunk
                     // that way if the client is lying about how big the body is or the client aborts

@@ -110,6 +110,10 @@ export fn Bun__revokeObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JS
         return JSC.JSValue.undefined;
     }
     const str = arguments.ptr[0].toBunString(globalObject);
+    if (!str.hasPrefixComptime("blob:")) {
+        return JSC.JSValue.undefined;
+    }
+
     const slice = str.toUTF8WithoutRef(bun.default_allocator);
     defer slice.deinit();
     defer str.deref();

@@ -153,10 +153,10 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 
         if (value.is8Bit()) {
             const auto valueSpan = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
+            res->writeHeader(std::string_view("Set-Cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
         } else {
             WTF::CString valueStr = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
+            res->writeHeader(std::string_view("Set-Cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
         }
     }
 

@@ -61,7 +61,7 @@ Some methods are not optimized yet.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. Outgoing client request body streaming is currently buffered instead of being streamed.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 

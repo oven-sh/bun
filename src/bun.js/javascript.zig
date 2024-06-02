@@ -1834,13 +1834,13 @@ pub const VirtualMachine = struct {
 
                         ext_for_loader = current_path.name.ext;
                     } else if (blob.getMimeTypeOrContentType()) |mime_type| {
-                        if (strings.hasPrefixComptime(mime_type, "application/javascript-jsx")) {
+                        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
                             ext_for_loader = ".jsx";
-                        } else if (strings.hasPrefixComptime(mime_type, "application/typescript-jsx")) {
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
                             ext_for_loader = ".tsx";
-                        } else if (strings.hasPrefixComptime(mime_type, "application/javascript")) {
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
                             ext_for_loader = ".js";
-                        } else if (strings.hasPrefixComptime(mime_type, "application/typescript")) {
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
                             ext_for_loader = ".ts";
                         } else {
                             ext_for_loader = ".tsx";

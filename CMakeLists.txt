@@ -1283,11 +1283,11 @@ if(USE_CUSTOM_MIMALLOC)
     elseif(APPLE)
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "Using debug mimalloc")
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.o")
         else()
-            # https://github.com/microsoft/mimalloc/issues/512
-            # Linking mimalloc via object file on macOS x64 can cause heap corruption
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+            # Note: https://github.com/microsoft/mimalloc/issues/512
+            # It may have been a bug in our code at the time.
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
         endif()
     else()
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")

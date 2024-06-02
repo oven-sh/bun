@@ -178,6 +178,7 @@ pub const WebWorker = struct {
             .allocator = this.arena.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
+            .graph = this.parent.standalone_module_graph,
         });
         vm.allocator = this.arena.allocator();
         vm.arena = &this.arena;

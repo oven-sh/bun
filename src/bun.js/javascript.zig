@@ -1833,6 +1833,20 @@ pub const VirtualMachine = struct {
                         }
 
                         ext_for_loader = current_path.name.ext;
+                    } else if (blob.getMimeTypeOrContentType()) |mime_type| {
+                        if (strings.hasPrefixComptime(mime_type, "application/javascript-jsx")) {
+                            ext_for_loader = ".jsx";
+                        } else if (strings.hasPrefixComptime(mime_type, "application/typescript-jsx")) {
+                            ext_for_loader = ".tsx";
+                        } else if (strings.hasPrefixComptime(mime_type, "application/javascript")) {
+                            ext_for_loader = ".js";
+                        } else if (strings.hasPrefixComptime(mime_type, "application/typescript")) {
+                            ext_for_loader = ".ts";
+                        } else {
+                            ext_for_loader = ".tsx";
+                        }
+                    } else {
+                        ext_for_loader = ".tsx";
                     }
 
                     if (!blob.needsToReadFile()) {

@@ -1,5 +1,24 @@
 import { test, expect } from "bun:test";
 
+test("blob: imports have sourcemapped stacktraces", async () => {
+  const blob = new Blob(
+    [
+      `
+    export function uhOh(very: any): boolean {
+      return Bun.inspect(new Error());  
+    }
+  `,
+    ],
+    { type: "application/typescript" },
+  );
+
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const { uhOh } = await import(url);
+  expect(uhOh()).toContain(`uhOh(very: any): boolean`);
+  URL.revokeObjectURL(url);
+});
+
 test("Blob.slice", async () => {
   const blob = new Blob(["Bun", "Foo"]);
   const b1 = blob.slice(0, 3, "Text/HTML");

@@ -1721,7 +1721,7 @@ pub const Printer = struct {
             try Yarn.packages(this, Writer, writer);
         }
 
-        pub fn packages(
+        fn packages(
             this: *Printer,
             comptime Writer: type,
             writer: Writer,
@@ -1736,8 +1736,9 @@ pub const Printer = struct {
             const dependencies_buffer = this.lockfile.buffers.dependencies.items;
             const RequestedVersion = std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80);
             var requested_versions = RequestedVersion.init(this.lockfile.allocator);
-            var all_requested_versions = try this.lockfile.allocator.alloc(Dependency.Version, resolutions_buffer.len);
-            defer this.lockfile.allocator.free(all_requested_versions);
+            const all_requested_versions_buf = try this.lockfile.allocator.alloc(Dependency.Version, resolutions_buffer.len);
+            var all_requested_versions = all_requested_versions_buf;
+            defer this.lockfile.allocator.free(all_requested_versions_buf);
             const package_count = @as(PackageID, @truncate(names.len));
             var alphabetized_names = try this.lockfile.allocator.alloc(PackageID, package_count - 1);
             defer this.lockfile.allocator.free(alphabetized_names);
@@ -3499,11 +3500,13 @@ pub const Package = extern struct {
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
                     if (comptime group.behavior.isOptional()) {
-                        for (dependencies[0..total_dependencies_count]) |*dep| {
-                            if (dep.name_hash == key.hash) {
-                                // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
-                                // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
-                                dep.* = dependency;
+                        for (0..total_dependencies_count) |j| {
+                            if (dependencies[j].name_hash == key.hash) {
+                                // need to shift dependencies after the duplicate to maintain sort order
+                                for (j + 1..total_dependencies_count) |k| {
+                                    dependencies[k - 1] = dependencies[k];
+                                }
+                                dependencies[total_dependencies_count - 1] = dependency;
                                 continue :list;
                             }
                         }

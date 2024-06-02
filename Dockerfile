@@ -256,15 +256,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN install_packages autoconf automake libtool pkg-config 
 
-COPY Makefile ${BUN_DIR}/Makefile
+COPY .scripts ${BUN_DIR}/.scripts
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make libarchive \
-  && rm -rf src/deps/libarchive Makefile
+  && bash ./scripts/build-libarchive.sh && rm -rf src/deps/libarchive .scripts
 
 FROM bun-base as tinycc
 

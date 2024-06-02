@@ -3069,6 +3069,42 @@ test("multiple versions with binary map", async () => {
   );
 });
 
+test("duplicate dependency in optionalDependencies maintains sort order", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        // `duplicate-optional` has `no-deps` as a normal dependency (1.0.0) and as an
+        // optional dependency (1.0.1). The optional dependency version should be installed and
+        // the sort order should remain the same (tested by `bun-debug bun.lockb`).
+        "duplicate-optional": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+
+  const { stdout, exited } = spawn({
+    cmd: [bunExe(), "bun.lockb"],
+    cwd: packageDir,
+    stderr: "inherit",
+    stdout: "pipe",
+    env,
+  });
+
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).toMatchSnapshot();
+  expect(await exited).toBe(0);
+});
+
 test("missing package on reinstall, some with binaries", async () => {
   await writeFile(
     join(packageDir, "package.json"),

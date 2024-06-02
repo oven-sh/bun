@@ -91,15 +91,36 @@ pub const WebWorker = struct {
         defer parent.bundler.setLog(prev_log);
         defer temp_log.deinit();
 
-        var resolved_entry_point = parent.bundler.resolveEntryPoint(spec_slice.slice()) catch {
-            const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
-            error_message.* = out;
-            return null;
-        };
+        var resolved_entry_point: bun.resolver.Result = undefined;
 
-        const path = resolved_entry_point.path() orelse {
-            error_message.* = bun.String.static("Worker entry point is missing");
-            return null;
+        const path = brk: {
+            const str = spec_slice.slice();
+            if (parent.standalone_module_graph) |graph| {
+                if (graph.find(str) != null) {
+                    break :brk str;
+                }
+            }
+
+            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(str)) {
+                if (JSC.WebCore.ObjectURLRegistry.singleton().has(str["blob:".len..])) {
+                    break :brk str;
+                } else {
+                    error_message.* = bun.String.static("Blob URL is missing");
+                    return null;
+                }
+            }
+
+            resolved_entry_point = parent.bundler.resolveEntryPoint(str) catch {
+                const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+                error_message.* = out;
+                return null;
+            };
+
+            const entry_path = resolved_entry_point.path() orelse {
+                error_message.* = bun.String.static("Worker entry point is missing");
+                return null;
+            };
+            break :brk entry_path.text;
         };
 
         var worker = bun.default_allocator.create(WebWorker) catch @panic("OOM");
@@ -109,7 +130,7 @@ pub const WebWorker = struct {
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
-            .specifier = bun.default_allocator.dupe(u8, path.text) catch @panic("OOM"),
+            .specifier = bun.default_allocator.dupe(u8, path) catch @panic("OOM"),
             .store_fd = parent.bundler.resolver.store_fd,
             .name = brk: {
                 if (!name_str.isEmpty()) {

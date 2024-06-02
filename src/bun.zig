@@ -3458,3 +3458,5 @@ pub const timespec = extern struct {
         return now().addMs(interval);
     }
 };
+
+pub const UUID = @import("./bun.js/uuid.zig");

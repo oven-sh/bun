@@ -88,9 +88,9 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
-        var mini_store = bun.default_allocator.create(MiniStore) catch @panic("OOM");
+        var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
         mini_store.* = .{
-            .heap = bun.MimallocArena.init() catch @panic("OOM"),
+            .heap = bun.MimallocArena.init() catch bun.outOfMemory(),
             .memory_allocator = undefined,
         };
         mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };

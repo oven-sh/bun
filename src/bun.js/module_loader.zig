@@ -433,7 +433,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch @panic("out of memory!");
+                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -888,7 +888,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
                 concurrent_task.* = .{
                     .task = JSC.Task.init(this),
                     .auto_delete = true,

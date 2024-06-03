@@ -906,7 +906,7 @@ pub fn checkServerIdentity(
                 if (client.signals.get(.cert_errors)) {
                     // clone the relevant data
                     const cert_size = BoringSSL.i2d_X509(x509, null);
-                    const cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch @panic("OOM");
+                    const cert = bun.default_allocator.alloc(u8, @intCast(cert_size)) catch bun.outOfMemory();
                     var cert_ptr = cert.ptr;
                     const result_size = BoringSSL.i2d_X509(x509, &cert_ptr);
                     assert(result_size == cert_size);
@@ -918,11 +918,11 @@ pub fn checkServerIdentity(
 
                     client.state.certificate_info = .{
                         .cert = cert,
-                        .hostname = bun.default_allocator.dupe(u8, hostname) catch @panic("OOM"),
+                        .hostname = bun.default_allocator.dupe(u8, hostname) catch bun.outOfMemory(),
                         .cert_error = .{
                             .error_no = certError.error_no,
-                            .code = bun.default_allocator.dupeZ(u8, certError.code) catch @panic("OOM"),
-                            .reason = bun.default_allocator.dupeZ(u8, certError.reason) catch @panic("OOM"),
+                            .code = bun.default_allocator.dupeZ(u8, certError.code) catch bun.outOfMemory(),
+                            .reason = bun.default_allocator.dupeZ(u8, certError.reason) catch bun.outOfMemory(),
                         },
                     };
 
@@ -2676,7 +2676,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
             var needs_move = true;
             if (this.state.response_message_buffer.list.items.len > 0) {
                 // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-                this.state.response_message_buffer.appendSliceExact(incoming_data) catch @panic("Out of memory");
+                this.state.response_message_buffer.appendSliceExact(incoming_data) catch bun.outOfMemory();
                 to_read = this.state.response_message_buffer.list.items;
                 needs_move = false;
             }

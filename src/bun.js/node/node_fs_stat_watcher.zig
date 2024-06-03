@@ -41,7 +41,7 @@ pub const StatWatcherScheduler = struct {
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
     pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
-        const this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
+        const this = allocator.create(StatWatcherScheduler) catch bun.outOfMemory();
         this.* = .{};
         return this;
     }
@@ -321,7 +321,7 @@ pub const StatWatcher = struct {
         pub fn createAndSchedule(
             watcher: *StatWatcher,
         ) void {
-            var task = bun.default_allocator.create(InitialStatTask) catch @panic("out of memory");
+            var task = bun.default_allocator.create(InitialStatTask) catch bun.outOfMemory();
             task.* = .{ .watcher = watcher };
             JSC.WorkPool.schedule(&task.task);
         }

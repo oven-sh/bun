@@ -1733,7 +1733,7 @@ pub const Fetch = struct {
                 }
             } else {
                 if (success) {
-                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
+                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch bun.outOfMemory();
                 }
                 // reset for reuse
                 task.response_buffer.reset();
@@ -1799,7 +1799,7 @@ pub const Fetch = struct {
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;
-        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
+        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);

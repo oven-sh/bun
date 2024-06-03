@@ -737,7 +737,7 @@ pub const Body = struct {
                         );
                     } else {
                         new_blob = Blob.init(
-                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch @panic("Out of memory"),
+                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
                             bun.default_allocator,
                             JSC.VirtualMachine.get().global,
                         );
@@ -1313,7 +1313,7 @@ pub const BodyValueBufferer = struct {
 
         const chunk = stream.slice();
         log("onStreamPipe chunk {}", .{chunk.len});
-        _ = sink.stream_buffer.write(chunk) catch @panic("OOM");
+        _ = sink.stream_buffer.write(chunk) catch bun.outOfMemory();
         if (stream.isDone()) {
             const bytes = sink.stream_buffer.list.items;
             log("onStreamPipe done {}", .{bytes.len});
@@ -1468,7 +1468,7 @@ pub const BodyValueBufferer = struct {
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
-                    _ = sink.stream_buffer.write(bytes) catch @panic("OOM");
+                    _ = sink.stream_buffer.write(bytes) catch bun.outOfMemory();
                     return;
                 },
             }

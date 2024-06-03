@@ -408,7 +408,7 @@ pub const JSBundler = struct {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
 
-                    const key = prop.toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+                    const key = prop.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
 
                     // value is always cloned
                     const value = val.toSlice(bun.default_allocator);
@@ -443,7 +443,7 @@ pub const JSBundler = struct {
                         Api.Loader,
                         options.Loader.api_names,
                     );
-                    loader_names[loader_iter.i] = prop.toOwnedSlice(bun.default_allocator) catch @panic("OOM");
+                    loader_names[loader_iter.i] = prop.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
                 }
 
                 this.loaders = Api.LoaderMap{

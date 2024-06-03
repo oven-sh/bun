@@ -60,7 +60,7 @@ pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
         if (e != error.OutOfMemory) bun.outOfMemory();
     }
-    @panic("Out of memory");
+    bun.outOfMemory();
 }
 
 const log = bun.Output.scoped(.SHELL, false);

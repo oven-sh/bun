@@ -1406,15 +1406,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
             var class_name = value.getClassInfoName() orelse bun.String.empty;
             defer class_name.deref();
+            const globalThis: *JSC.JSGlobalObject = ctx.server.globalThis;
 
             Output.enableBuffering();
             var writer = Output.errorWriter();
 
             if (class_name.eqlComptime("Response")) {
                 Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
-            } else if (!value.isEmpty()) {
+            } else if (!value.isEmpty() and !globalThis.hasException()) {
                 var formatter = JSC.ConsoleObject.Formatter{
-                    .globalThis = ctx.server.globalThis,
+                    .globalThis = globalThis,
                     .quote_strings = true,
                 };
                 Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(formatter.globalThis, &formatter)});
@@ -1423,7 +1424,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             Output.flush();
-            JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, ctx.server.globalThis);
+            if (!globalThis.hasException()) {
+                JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+            }
             Output.flush();
             ctx.renderMissing();
         }

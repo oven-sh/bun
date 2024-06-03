@@ -2108,7 +2108,7 @@ pub const VirtualMachine = struct {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 error.NameTooLong,
-            ) catch @panic("Out of Memory");
+            ) catch bun.outOfMemory();
             const msg = logger.Msg{
                 .data = logger.rangeData(
                     null,
@@ -3774,7 +3774,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
             }
 
-            var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
+            var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
                 .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,

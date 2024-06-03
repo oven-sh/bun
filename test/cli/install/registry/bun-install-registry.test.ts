@@ -2370,7 +2370,63 @@ describe("workspaces", async () => {
   }
 });
 
+test("name from manifest is scoped and url encoded", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        // `name` in the manifest for these packages is manually changed
+        // to use `%40` and `%2f`
+        "@url/encoding.2": "1.0.1",
+        "@url/encoding.3": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const files = await Promise.all([
+    file(join(packageDir, "node_modules", "@url", "encoding.2", "package.json")).json(),
+    file(join(packageDir, "node_modules", "@url", "encoding.3", "package.json")).json(),
+  ]);
+
+  expect(files).toEqual([
+    { name: "@url/encoding.2", version: "1.0.1" },
+    { name: "@url/encoding.3", version: "1.0.1" },
+  ]);
+});
+
 describe("update", () => {
+  test("duplicate peer dependency (one package is invalid_package_id)", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+        peerDependencies: {
+          "no-deps": "^1.0.0",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+      },
+      peerDependencies: {
+        "no-deps": "^1.0.0",
+      },
+    });
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.1.0",
+    });
+  });
   test("dist-tags", async () => {
     await write(
       join(packageDir, "package.json"),
@@ -3067,6 +3123,42 @@ test("multiple versions with binary map", async () => {
   expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(
     join("..", "map-bin-multiple", "bin", "map-bin"),
   );
+});
+
+test("duplicate dependency in optionalDependencies maintains sort order", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        // `duplicate-optional` has `no-deps` as a normal dependency (1.0.0) and as an
+        // optional dependency (1.0.1). The optional dependency version should be installed and
+        // the sort order should remain the same (tested by `bun-debug bun.lockb`).
+        "duplicate-optional": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+
+  const { stdout, exited } = spawn({
+    cmd: [bunExe(), "bun.lockb"],
+    cwd: packageDir,
+    stderr: "inherit",
+    stdout: "pipe",
+    env,
+  });
+
+  const out = await Bun.readableStreamToText(stdout);
+  expect(out).toMatchSnapshot();
+  expect(await exited).toBe(0);
 });
 
 test("missing package on reinstall, some with binaries", async () => {

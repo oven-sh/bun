@@ -141,21 +141,20 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 20);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 23);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
     object->putDirect(
         vm, JSC::Identifier::fromString(vm, "bun"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__version + 1 /* remove "v" prefix */))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_boringssl))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s),
         // https://github.com/oven-sh/bun/issues/7921
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         JSC::JSValue(JSC::jsString(vm, String("1.1.0"_s), 0)));
+
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_libarchive))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
@@ -178,12 +177,15 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_c_ares))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
-
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("11.3.244.8-node.15"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_lshpack))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_zstd))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("12.4.254.14-node.12"_s))), 0);
 #if OS(WINDOWS)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString(uv_version_string()))), 0);
 #else
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.46.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.48.0"_s))), 0);
 #endif
     object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("9"_s))), 0);
 

@@ -5663,7 +5663,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
             };
 
-            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch bun.outOfMemory();
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
@@ -5807,7 +5807,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
-            var server = bun.default_allocator.create(ThisServer) catch @panic("Out of memory!");
+            var server = bun.default_allocator.create(ThisServer) catch bun.outOfMemory();
             server.* = .{
                 .globalThis = globalThis,
                 .config = config,
@@ -5817,7 +5817,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
 
             if (RequestContext.pool == null) {
-                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
+                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch bun.outOfMemory();
                 RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(server.allocator);
             }
 

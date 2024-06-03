@@ -2171,10 +2171,10 @@ pub fn detectGlobSyntax(potential_pattern: []const u8) bool {
             if (std.mem.indexOfScalar(u8, slice, token)) |idx| {
                 // Check for even number of backslashes preceding the
                 // token to know that it's not escaped
-                var i: usize = idx -| 1;
+                var i = idx;
                 var backslash_count: u16 = 0;
 
-                while (i >= 0 and potential_pattern[i] == '\\') : (i -= 1) {
+                while (i > 0 and potential_pattern[i - 1] == '\\') : (i -= 1) {
                     backslash_count += 1;
                 }
 

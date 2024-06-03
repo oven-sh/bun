@@ -607,7 +607,9 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
     return 0;
   }
 
-  s = context->on_writable(s);
+  if (s->handshake_state == HANDSHAKE_COMPLETED) {
+    s = context->on_writable(s);
+  }
 
   return s;
 }

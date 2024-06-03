@@ -1179,7 +1179,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -1270,7 +1270,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -5502,7 +5502,7 @@ pub const NodeFS = struct {
                                 return .{
                                     .result = .{
                                         .buffer = Buffer.fromBytes(
-                                            bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                             bun.default_allocator,
                                             .Uint8Array,
                                         ),
@@ -5511,13 +5511,13 @@ pub const NodeFS = struct {
                             } else if (comptime string_type == .default)
                                 return .{
                                     .result = .{
-                                        .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                        .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 }
                             else
                                 return .{
                                     .result = .{
-                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 };
                         }

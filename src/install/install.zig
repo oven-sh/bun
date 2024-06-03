@@ -88,9 +88,9 @@ pub fn initializeMiniStore() void {
         pub threadlocal var instance: ?*@This() = null;
     };
     if (MiniStore.instance == null) {
-        var mini_store = bun.default_allocator.create(MiniStore) catch @panic("OOM");
+        var mini_store = bun.default_allocator.create(MiniStore) catch bun.outOfMemory();
         mini_store.* = .{
-            .heap = bun.MimallocArena.init() catch @panic("OOM"),
+            .heap = bun.MimallocArena.init() catch bun.outOfMemory(),
             .memory_allocator = undefined,
         };
         mini_store.memory_allocator = .{ .allocator = mini_store.heap.allocator() };
@@ -2453,9 +2453,9 @@ pub const PackageManager = struct {
     /// The package id corresponding to the workspace the install is happening in
     root_package_id: struct {
         id: ?PackageID = null,
-        pub fn get(this: *@This(), manager: *PackageManager) PackageID {
+        pub fn get(this: *@This(), lockfile: *Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
             return this.id orelse {
-                this.id = manager.lockfile.getWorkspacePackageID(manager.workspace_name_hash);
+                this.id = lockfile.getWorkspacePackageID(workspace_name_hash);
                 return this.id.?;
             };
         }
@@ -3713,7 +3713,7 @@ pub const PackageManager = struct {
     ) !?ResolvedPackageResult {
         const should_update = this.to_update and
             // If updating, only update packages in the current workspace
-            this.isRootDependency(dependency_id) and
+            this.lockfile.isRootDependency(this, dependency_id) and
             // no need to do a look up if update requests are empty (`bun update` with no args)
             (this.update_requests.len == 0 or
             this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
@@ -4365,16 +4365,6 @@ pub const PackageManager = struct {
         }
 
         try tmpfile.promoteToCWD(tmpname, "yarn.lock");
-    }
-
-    // /// Is this a direct dependency of the workspace root package.json?
-    pub fn isWorkspaceRootDependency(this: *PackageManager, id: DependencyID) bool {
-        return this.lockfile.packages.items(.dependencies)[0].contains(id);
-    }
-
-    /// Is this a direct dependency of the workspace the install is taking place in?
-    pub fn isRootDependency(this: *PackageManager, id: DependencyID) bool {
-        return this.lockfile.packages.items(.dependencies)[this.root_package_id.get(this)].contains(id);
     }
 
     fn enqueueDependencyWithMain(
@@ -6942,6 +6932,8 @@ pub const PackageManager = struct {
                                         const is_alias = entry.value.is_alias;
                                         const dep_name = entry.key;
                                         for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
+                                            if (package_id == invalid_package_id) continue;
+
                                             const resolution = resolutions[package_id];
                                             if (resolution.tag != .npm) continue;
 
@@ -8263,7 +8255,6 @@ pub const PackageManager = struct {
         clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
         clap.parseParam("-g, --global                          Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
-        clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
@@ -8280,6 +8271,7 @@ pub const PackageManager = struct {
     };
 
     pub const update_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
     };
 
@@ -8399,6 +8391,12 @@ pub const PackageManager = struct {
                         \\<b>Examples:<r>
                         \\  <d>Update all dependencies:<r>
                         \\  <b><green>bun update<r>
+                        \\
+                        \\  <d>Update all dependencies to latest:<r>
+                        \\  <b><green>bun update --latest<r>
+                        \\
+                        \\  <d>Update specific packages:<r>
+                        \\  <b><green>bun update zod jquery@3<r>
                         \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
                     ;
@@ -8615,7 +8613,9 @@ pub const PackageManager = struct {
                 };
             }
 
-            cli.latest = args.flag("--latest");
+            if (comptime subcommand == .update) {
+                cli.latest = args.flag("--latest");
+            }
 
             const specified_backend: ?PackageInstall.Method = brk: {
                 if (args.option("--backend")) |backend_| {
@@ -10989,13 +10989,14 @@ pub const PackageManager = struct {
                     const lockfile = manager.lockfile;
                     const packages = lockfile.packages.slice();
                     const resolutions = packages.items(.resolution);
-                    const workspace_package_id = manager.root_package_id.get(manager);
+                    const workspace_package_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
                     const workspace_dep_list = packages.items(.dependencies)[workspace_package_id];
                     const workspace_res_list = packages.items(.resolutions)[workspace_package_id];
                     const workspace_deps = workspace_dep_list.get(lockfile.buffers.dependencies.items);
                     const workspace_package_ids = workspace_res_list.get(lockfile.buffers.resolutions.items);
                     for (workspace_deps, workspace_package_ids) |dep, package_id| {
                         if (dep.version.tag != .npm and dep.version.tag != .dist_tag) continue;
+                        if (package_id == invalid_package_id) continue;
 
                         if (manager.updating_packages.getPtr(dep.name.slice(lockfile.buffers.string_bytes.items))) |entry_ptr| {
                             const original_resolution: Resolution = resolutions[package_id];

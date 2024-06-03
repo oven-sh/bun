@@ -462,7 +462,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             var body = data;
             if (this.body.items.len > 0) {
-                this.body.appendSlice(bun.default_allocator, data) catch @panic("out of memory");
+                this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
                 body = this.body.items;
             }
 
@@ -484,7 +484,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     error.ShortRead => {
                         if (this.body.items.len == 0) {
-                            this.body.appendSlice(bun.default_allocator, data) catch @panic("out of memory");
+                            this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
                         }
                         return;
                     },

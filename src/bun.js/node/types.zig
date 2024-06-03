@@ -5057,6 +5057,8 @@ pub const Process = struct {
     pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
     pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
+    pub export const Bun__version_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
+    pub export const Bun__version_zstd: [*:0]const u8 = bun.Global.versions.zstd;
 };
 
 comptime {

@@ -1898,6 +1898,15 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
+        } else if (jsc_vm.standalone_module_graph) |graph| {
+            if (strings.hasPrefixComptime(specifier, "compiled://")) {
+                if (graph.files.contains(specifier)) {
+                    ret.result = null;
+                    ret.path = specifier;
+                } else {
+                    return error.ModuleNotFound;
+                }
+            }
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);

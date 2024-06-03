@@ -179,6 +179,13 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             /* Disable any instance of us in the pending ready poll list */
             us_poll_stop((struct us_poll_t *) s, s->context->loop);
         #endif
+
+        if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET) {
+            // Prevent entering TIME_WAIT state when forcefully closing
+            struct linger l = { 1, 0 };
+            setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
+        }
+
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
         /* Link this socket to the close-list and let it be deleted after this iteration */

@@ -1165,6 +1165,10 @@ fn NewSocket(comptime ssl: bool) type {
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
         detached: bool = false,
+
+        /// Prevent onClose from calling into JavaScript while we are finalizing
+        finalizing: bool = false,
+
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
@@ -1175,7 +1179,6 @@ fn NewSocket(comptime ssl: bool) type {
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
         owned_protos: bool = true,
-        did_call_open: bool = false,
         server_name: ?[]const u8 = null,
 
         // TODO: switch to something that uses `visitAggregate` and have the
@@ -1275,7 +1278,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
-            if (callback == .zero) return;
+            if (callback == .zero or this.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
                 return;
             }
@@ -1597,6 +1600,10 @@ fn NewSocket(comptime ssl: bool) type {
             this.detached = true;
             defer this.markInactive();
 
+            if (this.finalizing) {
+                return;
+            }
+
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unref(vm);
@@ -1634,7 +1641,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onData;
-            if (callback == .zero) return;
+            if (callback == .zero or this.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
                 return;
             }
@@ -2077,6 +2084,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) callconv(.C) void {
             log("finalize() {d}", .{@intFromPtr(this)});
+            this.finalizing = true;
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {

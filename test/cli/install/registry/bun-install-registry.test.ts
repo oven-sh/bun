@@ -2370,6 +2370,33 @@ describe("workspaces", async () => {
   }
 });
 
+test("name from manifest is scoped and url encoded", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        // `name` in the manifest for these packages is manually changed
+        // to use `%40` and `%2f`
+        "@url/encoding.2": "1.0.1",
+        "@url/encoding.3": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  const files = await Promise.all([
+    file(join(packageDir, "node_modules", "@url", "encoding.2", "package.json")).json(),
+    file(join(packageDir, "node_modules", "@url", "encoding.3", "package.json")).json(),
+  ]);
+
+  expect(files).toEqual([
+    { name: "@url/encoding.2", version: "1.0.1" },
+    { name: "@url/encoding.3", version: "1.0.1" },
+  ]);
+});
+
 describe("update", () => {
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(

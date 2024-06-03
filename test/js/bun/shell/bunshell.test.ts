@@ -113,6 +113,10 @@ describe("bunshell", () => {
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
+    escapeTest("✔", "✔");
+    escapeTest("lmao=✔", '"lmao=✔"');
+    escapeTest("元気かい、兄弟", "元気かい、兄弟");
+    escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
 
     describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";

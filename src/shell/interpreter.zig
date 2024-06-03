@@ -4574,8 +4574,9 @@ pub const Interpreter = struct {
                 }
 
                 const first_arg = this.args.items[0] orelse {
-                    // If no args then this is a bug
-                    @panic("No arguments provided");
+                    // Sometimes the expansion can result in an empty string
+                    this.parent.childDone(this, 0);
+                    return;
                 };
 
                 const first_arg_len = std.mem.len(first_arg);
@@ -6418,7 +6419,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
-                defer bun.default_allocator.destroy(task);
+                defer task.deinit();
                 this.state.exec.tasks_done += 1;
                 var output = task.takeOutput();
                 const err = task.err;
@@ -6499,6 +6500,11 @@ pub const Interpreter = struct {
                 concurrent_task: JSC.EventLoopTask,
 
                 const debug = bun.Output.scoped(.ShellMkdirTask, true);
+
+                pub fn deinit(this: *ShellMkdirTask) void {
+                    this.created_directories.deinit();
+                    bun.default_allocator.destroy(this);
+                }
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;

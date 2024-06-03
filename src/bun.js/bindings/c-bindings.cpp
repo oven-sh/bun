@@ -614,7 +614,7 @@ extern "C" void Bun__disableSOLinger(int fd)
 extern "C" void Bun__disableSOLinger(SOCKET fd)
 {
     struct linger l = { 1, 0 };
-    setsockopt(*fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
+    setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
 }
 
 #endif

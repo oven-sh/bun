@@ -2371,6 +2371,35 @@ describe("workspaces", async () => {
 });
 
 describe("update", () => {
+  test("duplicate peer dependency (one package is invalid_package_id)", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+        peerDependencies: {
+          "no-deps": "^1.0.0",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+      },
+      peerDependencies: {
+        "no-deps": "^1.0.0",
+      },
+    });
+
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.1.0",
+    });
+  });
   test("dist-tags", async () => {
     await write(
       join(packageDir, "package.json"),

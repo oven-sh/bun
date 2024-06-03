@@ -1548,9 +1548,10 @@ pub const CreateCommand = struct {
             , .{create_react_app_entry_point_path});
         }
 
-        const isEmptyDestination = std.mem.eql(u8, filesystem.relativeTo(destination), "");
+        const rel_destination = filesystem.relativeTo(destination);
+        const is_empty_destination = rel_destination.len == 0;
 
-        if (isEmptyDestination) {
+        if (is_empty_destination) {
             Output.pretty(
                 \\
                 \\<d>#<r><b> To get started, run:<r>
@@ -1571,7 +1572,7 @@ pub const CreateCommand = struct {
                 \\
                 \\
             , .{
-                filesystem.relativeTo(destination),
+                rel_destination,
                 start_command,
             });
         }

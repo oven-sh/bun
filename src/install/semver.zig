@@ -738,14 +738,13 @@ pub const Version = extern struct {
     ///
     /// The goal of this function is to avoid a complete parse of semver that's unused
     pub fn whichVersionIsPinned(input: string) PinnedVersion {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
         var i: usize = 0;
 
         const pinned: PinnedVersion = pinned: {
-            const remain = skipLeadingVersionCharacters(input);
-            _ = remain;
-
-            for (0..input.len) |j| {
-                switch (input[j]) {
+            for (0..version.len) |j| {
+                switch (version[j]) {
                     // newlines & whitespace
                     ' ',
                     '\t',
@@ -760,30 +759,35 @@ pub const Version = extern struct {
                     => {},
 
                     else => |c| {
-                        // Major pinned is the default. Since it is the first to appear, we can assume
-                        // it is major pinned and return early.
-                        if (c == '^') return .major;
-
                         i = j;
 
                         switch (c) {
-                            '~' => {
+                            '~', '^' => {
                                 i += 1;
 
-                                input = skipLeadingVersionCharacters(input[i..]);
+                                for (i..version.len) |k| {
+                                    switch (version[k]) {
+                                        ' ',
+                                        '\t',
+                                        '\n',
+                                        '\r',
+                                        std.ascii.control_code.vt,
+                                        std.ascii.control_code.ff,
+                                        => {
+                                            // `v` and `=` not included.
+                                            // `~v==1` would update to `^1.1.0` if versions `1.0.0`, `1.0.1`, `1.1.0`, and `2.0.0` are available
+                                            // note that `~` changes to `^`
+                                        },
 
-                                // for (input[i..]) |k| {
-                                //     ' ',
-                                //     '\t',
-                                //     '\n',
-                                //     '\r',
-                                //     std.ascii.control_code.vt,
-                                //     std.ascii.control_code.ff,
-                                //     'v',
-                                //     '=',
+                                        else => {
+                                            i = k;
+                                            break :pinned if (c == '~') .minor else .major;
+                                        },
+                                    }
+                                }
 
-                                // }
-
+                                // entire version after `~` is whitespace. invalid
+                                return .major;
                             },
 
                             '0'...'9' => break :pinned .patch,
@@ -800,79 +804,65 @@ pub const Version = extern struct {
             return .major;
         };
 
-        // var whitespace_length = strings.lengthOfLeadingWhitespaceASCII(input[i..]);
+        // `pinned` is `.major`, `.minor`, or `.patch`. Check for each version core number:
+        // - if major is missing, return `if (pinned == .patch) .major else pinned`
+        // - if minor is missing, return `if (pinned == .patch) .minor else pinned`
+        // - if patch is missing, return `pinned`
+        // - if there's whitespace or non-digit characters between core numbers, return `.major`
+        // - if the end is reached, return `pinned`
 
         // major
-        if (i >= input.len or !std.ascii.isDigit(input[i])) return .major;
-        var d = input[i];
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        var d = version[i];
         while (std.ascii.isDigit(d)) {
             i += 1;
-            if (i >= input.len) return .major; // version ends at major, so it's actually major pinned
-            d = input[i];
+            if (i >= version.len) return if (pinned == .patch) .major else pinned;
+            d = version[i];
         }
 
-        if (d != '.') return .major; // invalid
+        if (d != '.') return .major;
 
         // minor
         i += 1;
-        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
-        d = input[i];
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
         while (std.ascii.isDigit(d)) {
             i += 1;
-            if (i >= input.len) return false;
-            d = input[i];
+            if (i >= version.len) return if (pinned == .patch) .minor else pinned;
+            d = version[i];
         }
 
-        if (d != '.') return false;
+        if (d != '.') return .major;
 
         // patch
         i += 1;
-        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
-        d = input[i];
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
         while (std.ascii.isDigit(d)) {
             i += 1;
 
             // patch is done and at input end, valid
-            if (i >= input.len) return true;
-            d = input[i];
+            if (i >= version.len) return pinned;
+            d = version[i];
         }
 
         // Skip remaining valid pre/build tag characters and whitespace.
         // Does not validate whitespace used inside pre/build tags.
-        if (!validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) return false;
+        if (!validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) return .major;
         i += 1;
 
         // at this point the semver is valid so we can return true if it ends
-        if (i >= input.len) return pinned;
-        d = input[i];
-        while (validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) {
+        if (i >= version.len) return pinned;
+        d = version[i];
+        while (validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) {
             i += 1;
-            if (i >= input.len) return pinned;
-            d = input[i];
+            if (i >= version.len) return pinned;
+            d = version[i];
         }
 
-        // We've come across a character that is not valid for tags and is not whitespace
-        // and there's still characters left in the semver. Assume multiple ranges
+        // We've come across a character that is not valid for tags or is whitespace.
+        // Trailing whitespace was trimmed so we can assume there's another range
         return .major;
-    }
-
-    fn skipLeadingVersionCharacters(input: string) string {
-        for (0..input.len) |i| {
-            switch (input[i]) {
-                ' ',
-                '\t',
-                '\n',
-                '\r',
-                std.ascii.control_code.vt,
-                std.ascii.control_code.ff,
-
-                'v',
-                '=',
-                => {},
-
-                else => return input[i..],
-            }
-        }
     }
 
     fn validPreOrBuildTagCharacter(c: u8) bool {

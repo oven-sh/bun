@@ -108,6 +108,14 @@ pub const Expect = struct {
         }
     };
 
+    pub fn getSignatureOrCustomLabel(comptime has_custom_label: bool, comptime matcher_name: string, comptime args: string, comptime not: bool) string {
+        if (comptime has_custom_label) {
+            return "{}<r>";
+        }
+
+        return "{}" ++ getSignature(matcher_name, args, not);
+    }
+
     pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
         const received = "<d>expect(<r><red>received<r><d>).<r>";
         comptime if (not) {
@@ -456,7 +464,7 @@ pub const Expect = struct {
     ) callconv(.C) JSC.JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callframe.this();
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
         if (arguments.len < 1) {
@@ -475,43 +483,56 @@ pub const Expect = struct {
         if (not) pass = !pass;
         if (pass) return .undefined;
 
+        const custom_label = if (arguments.len > 1 and (arguments[1].isString() or arguments[1].implementsToString(globalObject))) brk: {
+            const label = arguments[1].toBunString(globalObject);
+            if (globalObject.hasException()) return .zero;
+            break :brk label;
+        } else bun.String.empty;
+        defer custom_label.deref();
+
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        if (not) {
-            const signature = comptime getSignature("toBe", "<green>expected<r>", true);
-            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
-            globalObject.throwPretty(fmt, .{right.toFmt(globalObject, &formatter)});
-            return .zero;
-        }
 
-        const signature = comptime getSignature("toBe", "<green>expected<r>", false);
-        if (left.deepEquals(right, globalObject) or left.strictDeepEquals(right, globalObject)) {
-            const fmt = signature ++
-                "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" ++
-                "\n\nExpected: <green>{any}<r>\n" ++
-                "Received: serializes to the same string\n";
-            globalObject.throwPretty(fmt, .{right.toFmt(globalObject, &formatter)});
-            return .zero;
-        }
+        switch (!custom_label.isEmpty()) {
+            inline else => |has_custom_label| {
+                if (not) {
+                    const signature = comptime getSignatureOrCustomLabel(has_custom_label, "toBe", "<green>expected<r>", true);
+                    const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
+                    globalObject.throwPretty(fmt, .{ custom_label, right.toFmt(globalObject, &formatter) });
+                    return .zero;
+                }
 
-        if (right.isString() and left.isString()) {
-            const diff_format = DiffFormatter{
-                .expected = right,
-                .received = left,
-                .globalObject = globalObject,
-                .not = not,
-            };
-            const fmt = comptime signature ++ "\n\n{any}\n";
-            globalObject.throwPretty(fmt, .{diff_format});
-            return .zero;
-        }
+                const signature = comptime getSignatureOrCustomLabel(has_custom_label, "toBe", "<green>expected<r>", false);
+                if (left.deepEquals(right, globalObject) or left.strictDeepEquals(right, globalObject)) {
+                    const fmt = signature ++
+                        (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
+                        "\n\nExpected: <green>{any}<r>\n" ++
+                        "Received: serializes to the same string\n";
+                    globalObject.throwPretty(fmt, .{ custom_label, right.toFmt(globalObject, &formatter) });
+                    return .zero;
+                }
 
-        const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
-        globalObject.throwPretty(fmt, .{
-            right.toFmt(globalObject, &formatter),
-            left.toFmt(globalObject, &formatter),
-        });
-        return .zero;
+                if (right.isString() and left.isString()) {
+                    const diff_format = DiffFormatter{
+                        .expected = right,
+                        .received = left,
+                        .globalObject = globalObject,
+                        .not = not,
+                    };
+                    const fmt = comptime signature ++ "\n\n{any}\n";
+                    globalObject.throwPretty(fmt, .{ custom_label, diff_format });
+                    return .zero;
+                }
+
+                const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+                globalObject.throwPretty(fmt, .{
+                    custom_label,
+                    right.toFmt(globalObject, &formatter),
+                    left.toFmt(globalObject, &formatter),
+                });
+                return .zero;
+            },
+        }
     }
 
     pub fn toHaveLength(

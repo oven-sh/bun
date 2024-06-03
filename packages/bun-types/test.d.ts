@@ -836,7 +836,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBe(expected: T): void;
+    toBe(expected: T, optionalFailureMessage?: string | { toString(): string }): void;
     /**
      * Asserts that a number is odd.
      *

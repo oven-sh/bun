@@ -22,6 +22,7 @@ jobs:
           sparse-checkout: |
             .github
             src
+            scripts
             packages
             test
             bench
@@ -42,6 +43,9 @@ jobs:
       - name: Format Zig
         run: |
           bun fmt:zig
+      - name: Generate submodule versions
+        run: |
+          bash ./scripts/write-versions.sh
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:

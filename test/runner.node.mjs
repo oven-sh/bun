@@ -128,7 +128,7 @@ async function runTests(target) {
     await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
   }
 
-  return results.some(({ ok }) => ok) ? 0 : 1;
+  return results.some(({ ok }) => !ok) ? 1 : 0;
 }
 
 /**
@@ -324,7 +324,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       stderr,
     });
   } finally {
-    rmSync(testPath, { recursive: true, force: true });
+    try {
+      rmSync(testPath, { recursive: true, force: true });
+    } catch (error) {
+      console.error(error);
+    }
   }
 }
 
@@ -966,6 +970,7 @@ function getFileUrl(file, line) {
       url += `#L${line}`;
     }
   }
+
   return url;
 }
 

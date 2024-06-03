@@ -880,7 +880,6 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
-            this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             const is_done = !success or !this.result.has_more;
@@ -1030,14 +1029,16 @@ pub const Fetch = struct {
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
+            this.mutex.lock();
+
             if (this.is_waiting_body) {
-                return this.onBodyReceived();
+                this.onBodyReceived();
+                return;
             }
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
             const globalThis = this.global_this;
-            this.mutex.lock();
 
             if (this.is_waiting_abort) {
                 // has_more will be false when the request is aborted/finished
@@ -1696,9 +1697,13 @@ pub const Fetch = struct {
             return node;
         }
 
-        pub fn callback(task: *FetchTasklet, result: http.HTTPClientResult) void {
+        pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
             task.mutex.lock();
             defer task.mutex.unlock();
+
+            task.http.?.* = async_http.*;
+            task.http.?.response_buffer = async_http.response_buffer;
+
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
 
             task.result = result;
@@ -1737,12 +1742,6 @@ pub const Fetch = struct {
                 }
                 // reset for reuse
                 task.response_buffer.reset();
-            }
-
-            if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
-                if (has_schedule_callback) {
-                    return;
-                }
             }
 
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));

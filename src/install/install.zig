@@ -551,7 +551,11 @@ pub const PatchTask = struct {
                 },
             ).asErr()) |e_| {
                 var e = e_;
-                if (switch (e.getErrno()) {
+
+                if (if (comptime bun.Environment.isWindows) switch (e.getErrno()) {
+                    bun.C.E.NOTEMPTY, bun.C.E.EXIST => true,
+                    else => false,
+                } else switch (e.getErrno()) {
                     bun.C.E.NOTEMPTY, bun.C.E.EXIST, bun.C.E.OPNOTSUPP => true,
                     else => false,
                 }) {
@@ -1514,7 +1518,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 bunhashtag,
             }, .posix);
 
-            _ = bun.sys.fstatat(bun.toFD(root_node_modules_dir.fd), patch_tag_path).unwrap() catch return false;
+            if (comptime bun.Environment.isPosix) {
+                _ = bun.sys.fstatat(bun.toFD(root_node_modules_dir.fd), patch_tag_path).unwrap() catch return false;
+            } else {
+                switch (bun.sys.openat(bun.toFD(root_node_modules_dir.fd), patch_tag_path, std.os.O.RDONLY, 0)) {
+                    .err => return false,
+                    .result => |fd| _ = bun.sys.close(fd),
+                }
+            }
             return true;
         }
 

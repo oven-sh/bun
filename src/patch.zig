@@ -55,23 +55,24 @@ pub const PatchFile = struct {
         this.parts.deinit(allocator);
     }
 
-    pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?JSC.SystemError {
-        const State = struct {
-            pathbuf: bun.PathBuffer = undefined,
-            patch_dir_abs_path: ?[:0]const u8 = null,
+    const ApplyState = struct {
+        pathbuf: bun.PathBuffer = undefined,
+        patch_dir_abs_path: ?[:0]const u8 = null,
 
-            fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) JSC.Maybe([:0]const u8) {
-                if (state.patch_dir_abs_path) |p| return .{ .result = p };
-                return switch (bun.sys.getFdPath(fd, &state.pathbuf)) {
-                    .result => |p| {
-                        state.patch_dir_abs_path = state.pathbuf[0..p.len :0];
-                        return .{ .result = state.patch_dir_abs_path.? };
-                    },
-                    .err => |e| return .{ .err = e.withFd(fd) },
-                };
-            }
-        };
-        var state: State = .{};
+        fn patchDirAbsPath(state: *@This(), fd: bun.FileDescriptor) JSC.Maybe([:0]const u8) {
+            if (state.patch_dir_abs_path) |p| return .{ .result = p };
+            return switch (bun.sys.getFdPath(fd, &state.pathbuf)) {
+                .result => |p| {
+                    state.patch_dir_abs_path = state.pathbuf[0..p.len :0];
+                    return .{ .result = state.patch_dir_abs_path.? };
+                },
+                .err => |e| return .{ .err = e.withFd(fd) },
+            };
+        }
+    };
+
+    pub fn apply(this: *const PatchFile, allocator: Allocator, patch_dir: bun.FileDescriptor) ?JSC.SystemError {
+        var state: ApplyState = .{};
         var sfb = std.heap.stackFallback(1024, allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
 
@@ -120,7 +121,7 @@ pub const PatchFile = struct {
                         if (nodefs.mkdirRecursive(.{
                             .path = .{ .string = bun.PathString.init(filedir) },
                             .recursive = true,
-                            .mode = @intFromEnum(mode),
+                            .mode = @intCast(@intFromEnum(mode)),
                         }, .sync).asErr()) |e| return e.toSystemError();
                     }
 
@@ -181,15 +182,32 @@ pub const PatchFile = struct {
                 },
                 .file_patch => {
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if (applyPatch(part.file_patch, &arena, patch_dir).asErr()) |e| {
+                    if (applyPatch(part.file_patch, &arena, patch_dir, &state).asErr()) |e| {
                         return e.toSystemError();
                     }
                 },
                 .file_mode_change => {
                     const newmode = part.file_mode_change.new_mode;
                     const filepath = arena.allocator().dupeZ(u8, part.file_mode_change.path) catch bun.outOfMemory();
-                    if (bun.sys.fchmodat(patch_dir, filepath, newmode.toBunMode(), 0).asErr()) |e| {
-                        return e.toSystemError();
+                    if (comptime bun.Environment.isPosix) {
+                        if (bun.sys.fchmodat(patch_dir, filepath, newmode.toBunMode(), 0).asErr()) |e| {
+                            return e.toSystemError();
+                        }
+                    }
+
+                    if (comptime bun.Environment.isWindows) {
+                        const absfilepath = switch (state.patchDirAbsPath(patch_dir)) {
+                            .result => |p| p,
+                            .err => |e| return e.toSystemError(),
+                        };
+                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), std.os.O.RDWR, 0)) {
+                            .err => |e| return e.toSystemError(),
+                            .result => |f| f,
+                        };
+                        defer _ = bun.sys.close(fd);
+                        if (bun.sys.fchmod(fd, newmode.toBunMode()).asErr()) |e| {
+                            return e.toSystemError();
+                        }
                     }
                 },
             }
@@ -210,12 +228,21 @@ pub const PatchFile = struct {
         patch: *const FilePatch,
         arena: *bun.ArenaAllocator,
         patch_dir: bun.FileDescriptor,
+        state: *ApplyState,
     ) JSC.Maybe(void) {
         const file_path: [:0]const u8 = arena.allocator().dupeZ(u8, patch.path) catch bun.outOfMemory();
 
         // Need to get the mode of the original file
         // And also get the size to read file into memory
-        const stat = switch (bun.sys.fstatat(patch_dir, file_path)) {
+        const stat = switch (if (bun.Environment.isPosix)
+            bun.sys.fstatat(patch_dir, file_path)
+        else
+            bun.sys.stat(
+                switch (state.patchDirAbsPath(patch_dir)) {
+                    .result => |p| bun.path.joinZ(&[_][]const u8{ p, file_path }, .auto),
+                    .err => |e| return .{ .err = e },
+                },
+            )) {
             .err => |e| return .{ .err = e.withPath(file_path) },
             .result => |stat| stat,
         };
@@ -299,7 +326,12 @@ pub const PatchFile = struct {
             }
         }
 
-        const file_fd = switch (bun.sys.openat(patch_dir, file_path, std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC, stat.mode)) {
+        const file_fd = switch (bun.sys.openat(
+            patch_dir,
+            file_path,
+            std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+            @intCast(stat.mode),
+        )) {
             .err => |e| return .{ .err = e.withPath(file_path) },
             .result => |fd| fd,
         };
@@ -547,7 +579,7 @@ pub const FileMode = enum(u32) {
     executable = 0o755,
 
     pub fn toBunMode(this: FileMode) bun.Mode {
-        return @intFromEnum(this);
+        return @intCast(@intFromEnum(this));
     }
 
     pub fn fromU32(mode: u32) ?FileMode {
@@ -1213,7 +1245,7 @@ pub const JS = struct {
         pub fn deinit(this: *ApplyArgs) void {
             this.patchfile_txt.deinit();
             this.patchfile.deinit(bun.default_allocator);
-            if (bun.FileDescriptor.cwd().int() != this.dirfd.int()) {
+            if (bun.FileDescriptor.cwd().eq(this.dirfd)) {
                 _ = bun.sys.close(this.dirfd);
             }
         }
@@ -1291,9 +1323,10 @@ pub const JS = struct {
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 
         const patch_file = parsePatchFile(patchfile_src.slice()) catch |e| {
-            if (bun.FileDescriptor.cwd().int() != dir_fd.int()) {
+            if (bun.FileDescriptor.cwd().eq(dir_fd)) {
                 _ = bun.sys.close(dir_fd);
             }
+
             patchfile_src.deinit();
             globalThis.throwError(e, "failed to parse patchfile");
             return .{ .err = .undefined };

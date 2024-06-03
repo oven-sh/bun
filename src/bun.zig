@@ -144,6 +144,23 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         return toFD(std.fs.cwd().fd);
     }
 
+    pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
+        if (Environment.isPosix) return this.int() == that.int();
+
+        const this_ = FDImpl.decode(this);
+        const that_ = FDImpl.decode(that);
+        return switch (this_.kind) {
+            .system => switch (that_.kind) {
+                .system => this_.value.as_system == that_.value.as_system,
+                .uv => false,
+            },
+            .uv => switch (that_.kind) {
+                .system => false,
+                .uv => this_.value.as_uv == that_.value.as_uv,
+            },
+        };
+    }
+
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
         const decoded = FDImpl.decode(fd);

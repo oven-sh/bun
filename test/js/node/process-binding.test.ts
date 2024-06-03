@@ -1,4 +1,10 @@
 describe("process.binding", () => {
+  test("process.binding() with unsupported module property access", () => {
+    /* @ts-ignore */
+    const unsupported = process.binding("buffer");
+    expect(() => unsupported.kMaxLength).toThrow();
+  });
+
   test("process.binding('constants')", () => {
     /* @ts-ignore */
     const constants = process.binding("constants");
@@ -9,6 +15,7 @@ describe("process.binding", () => {
     expect(constants).toHaveProperty("trace");
     expect(constants).toHaveProperty("zlib");
   });
+
   test("process.binding('uv')", () => {
     /* @ts-ignore */
     const uv = process.binding("uv");

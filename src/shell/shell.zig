@@ -4234,8 +4234,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
         pub fn orderedRemove(this: *@This(), idx: usize) void {
             switch (this.*) {
                 .heap => {
-                    var list = this.heap.listManaged(bun.default_allocator);
-                    _ = list.orderedRemove(idx);
+                    _ = this.heap.orderedRemove(idx);
                 },
                 .inlined => {
                     _ = this.inlined.orderedRemove(idx);
@@ -4246,8 +4245,7 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
         pub fn swapRemove(this: *@This(), idx: usize) void {
             switch (this.*) {
                 .heap => {
-                    var list = this.heap.listManaged(bun.default_allocator);
-                    _ = list.swapRemove(idx);
+                    _ = this.heap.swapRemove(idx);
                 },
                 .inlined => {
                     _ = this.inlined.swapRemove(idx);

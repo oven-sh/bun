@@ -825,6 +825,9 @@ pub const HTTPThread = struct {
                     return err;
                 };
                 try custom_ssl_context_map.put(requested_config, custom_context);
+                // We might deinit the socket context, so we disable keepalive to make sure we don't
+                // free it while in use.
+                client.disable_keepalive = true;
                 return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
             }
         }

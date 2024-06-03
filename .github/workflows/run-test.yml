@@ -92,7 +92,6 @@ jobs:
         timeout-minutes: 90
         shell: bash
         env:
-          IS_BUN_CI: 1
           TMPDIR: ${{ runner.temp }}
           BUN_TAG: ${{ inputs.tag }}
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"

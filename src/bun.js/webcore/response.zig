@@ -241,7 +241,7 @@ pub const Response = struct {
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this.init.headers.?.put("content-type", content_type, globalThis);
+                    this.init.headers.?.put("Content-Type", content_type, globalThis);
                 }
             }
         }
@@ -391,7 +391,7 @@ pub const Response = struct {
         }
 
         var headers_ref = response.getOrCreateHeaders(globalThis);
-        headers_ref.putDefault("content-type", MimeType.json.value, globalThis);
+        headers_ref.putDefault("Content-Type", MimeType.json.value, globalThis);
         return bun.new(Response, response).toJS(globalThis);
     }
     pub fn constructRedirect(
@@ -434,7 +434,7 @@ pub const Response = struct {
 
         response.init.headers = response.getOrCreateHeaders(globalThis);
         var headers_ref = response.init.headers.?;
-        headers_ref.put("location", url_string_slice.slice(), globalThis);
+        headers_ref.put("Location", url_string_slice.slice(), globalThis);
         const ptr = bun.new(Response, response);
 
         return ptr.toJS(globalThis);
@@ -525,7 +525,7 @@ pub const Response = struct {
             response.body.value.Blob.content_type.len > 0 and
             !response.init.headers.?.fastHas(.ContentType))
         {
-            response.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
+            response.init.headers.?.put("Content-Type", response.body.value.Blob.content_type, globalThis);
         }
 
         response.calculateEstimatedByteSize();

@@ -154,7 +154,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // https://github.com/oven-sh/bun/issues/7921
         // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
         JSC::JSValue(JSC::jsString(vm, String("1.1.0"_s), 0)));
-
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_libarchive))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),

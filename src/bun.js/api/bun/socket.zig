@@ -1340,10 +1340,10 @@ fn NewSocket(comptime ssl: bool) type {
                 if (!this.detached) {
                     // we have to close the socket before the socket context is closed
                     // otherwise we will get a segfault
-                    // uSockets will defer closing the TCP socket until the next tick
+                    // uSockets will defer freeing the TCP socket until the next tick
                     if (!this.socket.isClosed()) {
                         this.detached = true;
-                        this.socket.close(0, null);
+                        this.socket.close(.normal);
                         // onClose will call markInactive again
                         return;
                     }
@@ -1951,6 +1951,19 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn terminate(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (!this.detached) {
+                this.socket.close(.failure);
+            }
+
+            return JSValue.jsUndefined();
+        }
+
         pub fn shutdown(
             this: *This,
             _: *JSC.JSGlobalObject,
@@ -2015,7 +2028,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {
-                    this.socket.close(0, null);
+                    this.socket.close(.failure);
                 }
             }
 

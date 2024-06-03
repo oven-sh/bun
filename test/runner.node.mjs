@@ -118,18 +118,17 @@ async function runTests(target) {
     await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
   }
 
+  if (results.some(({ ok }) => !ok)) {
+    // If install failed, don't run the tests.
+    return 1;
+  }
+
   for (const testPath of tests.slice(firstTest, lastTest)) {
     const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
     await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
   }
 
-  for (const { error } of Object.values(results)) {
-    if (error) {
-      return 1;
-    }
-  }
-
-  return 0;
+  return results.some(({ ok }) => ok) ? 0 : 1;
 }
 
 /**
@@ -518,6 +517,7 @@ function parseTestStdout(stdout, testPath) {
 async function spawnBunInstall(execPath, options) {
   const { ok, error, stdout, duration } = await spawnBun(execPath, {
     args: ["install"],
+    timeout: isWindows ? hardTestTimeout : softTestTimeout,
     ...options,
   });
   const relativePath = relative(cwd, options.cwd);
@@ -951,15 +951,17 @@ function getBuildLabel() {
  * @returns {string | undefined}
  */
 function getFileUrl(file, line) {
+  const filePath = file.replace(/\\/g, "/");
+
   let url;
   if (pullRequest) {
-    const fileMd5 = crypto.createHash("md5").update(file).digest("hex");
+    const fileMd5 = crypto.createHash("md5").update(filePath).digest("hex");
     url = `${baseUrl}/${repository}/pull/${pullRequest}/files#diff-${fileMd5}`;
     if (line !== undefined) {
       url += `L${line}`;
     }
   } else if (gitSha) {
-    url = `${baseUrl}/${repository}/blob/${gitSha}/${file}`;
+    url = `${baseUrl}/${repository}/blob/${gitSha}/${filePath}`;
     if (line !== undefined) {
       url += `#L${line}`;
     }
@@ -1059,18 +1061,19 @@ function formatTestToMarkdown(...results) {
       }
     }
 
+    const testTitle = testPath.replace(/\//g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
 
     markdown += "<details><summary>";
     if (testUrl) {
-      markdown += `<a href="${testUrl}"><code>${testPath}</code></a>`;
+      markdown += `<a href="${testUrl}"><code>${testTitle}</code></a>`;
     } else {
-      markdown += `<a><code>${testPath}</code></a>`;
+      markdown += `<a><code>${testTitle}</code></a>`;
     }
     if (error) {
-      markdown += `- ${error} `;
+      markdown += ` - ${error}`;
     }
-    markdown += `on ${platform}</summary>\n\n`;
+    markdown += ` on ${platform}</summary>\n\n`;
 
     if (isBuildKite) {
       const preview = escapeCodeBlock(stdout);

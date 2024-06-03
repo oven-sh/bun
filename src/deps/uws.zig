@@ -14,6 +14,11 @@ pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
 const uws = @This();
 
+pub const CloseCode = enum(i32) {
+    normal = 0,
+    failure = 1,
+};
+
 const BoringSSL = bun.BoringSSL;
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
@@ -481,7 +486,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             }
         }
 
-        pub fn close(this: ThisSocket, code: i32, reason: ?*anyopaque) void {
+        pub fn close(this: ThisSocket, code: CloseCode) void {
             // debug("us_socket_close({d})", .{@intFromPtr(this.socket)});
             switch (this.socket) {
                 .done => |socket| {
@@ -489,7 +494,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         comptime ssl_int,
                         socket,
                         code,
-                        reason,
+                        null,
                     );
                 },
                 .connecting => |socket| {
@@ -961,7 +966,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     // We close immediately in this case
                     // uSockets doesn't know if this is a TLS socket or not.
                     // So we have to do that logic in here.
-                    ThisSocket.from(socket).close(0, null);
+                    ThisSocket.from(socket).close(.failure);
 
                     Fields.onConnectError(
                         val,
@@ -1529,7 +1534,7 @@ extern fn us_socket_shutdown(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_shutdown_read(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_is_closed(ssl: i32, s: ?*Socket) i32;
-extern fn us_socket_close(ssl: i32, s: ?*Socket, code: i32, reason: ?*anyopaque) ?*Socket;
+extern fn us_socket_close(ssl: i32, s: ?*Socket, code: CloseCode, reason: ?*anyopaque) ?*Socket;
 
 extern fn us_connecting_socket_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;
 extern fn us_connecting_socket_long_timeout(ssl: i32, s: ?*ConnectingSocket, seconds: c_uint) void;

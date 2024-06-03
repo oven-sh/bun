@@ -3874,6 +3874,15 @@ declare module "bun" {
     timeout(seconds: number): void;
 
     /**
+     * Forcefully close the socket. The other end may not receive all data, and
+     * the socket will be closed immediately.
+     *
+     * This passes `SO_LINGER` with `l_onoff` set to `1` and `l_linger` set to
+     * `0` and then calls `close(2)`.
+     */
+    terminate(): void;
+
+    /**
      * Shutdown writes to a socket
      *
      * This makes the socket a half-closed socket. It can still receive data.

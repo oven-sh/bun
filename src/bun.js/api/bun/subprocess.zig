@@ -742,7 +742,7 @@ pub const Subprocess = struct {
 
     pub fn disconnect(this: *Subprocess) void {
         const ipc_data = this.ipc_data orelse return;
-        ipc_data.socket.close(0, null);
+        ipc_data.socket.close(.normal);
         this.ipc_data = null;
     }
 

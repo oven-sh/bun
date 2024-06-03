@@ -2446,6 +2446,11 @@ pub fn setFileOffsetToEndWindows(fd: bun.FileDescriptor) Maybe(usize) {
     @compileError("Not Implemented");
 }
 
+extern fn Bun__disableSOLinger(fd: if (Environment.isWindows) windows.HANDLE else i32) void;
+pub fn disableLinger(fd: bun.FileDescriptor) void {
+    Bun__disableSOLinger(fd.cast());
+}
+
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         @panic("TODO: Implement `pipe()` for Windows");

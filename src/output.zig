@@ -241,9 +241,9 @@ pub const Source = struct {
             Output.Source.init(stdout, stderr)
                 .set();
 
-            // if (comptime Environment.isDebug) {
-            initScopedDebugWriterAtStartup();
-            // }
+            if (comptime Environment.isDebug) {
+                initScopedDebugWriterAtStartup();
+            }
         }
 
         pub fn restore() void {
@@ -569,14 +569,14 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         else => tag,
     };
 
-    // if (comptime !Environment.isDebug) {
-    //     return struct {
-    //         pub fn isVisible() bool {
-    //             return false;
-    //         }
-    //         pub fn log(comptime _: string, _: anytype) void {}
-    //     };
-    // }
+    if (comptime !Environment.isDebug) {
+        return struct {
+            pub fn isVisible() bool {
+                return false;
+            }
+            pub fn log(comptime _: string, _: anytype) void {}
+        };
+    }
 
     return struct {
         const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
@@ -618,6 +618,8 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
             if (ScopedDebugWriter.disable_inside_log > 0) {
                 return;
             }
+            ScopedDebugWriter.disable_inside_log += 1;
+            defer ScopedDebugWriter.disable_inside_log -= 1;
 
             if (!isVisible())
                 return;
@@ -1000,9 +1002,9 @@ pub fn initScopedDebugWriterAtStartup() void {
     ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
 }
 fn scopedWriter() File.QuietWriter {
-    // if (comptime !Environment.isDebug) {
-    //     @compileError("scopedWriter() should only be called in debug mode");
-    // }
+    if (comptime !Environment.isDebug) {
+        @compileError("scopedWriter() should only be called in debug mode");
+    }
 
     return ScopedDebugWriter.scoped_file_writer;
 }

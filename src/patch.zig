@@ -1338,7 +1338,11 @@ pub const JS = struct {
     }
 };
 
-pub fn gitDiff(allocator: std.mem.Allocator, old_folder: []const u8, new_folder: []const u8) !std.ArrayList(u8) {
+pub fn gitDiff(
+    allocator: std.mem.Allocator,
+    old_folder: []const u8,
+    new_folder: []const u8,
+) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
     var child_proc = std.ChildProcess.init(
         &[_][]const u8{
             "git",
@@ -1371,16 +1375,23 @@ pub fn gitDiff(allocator: std.mem.Allocator, old_folder: []const u8, new_folder:
     child_proc.env_map = &map;
     var stdout = std.ArrayList(u8).init(allocator);
     var stderr = std.ArrayList(u8).init(allocator);
-    defer stderr.deinit();
+    var deinit_stdout = true;
+    var deinit_stderr = true;
+    defer {
+        if (deinit_stdout) stdout.deinit();
+        if (deinit_stderr) stderr.deinit();
+    }
     try child_proc.spawn();
     try child_proc.collectOutput(&stdout, &stderr, 1024 * 1024 * 4);
     _ = try child_proc.wait();
     if (stderr.items.len > 0) {
-        @panic("TODO zack git diff failed");
+        deinit_stderr = false;
+        return .{ .err = stderr };
     }
 
     try gitDiffPostprocess(&stdout, old_folder, new_folder);
-    return stdout;
+    deinit_stdout = false;
+    return .{ .result = stdout };
 }
 
 /// Now we need to do the equivalent of these regex subtitutions.

@@ -351,7 +351,7 @@ pub const PatchTask = struct {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
-        const hash = switch (calc_hash.result orelse @panic("bad")) {
+        const hash = switch (calc_hash.result orelse @panic("Calc hash didn't run, this is a bug in Bun.")) {
             .result => |h| h,
             .err => |e| {
                 if (comptime log_level != .silent) {
@@ -5963,7 +5963,7 @@ pub const PackageManager = struct {
                                 .name_hash = dependency.name_hash,
                                 .resolution = res,
                             },
-                            @panic("TODO: handle if patched"),
+                            null,
                         )) |network_task| {
                             this.enqueueNetworkTask(network_task);
                         }
@@ -10636,7 +10636,14 @@ pub const PackageManager = struct {
         try package.parse(lockfile, manager.allocator, manager.log, package_json_source, void, {}, Features.folder);
         const name = lockfile.str(&package.name);
         var resolution_buf: [1024]u8 = undefined;
-        const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse @panic("TODO zack this is bad")) {
+        const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
+            Output.prettyError(
+                "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
+                .{},
+            );
+            Output.flush();
+            Global.crash();
+        }) {
             .PackageID => |id| lockfile.packages.get(id),
             .PackageIDMultiple => |ids| brk: {
                 for (ids.items) |id| {
@@ -10676,13 +10683,41 @@ pub const PackageManager = struct {
                     stuff.cache_dir_subpath,
                 }, .auto);
             };
-            break :brk bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
+            break :brk switch (bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
                 Output.prettyError(
-                    "<r><red>error<r>: failed to read make diff {s}<r>\n",
+                    "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},
                 );
                 Output.flush();
                 Global.crash();
+            }) {
+                .result => |stdout| stdout,
+                .err => |stderr| {
+                    defer stderr.deinit();
+                    const Truncate = struct {
+                        stderr: std.ArrayList(u8),
+
+                        pub fn format(
+                            this: *const @This(),
+                            comptime _: []const u8,
+                            _: std.fmt.FormatOptions,
+                            writer: anytype,
+                        ) !void {
+                            const truncate_stderr = this.stderr.items.len > 256;
+                            if (truncate_stderr) {
+                                try writer.print("{s}... ({d} more bytes)", .{ this.stderr.items[0..256], this.stderr.items.len - 256 });
+                            } else try writer.print("{s}", .{this.stderr.items[0..]});
+                        }
+                    };
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to make diff {}<r>\n",
+                        .{
+                            Truncate{ .stderr = stderr },
+                        },
+                    );
+                    Output.flush();
+                    Global.crash();
+                },
             };
         };
         defer patchfile_contents.deinit();

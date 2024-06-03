@@ -483,11 +483,6 @@ pub const Arguments = struct {
             ctx.test_options.only = args.flag("--only");
         }
 
-        // if (cmd == .PatchCommand) {
-        //     ctx.eatch_options.edit_dir = args.option("--edit-dir") orelse "";
-        //     ctx.patch_options.ignore_existing = args.flag("--ignore-existing");
-        // }
-
         ctx.args.absolute_working_dir = cwd;
         ctx.positionals = args.positionals();
 

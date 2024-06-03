@@ -347,6 +347,8 @@ extern "C" const char* Bun__versions_zlib;
 extern "C" const char* Bun__versions_tinycc;
 extern "C" const char* Bun__versions_lolhtml;
 extern "C" const char* Bun__versions_c_ares;
+extern "C" const char* Bun__versions_lshpack;
+extern "C" const char* Bun__versions_zstd;
 extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;

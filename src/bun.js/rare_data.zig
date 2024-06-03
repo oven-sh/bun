@@ -74,6 +74,8 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     for (this.listening_sockets_for_watch_mode.items) |socket| {
+        // Prevent TIME_WAIT state
+        Syscall.disableLinger(socket);
         _ = Syscall.close(socket);
     }
     this.listening_sockets_for_watch_mode = .{};

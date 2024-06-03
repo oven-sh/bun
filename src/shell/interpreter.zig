@@ -1689,6 +1689,7 @@ pub const Interpreter = struct {
                 walker: GlobWalker,
             },
         },
+        out_exit_code: ExitCode = 0,
         out: Result,
         out_idx: u32,
 
@@ -2109,7 +2110,6 @@ pub const Interpreter = struct {
         }
 
         fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
-            _ = exit_code;
             if (comptime bun.Environment.allow_assert) {
                 assert(this.state != .done and this.state != .err);
                 assert(this.child_state != .idle);
@@ -2119,6 +2119,13 @@ pub const Interpreter = struct {
             if (child.ptr.is(Script)) {
                 if (comptime bun.Environment.allow_assert) {
                     assert(this.child_state == .cmd_subst);
+                }
+
+                if (exit_code != 0 and
+                    this.node.* == .simple and
+                    this.node.simple == .cmd_subst)
+                {
+                    this.out_exit_code = exit_code;
                 }
 
                 const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout().slice();
@@ -3703,6 +3710,7 @@ pub const Interpreter = struct {
             expanding_args: struct {
                 idx: u32 = 0,
                 expansion: Expansion,
+                last_exit_code: ExitCode = 0,
             },
             waiting_stat,
             stat_complete: struct {
@@ -4544,6 +4552,14 @@ pub const Interpreter = struct {
                     this.writeFailingError("{s}", .{buf});
                     return;
                 }
+                const e: *Expansion = child.ptr.as(Expansion);
+                if (this.state == .expanding_args and
+                    e.node.* == .simple and
+                    e.node.simple == .cmd_subst and
+                    this.state.expanding_args.idx == 1 and this.node.name_and_args.len == 1)
+                {
+                    this.exit_code = e.out_exit_code;
+                }
                 this.next();
                 return;
             }
@@ -4575,7 +4591,7 @@ pub const Interpreter = struct {
 
                 const first_arg = this.args.items[0] orelse {
                     // Sometimes the expansion can result in an empty string
-                    this.parent.childDone(this, 0);
+                    this.parent.childDone(this, this.exit_code orelse 0);
                     return;
                 };
 

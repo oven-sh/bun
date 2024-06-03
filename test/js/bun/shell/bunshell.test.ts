@@ -397,6 +397,12 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
+  describe("empty_expansion", () => {
+    TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
+    TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
+    TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
+  });
+
   describe("tilde_expansion", () => {
     describe("with paths", async () => {
       TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("normal");

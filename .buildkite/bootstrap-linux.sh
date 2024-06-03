@@ -80,6 +80,7 @@ apt-get install -y --reinstall --no-install-recommends \
   tar \
   rsync \
   gzip \
+  zip \
   unzip \
   perl \
   python3 \

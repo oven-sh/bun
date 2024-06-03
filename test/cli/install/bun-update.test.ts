@@ -133,7 +133,7 @@ it("should update to latest version of dependency", async () => {
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
     dependencies: {
-      baz: "^0.0.5",
+      baz: "~0.0.5",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -265,7 +265,7 @@ it("should update to latest versions of dependencies", async () => {
     name: "foo",
     dependencies: {
       "@barn/moo": "^0.1.0",
-      baz: "^0.0.5",
+      baz: "~0.0.5",
     },
   });
   await access(join(package_dir, "bun.lockb"));

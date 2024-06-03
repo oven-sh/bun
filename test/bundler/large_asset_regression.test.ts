@@ -16,7 +16,11 @@ describe("https://github.com/oven-sh/bun/issues/10139", async () => {
         throw new Error("Unexpected public path: " + huge);
       }
       `,
-      "1.png": new Buffer(1024 * 1024 * 1024),
+      // Note: the SIGBUS only seemed to reproduce at >= 768 MB
+      // However, that causes issues in CI. CI does not like writing 1 GB files
+      // to disk. So we shrink it down to 128 MB instead, which still causes the
+      // test to fail in Bun v1.1.2 and earlier.
+      "1.png": new Buffer(1024 * 1024 * 128),
     });
   });
 

@@ -41,7 +41,7 @@ const clap = bun.clap;
 const Lock = @import("../lock.zig").Lock;
 const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
-var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var bun_path_buf: bun.PathBuffer = undefined;
 const Futex = @import("../futex.zig");
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
@@ -235,7 +235,7 @@ const CreateOptions = struct {
 };
 
 const BUN_CREATE_DIR = ".bun-create";
-var home_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+var home_dir_buf: bun.PathBuffer = undefined;
 pub const CreateCommand = struct {
     pub fn exec(ctx: Command.Context, example_tag: Example.Tag, template: []const u8) !void {
         @setCold(true);

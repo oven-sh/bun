@@ -54,6 +54,7 @@
 /test.js
 /test.ts
 /testdir
+/test.zig
 build
 build.ninja
 bun-binary

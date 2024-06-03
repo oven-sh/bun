@@ -36,7 +36,7 @@ pub const CodeCoverageReport = struct {
     };
 
     pub fn linesCoverageFraction(this: *const CodeCoverageReport) f64 {
-        var intersected = this.executable_lines.clone(bun.default_allocator) catch @panic("OOM");
+        var intersected = this.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
         defer intersected.deinit(bun.default_allocator);
         intersected.setIntersection(this.lines_which_have_executed);
 
@@ -162,7 +162,7 @@ pub const CodeCoverageReport = struct {
 
         try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
-        var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch @panic("OOM");
+        var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
         defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
         executable_lines_that_havent_been_executed.toggleAll();
 
@@ -326,13 +326,13 @@ pub const ByteRangeMapping = struct {
     pub threadlocal var map: ?*HashMap = null;
     pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
         var _map = map orelse brk: {
-            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch @panic("OOM");
+            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch bun.outOfMemory();
             map.?.* = HashMap.init(bun.JSC.VirtualMachine.get().allocator);
             break :brk map.?;
         };
         var slice = str.toUTF8(bun.default_allocator);
         const hash = bun.hash(slice.slice());
-        var entry = _map.getOrPut(hash) catch @panic("Out of memory");
+        var entry = _map.getOrPut(hash) catch bun.outOfMemory();
         if (entry.found_existing) {
             entry.value_ptr.deinit();
         }
@@ -369,9 +369,7 @@ pub const ByteRangeMapping = struct {
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
-        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(
-            source_url.slice(),
-        );
+        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
 
         var functions = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
         try functions.ensureTotalCapacityPrecise(allocator, function_blocks.len);

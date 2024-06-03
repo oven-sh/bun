@@ -44,8 +44,7 @@ pub const InternalLoopData = extern struct {
     mutex: u32, // this is actually a bun.Lock
     parent_ptr: ?*anyopaque,
     parent_tag: c_char,
-
-    iteration_nr: c_longlong,
+    iteration_nr: usize,
 
     pub fn recvSlice(this: *InternalLoopData) []u8 {
         return this.recv_buf[0..LIBUS_RECV_BUFFER_LENGTH];
@@ -589,8 +588,16 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
-            const host_ = allocator.dupeZ(u8, host) catch return null;
-            defer allocator.free(host_);
+
+            // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
+            const clean_host = if (host.len > 1 and host[0] == '[' and host[host.len - 1] == ']')
+                host[1 .. host.len - 1]
+            else
+                host;
+
+            const host_ = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            defer allocator.free(host);
+
             var did_dns_resolve: i32 = 0;
             const socket = us_socket_context_connect(comptime ssl_int, socket_ctx, host_, port, 0, @sizeOf(Context), &did_dns_resolve) orelse return null;
             const socket_ = if (did_dns_resolve == 1)
@@ -682,22 +689,20 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
             var allocator = stack_fallback.get();
 
-            const host: ?[*:0]u8 = brk: {
-                // getaddrinfo expects `node` to be null if localhost
-                if (raw_host.len < 6 and (bun.strings.eqlComptime(raw_host, "[::1]") or bun.strings.eqlComptime(raw_host, "[::]"))) {
-                    break :brk null;
-                }
+            // remove brackets from IPv6 addresses, as getaddrinfo doesn't understand them
+            const clean_host = if (raw_host.len > 1 and raw_host[0] == '[' and raw_host[raw_host.len - 1] == ']')
+                raw_host[1 .. raw_host.len - 1]
+            else
+                raw_host;
 
-                break :brk allocator.dupeZ(u8, raw_host) catch bun.outOfMemory();
-            };
-
-            defer if (host) |allocated_host| allocator.free(allocated_host[0..raw_host.len]);
+            const host = allocator.dupeZ(u8, clean_host) catch bun.outOfMemory();
+            defer allocator.free(host);
 
             var did_dns_resolve: i32 = 0;
             const socket_ptr = us_socket_context_connect(
                 comptime ssl_int,
                 socket_ctx,
-                host,
+                host.ptr,
                 port,
                 0,
                 @sizeOf(*anyopaque),
@@ -1203,7 +1208,7 @@ pub const PosixLoop = extern struct {
 
     const log = bun.Output.scoped(.Loop, false);
 
-    pub fn iterationNumber(this: *const PosixLoop) c_longlong {
+    pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
 
@@ -1216,23 +1221,13 @@ pub const PosixLoop = extern struct {
     }
 
     pub fn ref(this: *PosixLoop) void {
-        log("ref", .{});
+        log("ref {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
         this.active += 1;
     }
-    pub fn refConcurrently(this: *PosixLoop) void {
-        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Add, 1, .Monotonic);
-        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Add, 1, .Monotonic);
-        log("refConcurrently ({d}, {d})", .{ this.num_polls, this.active });
-    }
-    pub fn unrefConcurrently(this: *PosixLoop) void {
-        _ = @atomicRmw(@TypeOf(this.num_polls), &this.num_polls, .Sub, 1, .Monotonic);
-        _ = @atomicRmw(@TypeOf(this.active), &this.active, .Sub, 1, .Monotonic);
-        log("unrefConcurrently ({d}, {d})", .{ this.num_polls, this.active });
-    }
 
     pub fn unref(this: *PosixLoop) void {
-        log("unref", .{});
+        log("unref {d} - 1 = {d}", .{ this.num_polls, this.num_polls - 1 });
         this.num_polls -= 1;
         this.active -|= 1;
     }
@@ -1280,18 +1275,19 @@ pub const PosixLoop = extern struct {
     pub const wake = wakeup;
 
     pub fn tick(this: *PosixLoop) void {
-        us_loop_run_bun_tick(this, 0);
+        us_loop_run_bun_tick(this, null);
     }
 
     pub fn tickWithoutIdle(this: *PosixLoop) void {
-        us_loop_run_bun_tick(this, std.math.maxInt(i64));
+        const timespec = bun.timespec{ .sec = 0, .nsec = 0 };
+        us_loop_run_bun_tick(this, &timespec);
     }
 
-    pub fn tickWithTimeout(this: *PosixLoop, timeoutMs: i64) void {
-        us_loop_run_bun_tick(this, timeoutMs);
+    pub fn tickWithTimeout(this: *PosixLoop, timespec: ?*const bun.timespec) void {
+        us_loop_run_bun_tick(this, timespec);
     }
 
-    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: i64) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
 
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
@@ -1425,7 +1421,7 @@ extern fn us_socket_context_ext(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 
 pub extern fn us_socket_context_listen(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32) ?*ListenSocket;
 pub extern fn us_socket_context_listen_unix(ssl: i32, context: ?*SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*ListenSocket;
-pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
+pub extern fn us_socket_context_connect(ssl: i32, context: ?*SocketContext, host: [*:0]const u8, port: i32, options: i32, socket_ext_size: i32, has_dns_resolved: *i32) ?*anyopaque;
 pub extern fn us_socket_context_connect_unix(ssl: i32, context: ?*SocketContext, path: [*c]const u8, pathlen: usize, options: i32, socket_ext_size: i32) ?*Socket;
 pub extern fn us_socket_is_established(ssl: i32, s: ?*Socket) i32;
 pub extern fn us_socket_context_loop(ssl: i32, context: ?*SocketContext) ?*Loop;
@@ -2788,7 +2784,7 @@ pub const WindowsLoop = extern struct {
 
     extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
 
-    pub fn iterationNumber(this: *const WindowsLoop) c_longlong {
+    pub fn iterationNumber(this: *const WindowsLoop) u64 {
         return this.internal_loop_data.iteration_nr;
     }
 
@@ -2810,7 +2806,7 @@ pub const WindowsLoop = extern struct {
 
     pub const wake = wakeup;
 
-    pub fn tickWithTimeout(this: *WindowsLoop, _: i64) void {
+    pub fn tickWithTimeout(this: *WindowsLoop, _: ?*const bun.timespec) void {
         us_loop_run(this);
     }
 

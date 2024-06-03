@@ -276,6 +276,20 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
     return fd;
 }
 
+static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
+#if _WIN32
+    if (fd != LIBUS_SOCKET_ERROR) {
+        // libuv will set non-blocking, but only on poll init!
+        // we need it to be set on connect as well
+        DWORD yes = 1;
+        ioctlsocket(fd, FIONBIO, &yes);
+    }
+    return fd;
+#else
+    return fd;
+#endif
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
     /* Libuv will set windows sockets as non-blocking */
@@ -300,15 +314,14 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
-    // returns INVALID_SOCKET on error
-    int flags = 0;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
-#endif
-
+    int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
     LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type | flags, protocol);
-
+    return apple_no_sigpipe(created_fd);
+#else
+    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type, protocol);
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
+#endif
 }
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -888,19 +901,34 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 //     return 0; // no ecn defaults to 0
 // }
 
-static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
+static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {
 #ifdef _WIN32
-    do {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || WSAGetLastError() == WSAEINPROGRESS) {
+    while (1) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
             return 0;
         }
-    } while (WSAGetLastError() == WSAEINTR);
 
-    return WSAGetLastError();
+        int err = WSAGetLastError();
+        switch (err) {
+            case WSAEINPROGRESS:
+            case WSAEWOULDBLOCK:
+            case WSAEALREADY: {
+                return 0;
+            }
+            case WSAEINTR: {
+                continue;
+            }
+            default: {
+                return err;
+            }
+        }
+    }
+
+    
 #else
      do {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || errno == EINPROGRESS) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS || errno == EAGAIN) {
             return 0;
         }
     } while (errno == EINTR);
@@ -909,77 +937,34 @@ static int bsd_do_connect_raw(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR fd)
 #endif
 }
 
-static int bsd_do_connect(struct addrinfo *rp, LIBUS_SOCKET_DESCRIPTOR *fd)
-{
-    int lastErr = 0;
-    while (rp != NULL) {
-        lastErr = bsd_do_connect_raw(rp, *fd);
-        if (lastErr == 0) {
-            return 0;
-        }
-
-        rp = rp->ai_next;
-        bsd_close_socket(*fd);
-
-        if (rp == NULL) {
-            if (lastErr != 0) {
-                errno = lastErr;
-            }
-            return LIBUS_SOCKET_ERROR;
-        }
-
-        LIBUS_SOCKET_DESCRIPTOR resultFd = bsd_create_socket(rp->ai_family, SOCK_STREAM, 0);
-        if (resultFd < 0) {
-            return LIBUS_SOCKET_ERROR;
-        }
-        *fd = resultFd;
-    }
-
-    if (lastErr != 0) {
-        errno = lastErr;
-    }
-
-    return LIBUS_SOCKET_ERROR;
-}
-
 #ifdef _WIN32
 
-static int convert_null_addr(struct addrinfo *addrinfo, struct addrinfo* result, struct sockaddr_storage *inaddr) {
+static int convert_null_addr(const struct sockaddr_storage *addr, struct sockaddr_storage* result) {
     // 1. check that all addrinfo results are 0.0.0.0 or ::
-    if (addrinfo->ai_family == AF_INET) {
-        struct sockaddr_in *addr = (struct sockaddr_in *) addrinfo->ai_addr;
-        if (addr->sin_addr.s_addr == htonl(INADDR_ANY)) {
-            memcpy(inaddr, addr, sizeof(struct sockaddr_in));
-            ((struct sockaddr_in *) inaddr)->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-            memcpy(result, addrinfo, sizeof(struct addrinfo));
-            result->ai_addr = (struct sockaddr *) inaddr;
-            result->ai_next = NULL;
-
+    if (addr->ss_family == AF_INET) {
+        struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
+        if (addr4->sin_addr.s_addr == htonl(INADDR_ANY)) {
+            memcpy(result, addr, sizeof(struct sockaddr_in));
+            ((struct sockaddr_in *) result)->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
             return 1;
         }
-    } else if (addrinfo->ai_family == AF_INET6) {
-        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) addrinfo->ai_addr;
-        if (memcmp(&addr->sin6_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
-            memcpy(inaddr, addr, sizeof(struct sockaddr_in6));
-            memcpy(&((struct sockaddr_in6 *) inaddr)->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr));
-
-            memcpy(result, addrinfo, sizeof(struct addrinfo));
-            result->ai_addr = (struct sockaddr *) inaddr;
-            result->ai_next = NULL;
-
+    } else if (addr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
+        if (memcmp(&addr6->sin6_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
+            memcpy(result, addr, sizeof(struct sockaddr_in6));
+            memcpy(&((struct sockaddr_in6 *) result)->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr));
             return 1;
         }
     }
     return 0;
 } 
 
-static int is_loopback(struct addrinfo *addrinfo) {
-    if (addrinfo->ai_family == AF_INET) {
-        struct sockaddr_in *addr = (struct sockaddr_in *) addrinfo->ai_addr;
+static int is_loopback(struct sockaddr_storage *sockaddr) {
+    if (sockaddr->ss_family == AF_INET) {
+        struct sockaddr_in *addr = (struct sockaddr_in *) sockaddr;
         return addr->sin_addr.s_addr == htonl(INADDR_LOOPBACK);
-    } else if (addrinfo->ai_family == AF_INET6) {
-        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) addrinfo->ai_addr;
+    } else if (sockaddr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) sockaddr;
         return memcmp(&addr->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr)) == 0;
     } else {
         return 0;
@@ -987,21 +972,20 @@ static int is_loopback(struct addrinfo *addrinfo) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int options) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addrinfo->ai_family, SOCK_STREAM, 0);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
 
 #ifdef _WIN32
+    win32_set_nonblocking(fd);
 
     // On windows we can't connect to the null address directly. 
     // To match POSIX behavior, we need to connect to localhost instead.
-    struct addrinfo alt_result;
-    struct sockaddr_storage storage;
-
-    if (convert_null_addr(addrinfo, &alt_result, &storage)) {
-        addrinfo = &alt_result;
+    struct sockaddr_storage converted;
+    if (convert_null_addr(addr, &converted)) {
+        addr = &converted;
     }
 
     // This sets the socket to fail quickly if no connection can be established to localhost,
@@ -1010,7 +994,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int
     // see https://github.com/libuv/libuv/blob/bf61390769068de603e6deec8e16623efcbe761a/src/win/tcp.c#L806
     TCP_INITIAL_RTO_PARAMETERS retransmit_ioctl;
     DWORD bytes;
-    if (is_loopback(addrinfo)) {
+    if (is_loopback(addr)) {
         memset(&retransmit_ioctl, 0, sizeof(retransmit_ioctl));
         retransmit_ioctl.Rtt = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
         retransmit_ioctl.MaxSynRetransmissions = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
@@ -1026,11 +1010,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct addrinfo *addrinfo, int
     }
 
 #endif
+    int rc = bsd_do_connect_raw(fd, (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
 
-    if (bsd_do_connect(addrinfo, &fd) != 0) {
+    if (rc != 0) {
+        bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }
-    
     return fd;
 }
 
@@ -1041,16 +1026,10 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (connect(fd, (struct sockaddr *)server_address, addrlen) != 0 && errno != EINPROGRESS) {
-        #if defined(_WIN32)
-          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
-        #endif
+    win32_set_nonblocking(fd);
+
+    if (bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen) != 0) {
         bsd_close_socket(fd);
-        #if defined(_WIN32)
-            if (shouldSimulateENOENT) {
-                SetLastError(ERROR_PATH_NOT_FOUND);
-            }
-        #endif
         return LIBUS_SOCKET_ERROR;
     }
 

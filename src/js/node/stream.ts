@@ -2,21 +2,37 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
+// BEGIN moved from require_readable
+// when we split this stuff up again, we can move this back
+const kObjectMode = 1 << 0;
+const kEnded = 1 << 1;
+const kEndEmitted = 1 << 2;
+const kReading = 1 << 3;
+const kConstructed = 1 << 4;
+const kSync = 1 << 5;
+const kNeedReadable = 1 << 6;
+const kEmittedReadable = 1 << 7;
+const kReadableListening = 1 << 8;
+const kResumeScheduled = 1 << 9;
+const kErrorEmitted = 1 << 10;
+const kEmitClose = 1 << 11;
+const kAutoDestroy = 1 << 12;
+const kDestroyed = 1 << 13;
+const kClosed = 1 << 14;
+const kCloseEmitted = 1 << 15;
+const kMultiAwaitDrain = 1 << 16;
+const kReadingMore = 1 << 17;
+const kDataEmitted = 1 << 18;
+const kPaused = Symbol("kPaused");
+// END moved from require_readable
+
 const StringDecoder = require("node:string_decoder").StringDecoder;
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const ProcessNextTick = process.nextTick;
 
-const {
-  BufferList,
-  ReadableState,
-  maybeReadMore: _maybeReadMore,
-  resume,
-  emitReadable: _emitReadable,
-  // onEofChunk,
-  EE,
-} = $cpp("JSReadableHelper.cpp", "createNodeStreamBinding");
+const EE = require("node:events").EventEmitter;
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -1288,15 +1304,15 @@ var require_end_of_stream = __commonJS({
       return cleanup;
     }
     function finished(stream, opts) {
-      return new Promise2((resolve, reject) => {
-        eos(stream, opts, err => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve();
-          }
-        });
+      const { promise, resolve, reject } = $newPromiseCapability(Promise);
+      eos(stream, opts, err => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
       });
+      return promise;
     }
     module.exports = eos;
     module.exports.finished = finished;
@@ -2247,6 +2263,50 @@ var require_from = __commonJS({
   },
 });
 
+var require_state = __commonJS({
+  "node_modules/readable-stream/lib/internal/streams/state.js"(exports, module) {
+    "use strict";
+
+    const { MathFloor, NumberIsInteger } = require_primordials();
+    const { validateInteger } = require_validators();
+    const { ERR_INVALID_ARG_VALUE } = require_errors().codes;
+    let defaultHighWaterMarkBytes = 16 * 1024;
+    let defaultHighWaterMarkObjectMode = 16;
+    function highWaterMarkFrom(options, isDuplex, duplexKey) {
+      return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+    }
+    function getDefaultHighWaterMark(objectMode) {
+      return objectMode ? defaultHighWaterMarkObjectMode : defaultHighWaterMarkBytes;
+    }
+    function setDefaultHighWaterMark(objectMode, value) {
+      validateInteger(value, "value", 0);
+      if (objectMode) {
+        defaultHighWaterMarkObjectMode = value;
+      } else {
+        defaultHighWaterMarkBytes = value;
+      }
+    }
+    function getHighWaterMark(state, options, duplexKey, isDuplex) {
+      const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
+      if (hwm != null) {
+        if (!NumberIsInteger(hwm) || hwm < 0) {
+          const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
+          throw new ERR_INVALID_ARG_VALUE(name, hwm);
+        }
+        return MathFloor(hwm);
+      }
+
+      // Default value
+      return getDefaultHighWaterMark(state.objectMode);
+    }
+    module.exports = {
+      getHighWaterMark,
+      getDefaultHighWaterMark,
+      setDefaultHighWaterMark,
+    };
+  },
+});
+
 var _ReadableFromWeb;
 var _ReadableFromWebForUndici;
 
@@ -2265,21 +2325,132 @@ var require_readable = __commonJS({
       Promise: Promise2,
       SafeSet,
       SymbolAsyncIterator,
+      Promise,
+      SymbolAsyncDispose,
+      Symbol,
     } = require_primordials();
 
     var { Stream, prependListener } = require_legacy();
 
+    const BufferList = $cpp("JSBufferList.cpp", "getBufferList");
+
+    const { getHighWaterMark, getDefaultHighWaterMark } = require_state();
+
+    const { AbortError } = require_errors();
+
+    // TODO(benjamingr) it is likely slower to do it this way than with free functions
+    function makeBitMapDescriptor(bit) {
+      return {
+        enumerable: false,
+        get() {
+          return (this.state & bit) !== 0;
+        },
+        set(value) {
+          if (value) this.state |= bit;
+          else this.state &= ~bit;
+        },
+      };
+    }
+    function ReadableState(options, stream, isDuplex) {
+      // Duplex streams are both readable and writable, but share
+      // the same options object.
+      // However, some cases require setting options to different
+      // values for the readable and the writable sides of the duplex stream.
+      // These options can be provided separately as readableXXX and writableXXX.
+      if (typeof isDuplex !== "boolean") isDuplex = stream instanceof require_duplex();
+
+      // Bit map field to store ReadableState more effciently with 1 bit per field
+      // instead of a V8 slot per field.
+      this.state = kEmitClose | kAutoDestroy | kConstructed | kSync;
+      // Object stream flag. Used to make read(n) ignore n and to
+      // make all the buffer merging and length checks go away.
+      if (options && options.objectMode) this.state |= kObjectMode;
+      if (isDuplex && options && options.readableObjectMode) this.state |= kObjectMode;
+
+      // The point at which it stops calling _read() to fill the buffer
+      // Note: 0 is a valid value, means "don't call _read preemptively ever"
+      this.highWaterMark = options
+        ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
+        : getDefaultHighWaterMark(false);
+
+      // A linked list is used to store data chunks instead of an array because the
+      // linked list can remove elements from the beginning faster than
+      // array.shift().
+      this.buffer = new BufferList();
+      this.length = 0;
+      this.pipes = [];
+      this.flowing = null;
+      this[kPaused] = null;
+
+      // Should close be emitted on destroy. Defaults to true.
+      if (options && options.emitClose === false) this.state &= ~kEmitClose;
+
+      // Should .destroy() be called after 'end' (and potentially 'finish').
+      if (options && options.autoDestroy === false) this.state &= ~kAutoDestroy;
+
+      // Indicates whether the stream has errored. When true no further
+      // _read calls, 'data' or 'readable' events should occur. This is needed
+      // since when autoDestroy is disabled we need a way to tell whether the
+      // stream has failed.
+      this.errored = null;
+
+      // Crypto is kind of old and crusty.  Historically, its default string
+      // encoding is 'binary' so we have to make this configurable.
+      // Everything else in the universe uses 'utf8', though.
+      this.defaultEncoding = (options && options.defaultEncoding) || "utf8";
+
+      // Ref the piped dest which we need a drain event on it
+      // type: null | Writable | Set<Writable>.
+      this.awaitDrainWriters = null;
+      this.decoder = null;
+      this.encoding = null;
+      if (options && options.encoding) {
+        this.decoder = new StringDecoder(options.encoding);
+        this.encoding = options.encoding;
+      }
+    }
+    ReadableState.prototype = {};
+    ObjectDefineProperties(ReadableState.prototype, {
+      objectMode: makeBitMapDescriptor(kObjectMode),
+      ended: makeBitMapDescriptor(kEnded),
+      endEmitted: makeBitMapDescriptor(kEndEmitted),
+      reading: makeBitMapDescriptor(kReading),
+      // Stream is still being constructed and cannot be
+      // destroyed until construction finished or failed.
+      // Async construction is opt in, therefore we start as
+      // constructed.
+      constructed: makeBitMapDescriptor(kConstructed),
+      // A flag to be able to tell if the event 'readable'/'data' is emitted
+      // immediately, or on a later tick.  We set this to true at first, because
+      // any actions that shouldn't happen until "later" should generally also
+      // not happen before the first read call.
+      sync: makeBitMapDescriptor(kSync),
+      // Whenever we return null, then we set a flag to say
+      // that we're awaiting a 'readable' event emission.
+      needReadable: makeBitMapDescriptor(kNeedReadable),
+      emittedReadable: makeBitMapDescriptor(kEmittedReadable),
+      readableListening: makeBitMapDescriptor(kReadableListening),
+      resumeScheduled: makeBitMapDescriptor(kResumeScheduled),
+      // True if the error was already emitted and should not be thrown again.
+      errorEmitted: makeBitMapDescriptor(kErrorEmitted),
+      emitClose: makeBitMapDescriptor(kEmitClose),
+      autoDestroy: makeBitMapDescriptor(kAutoDestroy),
+      // Has it been destroyed.
+      destroyed: makeBitMapDescriptor(kDestroyed),
+      // Indicates whether the stream has finished destroying.
+      closed: makeBitMapDescriptor(kClosed),
+      // True if close has been emitted or would have been emitted
+      // depending on emitClose.
+      closeEmitted: makeBitMapDescriptor(kCloseEmitted),
+      multiAwaitDrain: makeBitMapDescriptor(kMultiAwaitDrain),
+      // If true, a maybeReadMore has been scheduled.
+      readingMore: makeBitMapDescriptor(kReadingMore),
+      dataEmitted: makeBitMapDescriptor(kDataEmitted),
+    });
+
     function Readable(options) {
       if (!(this instanceof Readable)) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
-
-      // this._events ??= {
-      //   close: undefined,
-      //   error: undefined,
-      //   prefinish: undefined,
-      //   finish: undefined,
-      //   drain: undefined,
-      // };
 
       this._readableState = new ReadableState(options, this, isDuplex);
       if (options) {
@@ -2301,6 +2472,7 @@ var require_readable = __commonJS({
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
     Readable.prototype.constructor = Readable; // Re-add constructor which got lost when setting prototype
     ObjectSetPrototypeOf(Readable, Stream);
+    Readable.ReadableState = ReadableState;
 
     Readable.prototype.on = function (ev, fn) {
       const res = Stream.prototype.on.$call(this, ev, fn);
@@ -2327,7 +2499,7 @@ var require_readable = __commonJS({
             this.__id,
           );
           if (state.length) {
-            emitReadable(this, state);
+            emitReadable(this);
           } else if (!state.reading) {
             ProcessNextTick(nReadingNextTick, this);
           }
@@ -2526,18 +2698,82 @@ var require_readable = __commonJS({
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
+    // function maybeReadMore(stream, state) {
+    //   ProcessNextTick(_maybeReadMore, stream, state);
+    // }
+
     function maybeReadMore(stream, state) {
-      ProcessNextTick(_maybeReadMore, stream, state);
-    }
-    function emitReadable(stream, state) {
-      $debug("NativeReadable - emitReadable", stream.__id);
-      state.needReadable = false;
-      if (!state.emittedReadable) {
-        state.emittedReadable = true;
-        // stream.emit("readable"); // TODO:
-        ProcessNextTick(_emitReadable, stream, state);
+      if (!state.readingMore && state.constructed) {
+        state.readingMore = true;
+        process.nextTick(maybeReadMore_, stream, state);
       }
     }
+    function maybeReadMore_(stream, state) {
+      // Attempt to read more data if we should.
+      //
+      // The conditions for reading more data are (one of):
+      // - Not enough data buffered (state.length < state.highWaterMark). The loop
+      //   is responsible for filling the buffer with enough data if such data
+      //   is available. If highWaterMark is 0 and we are not in the flowing mode
+      //   we should _not_ attempt to buffer any extra data. We'll get more data
+      //   when the stream consumer calls read() instead.
+      // - No data in the buffer, and the stream is in flowing mode. In this mode
+      //   the loop below is responsible for ensuring read() is called. Failing to
+      //   call read here would abort the flow and there's no other mechanism for
+      //   continuing the flow if the stream consumer has just subscribed to the
+      //   'data' event.
+      //
+      // In addition to the above conditions to keep reading data, the following
+      // conditions prevent the data from being read:
+      // - The stream has ended (state.ended).
+      // - There is already a pending 'read' operation (state.reading). This is a
+      //   case where the stream has called the implementation defined _read()
+      //   method, but they are processing the call asynchronously and have _not_
+      //   called push() with new data. In this case we skip performing more
+      //   read()s. The execution ends in this method again after the _read() ends
+      //   up calling push() with more data.
+      while (
+        !state.reading &&
+        !state.ended &&
+        (state.length < state.highWaterMark || (state.flowing && state.length === 0))
+      ) {
+        const len = state.length;
+        stream.read(0);
+        if (len === state.length)
+          // Didn't get any data, stop spinning.
+          break;
+      }
+      state.readingMore = false;
+    }
+
+    function emitReadable(stream) {
+      const state = stream._readableState;
+      $debug("emitReadable", state.needReadable, state.emittedReadable);
+      state.needReadable = false;
+      if (!state.emittedReadable) {
+        $debug("emitReadable", state.flowing);
+        state.emittedReadable = true;
+        process.nextTick(emitReadable_, stream);
+      }
+    }
+    function emitReadable_(stream) {
+      const state = stream._readableState;
+      $debug("emitReadable_", state.destroyed, state.length, state.ended);
+      if (!state.destroyed && !state.errored && (state.length || state.ended)) {
+        stream.emit("readable");
+        state.emittedReadable = false;
+      }
+
+      // The stream needs another readable event if:
+      // 1. It is not flowing, as the flow mechanism will take
+      //    care of it.
+      // 2. It is not ended.
+      // 3. It is below the highWaterMark, so we can schedule
+      //    another readable later.
+      state.needReadable = !state.flowing && !state.ended && state.length <= state.highWaterMark;
+      flow(stream);
+    }
+
     var destroyImpl = require_destroy();
     var {
       aggregateTwoErrors,
@@ -2640,7 +2876,7 @@ var require_readable = __commonJS({
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
         $debug("needReadable @ addChunk", state.needReadable, stream.__id);
-        if (state.needReadable) emitReadable(stream, state);
+        if (state.needReadable) emitReadable(stream);
       }
       $debug("about to maybereadmore");
       maybeReadMore(stream, state);
@@ -2659,12 +2895,11 @@ var require_readable = __commonJS({
       }
       state.ended = true;
       if (state.sync) {
-        emitReadable(stream, state);
+        emitReadable(stream);
       } else {
         state.needReadable = false;
         state.emittedReadable = true;
-        // stream.emit("readable"); // TODO:
-        _emitReadable(stream, state);
+        emitReadable_(stream);
       }
     }
     Readable.prototype.isPaused = function () {
@@ -2738,7 +2973,7 @@ var require_readable = __commonJS({
       ) {
         $debug("read: emitReadable or endReadable", state.length, state.ended, this.__id);
         if (state.length === 0 && state.ended) endReadable(this);
-        else emitReadable(this, state);
+        else emitReadable(this);
         return null;
       }
 
@@ -3046,16 +3281,45 @@ var require_readable = __commonJS({
       $debug("on readable nextTick, calling read(0)", self.__id);
       self.read(0);
     }
+    // Readable.prototype.resume = function () {
+    //   const state = this._readableState;
+    //   if (!state.flowing) {
+    //     $debug("resume", this.__id);
+    //     state.flowing = !state.readableListening;
+    //     resume(this, state);
+    //   }
+    //   state.paused = false;
+    //   return this;
+    // };
     Readable.prototype.resume = function () {
       const state = this._readableState;
       if (!state.flowing) {
-        $debug("resume", this.__id);
+        $debug("resume");
+        // We flow only if there is no one listening
+        // for readable, but we still have to call
+        // resume().
         state.flowing = !state.readableListening;
         resume(this, state);
       }
-      state.paused = false;
+      state[kPaused] = false;
       return this;
     };
+    function resume(stream, state) {
+      if (!state.resumeScheduled) {
+        state.resumeScheduled = true;
+        process.nextTick(resume_, stream, state);
+      }
+    }
+    function resume_(stream, state) {
+      $debug("resume", state.reading);
+      if (!state.reading) {
+        stream.read(0);
+      }
+      state.resumeScheduled = false;
+      stream.emit("resume");
+      flow(stream);
+      if (state.flowing && !state.reading) stream.read(0);
+    }
     Readable.prototype.pause = function () {
       $debug("call pause flowing=%j", this._readableState.flowing, this.__id);
       if (this._readableState.flowing !== false) {
@@ -3066,6 +3330,10 @@ var require_readable = __commonJS({
       this._readableState.paused = true;
       return this;
     };
+    function flow(stream) {
+      const state = stream._readableState;
+      while (state.flowing && stream.read() !== null);
+    }
     Readable.prototype.wrap = function (stream) {
       let paused = false;
       stream.on("data", chunk => {
@@ -3909,7 +4177,7 @@ var require_writable = __commonJS({
           errorOrDestroy(stream, err, state.sync);
         } else if (needFinish(state)) {
           state.prefinished = true;
-          ProcessNextTick(() => stream.emit("prefinish"));
+          stream.emit("prefinish");
           state.pendingcb++;
           ProcessNextTick(finish, stream, state);
         }
@@ -5135,30 +5403,30 @@ var require_promises = __commonJS({
     var { pipelineImpl: pl } = require_pipeline();
     var { finished } = require_end_of_stream();
     function pipeline(...streams) {
-      return new Promise2((resolve, reject) => {
-        let signal;
-        let end;
-        const lastArg = streams[streams.length - 1];
-        if (lastArg && typeof lastArg === "object" && !isNodeStream(lastArg) && !isIterable(lastArg)) {
-          const options = ArrayPrototypePop(streams);
-          signal = options.signal;
-          end = options.end;
-        }
-        pl(
-          streams,
-          (err, value) => {
-            if (err) {
-              reject(err);
-            } else {
-              resolve(value);
-            }
-          },
-          {
-            signal,
-            end,
-          },
-        );
-      });
+      const { promise, resolve, reject } = $newPromiseCapability(Promise);
+      let signal;
+      let end;
+      const lastArg = streams[streams.length - 1];
+      if (lastArg && typeof lastArg === "object" && !isNodeStream(lastArg) && !isIterable(lastArg)) {
+        const options = ArrayPrototypePop(streams);
+        signal = options.signal;
+        end = options.end;
+      }
+      pl(
+        streams,
+        (err, value) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(value);
+          }
+        },
+        {
+          signal,
+          end,
+        },
+      );
+      return promise;
     }
     module.exports = {
       finished,

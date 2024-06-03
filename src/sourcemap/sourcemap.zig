@@ -11,7 +11,7 @@ const BabyList = JSAst.BabyList;
 const Logger = bun.logger;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const Joiner = @import("../string_joiner.zig");
+const StringJoiner = bun.StringJoiner;
 const JSPrinter = bun.js_printer;
 const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
@@ -39,77 +39,201 @@ sources_content: []string,
 mapping: Mapping.List = .{},
 allocator: std.mem.Allocator,
 
-pub fn parse(
-    allocator: std.mem.Allocator,
-    json_source: *const Logger.Source,
-    log: *Logger.Log,
-) !SourceMap {
-    var json = try bun.JSON.ParseJSONUTF8(json_source, log, allocator);
-    var mappings = bun.sourcemap.Mapping.List{};
+/// Dictates what parseUrl/parseJSON return.
+pub const ParseUrlResultHint = union(enum) {
+    mappings_only,
+    /// Source Index to fetch
+    source_only: u32,
+    /// In order to fetch source contents, you need to know the
+    /// index, but you cant know the index until the mappings
+    /// are loaded. So pass in line+col.
+    all: struct { line: i32, column: i32 },
+};
+
+pub const ParseUrl = struct {
+    /// Populated when `mappings_only` or `all`.
+    map: ?*Mapping.ParsedSourceMap = null,
+    /// Populated when `all`
+    /// May be `null` even when requested.
+    mapping: ?Mapping = null,
+    /// Populated when `source_only` or `all`
+    /// May be `null` even when requested, if did not exist in map.
+    source_contents: ?[]const u8 = null,
+};
+
+/// Parses an inline source map url like `data:application/json,....`
+/// Currently does not handle non-inline source maps.
+///
+/// `source` must be in UTF-8 and can be freed after this call.
+/// The mappings are owned by the `alloc` allocator.
+/// Temporary allocations are made to the `arena` allocator, which
+/// should be an arena allocator (caller is assumed to call `deinit`).
+pub fn parseUrl(
+    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    source: []const u8,
+    hint: ParseUrlResultHint,
+) !ParseUrl {
+    const json_bytes = json_bytes: {
+        const data_prefix = "data:application/json";
+        if (bun.strings.hasPrefixComptime(source, data_prefix) and source.len > (data_prefix.len + 1)) try_data_url: {
+            switch (source[data_prefix.len]) {
+                ';' => {
+                    const encoding = bun.sliceTo(source[data_prefix.len + 1 ..], ',');
+                    if (!bun.strings.eqlComptime(encoding, "base64")) break :try_data_url;
+                    const base64_data = source[data_prefix.len + ";base64,".len ..];
+
+                    const len = bun.base64.decodeLen(base64_data);
+                    const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
+                    const decoded = bun.base64.decode(bytes, base64_data);
+                    if (decoded.fail) {
+                        return error.InvalidBase64;
+                    }
+                    break :json_bytes bytes[0..decoded.written];
+                },
+                ',' => break :json_bytes source[data_prefix.len + 1 ..],
+                else => break :try_data_url,
+            }
+        }
+
+        return error.UnsupportedFormat;
+    };
+
+    return parseJSON(alloc, arena, json_bytes, hint);
+}
+
+/// Parses a JSON source-map
+///
+/// `source` must be in UTF-8 and can be freed after this call.
+/// The mappings are owned by the `alloc` allocator.
+/// Temporary allocations are made to the `arena` allocator, which
+/// should be an arena allocator (caller is assumed to call `deinit`).
+pub fn parseJSON(
+    alloc: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    source: []const u8,
+    hint: ParseUrlResultHint,
+) !ParseUrl {
+    const json_src = bun.logger.Source.initPathString("sourcemap.json", source);
+    var log = bun.logger.Log.init(arena);
+    defer log.deinit();
+
+    var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
+        return error.InvalidJSON;
+    };
+
+    // the allocator given to the JS parser is not respected for all parts
+    // of the parse, so we need to remember to reset the ast store
+    defer {
+        bun.JSAst.Expr.Data.Store.reset();
+        bun.JSAst.Stmt.Data.Store.reset();
+    }
 
     if (json.get("version")) |version| {
         if (version.data != .e_number or version.data.e_number.value != 3.0) {
-            return error.@"Unsupported sourcemap version";
+            return error.UnsupportedVersion;
         }
     }
 
-    if (json.get("mappings")) |mappings_str| {
-        if (mappings_str.data != .e_string) {
-            return error.@"Invalid sourcemap mappings";
-        }
+    const mappings_str = json.get("mappings") orelse {
+        return error.UnsupportedVersion;
+    };
 
-        var parsed = bun.sourcemap.Mapping.parse(allocator, try mappings_str.data.e_string.toUTF8(allocator), null, std.math.maxInt(i32));
-        if (parsed == .fail) {
-            try log.addMsg(bun.logger.Msg{
-                .data = parsed.fail.toData("sourcemap.json"),
-                .kind = .err,
-            });
-            return error.@"Failed to parse sourcemap mappings";
-        }
-
-        mappings = parsed.success;
+    if (mappings_str.data != .e_string) {
+        return error.InvalidSourceMap;
     }
 
-    var sources = std.ArrayList(bun.string).init(allocator);
-    var sources_content = std.ArrayList(string).init(allocator);
+    const sources_content = switch ((json.get("sourcesContent") orelse return error.InvalidSourceMap).data) {
+        .e_array => |arr| arr,
+        else => return error.InvalidSourceMap,
+    };
 
-    if (json.get("sourcesContent")) |mappings_str| {
-        if (mappings_str.data != .e_array) {
-            return error.@"Invalid sourcemap sources";
-        }
+    const sources_paths = switch ((json.get("sources") orelse return error.InvalidSourceMap).data) {
+        .e_array => |arr| arr,
+        else => return error.InvalidSourceMap,
+    };
 
-        try sources_content.ensureTotalCapacityPrecise(mappings_str.data.e_array.items.len);
-        for (mappings_str.data.e_array.items.slice()) |source| {
-            if (source.data != .e_string) {
-                return error.@"Invalid sourcemap source";
-            }
-
-            try source.data.e_string.toUTF8(allocator);
-            sources_content.appendAssumeCapacity(source.data.e_string.slice());
-        }
+    if (sources_content.items.len != sources_paths.items.len) {
+        return error.InvalidSourceMap;
     }
 
-    if (json.get("sources")) |mappings_str| {
-        if (mappings_str.data != .e_array) {
-            return error.@"Invalid sourcemap sources";
+    var i: usize = 0;
+
+    const source_paths_slice = if (hint != .source_only)
+        alloc.alloc([]const u8, sources_content.items.len) catch bun.outOfMemory()
+    else
+        null;
+    errdefer if (hint != .source_only) {
+        for (source_paths_slice.?[0..i]) |item| alloc.free(item);
+        alloc.free(source_paths_slice.?);
+    };
+
+    if (hint != .source_only) for (sources_paths.items.slice()) |item| {
+        if (item.data != .e_string)
+            return error.InvalidSourceMap;
+
+        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
+        defer arena.free(utf16_decode);
+        source_paths_slice.?[i] = bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
+            return error.InvalidSourceMap;
+
+        i += 1;
+    };
+
+    const map = if (hint != .source_only) map: {
+        const map_data = switch (Mapping.parse(
+            alloc,
+            mappings_str.data.e_string.slice(arena),
+            null,
+            std.math.maxInt(i32),
+            std.math.maxInt(i32),
+        )) {
+            .success => |x| x,
+            .fail => |fail| return fail.err,
+        };
+
+        const ptr = bun.default_allocator.create(Mapping.ParsedSourceMap) catch bun.outOfMemory();
+        ptr.* = map_data;
+        ptr.external_source_names = source_paths_slice.?;
+        break :map ptr;
+    } else null;
+    errdefer if (map) |m| m.deinit(bun.default_allocator);
+
+    const mapping, const source_index = switch (hint) {
+        .source_only => |index| .{ null, index },
+        .all => |loc| brk: {
+            const mapping = Mapping.find(map.?.mappings, loc.line, loc.column) orelse
+                break :brk .{ null, null };
+            break :brk .{ mapping, std.math.cast(u32, mapping.source_index) };
+        },
+        .mappings_only => .{ null, null },
+    };
+
+    const content_slice: ?[]const u8 = if (hint != .mappings_only and
+        source_index != null and
+        source_index.? < sources_content.items.len)
+    content: {
+        const item = sources_content.items.slice()[source_index.?];
+        if (item.data != .e_string) {
+            break :content null;
         }
 
-        try sources.ensureTotalCapacityPrecise(mappings_str.data.e_array.items.len);
-        for (mappings_str.data.e_array.items.slice()) |source| {
-            if (source.data != .e_string) {
-                return error.@"Invalid sourcemap source";
-            }
-
-            try source.data.e_string.toUTF8(allocator);
-            sources.appendAssumeCapacity(source.data.e_string.slice());
+        const str = item.data.e_string.string(arena) catch bun.outOfMemory();
+        if (str.len == 0) {
+            break :content null;
         }
-    }
 
-    return SourceMap{
-        .mapping = mappings,
-        .allocator = allocator,
-        .sources_content = sources_content.items,
-        .sources = sources.items,
+        const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(str, arena);
+        defer arena.free(utf16_decode);
+
+        break :content bun.strings.toUTF8Alloc(alloc, utf16_decode) catch
+            return error.InvalidSourceMap;
+    } else null;
+
+    return .{
+        .map = map,
+        .mapping = mapping,
+        .source_contents = content_slice,
     };
 }
 
@@ -117,6 +241,80 @@ pub const Mapping = struct {
     generated: LineColumnOffset,
     original: LineColumnOffset,
     source_index: i32,
+
+    pub const Lookup = struct {
+        mapping: Mapping,
+        source_map: *ParsedSourceMap,
+        /// Owned by default_allocator always
+        /// use `getSourceCode` to access this as a Slice
+        prefetched_source_code: ?[]const u8,
+
+        /// This creates a bun.String if the source remap *changes* the source url,
+        /// a case that happens only when the source map points to another file.
+        pub fn displaySourceURLIfNeeded(lookup: Lookup, base_filename: []const u8) ?bun.String {
+            // See doc comment on `external_source_names`
+            if (lookup.source_map.external_source_names.len == 0)
+                return null;
+            if (lookup.mapping.source_index >= lookup.source_map.external_source_names.len)
+                return null;
+
+            const name = lookup.source_map.external_source_names[@intCast(lookup.mapping.source_index)];
+
+            if (std.fs.path.isAbsolute(base_filename)) {
+                const dir = bun.path.dirname(base_filename, .auto);
+                return bun.String.init(bun.path.joinAbs(dir, .auto, name));
+            }
+
+            return bun.String.init(name);
+        }
+
+        /// Only valid if `lookup.source_map.isExternal()`
+        /// This has the possibility of invoking a call to the filesystem.
+        pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
+            const bytes = bytes: {
+                assert(lookup.source_map.isExternal());
+                if (lookup.prefetched_source_code) |code| {
+                    break :bytes code;
+                }
+
+                const provider = lookup.source_map.underlying_provider.provider() orelse
+                    return null;
+
+                const index = lookup.mapping.source_index;
+
+                if (provider.getSourceMap(
+                    base_filename,
+                    lookup.source_map.underlying_provider.load_hint,
+                    .{ .source_only = @intCast(index) },
+                )) |parsed|
+                    if (parsed.source_contents) |contents|
+                        break :bytes contents;
+
+                if (index >= lookup.source_map.external_source_names.len)
+                    return null;
+
+                const name = lookup.source_map.external_source_names[@intCast(index)];
+
+                var buf: bun.PathBuffer = undefined;
+                const normalized = bun.path.joinAbsStringBufZ(
+                    bun.path.dirname(base_filename, .auto),
+                    &buf,
+                    &.{name},
+                    .loose,
+                );
+                switch (bun.sys.File.readFrom(
+                    std.fs.cwd(),
+                    normalized,
+                    bun.default_allocator,
+                )) {
+                    .result => |r| break :bytes r,
+                    .err => return null,
+                }
+            };
+
+            return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
+        }
+    };
 
     pub const List = std.MultiArrayList(Mapping);
 
@@ -286,11 +484,6 @@ pub const Mapping = struct {
             }
             remain = remain[source_index_delta.start..];
 
-            // // "AAAA" is extremely common
-            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
-
-            // }
-
             // Read the original line
             const original_line_delta = decodeVLQ(remain, 0);
             if (original_line_delta.start == 0) {
@@ -398,12 +591,226 @@ pub const Mapping = struct {
     pub const ParsedSourceMap = struct {
         input_line_count: usize = 0,
         mappings: Mapping.List = .{},
+        /// If this is empty, this implies that the source code is a single file
+        /// transpiled on-demand. If there are items, then it means this is a file
+        /// loaded without transpilation but with external sources. This array
+        /// maps `source_index` to the correct filename.
+        external_source_names: []const []const u8 = &.{},
+        /// In order to load source contents from a source-map after the fact,
+        /// a handle to the underying source provider is stored. Within this pointer,
+        /// a flag is stored if it is known to be an inline or external source map.
+        ///
+        /// Source contents are large, we don't preserve them in memory. This has
+        /// the downside of repeatedly re-decoding sourcemaps if multiple errors
+        /// are emitted (specifically with Bun.inspect / unhandled; the ones that
+        /// rely on source contents)
+        underlying_provider: SourceContentPtr = .{ .data = 0 },
+
+        const SourceContentPtr = packed struct(u64) {
+            load_hint: SourceMapLoadHint = .none,
+            data: u62,
+
+            fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
+                return .{ .data = @intCast(@intFromPtr(p)) };
+            }
+
+            pub fn provider(sc: SourceContentPtr) ?*SourceProviderMap {
+                return @ptrFromInt(sc.data);
+            }
+        };
+
+        pub fn isExternal(psm: *ParsedSourceMap) bool {
+            return psm.external_source_names.len != 0;
+        }
 
         pub fn deinit(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
             this.mappings.deinit(allocator);
+
+            if (this.external_source_names.len > 0) {
+                for (this.external_source_names) |name|
+                    allocator.free(name);
+                allocator.free(this.external_source_names);
+            }
+
             allocator.destroy(this);
         }
+
+        pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
+            var last_col: i32 = 0;
+            var last_src: i32 = 0;
+            var last_ol: i32 = 0;
+            var last_oc: i32 = 0;
+            var current_line: i32 = 0;
+            for (
+                map.mappings.items(.generated),
+                map.mappings.items(.original),
+                map.mappings.items(.source_index),
+                0..,
+            ) |gen, orig, source_index, i| {
+                if (current_line != gen.lines) {
+                    assert(gen.lines > current_line);
+                    const inc = gen.lines - current_line;
+                    try writer.writeByteNTimes(';', @intCast(inc));
+                    current_line = gen.lines;
+                    last_col = 0;
+                } else if (i != 0) {
+                    try writer.writeByte(',');
+                }
+                try encodeVLQ(gen.columns - last_col).writeTo(writer);
+                last_col = gen.columns;
+                try encodeVLQ(source_index - last_src).writeTo(writer);
+                last_src = source_index;
+                try encodeVLQ(orig.lines - last_ol).writeTo(writer);
+                last_ol = orig.lines;
+                try encodeVLQ(orig.columns - last_oc).writeTo(writer);
+                last_oc = orig.columns;
+            }
+        }
+
+        pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
+            return .{ .data = map };
+        }
+
+        fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+            try map.writeVLQs(w);
+        }
     };
+};
+
+/// For some sourcemap loading code, this enum is used as a hint if it should
+/// bother loading source code into memory. Most uses of source maps only care
+/// about filenames and source mappings, and we should avoid loading contents
+/// whenever possible.
+pub const SourceContentHandling = enum {
+    no_source_contents,
+    source_contents,
+};
+
+/// For some sourcemap loading code, this enum is used as a hint if we already
+/// know if the sourcemap is located on disk or inline in the source code.
+pub const SourceMapLoadHint = enum {
+    none,
+    is_inline_map,
+    is_external_map,
+};
+
+/// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
+/// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
+///
+/// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
+pub const SourceProviderMap = opaque {
+    extern fn ZigSourceProvider__getSourceSlice(*SourceProviderMap) bun.String;
+
+    fn findSourceMappingURL(comptime T: type, source: []const T, alloc: std.mem.Allocator) ?bun.JSC.ZigString.Slice {
+        const needle = comptime bun.strings.literal(T, "\n//# sourceMappingURL=");
+        const found = bun.strings.indexOfT(T, source, needle) orelse return null;
+        const end = std.mem.indexOfScalarPos(T, source, found + needle.len, '\n') orelse source.len;
+        const url = std.mem.trimRight(T, source[found + needle.len .. end], &.{ ' ', '\r' });
+        return switch (T) {
+            u8 => bun.JSC.ZigString.Slice.fromUTF8NeverFree(url),
+            u16 => bun.JSC.ZigString.Slice.init(
+                alloc,
+                bun.strings.toUTF8Alloc(alloc, url) catch bun.outOfMemory(),
+            ),
+            else => @compileError("Not Supported"),
+        };
+    }
+
+    /// The last two arguments to this specify loading hints
+    pub fn getSourceMap(
+        provider: *SourceProviderMap,
+        source_filename: []const u8,
+        load_hint: SourceMapLoadHint,
+        result: ParseUrlResultHint,
+    ) ?SourceMap.ParseUrl {
+        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(sfb.get());
+        defer arena.deinit();
+
+        const new_load_hint: SourceMapLoadHint, const parsed = parsed: {
+            var inline_err: ?anyerror = null;
+
+            // try to get an inline source map
+            if (load_hint != .is_external_map) try_inline: {
+                const source = ZigSourceProvider__getSourceSlice(provider);
+                defer source.deref();
+                bun.assert(source.tag == .ZigString);
+
+                const found_url = (if (source.is8Bit())
+                    findSourceMappingURL(u8, source.latin1(), arena.allocator())
+                else
+                    findSourceMappingURL(u16, source.utf16(), arena.allocator())) orelse
+                    break :try_inline;
+                defer found_url.deinit();
+
+                break :parsed .{
+                    .is_inline_map,
+                    parseUrl(
+                        bun.default_allocator,
+                        arena.allocator(),
+                        found_url.slice(),
+                        result,
+                    ) catch |err| {
+                        inline_err = err;
+                        break :try_inline;
+                    },
+                };
+            }
+
+            // try to load a .map file
+            if (load_hint != .is_inline_map) try_external: {
+                var load_path_buf: bun.PathBuffer = undefined;
+                if (source_filename.len + 4 > load_path_buf.len)
+                    break :try_external;
+                @memcpy(load_path_buf[0..source_filename.len], source_filename);
+                @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
+
+                const load_path = load_path_buf[0 .. source_filename.len + 4];
+                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, arena.allocator())) {
+                    .err => break :try_external,
+                    .result => |data| data,
+                };
+
+                break :parsed .{
+                    .is_external_map,
+                    parseJSON(
+                        bun.default_allocator,
+                        arena.allocator(),
+                        data,
+                        result,
+                    ) catch |err| {
+                        // Print warning even if this came from non-visible code like
+                        // calling `error.stack`. This message is only printed if
+                        // the sourcemap has been found but is invalid, such as being
+                        // invalid JSON text or corrupt mappings.
+                        bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                            source_filename,
+                            @errorName(err),
+                        }); // Disable the "try using --sourcemap=external" hint
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                        return null;
+                    },
+                };
+            }
+
+            if (inline_err) |err| {
+                bun.Output.warn("Could not decode sourcemap in '{s}': {s}", .{
+                    source_filename,
+                    @errorName(err),
+                });
+                // Disable the "try using --sourcemap=external" hint
+                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.seen_invalid = true;
+                return null;
+            }
+
+            return null;
+        };
+        if (parsed.map) |ptr| {
+            ptr.underlying_provider = Mapping.ParsedSourceMap.SourceContentPtr.fromProvider(provider);
+            ptr.underlying_provider.load_hint = new_load_hint;
+        }
+        return parsed;
+    }
 };
 
 pub const LineColumnOffset = struct {
@@ -417,14 +824,14 @@ pub const LineColumnOffset = struct {
         pub fn advance(this: *Optional, input: []const u8) void {
             switch (this.*) {
                 .null => {},
-                .value => this.value.advance(input),
+                .value => |*v| v.advance(input),
             }
         }
 
         pub fn reset(this: *Optional) void {
             switch (this.*) {
                 .null => {},
-                .value => this.value = .{},
+                .value => this.* = .{ .value = .{} },
             }
         }
     };
@@ -438,9 +845,13 @@ pub const LineColumnOffset = struct {
         }
     }
 
-    pub fn advance(this: *LineColumnOffset, input: []const u8) void {
-        var columns = this.columns;
-        defer this.columns = columns;
+    pub fn advance(this_ptr: *LineColumnOffset, input: []const u8) void {
+        // Instead of mutating `this_ptr` directly, copy the state to the stack and do
+        // all the work here, then move it back to the input pointer. When sourcemaps
+        // are enabled, this function is extremely hot.
+        var this = this_ptr.*;
+        defer this_ptr.* = this;
+
         var offset: u32 = 0;
         while (strings.indexOfNewlineOrNonASCII(input, offset)) |i| {
             assert(i >= offset);
@@ -454,7 +865,7 @@ pub const LineColumnOffset = struct {
             // This can lead to integer overflow, crashes, or hangs.
             // https://github.com/oven-sh/bun/issues/10624
             if (cursor.width == 0) {
-                columns += 1;
+                this.columns += 1;
                 offset = i + 1;
                 continue;
             }
@@ -465,22 +876,32 @@ pub const LineColumnOffset = struct {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cursor.c == '\r' and input.len > i + 1 and input[i + 1] == '\n') {
-                        columns += 1;
+                        this.columns += 1;
                         continue;
                     }
 
                     this.lines += 1;
-                    columns = 0;
+                    this.columns = 0;
                 },
                 else => |c| {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units
-                    columns += switch (c) {
+                    this.columns += switch (c) {
                         0...0xFFFF => 1,
                         else => 2,
                     };
                 },
             }
         }
+
+        const remain = input[offset..];
+
+        if (bun.Environment.allow_assert) {
+            assert(bun.strings.isAllASCII(remain));
+            assert(!bun.strings.containsChar(remain, '\n'));
+            assert(!bun.strings.containsChar(remain, '\r'));
+        }
+
+        this.columns += @intCast(remain.len);
     }
 
     pub fn comesBefore(a: LineColumnOffset, b: LineColumnOffset) bool {
@@ -537,9 +958,14 @@ pub const SourceMapPieces = struct {
         var current: usize = 0;
         var generated = LineColumnOffset{};
         var prev_shift_column_delta: i32 = 0;
-        var j = Joiner{};
 
-        j.push(this.prefix.items);
+        // the joiner's node allocator contains string join nodes as well as some vlq encodings
+        // it doesnt contain json payloads or source code, so 16kb is probably going to cover
+        // most applications.
+        var sfb = std.heap.stackFallback(16384, bun.default_allocator);
+        var j = StringJoiner{ .allocator = sfb.get() };
+
+        j.pushStatic(this.prefix.items);
         const mappings = this.mappings.items;
 
         while (current < mappings.len) {
@@ -559,14 +985,14 @@ pub const SourceMapPieces = struct {
 
             const potential_start_of_run = current;
 
-            current = decodeVLQ(mappings, current).start;
-            current = decodeVLQ(mappings, current).start;
-            current = decodeVLQ(mappings, current).start;
+            current = decodeVLQAssumeValid(mappings, current).start;
+            current = decodeVLQAssumeValid(mappings, current).start;
+            current = decodeVLQAssumeValid(mappings, current).start;
 
             if (current < mappings.len) {
                 const c = mappings[current];
                 if (c != ',' and c != ';') {
-                    current = decodeVLQ(mappings, current).start;
+                    current = decodeVLQAssumeValid(mappings, current).start;
                 }
             }
 
@@ -589,22 +1015,24 @@ pub const SourceMapPieces = struct {
                 continue;
             }
 
-            j.push(mappings[start_of_run..potential_end_of_run]);
+            j.pushStatic(mappings[start_of_run..potential_end_of_run]);
 
             assert(shift.before.lines == shift.after.lines);
 
             const shift_column_delta = shift.after.columns - shift.before.columns;
-            const encode = encodeVLQ(decode_result.value + shift_column_delta - prev_shift_column_delta);
-            j.push(encode.bytes[0..encode.len]);
+            const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
+            const encode = encodeVLQ(vlq_value);
+            j.pushCloned(encode.bytes[0..encode.len]);
             prev_shift_column_delta = shift_column_delta;
 
             start_of_run = potential_start_of_run;
         }
 
-        j.push(mappings[start_of_run..]);
-        j.push(this.suffix.items);
+        j.pushStatic(mappings[start_of_run..]);
 
-        return try j.done(allocator);
+        const str = try j.doneWithEnd(allocator, this.suffix.items);
+        bun.assert(str[0] == '{'); // invalid json
+        return str;
     }
 };
 
@@ -617,54 +1045,61 @@ pub const SourceMapPieces = struct {
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn appendSourceMapChunk(j: *Joiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
+pub fn appendSourceMapChunk(j: *StringJoiner, allocator: std.mem.Allocator, prev_end_state_: SourceMapState, start_state_: SourceMapState, source_map_: bun.string) !void {
     var prev_end_state = prev_end_state_;
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
-    if (start_state.generated_line > 0) {
-        j.append(try strings.repeatingAlloc(allocator, @as(usize, @intCast(start_state.generated_line)), ';'), 0, allocator);
+    if (start_state.generated_line != 0) {
+        j.push(try strings.repeatingAlloc(allocator, @intCast(start_state.generated_line), ';'), allocator);
         prev_end_state.generated_column = 0;
     }
 
+    // Skip past any leading semicolons, which indicate line breaks
     var source_map = source_map_;
     if (strings.indexOfNotChar(source_map, ';')) |semicolons| {
-        j.push(source_map[0..semicolons]);
-        source_map = source_map[semicolons..];
-        prev_end_state.generated_column = 0;
-        start_state.generated_column = 0;
+        if (semicolons > 0) {
+            j.pushStatic(source_map[0..semicolons]);
+            source_map = source_map[semicolons..];
+            prev_end_state.generated_column = 0;
+            start_state.generated_column = 0;
+        }
     }
 
     // Strip off the first mapping from the buffer. The first mapping should be
     // for the start of the original file (the printer always generates one for
     // the start of the file).
     var i: usize = 0;
-    const generated_column_ = decodeVLQ(source_map, 0);
-    i = generated_column_.start;
-    const source_index_ = decodeVLQ(source_map, i);
-    i = source_index_.start;
-    const original_line_ = decodeVLQ(source_map, i);
-    i = original_line_.start;
-    const original_column_ = decodeVLQ(source_map, i);
-    i = original_column_.start;
+    const generated_column = decodeVLQAssumeValid(source_map, i);
+    i = generated_column.start;
+    const source_index = decodeVLQAssumeValid(source_map, i);
+    i = source_index.start;
+    const original_line = decodeVLQAssumeValid(source_map, i);
+    i = original_line.start;
+    const original_column = decodeVLQAssumeValid(source_map, i);
+    i = original_column.start;
 
     source_map = source_map[i..];
 
     // Rewrite the first mapping to be relative to the end state of the previous
     // chunk. We now know what the end state is because we're in the second pass
     // where all chunks have already been generated.
-    start_state.source_index += source_index_.value;
-    start_state.generated_column += generated_column_.value;
-    start_state.original_line += original_line_.value;
-    start_state.original_column += original_column_.value;
+    start_state.source_index += source_index.value;
+    start_state.generated_column += generated_column.value;
+    start_state.original_line += original_line.value;
+    start_state.original_column += original_column.value;
 
-    j.append(
-        appendMappingToBuffer(MutableString.initEmpty(allocator), j.lastByte(), prev_end_state, start_state).list.items,
-        0,
+    j.push(
+        appendMappingToBuffer(
+            MutableString.initEmpty(allocator),
+            j.lastByte(),
+            prev_end_state,
+            start_state,
+        ).list.items,
         allocator,
     );
 
     // Then append everything after that without modification.
-    j.push(source_map);
+    j.pushStatic(source_map);
 }
 
 const vlq_lookup_table: [256]VLQ = brk: {
@@ -694,9 +1129,7 @@ pub const VLQ = struct {
     }
 };
 
-pub fn encodeVLQWithLookupTable(
-    value: i32,
-) VLQ {
+pub fn encodeVLQWithLookupTable(value: i32) VLQ {
     return if (value >= 0 and value <= 255)
         vlq_lookup_table[@as(usize, @intCast(value))]
     else
@@ -777,6 +1210,39 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     comptime var i: usize = 0;
     inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
         const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
+
+        // decode a byte
+        vlq |= (index & 31) << @as(u5, @truncate(shift));
+        shift += 5;
+
+        // Stop if there's no continuation bit
+        if ((index & 32) == 0) {
+            return VLQResult{
+                .start = start + comptime (i + 1),
+                .value = if ((vlq & 1) == 0)
+                    @as(i32, @intCast(vlq >> 1))
+                else
+                    -@as(i32, @intCast((vlq >> 1))),
+            };
+        }
+    }
+
+    return VLQResult{ .start = start + encoded_.len, .value = 0 };
+}
+
+pub fn decodeVLQAssumeValid(encoded: []const u8, start: usize) VLQResult {
+    var shift: u8 = 0;
+    var vlq: u32 = 0;
+
+    // hint to the compiler what the maximum value is
+    const encoded_ = encoded[start..][0..@min(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
+
+    // inlining helps for the 1 or 2 byte case, hurts a little for larger
+    comptime var i: usize = 0;
+    inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
+        bun.assert(encoded_[i] < std.math.maxInt(u7)); // invalid base64 character
+        const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
+        bun.assert(index != std.math.maxInt(u7)); // invalid base64 character
 
         // decode a byte
         vlq |= (index & 31) << @as(u5, @truncate(shift));
@@ -1067,9 +1533,8 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
         buffer.appendCharAssumeCapacity(',');
     }
 
-    comptime var i: usize = 0;
-    inline while (i < vlq.len) : (i += 1) {
-        buffer.appendAssumeCapacity(vlq[i].bytes[0..vlq[i].len]);
+    inline for (vlq) |item| {
+        buffer.appendAssumeCapacity(item.bytes[0..item.len]);
     }
 
     return buffer;
@@ -1121,7 +1586,7 @@ pub const Chunk = struct {
 
         // attempt to pre-allocate
 
-        var filename_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var filename_buf: bun.PathBuffer = undefined;
         var filename = source.path.text;
         if (strings.hasPrefix(source.path.text, FileSystem.instance.top_level_dir)) {
             filename = filename[FileSystem.instance.top_level_dir.len - 1 ..];
@@ -1368,9 +1833,9 @@ pub const Chunk = struct {
 
             pub fn addSourceMapping(b: *ThisBuilder, loc: Logger.Loc, output: []const u8) void {
                 if (
-                // exclude generated code from source
+                // don't insert mappings for same location twice
                 b.prev_loc.eql(loc) or
-                    // don't insert mappings for same location twice
+                    // exclude generated code from source
                     loc.start == Logger.Loc.Empty.start)
                     return;
 

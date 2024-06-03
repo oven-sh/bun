@@ -86,34 +86,34 @@ const bufs = struct {
     // packages but we lack a decent module resolution benchmark right now.
     // Potentially revisit after https://github.com/oven-sh/bun/issues/2716
     pub threadlocal var extension_path: [512]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_match_full_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tsconfig_match_full_buf: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_match_full_buf2: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_match_full_buf3: bun.PathBuffer = undefined;
 
     pub threadlocal var esm_subpath: [512]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var esm_absolute_package_path: bun.PathBuffer = undefined;
+    pub threadlocal var esm_absolute_package_path_joined: bun.PathBuffer = undefined;
 
     pub threadlocal var dir_entry_paths_to_resolve: [256]DirEntryResolveQueueItem = undefined;
     pub threadlocal var open_dirs: [256]std.fs.Dir = undefined;
-    pub threadlocal var resolve_without_remapping: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var index: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var dir_info_uncached_filename: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var node_bin_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var dir_info_uncached_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_base_url: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var relative_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var node_modules_check: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var field_abs_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var tsconfig_path_abs: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var check_browser_map: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var remap_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var load_as_file: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var path_in_global_disk_cache: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var abs_to_rel: [bun.MAX_PATH_BYTES]u8 = undefined;
-    pub threadlocal var node_modules_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var resolve_without_remapping: bun.PathBuffer = undefined;
+    pub threadlocal var index: bun.PathBuffer = undefined;
+    pub threadlocal var dir_info_uncached_filename: bun.PathBuffer = undefined;
+    pub threadlocal var node_bin_path: bun.PathBuffer = undefined;
+    pub threadlocal var dir_info_uncached_path: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_base_url: bun.PathBuffer = undefined;
+    pub threadlocal var relative_abs_path: bun.PathBuffer = undefined;
+    pub threadlocal var load_as_file_or_directory_via_tsconfig_base_path: bun.PathBuffer = undefined;
+    pub threadlocal var node_modules_check: bun.PathBuffer = undefined;
+    pub threadlocal var field_abs_path: bun.PathBuffer = undefined;
+    pub threadlocal var tsconfig_path_abs: bun.PathBuffer = undefined;
+    pub threadlocal var check_browser_map: bun.PathBuffer = undefined;
+    pub threadlocal var remap_path: bun.PathBuffer = undefined;
+    pub threadlocal var load_as_file: bun.PathBuffer = undefined;
+    pub threadlocal var remap_path_trailing_slash: bun.PathBuffer = undefined;
+    pub threadlocal var path_in_global_disk_cache: bun.PathBuffer = undefined;
+    pub threadlocal var abs_to_rel: bun.PathBuffer = undefined;
+    pub threadlocal var node_modules_paths_buf: bun.PathBuffer = undefined;
 
     pub inline fn bufs(comptime field: std.meta.DeclEnum(@This())) *@TypeOf(@field(@This(), @tagName(field))) {
         return &@field(@This(), @tagName(field));
@@ -736,7 +736,7 @@ pub const Resolver = struct {
         pkg.loadFrameworkWithPreference(pair, json, r.allocator, load_defines, preference);
         const dir = pkg.source.path.sourceDir();
 
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         pair.framework.resolved_dir = pkg.source.path.sourceDir();
 
@@ -1069,7 +1069,7 @@ pub const Resolver = struct {
                         }
                     } else if (dir.abs_real_path.len > 0) {
                         var parts = [_]string{ dir.abs_real_path, query.entry.base() };
-                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var buf: bun.PathBuffer = undefined;
 
                         var out = r.fs.absBuf(&parts, &buf);
 
@@ -2576,6 +2576,23 @@ pub const Resolver = struct {
 
         if (comptime Environment.isWindows) {
             input_path = r.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, input_path);
+            // kind of a patch on the fact normalizeBuf isn't 100% perfect what we want
+            if ((input_path.len == 2 and input_path[1] == ':') or
+                (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
+            {
+                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                win32_normalized_dir_info_cache_buf[2] = '\\';
+                input_path.len = 3;
+            }
+
+            // Filter out \\hello\, a UNC server path but without a share.
+            // When there isn't a share name, such path is not considered to exist.
+            if (bun.strings.hasPrefixComptime(input_path, "\\\\")) {
+                const first_slash = bun.strings.indexOfChar(input_path[2..], '\\') orelse
+                    return null;
+                _ = bun.strings.indexOfChar(input_path[2 + first_slash ..], '\\') orelse
+                    return null;
+            }
         }
 
         assert(std.fs.path.isAbsolute(input_path));
@@ -2601,8 +2618,8 @@ pub const Resolver = struct {
             .hash = 0,
             .status = .not_found,
         };
-        const root_path = if (comptime Environment.isWindows)
-            ResolvePath.windowsFilesystemRoot(path)
+        const root_path = if (Environment.isWindows)
+            bun.strings.pathWithoutTrailingSlashOne(ResolvePath.windowsFilesystemRoot(path))
         else
             // we cannot just use "/"
             // we will write to the buffer past the ptr len so it must be a non-const buffer
@@ -2614,7 +2631,8 @@ pub const Resolver = struct {
         rfs.entries_mutex.lock();
         defer rfs.entries_mutex.unlock();
 
-        while (!strings.eql(top, root_path)) : (top = Dirname.dirname(top)) {
+        while (top.len > root_path.len) : (top = Dirname.dirname(top)) {
+            assert(top.ptr == root_path.ptr);
             const result = try r.dir_cache.getOrPut(top);
 
             if (result.status != .unknown) {
@@ -2719,7 +2737,11 @@ pub const Resolver = struct {
                         .{ .no_follow = !follow_symlinks, .iterate = true },
                     )
                 else if (comptime Environment.isWindows) open_req: {
-                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{ .iterable = true, .no_follow = !follow_symlinks, .read_only = true });
+                    const dirfd_result = bun.sys.openDirAtWindowsA(bun.invalid_fd, sentinel, .{
+                        .iterable = true,
+                        .no_follow = !follow_symlinks,
+                        .read_only = true,
+                    });
                     if (dirfd_result.unwrap()) |result| {
                         break :open_req result.asDir();
                     } else |err| {

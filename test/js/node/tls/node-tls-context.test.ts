@@ -115,6 +115,7 @@ describe("tls.Server", () => {
             {
               ...clientOptionsBase,
               port: (server.address() as AddressInfo).port,
+              host: "127.0.0.1",
               servername,
             },
             () => {
@@ -122,6 +123,7 @@ describe("tls.Server", () => {
               resolve();
             },
           );
+          client.on("error", reject);
         });
       }
 
@@ -174,6 +176,7 @@ describe("tls.Server", () => {
       server.listen(0, () => {
         const options = {
           port: (server?.address() as AddressInfo).port,
+          host: "127.0.0.1",
           key: agent1Key,
           cert: agent1Cert,
           ca: [ca1],
@@ -212,8 +215,12 @@ describe("tls.Server", () => {
             onemore.on("close", () => {
               server.close();
             });
+            onemore.on("error", reject);
           });
+
+          other.on("error", reject);
         });
+        client.on("error", reject);
       });
       server.on("error", reject);
       server.on("clientError", reject);
@@ -236,23 +243,29 @@ describe("tls.Server", () => {
         port: (server.address() as AddressInfo).port,
         ca,
       };
+      var authorized = false;
       const socket = tls.connect(options, () => {
-        resolve(socket.authorized);
+        authorized = socket.authorized;
         socket.end();
       });
 
       socket.on("error", reject);
       socket.on("close", () => {
-        server.close();
+        server.close(() => {
+          resolve(authorized);
+        });
       });
     });
     return promise;
   }
-  it("should allow multiple in CA", async () => {
+  it("should allow multiple CA", async () => {
     // Verify that multiple CA certificates can be provided, and that for
     // convenience that can also be in newline-separated strings.
-    expect(await testCA([ca1, ca2])).toBe(true);
-    expect(await testCA([ca2 + "\n" + ca1])).toBe(true);
+    expect(await testCA([ca1, ca2])).toBeTrue();
+  });
+
+  it("should allow multiple CA in newline-separated strings", async () => {
+    expect(await testCA([ca2 + "\n" + ca1])).toBeTrue();
   });
 
   function testClient(options: any, clientResult: boolean, serverResult: string) {
@@ -278,6 +291,7 @@ describe("tls.Server", () => {
         {
           ...options,
           port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
         },
         () => {
@@ -292,7 +306,7 @@ describe("tls.Server", () => {
           client.end();
         },
       );
-
+      client.on("error", reject);
       client.on("close", () => {
         server.close();
       });

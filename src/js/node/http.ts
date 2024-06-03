@@ -1,7 +1,7 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
-const { Duplex, Readable, Writable } = require("node:stream");
+const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
 
 const {
   getHeader,
@@ -550,6 +550,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
           ws.data.pong(ws, data);
         },
       },
+      maxRequestBodySize: Number.MAX_SAFE_INTEGER,
       // Be very careful not to access (web) Request object
       // properties:
       // - request.url
@@ -1214,9 +1215,9 @@ function ensureReadableStreamController(run) {
           firstWrite = undefined;
           run(controller);
           if (!this[finishedSymbol]) {
-            return new Promise(resolve => {
-              this[deferredSymbol] = resolve;
-            });
+            const { promise, resolve } = $newPromiseCapability(GlobalPromise);
+            this[deferredSymbol] = resolve;
+            return promise;
           }
         },
       }),
@@ -1462,7 +1463,9 @@ class ClientRequest extends OutgoingMessage {
     this.#finished = true;
     this[kAbortController] = new AbortController();
     this[kAbortController].signal.addEventListener("abort", () => {
+      this.emit("abort");
       this[kClearTimeout]();
+      this.destroy();
     });
     if (this.#signal?.aborted) {
       this[kAbortController].abort();
@@ -1522,7 +1525,14 @@ class ClientRequest extends OutgoingMessage {
           this.emit("response", res);
         })
         .catch(err => {
+          // Node treats AbortError separately.
+          // The "abort" listener on the abort controller should have called this
+          if (err?.name === "AbortError") {
+            return;
+          }
+
           if (!!$debug) globalReportError(err);
+
           this.emit("error", err);
         })
         .finally(() => {

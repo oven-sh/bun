@@ -173,7 +173,7 @@ pub const PathWatcherManager = struct {
 
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
         var ctx = this.main_watcher;
         defer ctx.flushEvictions();
@@ -440,7 +440,7 @@ pub const PathWatcherManager = struct {
         fn processWatcher(
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
-            buf: *[bun.MAX_PATH_BYTES + 1]u8,
+            buf: *bun.PathBuffer,
         ) bun.JSC.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
@@ -524,7 +524,7 @@ pub const PathWatcherManager = struct {
                 return bun.todo(@src(), {});
             }
 
-            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
 
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
@@ -773,7 +773,7 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
-                var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buffer: bun.PathBuffer = undefined;
                 const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;

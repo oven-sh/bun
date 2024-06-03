@@ -56,3 +56,17 @@ To clear Bun's global module cache:
 ```bash
 $ bun pm cache rm
 ```
+
+## List global installs
+
+To list all globally installed packages:
+
+```bash
+$ bun pm ls -g
+```
+
+To list all globally installed packages, including nth-order dependencies:
+
+```bash
+$ bun pm ls -g --all
+```

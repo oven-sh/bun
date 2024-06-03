@@ -201,7 +201,10 @@ void us_internal_drain_pending_dns_resolve(struct us_loop_t *loop, struct us_con
 }
 
 int us_internal_handle_dns_results(struct us_loop_t *loop) {
-    struct us_connecting_socket_t *s = __atomic_exchange_n(&loop->data.dns_ready_head, NULL, __ATOMIC_ACQ_REL);
+    Bun__lock(&loop->data.mutex);
+    struct us_connecting_socket_t *s = loop->data.dns_ready_head;
+    loop->data.dns_ready_head = NULL;
+    Bun__unlock(&loop->data.mutex);
     us_internal_drain_pending_dns_resolve(loop, s);
     return s != NULL;
 }
@@ -277,50 +280,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                struct us_socket_t *s = (struct us_socket_t *) p;
-
-                /* It is perfectly possible to come here with an error */
-                if (error) {
-                    struct us_connecting_socket_t *c = s->connect_state; 
-
-                    /* Emit error, close without emitting on_close */
-
-                    /* There are two possible states here: 
-                        1. It's a us_connecting_socket_t*. DNS resolution failed, or a connection failed. 
-                        2. It's a us_socket_t* 
-
-                       We differentiate between these two cases by checking if the connect_state is null.
-                    */
-                    if (c) {
-                        s->context->on_connect_error(s->connect_state, error);
-                        us_connecting_socket_close(c->ssl, c);
-                    } else {
-                        s->context->on_socket_connect_error(s, error);
-                        // It's expected that close is called by the caller
-                    }
-                    
-                    s = NULL;
-                } else {
-                    /* All sockets poll for readable */
-                    us_poll_change(p, s->context->loop, LIBUS_SOCKET_READABLE);
-
-                    /* We always use nodelay */
-                    bsd_socket_nodelay(us_poll_fd(p), 1);
-
-                    /* We are now a proper socket */
-                    us_internal_poll_set_type(p, POLL_TYPE_SOCKET);
-
-                    /* If we used a connection timeout we have to reset it here */
-                    us_socket_timeout(0, s, 0);
-
-                    s->context->on_open(s, 1, 0, 0);
-
-                    if (s->connect_state) {
-                        // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
-                        us_connecting_socket_free(s->connect_state);
-                        s->connect_state = NULL;
-                    }
-                }
+                us_internal_socket_after_open((struct us_socket_t *) p, error);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
                 struct bsd_addr_t addr;
@@ -481,7 +441,32 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 break;
             }
 
-            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+            if (events & LIBUS_SOCKET_READABLE) {
+                do {
+                    struct udp_recvbuf recvbuf;
+                    bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
+                    if (npackets > 0) {
+                        u->on_data(u, &recvbuf, npackets);
+                    } else {
+                        if (npackets == LIBUS_SOCKET_ERROR) {
+                            // If the error was not EAGAIN, mark the error
+                            if (!bsd_would_block()) {
+                                error = 1;
+                            }
+                        } else {
+                            // 0 messages received, we are done
+                            // this case can happen if either:
+                            // - the total number of messages pending was not divisible by 8
+                            // - recvmsg() was used instead of recvmmsg() and there was no message to read.
+                        }
+
+                        break;
+                    }
+                } while (!u->closed);
+            }
+
+            if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
                 u->on_drain(u);
                 if (u->closed) {
                     break;
@@ -490,25 +475,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                 // Otherwise we would receive a writable event on every tick of the event loop.
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
-            if (events & LIBUS_SOCKET_READABLE) {
-                struct udp_recvbuf recvbuf;
-                bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
-                while (1) {
-                    int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT);
-                    if (npackets > 0) {
-                        u->on_data(u, &recvbuf, npackets);
-                        if (u->closed) {
-                            break;
-                        }
-                    } else if (npackets == LIBUS_SOCKET_ERROR && bsd_would_block()) {
-                        // break receive loop when we receive EAGAIN or similar
-                        break;
-                    } else if (npackets == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
-                        // close the socket on error
-                        us_udp_socket_close(u);
-                        break;
-                    }
-                }
+
+            if (error && !u->closed) {
+                us_udp_socket_close(u);
             }
             break;
         }

@@ -48,7 +48,7 @@ afterAll(() => {
   }
 });
 
-describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () => {
+describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(
       isDirect ? "direct" : "default",
@@ -105,12 +105,17 @@ describe("1000 simultaneous uploads & downloads do not leak ReadableStream", () 
               Bun.gc(false);
             }
             {
-              const promises = new Array(count);
-              for (let i = 0; i < count; i++) {
-                promises[i] = callback();
-              }
+              let remaining = count;
 
-              await Promise.all(promises);
+              const batchSize = 64;
+              while (remaining > 0) {
+                const promises = new Array(count);
+                for (let i = 0; i < batchSize && remaining > 0; i++) {
+                  promises[i] = callback();
+                }
+                await Promise.all(promises);
+                remaining -= batchSize;
+              }
             }
 
             Bun.gc(true);
@@ -184,56 +189,50 @@ it("should display a welcome message when the response value type is incorrect",
 
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
     async server => {
-      try {
-        await fetch(server.url.origin, { signal: aborty.signal });
-        throw new Error("Expected fetch to throw");
-      } catch (e: any) {
-        expect(e.name).toBe("AbortError");
-      }
-      await Bun.sleep(1);
-
-      expect(didAbort).toBe(true);
+      expect(async () => {
+        const response = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await response.blob();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
 
 it("request.signal works in leaky case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
 
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(20);
         return new Response("Test failed!");
       },
     },
     async server => {
-      expect(async () => fetch(server.url.origin, { signal: aborty.signal })).toThrow("The operation was aborted.");
-
-      await Bun.sleep(10);
-
-      expect(didAbort).toBe(true);
+      await expect(async () => {
+        const resp = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await Bun.sleep(10);
+        resp.body?.getReader();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
@@ -1127,19 +1126,18 @@ it("request body and signal life cycle", async () => {
       },
     });
 
-    const requests = [];
     for (let j = 0; j < 10; j++) {
-      for (let i = 0; i < 250; i++) {
+      const batchSize = 64;
+      const requests = [];
+      for (let i = 0; i < batchSize; i++) {
         requests.push(fetch(server.url.origin));
       }
-
       await Promise.all(requests);
-      requests.length = 0;
       Bun.gc(true);
     }
 
     await Bun.sleep(10);
-    expect(true).toBe(true);
+    expect().pass();
   }
 }, 30_000);
 

@@ -9,7 +9,7 @@ const Fs = @import("../fs.zig");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
-pub fn z(input: []const u8, output: *[bun.MAX_PATH_BYTES]u8) [:0]const u8 {
+pub fn z(input: []const u8, output: *bun.PathBuffer) [:0]const u8 {
     if (input.len > bun.MAX_PATH_BYTES) {
         if (comptime bun.Environment.allow_assert) @panic("path too long");
         return "";
@@ -409,7 +409,7 @@ pub fn relativeToCommonPath(
     var out_slice: []u8 = buf[0..0];
 
     if (normalized_from.len > 0) {
-        var i: usize = @as(usize, @intCast(@intFromBool(normalized_from[0] == separator))) + 1 + last_common_separator;
+        var i: usize = @as(usize, @intCast(@intFromBool(platform.isSeparator(normalized_from[0])))) + 1 + last_common_separator;
 
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
@@ -427,13 +427,15 @@ pub fn relativeToCommonPath(
     if (normalized_to.len > last_common_separator + 1) {
         var tail = normalized_to[last_common_separator..];
         if (normalized_from.len > 0 and (last_common_separator == normalized_from.len or (last_common_separator == normalized_from.len - 1))) {
-            if (tail[0] == separator) {
+            if (platform.isSeparator(tail[0])) {
                 tail = tail[1..];
             }
         }
 
         // avoid making non-absolute paths absolute
-        const insert_leading_slash = tail[0] != separator and out_slice.len > 0 and out_slice[out_slice.len - 1] != separator;
+        const insert_leading_slash = !platform.isSeparator(tail[0]) and
+            out_slice.len > 0 and !platform.isSeparator(out_slice[out_slice.len - 1]);
+
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;
             out_slice.len += 1;
@@ -487,6 +489,17 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
     }
 }
 
+pub fn dirnameW(str: []const u16) []const u16 {
+    const separator = lastIndexOfSeparatorWindowsT(u16, str) orelse {
+        // return disk designator instead
+        if (str.len < 2) return &.{};
+        if (!(str[1] == ':')) return &.{};
+        if (!bun.path.isDriveLetterT(u16, str[0])) return &.{};
+        return str[0..2];
+    };
+    return str[0..separator];
+}
+
 threadlocal var relative_from_buf: bun.PathBuffer = undefined;
 threadlocal var relative_to_buf: bun.PathBuffer = undefined;
 
@@ -496,6 +509,13 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const normalized_from = if (platform.isAbsolute(from)) brk: {
+        if (platform == .loose and bun.Environment.isWindows) {
+            // we want to invoke the windows resolution behavior but end up with a
+            // string with forward slashes.
+            const normalized = normalizeStringBuf(from, relative_from_buf[1..], true, .windows, true);
+            platformToPosixInPlace(u8, normalized);
+            break :brk normalized;
+        }
         const path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_from_buf[0] = platform.separator();
@@ -510,6 +530,11 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
     );
 
     const normalized_to = if (platform.isAbsolute(to)) brk: {
+        if (platform == .loose and bun.Environment.isWindows) {
+            const normalized = normalizeStringBuf(to, relative_to_buf[1..], true, .windows, true);
+            platformToPosixInPlace(u8, normalized);
+            break :brk normalized;
+        }
         const path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
         if (platform == .windows) break :brk path;
         relative_to_buf[0] = platform.separator();
@@ -637,8 +662,10 @@ pub fn windowsFilesystemRootT(comptime T: type, path: []const T) []const T {
         path[2] != '.')
     {
         if (bun.strings.indexAnyComptimeT(T, path[3..], "/\\")) |idx| {
-            // TODO: handle input "//abc//def" should be picked up as a unc path
-            return path[0 .. idx + 4];
+            if (bun.strings.indexAnyComptimeT(T, path[4 + idx ..], "/\\")) |idx_second| {
+                return path[0 .. idx + idx_second + 4];
+            }
+            return path[0..];
         }
     }
     if (isSepAnyT(T, path[0])) return path[0..1];
@@ -736,7 +763,12 @@ pub fn normalizeStringGenericTZ(
             }
             if (path_[1] != ':') {
                 // UNC paths
-                @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                if (options.add_nt_prefix) {
+                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "UNC" ++ sep_str));
+                    buf_i += 2;
+                } else {
+                    @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                }
                 @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                 buf[buf_i + indexOfThirdUNCSlash] = options.separator;
                 @memcpy(
@@ -1081,6 +1113,11 @@ pub const Platform = enum {
 pub fn normalizeString(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) []u8 {
     return normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
 }
+pub fn normalizeStringZ(str: []const u8, comptime allow_above_root: bool, comptime _platform: Platform) [:0]u8 {
+    const normalized = normalizeStringBuf(str, &parser_buffer, allow_above_root, _platform, false);
+    parser_buffer[normalized.len] = 0;
+    return parser_buffer[0..normalized.len :0];
+}
 
 pub fn normalizeBuf(str: []const u8, buf: []u8, comptime _platform: Platform) []u8 {
     return normalizeBufT(u8, str, buf, _platform);
@@ -1241,7 +1278,7 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _plat
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(T, count * 2) catch @panic("Out of memory");
+        temp_buf = bun.default_allocator.alloc(T, count * 2) catch bun.outOfMemory();
         free_temp_buf = true;
     }
 
@@ -1528,8 +1565,7 @@ pub fn isSepPosix(char: u8) bool {
     return isSepPosixT(u8, char);
 }
 
-pub fn isSepPosixT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepPosixT");
+pub fn isSepPosixT(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_posix;
 }
 
@@ -1537,8 +1573,7 @@ pub fn isSepWin32(char: u8) bool {
     return isSepWin32T(u8, char);
 }
 
-pub fn isSepWin32T(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepWin32T");
+pub fn isSepWin32T(comptime T: type, char: T) bool {
     return char == std.fs.path.sep_windows;
 }
 
@@ -1546,8 +1581,7 @@ pub fn isSepAny(char: u8) bool {
     return isSepAnyT(u8, char);
 }
 
-pub fn isSepAnyT(comptime T: type, char: anytype) bool {
-    if (comptime @TypeOf(char) != T) @compileError("Incorrect type passed to isSepAnyT");
+pub fn isSepAnyT(comptime T: type, char: T) bool {
     return @call(bun.callmod_inline, isSepPosixT, .{ T, char }) or @call(bun.callmod_inline, isSepWin32T, .{ T, char });
 }
 
@@ -1555,8 +1589,7 @@ pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
     return lastIndexOfSeparatorWindowsT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorWindowsT");
+pub fn lastIndexOfSeparatorWindowsT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfAny(T, slice, comptime strings.literal(T, "\\/"));
 }
 
@@ -1564,8 +1597,7 @@ pub fn lastIndexOfSeparatorPosix(slice: []const u8) ?usize {
     return lastIndexOfSeparatorPosixT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorPosixT");
+pub fn lastIndexOfSeparatorPosixT(comptime T: type, slice: []const T) ?usize {
     return std.mem.lastIndexOfScalar(T, slice, std.fs.path.sep_posix);
 }
 
@@ -1584,8 +1616,7 @@ pub fn lastIndexOfSeparatorLoose(slice: []const u8) ?usize {
     return lastIndexOfSeparatorLooseT(u8, slice);
 }
 
-pub fn lastIndexOfSeparatorLooseT(comptime T: type, slice: anytype) ?usize {
-    if (comptime std.meta.Child(@TypeOf(slice)) != T) @compileError("Invalid type passed to lastIndexOfSeparatorLooseT");
+pub fn lastIndexOfSeparatorLooseT(comptime T: type, slice: []const T) ?usize {
     return lastIndexOfSepT(T, slice);
 }
 
@@ -1965,8 +1996,8 @@ pub fn pathToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
     return buf[0..path.len];
 }
 
-pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []T {
-    if (std.fs.path.sep == '/') return;
+pub fn platformToPosixBuf(comptime T: type, path: []const T, buf: []T) []const T {
+    if (std.fs.path.sep == '/') return path;
     var idx: usize = 0;
     while (std.mem.indexOfScalarPos(T, path, idx, std.fs.path.sep)) |index| : (idx = index + 1) {
         @memcpy(buf[idx..index], path[idx..index]);

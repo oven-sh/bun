@@ -343,9 +343,21 @@ const JSONFormatter = struct {
     }
 };
 
+const JSONFormatterUTF8 = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+    }
+};
+
 /// Expects latin1
 pub fn formatJSONString(text: []const u8) JSONFormatter {
-    return JSONFormatter{ .input = text };
+    return .{ .input = text };
+}
+
+pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
+    return .{ .input = text };
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
@@ -371,13 +383,15 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
             } else break :brk strings.latin1ToCodepointAssumeNotASCII(char, i32);
         };
         if (canPrintWithoutEscape(i32, c, false)) {
-            const remain = text[@as(usize, width)..];
+            const remain = text[width..];
             if (encoding != .utf8 and width > 0) {
                 var codepoint_bytes: [4]u8 = undefined;
                 std.mem.writeInt(i32, &codepoint_bytes, c, .little);
                 try writer.writeAll(
                     codepoint_bytes[0..strings.encodeWTF8Rune(codepoint_bytes[0..4], c)],
                 );
+            } else if (encoding == .utf8) {
+                try writer.writeAll(text[0..width]);
             }
 
             if (strings.indexOfNeedsEscape(remain)) |j| {
@@ -1381,7 +1395,6 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
-
             printer.source_map_builder.addSourceMapping(location, printer.writer.slice());
         }
 
@@ -1389,8 +1402,6 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
-
-            // TODO:
             printer.addSourceMapping(location);
         }
 

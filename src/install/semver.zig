@@ -721,44 +721,97 @@ pub const Version = extern struct {
         }
     };
 
-    /// Not perfect, only works if the semver doesn't have multiple ranges.
-    /// e.g. 1.2.3 || 1.2.3 should return true, but will return false.
+    pub const PinnedVersion = enum {
+        major, // ^
+        minor, // ~
+        patch, // =
+    };
+
+    /// Modified version of pnpm's `whichVersionIsPinned`
+    /// https://github.com/pnpm/pnpm/blob/bc0618cf192a9cafd0ab171a3673e23ed0869bbd/packages/which-version-is-pinned/src/index.ts#L9
     ///
-    /// Invalid input is considered non-exact
-    pub fn @"is exact-ish"(input: string) bool {
+    /// Differences:
+    /// - It's not used for workspaces
+    /// - `npm:` is assumed already removed from aliased versions
+    /// - Invalid input is considered major pinned (important because these strings are coming
+    ///    from package.json)
+    ///
+    /// The goal of this function is to avoid a complete parse of semver that's unused
+    pub fn whichVersionIsPinned(input: string) PinnedVersion {
         var i: usize = 0;
 
-        for (0..input.len) |c| {
-            switch (input[c]) {
-                // newlines & whitespace
-                ' ',
-                '\t',
-                '\n',
-                '\r',
-                std.ascii.control_code.vt,
-                std.ascii.control_code.ff,
+        const pinned: PinnedVersion = pinned: {
+            const remain = skipLeadingVersionCharacters(input);
+            _ = remain;
 
-                // version separators
-                'v',
-                '=',
-                => {},
-                else => {
-                    i = c;
-                    break;
-                },
+            for (0..input.len) |j| {
+                switch (input[j]) {
+                    // newlines & whitespace
+                    ' ',
+                    '\t',
+                    '\n',
+                    '\r',
+                    std.ascii.control_code.vt,
+                    std.ascii.control_code.ff,
+
+                    // version separators
+                    'v',
+                    '=',
+                    => {},
+
+                    else => |c| {
+                        // Major pinned is the default. Since it is the first to appear, we can assume
+                        // it is major pinned and return early.
+                        if (c == '^') return .major;
+
+                        i = j;
+
+                        switch (c) {
+                            '~' => {
+                                i += 1;
+
+                                input = skipLeadingVersionCharacters(input[i..]);
+
+                                // for (input[i..]) |k| {
+                                //     ' ',
+                                //     '\t',
+                                //     '\n',
+                                //     '\r',
+                                //     std.ascii.control_code.vt,
+                                //     std.ascii.control_code.ff,
+                                //     'v',
+                                //     '=',
+
+                                // }
+
+                            },
+
+                            '0'...'9' => break :pinned .patch,
+
+                            // could be invalid, could also be valid range syntax (>=, ...)
+                            // either way, pin major
+                            else => return .major,
+                        }
+                    },
+                }
             }
-        }
+
+            // entire semver is whitespace, `v`, and `=`. Invalid
+            return .major;
+        };
+
+        // var whitespace_length = strings.lengthOfLeadingWhitespaceASCII(input[i..]);
 
         // major
-        if (i >= input.len or !std.ascii.isDigit(input[i])) return false;
+        if (i >= input.len or !std.ascii.isDigit(input[i])) return .major;
         var d = input[i];
         while (std.ascii.isDigit(d)) {
             i += 1;
-            if (i >= input.len) return false;
+            if (i >= input.len) return .major; // version ends at major, so it's actually major pinned
             d = input[i];
         }
 
-        if (d != '.') return false;
+        if (d != '.') return .major; // invalid
 
         // minor
         i += 1;
@@ -790,15 +843,36 @@ pub const Version = extern struct {
         i += 1;
 
         // at this point the semver is valid so we can return true if it ends
-        if (i >= input.len) return true;
+        if (i >= input.len) return pinned;
         d = input[i];
         while (validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) {
             i += 1;
-            if (i >= input.len) return true;
+            if (i >= input.len) return pinned;
             d = input[i];
         }
 
-        return false;
+        // We've come across a character that is not valid for tags and is not whitespace
+        // and there's still characters left in the semver. Assume multiple ranges
+        return .major;
+    }
+
+    fn skipLeadingVersionCharacters(input: string) string {
+        for (0..input.len) |i| {
+            switch (input[i]) {
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                'v',
+                '=',
+                => {},
+
+                else => return input[i..],
+            }
+        }
     }
 
     fn validPreOrBuildTagCharacter(c: u8) bool {

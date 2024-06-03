@@ -6953,15 +6953,20 @@ pub const PackageManager = struct {
                                                 }
                                                 break :brk original_version_literal;
                                             };
+                                            _ = original_version_to_use;
 
-                                            const new_version = try switch (options.exact_versions or Semver.Version.@"is exact-ish"(original_version_to_use)) {
-                                                inline else => |exact_versions| std.fmt.allocPrint(
-                                                    allocator,
-                                                    if (comptime exact_versions) "{}" else "^{}",
-                                                    .{
-                                                        resolution.value.npm.version.fmt(string_buf),
-                                                    },
-                                                ),
+                                            const new_version = new_version: {
+                                                const resolved_version = resolution.value.npm.version.fmt(string_buf);
+                                                break :new_version try std.fmt.allocPrint(allocator, "{}", .{resolved_version});
+                                                // if (options.exact_versions) {
+                                                // }
+
+                                                // const pinned_version = Semver.Version.whichVersionIsPinned(original_version_to_use);
+                                                // break :new_version try switch (pinned_version) {
+                                                //     .patch => std.fmt.allocPrint(allocator, "{}", .{resolved_version}),
+                                                //     .minor => std.fmt.allocPrint(allocator, "~{}", .{resolved_version}),
+                                                //     .major => std.fmt.allocPrint(allocator, "^{}", .{resolved_version}),
+                                                // };
                                             };
 
                                             if (is_alias) {
@@ -7387,6 +7392,18 @@ pub const PackageManager = struct {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
+                            if (manager.subcommand == .update and manager.options.do.update_to_latest) {
+                                switch (request.version.tag) {
+                                    .dist_tag => {
+
+                                    },
+                                    .npm => {
+                                        
+                                    }
+                                }
+
+                            }
+                            if (manager.updating_packages.fetchSwapRemove())
                             if (request.version.tag == .dist_tag or
                                 (manager.subcommand == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
                             {
@@ -7415,13 +7432,20 @@ pub const PackageManager = struct {
 
                             break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
-                        .uninitialized => if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm)
-                            switch (request.version.tag) {
-                                .uninitialized => try allocator.dupe(u8, "latest"),
-                                else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                        .uninitialized => brk: {
+                            if (manager.subcommand == .update and manager.options.do.update_to_latest) {
+                                break :brk try allocator.dupe(u8, "latest");
                             }
-                        else
-                            e_string.data,
+
+                            if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
+                                break :brk switch (request.version.tag) {
+                                    .uninitialized => try allocator.dupe(u8, "latest"),
+                                    else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                                };
+                            } else {
+                                break :brk e_string.data;
+                            }
+                        },
 
                         .workspace => try allocator.dupe(u8, "workspace:*"),
                         else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),

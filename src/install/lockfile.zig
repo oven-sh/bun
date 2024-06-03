@@ -1211,7 +1211,7 @@ pub const Printer = struct {
             .ok => {},
         }
 
-        const writer = Output.writer();
+        const writer = Output.writerThatExitsOnEpipe();
         try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
         Output.flush();
     }

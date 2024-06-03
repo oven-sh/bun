@@ -265,6 +265,8 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
+            const writer = Output.writerThatExitsOnEpipe();
+
             const lockfile = load_lockfile.ok.lockfile;
             var iterator = Lockfile.Tree.Iterator.init(lockfile);
 
@@ -298,7 +300,19 @@ pub const PackageManagerCommand = struct {
             if (first_directory.dependencies.len > 1) more_packages[0] = true;
 
             if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
-                try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
+                switch (Output.enable_ansi_colors) {
+                    inline else => |enable_ansi_colors| try printNodeModulesFolderStructure(
+                        &first_directory,
+                        null,
+                        0,
+                        &directories,
+                        lockfile,
+                        more_packages,
+                        @TypeOf(writer),
+                        writer,
+                        enable_ansi_colors,
+                    ),
+                }
             } else {
                 var cwd_buf: bun.PathBuffer = undefined;
                 const path = bun.getcwd(&cwd_buf) catch {
@@ -310,7 +324,7 @@ pub const PackageManagerCommand = struct {
                 const resolutions = slice.items(.resolution);
                 const root_deps = slice.items(.dependencies)[0];
 
-                Output.println("{s} node_modules ({d})", .{ path, dependencies.len });
+                try writer.print("{s} node_modules ({d})\n", .{ path, dependencies.len });
                 const string_bytes = lockfile.buffers.string_bytes.items;
                 const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
                 defer ctx.allocator.free(sorted_dependencies);
@@ -328,10 +342,14 @@ pub const PackageManagerCommand = struct {
                     const name = dependencies[dependency_id].name.slice(string_bytes);
                     const resolution = resolutions[package_id].fmt(string_bytes, .auto);
 
-                    if (index < sorted_dependencies.len - 1) {
-                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
-                    } else {
-                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| {
+                            if (index < sorted_dependencies.len - 1) {
+                                try writer.print(Output.prettyFmt("<d>├──<r> {s}<r><d>@{any}<r>\n", enable_ansi_colors), .{ name, resolution });
+                            } else {
+                                try writer.print(Output.prettyFmt("<d>└──<r> {s}<r><d>@{any}<r>\n", enable_ansi_colors), .{ name, resolution });
+                            }
+                        },
                     }
                 }
             }
@@ -386,6 +404,9 @@ fn printNodeModulesFolderStructure(
     directories: *std.ArrayList(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages: []bool,
+    comptime Writer: type,
+    writer: Writer,
+    comptime enable_ansi_colors: bool,
 ) !void {
     const allocator = lockfile.allocator;
     const resolutions = lockfile.packages.items(.resolution);
@@ -396,15 +417,15 @@ fn printNodeModulesFolderStructure(
         while (i < depth) : (i += 1) {
             if (i == depth - 1) {
                 if (more_packages[i]) {
-                    Output.pretty("<d>├──<r>", .{});
+                    try writer.print(Output.prettyFmt("<d>|--<r>", enable_ansi_colors), .{});
                 } else {
-                    Output.pretty("<d>└──<r>", .{});
+                    try writer.print(Output.prettyFmt("<d>└──<r>", enable_ansi_colors), .{});
                 }
             } else {
                 if (more_packages[i]) {
-                    Output.pretty("<d>│<r>   ", .{});
+                    try writer.print(Output.prettyFmt("<d>│<r>   ", enable_ansi_colors), .{});
                 } else {
-                    Output.pretty("    ", .{});
+                    try writer.print(Output.prettyFmt("    ", enable_ansi_colors), .{});
                 }
             }
         }
@@ -414,7 +435,7 @@ fn printNodeModulesFolderStructure(
             var path = directory.relative_path;
 
             if (depth != 0) {
-                Output.pretty(" ", .{});
+                try writer.print(" ", .{});
                 var temp_depth = depth;
                 while (temp_depth > 0) : (temp_depth -= 1) {
                     if (std.mem.indexOf(u8, path, "node_modules")) |j| {
@@ -424,9 +445,9 @@ fn printNodeModulesFolderStructure(
             }
             const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes, .auto)});
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
-                Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
+                try writer.print(Output.prettyFmt("{s}<d>@{s}<r>\n", enable_ansi_colors), .{ path[0 .. j - 1], directory_version });
             } else {
-                Output.prettyln("{s}<d>@{s}<r>", .{ path, directory_version });
+                try writer.print(Output.prettyFmt("{s}<d>@{s}<r>\n", enable_ansi_colors), .{ path, directory_version });
             }
         } else {
             var cwd_buf: bun.PathBuffer = undefined;
@@ -434,7 +455,7 @@ fn printNodeModulesFolderStructure(
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Global.exit(1);
             };
-            Output.println("{s} node_modules", .{path});
+            try writer.print("{s} node_modules\n", .{path});
         }
     }
 
@@ -475,7 +496,7 @@ fn printNodeModulesFolderStructure(
                 }
 
                 more_packages[new_depth] = true;
-                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages);
+                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages, Writer, writer, enable_ansi_colors);
             }
         }
 
@@ -484,20 +505,20 @@ fn printNodeModulesFolderStructure(
         var i: usize = 0;
         while (i < depth) : (i += 1) {
             if (more_packages[i]) {
-                Output.pretty("<d>│<r>   ", .{});
+                try writer.print(Output.prettyFmt("<d>│<r>   ", enable_ansi_colors), .{});
             } else {
-                Output.pretty("    ", .{});
+                try writer.print(Output.prettyFmt("    ", enable_ansi_colors), .{});
             }
         }
 
         if (more_packages[depth]) {
-            Output.pretty("<d>├──<r> ", .{});
+            try writer.print(Output.prettyFmt("<d>├──<r> ", enable_ansi_colors), .{});
         } else {
-            Output.pretty("<d>└──<r> ", .{});
+            try writer.print(Output.prettyFmt("<d>└──<r> ", enable_ansi_colors), .{});
         }
 
         var resolution_buf: [512]u8 = undefined;
         const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
-        Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
+        try writer.print(Output.prettyFmt("{s}<d>@{s}<r>\n", enable_ansi_colors), .{ package_name, package_version });
     }
 }

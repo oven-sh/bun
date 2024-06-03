@@ -357,7 +357,8 @@ pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
     }
 }
 
-pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
+pub const WriterType: type = Source.StreamType.QuietWriter;
+pub const QuietWriterTypeThatExitsOnEpipe: type = Source.StreamType.QuietWriterThatExitsOnEpipe;
 
 pub fn errorWriter() WriterType {
     bun.debugAssert(source_set);
@@ -372,6 +373,11 @@ pub fn errorStream() Source.StreamType {
 pub fn writer() WriterType {
     bun.debugAssert(source_set);
     return source.stream.quietWriter();
+}
+
+pub fn writerThatExitsOnEpipe() QuietWriterTypeThatExitsOnEpipe {
+    bun.debugAssert(source_set);
+    return source.stream.quietWriterThatExitsOnEpipe();
 }
 
 pub fn resetTerminal() void {

@@ -4,6 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const bun = @import("root").bun;
+const Global = bun.Global;
 const os = std.os;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
@@ -2824,11 +2825,30 @@ pub const File = struct {
         return bytes.len;
     }
 
+    fn stdIoWriteQuietDebugAndExitOnEpipe(this: File, bytes: []const u8) WriteError!usize {
+        bun.Output.disableScopedDebugWriter();
+        defer bun.Output.enableScopedDebugWriter();
+
+        this.writeAll(bytes).unwrap() catch |err| {
+            if (err == error.EPIPE) {
+                Global.exit(0);
+            }
+            return err;
+        };
+
+        return bytes.len;
+    }
+
     pub const Writer = std.io.Writer(File, anyerror, stdIoWrite);
     pub const QuietWriter = if (Environment.isDebug) std.io.Writer(File, anyerror, stdIoWriteQuietDebug) else Writer;
+    pub const QuietWriterThatExitsOnEpipe = std.io.Writer(File, anyerror, stdIoWriteQuietDebugAndExitOnEpipe);
 
     pub fn writer(self: File) Writer {
         return Writer{ .context = self };
+    }
+
+    pub fn quietWriterThatExitsOnEpipe(self: File) QuietWriterThatExitsOnEpipe {
+        return QuietWriterThatExitsOnEpipe{ .context = self };
     }
 
     pub fn quietWriter(self: File) QuietWriter {

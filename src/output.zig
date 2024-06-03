@@ -618,8 +618,6 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
             if (ScopedDebugWriter.disable_inside_log > 0) {
                 return;
             }
-            ScopedDebugWriter.disable_inside_log += 1;
-            defer ScopedDebugWriter.disable_inside_log -= 1;
 
             if (!isVisible())
                 return;

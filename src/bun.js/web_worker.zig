@@ -102,18 +102,18 @@ pub const WebWorker = struct {
             return null;
         };
 
-        var worker = bun.default_allocator.create(WebWorker) catch @panic("OOM");
+        var worker = bun.default_allocator.create(WebWorker) catch bun.outOfMemory();
         worker.* = WebWorker{
             .cpp_worker = cpp_worker,
             .parent = parent,
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
-            .specifier = bun.default_allocator.dupe(u8, path.text) catch @panic("OOM"),
+            .specifier = bun.default_allocator.dupe(u8, path.text) catch bun.outOfMemory(),
             .store_fd = parent.bundler.resolver.store_fd,
             .name = brk: {
                 if (!name_str.isEmpty()) {
-                    break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch @panic("OOM");
+                    break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
                 }
                 break :brk "";
             },
@@ -237,7 +237,7 @@ pub const WebWorker = struct {
             },
         );
         buffered_writer.flush() catch {
-            @panic("OOM");
+            bun.outOfMemory();
         };
         JSC.markBinding(@src());
         WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);

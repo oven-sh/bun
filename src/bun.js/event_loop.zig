@@ -206,7 +206,7 @@ pub const ManagedTask = struct {
     pub fn New(comptime Type: type, comptime Callback: anytype) type {
         return struct {
             pub fn init(ctx: *Type) Task {
-                var managed = bun.default_allocator.create(ManagedTask) catch @panic("out of memory!");
+                var managed = bun.default_allocator.create(ManagedTask) catch bun.outOfMemory();
                 managed.* = ManagedTask{
                     .callback = wrap,
                     .ctx = ctx,
@@ -319,7 +319,7 @@ pub const JSCScheduler = struct {
     export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
         JSC.markBinding(@src());
         var loop = jsc_vm.eventLoop();
-        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
+        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch bun.outOfMemory();
         loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
     }
 
@@ -495,7 +495,7 @@ pub const ConcurrentTask = struct {
         auto_deinit,
     };
     pub fn create(task: Task) *ConcurrentTask {
-        const created = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
+        const created = bun.default_allocator.create(ConcurrentTask) catch bun.outOfMemory();
         created.* = .{
             .task = task,
             .next = null,

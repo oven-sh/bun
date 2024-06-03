@@ -1662,7 +1662,7 @@ pub const BundleV2 = struct {
 
         errdefer {
             var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
             completion.log = out_log;
         }
 
@@ -1688,7 +1688,7 @@ pub const BundleV2 = struct {
             .next = null,
         };
         var out_log = Logger.Log.init(bun.default_allocator);
-        this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+        this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
         completion.log = out_log;
         completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
     }
@@ -1854,7 +1854,7 @@ pub const BundleV2 = struct {
             estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
-        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch @panic("OOM");
+        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch bun.outOfMemory();
 
         var last_error: ?anyerror = null;
 
@@ -3700,9 +3700,9 @@ const LinkerGraph = struct {
 
         {
             var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch @panic("Out of memory");
+            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch bun.outOfMemory();
             for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
-                dest.* = src.clone(this.allocator) catch @panic("Out of memory");
+                dest.* = src.clone(this.allocator) catch bun.outOfMemory();
             }
             this.symbols = js_ast.Symbol.Map.initList(symbols);
         }
@@ -3908,7 +3908,7 @@ const LinkerContext = struct {
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const mutable = MutableString.initEmpty(allocator);
-            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch @panic("Out of memory")).list.items;
+            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
         }
     };
 
@@ -6999,22 +6999,35 @@ const LinkerContext = struct {
         const trace = tracer(@src(), "generateSourceMapForChunk");
         defer trace.end();
 
-        var j = StringJoiner{
-            .allocator = worker.allocator,
-        };
+        var j = StringJoiner{ .allocator = worker.allocator };
 
         const sources = c.parse_graph.input_files.items(.source);
         const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
 
-        var source_index_to_sources_index = std.AutoHashMap(u32, u32).init(worker.allocator);
-        defer source_index_to_sources_index.deinit();
-        var next_source_index: u32 = 0;
+        // Entries in `results` do not 1:1 map to source files, the mapping
+        // is actually many to one, where a source file can have multiple chunks
+        // in the sourcemap.
+        //
+        // This hashmap is going to map:
+        //    `source_index` (per compilation) in a chunk
+        //   -->
+        //    Which source index in the generated sourcemap, referred to
+        //    as the "mapping source index" within this function to be distinct.
+        var source_id_map = std.AutoArrayHashMap(u32, i32).init(worker.allocator);
+        defer source_id_map.deinit();
+
         const source_indices = results.items(.source_index);
 
-        j.pushStatic("{\n  \"version\": 3,\n  \"sources\": [");
+        j.pushStatic(
+            \\{
+            \\  "version": 3,
+            \\  "sources": [
+        );
         if (source_indices.len > 0) {
             {
-                var path = sources[source_indices[0]].path;
+                const index = source_indices[0];
+                var path = sources[index].path;
+                try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {
                     const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
@@ -7025,36 +7038,49 @@ const LinkerContext = struct {
                 quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
                 j.pushStatic(quote_buf.list.items); // freed by arena
             }
-            if (source_indices.len > 1) {
-                for (source_indices[1..]) |index| {
-                    var path = sources[index].path;
 
-                    if (path.isFile()) {
-                        const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
-                        path.pretty = rel_path;
-                    }
+            var next_mapping_source_index: i32 = 1;
+            for (source_indices[1..]) |index| {
+                const gop = try source_id_map.getOrPut(index);
+                if (gop.found_existing) continue;
 
-                    var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
-                    quote_buf.appendAssumeCapacity(", ");
-                    quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                    j.pushStatic(quote_buf.list.items); // freed by arena
+                gop.value_ptr.* = next_mapping_source_index;
+                next_mapping_source_index += 1;
+
+                var path = sources[index].path;
+
+                if (path.isFile()) {
+                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    path.pretty = rel_path;
                 }
+
+                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
+                quote_buf.appendAssumeCapacity(", ");
+                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
+                j.pushStatic(quote_buf.list.items); // freed by arena
             }
         }
 
-        j.pushStatic("],\n  \"sourcesContent\": [");
-        if (source_indices.len > 0) {
+        j.pushStatic(
+            \\],
+            \\  "sourcesContent": [
+        );
+
+        const source_indicies_for_contents = source_id_map.keys();
+        if (source_indicies_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indicies_for_contents[0]]);
 
-            if (source_indices.len > 1) {
-                for (source_indices[1..]) |index| {
-                    j.pushStatic(",\n  ");
-                    j.pushStatic(quoted_source_map_contents[index]);
-                }
+            for (source_indicies_for_contents[1..]) |index| {
+                j.pushStatic(",\n    ");
+                j.pushStatic(quoted_source_map_contents[index]);
             }
         }
-        j.pushStatic("\n  ],\n  \"mappings\": \"");
+        j.pushStatic(
+            \\
+            \\  ],
+            \\  "mappings": "
+        );
 
         const mapping_start = j.len;
         var prev_end_state = sourcemap.SourceMapState{};
@@ -7062,14 +7088,11 @@ const LinkerContext = struct {
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
         for (source_map_chunks, offsets, source_indices) |chunk, offset, current_source_index| {
-            const res = try source_index_to_sources_index.getOrPut(current_source_index);
-            if (res.found_existing) continue;
-            res.value_ptr.* = next_source_index;
-            const source_index = @as(i32, @intCast(next_source_index));
-            next_source_index += 1;
+            const mapping_source_index = source_id_map.get(current_source_index) orelse
+                unreachable; // the pass above during printing of "sources" must add the index
 
             var start_state = sourcemap.SourceMapState{
-                .source_index = source_index,
+                .source_index = mapping_source_index,
                 .generated_line = offset.lines,
                 .generated_column = offset.columns,
             };
@@ -7081,7 +7104,7 @@ const LinkerContext = struct {
             try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
-            prev_end_state.source_index = source_index;
+            prev_end_state.source_index = mapping_source_index;
             prev_column_offset = chunk.final_generated_column;
 
             if (prev_end_state.generated_line == 0) {

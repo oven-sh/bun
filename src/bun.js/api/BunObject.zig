@@ -1926,7 +1926,7 @@ pub const Crypto = struct {
                     hash: []const u8,
 
                     pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
+                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
                         defer bun.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
                         instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
@@ -1971,7 +1971,7 @@ pub const Crypto = struct {
             pub fn run(task: *bun.ThreadPool.Task) void {
                 var this = @fieldParentPtr(HashJob, "task", task);
 
-                var result = bun.default_allocator.create(Result) catch @panic("out of memory");
+                var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
                 result.* = Result{
                     .value = getValue(this.password, this.algorithm),
                     .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
@@ -1982,7 +1982,7 @@ pub const Crypto = struct {
                 this.ref = .{};
                 this.promise.strong = .{};
 
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
                 concurrent_task.* = JSC.ConcurrentTask{
                     .task = JSC.Task.init(&result.task),
                     .auto_delete = true,
@@ -2015,7 +2015,7 @@ pub const Crypto = struct {
                 unreachable;
             }
 
-            var job = bun.default_allocator.create(HashJob) catch @panic("out of memory");
+            var job = bun.default_allocator.create(HashJob) catch bun.outOfMemory();
             var promise = JSC.JSPromise.Strong.init(globalObject);
 
             job.* = HashJob{
@@ -2057,7 +2057,7 @@ pub const Crypto = struct {
                 unreachable;
             }
 
-            var job = bun.default_allocator.create(VerifyJob) catch @panic("out of memory");
+            var job = bun.default_allocator.create(VerifyJob) catch bun.outOfMemory();
             var promise = JSC.JSPromise.Strong.init(globalObject);
 
             job.* = VerifyJob{
@@ -2168,7 +2168,7 @@ pub const Crypto = struct {
                     pass: bool,
 
                     pub fn toErrorInstance(this: Value, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch @panic("out of memory");
+                        const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
                         defer bun.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
                         instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
@@ -2213,7 +2213,7 @@ pub const Crypto = struct {
             pub fn run(task: *bun.ThreadPool.Task) void {
                 var this = @fieldParentPtr(VerifyJob, "task", task);
 
-                var result = bun.default_allocator.create(Result) catch @panic("out of memory");
+                var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
                 result.* = Result{
                     .value = getValue(this.password, this.prev_hash, this.algorithm),
                     .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
@@ -2224,7 +2224,7 @@ pub const Crypto = struct {
                 this.ref = .{};
                 this.promise.strong = .{};
 
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("out of memory");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
                 concurrent_task.* = JSC.ConcurrentTask{
                     .task = JSC.Task.init(&result.task),
                     .auto_delete = true,
@@ -2558,7 +2558,7 @@ pub const Crypto = struct {
             var new: CryptoHasher = undefined;
             switch (this.*) {
                 .evp => |*inner| {
-                    new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch @panic("Out of memory") };
+                    new = .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() };
                 },
                 .zig => |*inner| {
                     new = .{ .zig = inner.copy() };

@@ -359,10 +359,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var tcp = this.tcp orelse return;
             this.tcp = null;
 
-            if (tcp.isEstablished()) {
-                tcp.shutdown();
-            }
-            tcp.close(0, null);
+            tcp.close(.failure);
         }
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
@@ -1029,7 +1026,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed() or this.tcp.isShutdown())
                 return;
 
-            this.tcp.close(0, null);
+            this.tcp.close(.failure);
         }
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {
@@ -1893,7 +1890,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed())
                 return;
 
-            this.tcp.close(0, null);
+            this.tcp.close(.normal);
         }
 
         pub const Export = shim.exportFunctions(.{

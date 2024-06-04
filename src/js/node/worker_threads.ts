@@ -274,7 +274,11 @@ class Worker extends EventEmitter {
       },
       { once: true },
     );
-    this.#worker.terminate();
+    
+    // todo: deal with mistyped terminate()
+    if (this.#worker.terminate() as unknown as boolean) {
+      resolve(undefined); // this aligns with Node behavior
+    }
 
     return (this.#onExitPromise = promise);
   }

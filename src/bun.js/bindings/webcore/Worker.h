@@ -67,7 +67,7 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    void terminate();
+    bool terminate();
     bool wasTerminated() const { return m_wasTerminated; }
     bool hasPendingActivity() const;
     bool updatePtr();

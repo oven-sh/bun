@@ -2513,6 +2513,186 @@ describe("update", () => {
       await rm(join(packageDir, "bun.lockb"));
     }
   });
+  describe("tilde", () => {
+    test("without args", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "~1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+
+      let { out } = await runBunUpdate(env, packageDir);
+      expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "no-deps": "~1.0.1",
+        },
+      });
+
+      // another update does not change anything (previously the version would update because it was changed to `^1.0.1`)
+      ({ out } = await runBunUpdate(env, packageDir));
+      expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "no-deps": "~1.0.1",
+        },
+      });
+    });
+
+    for (const latest of [true, false]) {
+      test(`update no args${latest ? " --latest" : ""}`, async () => {
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "a1": "npm:no-deps@1",
+              "a10": "npm:no-deps@~1.0",
+              "a11": "npm:no-deps@^1.0",
+              "a12": "npm:no-deps@~1.0.1",
+              "a13": "npm:no-deps@^1.0.1",
+              "a14": "npm:no-deps@~1.1.0",
+              "a15": "npm:no-deps@^1.1.0",
+              "a2": "npm:no-deps@1.0",
+              "a3": "npm:no-deps@1.1",
+              "a4": "npm:no-deps@1.0.1",
+              "a5": "npm:no-deps@1.1.0",
+              "a6": "npm:no-deps@~1",
+              "a7": "npm:no-deps@^1",
+              "a8": "npm:no-deps@~1.1",
+              "a9": "npm:no-deps@^1.1",
+            },
+          }),
+        );
+
+        if (latest) {
+          await runBunUpdate(env, packageDir, ["--latest"]);
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "a1": "npm:no-deps@^2.0.0",
+              "a10": "npm:no-deps@~2.0.0",
+              "a11": "npm:no-deps@^2.0.0",
+              "a12": "npm:no-deps@~2.0.0",
+              "a13": "npm:no-deps@^2.0.0",
+              "a14": "npm:no-deps@~2.0.0",
+              "a15": "npm:no-deps@^2.0.0",
+              "a2": "npm:no-deps@~2.0.0",
+              "a3": "npm:no-deps@~2.0.0",
+              "a4": "npm:no-deps@2.0.0",
+              "a5": "npm:no-deps@2.0.0",
+              "a6": "npm:no-deps@~2.0.0",
+              "a7": "npm:no-deps@^2.0.0",
+              "a8": "npm:no-deps@~2.0.0",
+              "a9": "npm:no-deps@^2.0.0",
+            },
+          });
+        } else {
+          await runBunUpdate(env, packageDir);
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "a1": "npm:no-deps@^1.1.0",
+              "a10": "npm:no-deps@~1.0.1",
+              "a11": "npm:no-deps@^1.1.0",
+              "a12": "npm:no-deps@~1.0.1",
+              "a13": "npm:no-deps@^1.1.0",
+              "a14": "npm:no-deps@~1.1.0",
+              "a15": "npm:no-deps@^1.1.0",
+              "a2": "npm:no-deps@~1.0.1",
+              "a3": "npm:no-deps@~1.1.0",
+              "a4": "npm:no-deps@1.0.1",
+              "a5": "npm:no-deps@1.1.0",
+              "a6": "npm:no-deps@~1.1.0",
+              "a7": "npm:no-deps@^1.1.0",
+              "a8": "npm:no-deps@~1.1.0",
+              "a9": "npm:no-deps@^1.1.0",
+            },
+          });
+        }
+        const files = await Promise.all(
+          ["a1", "a10", "a11", "a12", "a13", "a14", "a15", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"].map(alias =>
+            file(join(packageDir, "node_modules", alias, "package.json")).json(),
+          ),
+        );
+
+        if (latest) {
+          // each version should be "2.0.0"
+          expect(files).toMatchObject(Array(15).fill({ version: "2.0.0" }));
+        } else {
+          expect(files).toMatchObject([
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+          ]);
+        }
+      });
+    }
+
+    test("with package name in args", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "a-dep": "1.0.3",
+            "no-deps": "~1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+
+      let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
+      expect(out).toEqual(["", "installed no-deps@1.0.1", "", expect.stringContaining("done"), ""]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.3",
+          "no-deps": "~1.0.1",
+        },
+      });
+
+      // update with --latest should only change the update request and keep `~`
+      ({ out } = await runBunUpdate(env, packageDir, ["no-deps", "--latest"]));
+      expect(out).toEqual(["", "installed no-deps@2.0.0", "", "1 package installed"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.3",
+          "no-deps": "~2.0.0",
+        },
+      });
+    });
+  });
   describe("alises", () => {
     test("update all", async () => {
       await write(
@@ -2815,7 +2995,9 @@ describe("update", () => {
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "^2.0.0",
         "dev-deps": "1.0.0",
-        "a-dep": "1.0.5",
+
+        // a-dep should keep caret
+        "a-dep": "^1.0.5",
       },
     });
 
@@ -2967,6 +3149,27 @@ describe("update", () => {
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       version: "1.1.0",
     });
+  });
+
+  test("--latest works with packages from arguments", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir, ["no-deps", "--latest"]);
+
+    const files = await Promise.all([
+      file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+      file(join(packageDir, "package.json")).json(),
+    ]);
+
+    expect(files).toMatchObject([{ version: "2.0.0" }, { dependencies: { "no-deps": "2.0.0" } }]);
   });
 });
 

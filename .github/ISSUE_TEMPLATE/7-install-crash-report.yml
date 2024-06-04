@@ -13,12 +13,6 @@ body:
       label: How can we reproduce the crash?
       description: Please provide a [minimal reproduction](https://stackoverflow.com/help/minimal-reproducible-example) using a GitHub repository, [Replit](https://replit.com/@replit/Bun) or [CodeSandbox](https://codesandbox.io/templates/bun)
   - type: textarea
-    id: code
-    attributes:
-      label: Package.json
-      description: Please provide your package.json file.
-      render: shell
-  - type: textarea
     id: logs
     attributes:
       label: Relevant log output

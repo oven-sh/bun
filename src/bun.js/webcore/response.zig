@@ -768,6 +768,22 @@ pub const Fetch = struct {
 
         tracker: JSC.AsyncTaskTracker,
 
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+        pub fn ref(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchAdd(1, .Monotonic);
+            bun.debugAssert(count > 0);
+        }
+
+        pub fn deref(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .Monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                this.deinit();
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -832,8 +848,9 @@ pub const Fetch = struct {
             this.response_buffer.deinit();
             this.response.deinit();
             if (this.native_response) |response| {
-                response.unref();
                 this.native_response = null;
+
+                response.unref();
             }
 
             this.readable_stream_ref.deinit();
@@ -841,8 +858,10 @@ pub const Fetch = struct {
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
-            if (this.abort_reason != .zero)
+            if (this.abort_reason != .zero) {
                 this.abort_reason.unprotect();
+                this.abort_reason = .zero;
+            }
 
             this.check_server_identity.deinit();
 
@@ -852,8 +871,13 @@ pub const Fetch = struct {
             }
         }
 
-        pub fn deinit(this: *FetchTasklet) void {
+        fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
+
+            bun.assert(this.ref_count.load(.Monotonic) == 0);
+
+            this.clearData();
+
             var reporter = this.memory_reporter;
             const allocator = reporter.allocator();
 
@@ -895,8 +919,7 @@ pub const Fetch = struct {
                 if (is_done) {
                     const vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                 }
             }
 
@@ -1029,6 +1052,8 @@ pub const Fetch = struct {
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
+            defer this.deref();
+
             this.mutex.lock();
 
             if (this.is_waiting_body) {
@@ -1051,8 +1076,7 @@ pub const Fetch = struct {
                 const vm = globalThis.bunVM();
 
                 poll_ref.unref(vm);
-                this.clearData();
-                this.deinit();
+                this.deref();
                 return;
             }
             const promise_value = this.promise.valueOrEmpty();
@@ -1066,8 +1090,7 @@ pub const Fetch = struct {
                 this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
-                this.clearData();
-                this.deinit();
+                this.deref();
                 return;
             }
 
@@ -1097,8 +1120,7 @@ pub const Fetch = struct {
                     }
                     // we are already done we can deinit
                     poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                     return;
                 }
                 // everything ok
@@ -1121,8 +1143,7 @@ pub const Fetch = struct {
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                 }
             }
             const success = this.result.isSuccess();
@@ -1698,6 +1719,8 @@ pub const Fetch = struct {
         }
 
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+            task.ref();
+
             task.mutex.lock();
             defer task.mutex.unlock();
 

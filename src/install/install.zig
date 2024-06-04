@@ -230,8 +230,10 @@ const NetworkTask = struct {
 
     pub const DedupeMap = std.HashMap(u64, void, IdentityContext(u64), 80);
 
-    pub fn notify(this: *NetworkTask, _: anytype) void {
+    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
         defer this.package_manager.wake();
+        async_http.real.?.* = async_http.*;
+        async_http.real.?.response_buffer = async_http.response_buffer;
         this.package_manager.async_network_task_queue.push(this);
     }
 

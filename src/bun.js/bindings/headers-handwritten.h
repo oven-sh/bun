@@ -1,4 +1,5 @@
 #pragma once
+#include "wtf/text/OrdinalNumber.h"
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
 typedef uint16_t ZigErrorCode;
@@ -138,14 +139,8 @@ const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
 const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 typedef struct ZigStackFramePosition {
-    int32_t source_offset;
-    int32_t line;
-    int32_t line_start;
-    int32_t line_stop;
-    int32_t column_start;
-    int32_t column_stop;
-    int32_t expression_start;
-    int32_t expression_stop;
+    WTF::OrdinalNumber line;
+    WTF::OrdinalNumber column;
 } ZigStackFramePosition;
 
 typedef struct ZigStackFrame {
@@ -158,7 +153,7 @@ typedef struct ZigStackFrame {
 
 typedef struct ZigStackTrace {
     BunString* source_lines_ptr;
-    int32_t* source_lines_numbers;
+    OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;

@@ -148,6 +148,7 @@ pub const Tag = enum(u8) {
     uv_spawn,
     uv_pipe,
     uv_tty_set_mode,
+    uv_open_osfhandle,
 
     // Below this line are Windows API calls only.
 
@@ -510,7 +511,14 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
-    if (Environment.isWindows) return sys_uv.fstat(fd);
+    if (Environment.isWindows) {
+        const dec = bun.FDImpl.decode(fd);
+        if (dec.kind == .system) {
+            const uvfd = bun.toLibUVOwnedFD(fd) catch return .{ .err = Error.fromCode(.MFILE, .uv_open_osfhandle) };
+            defer _ = bun.sys.close(uvfd);
+            return sys_uv.fstat(fd);
+        } else return sys_uv.fstat(fd);
+    }
 
     var stat_ = mem.zeroes(bun.Stat);
 

@@ -10671,7 +10671,7 @@ pub const PackageManager = struct {
                 Global.crash();
             },
         };
-        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{actual_package.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{name, actual_package.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
         const stuff = manager.computeCacheDirAndSubpath(name, &actual_package.resolution, null);
 
         const patchfile_contents = brk: {

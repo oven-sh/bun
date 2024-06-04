@@ -914,7 +914,6 @@ pub const Fetch = struct {
                     this.scheduled_response_buffer.reset();
                 }
 
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
                     const vm = globalThis.bunVM();
@@ -1053,8 +1052,8 @@ pub const Fetch = struct {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
             defer this.deref();
-
             this.mutex.lock();
+            this.has_schedule_callback.store(false, .Monotonic);
 
             if (this.is_waiting_body) {
                 this.onBodyReceived();
@@ -1087,7 +1086,6 @@ pub const Fetch = struct {
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 this.promise.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
                 this.deref();
@@ -1113,7 +1111,6 @@ pub const Fetch = struct {
 
                     tracker.didDispatch(globalThis);
                     this.promise.deinit();
-                    this.has_schedule_callback.store(false, .Monotonic);
                     this.mutex.unlock();
                     if (this.is_waiting_abort) {
                         return;
@@ -1126,7 +1123,6 @@ pub const Fetch = struct {
                 // everything ok
                 if (this.metadata == null) {
                     log("onProgressUpdate: metadata is null", .{});
-                    this.has_schedule_callback.store(false, .Monotonic);
                     // cannot continue without metadata
                     this.mutex.unlock();
                     return;
@@ -1139,7 +1135,6 @@ pub const Fetch = struct {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
@@ -1765,6 +1760,13 @@ pub const Fetch = struct {
                 }
                 // reset for reuse
                 task.response_buffer.reset();
+            }
+
+            if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
+                if (has_schedule_callback) {
+                    task.deref();
+                    return;
+                }
             }
 
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));

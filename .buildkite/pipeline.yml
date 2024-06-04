@@ -609,7 +609,7 @@ steps:
         env:
           CPU_TARGET: "haswell"
         command:
-          - "powershell -command \".\\scripts\\all-dependencies.ps1\""
+          - ".\\scripts\\all-dependencies.ps1"
       - key: "bun-windows-x64-zig"
         label: ":windows: x64 - bun-zig"
         agents:
@@ -652,8 +652,8 @@ steps:
         command:
           - "mkdir build"
           - 'buildkite-agent artifact download "**" build --step bun-windows-x64-codegen'
-          - "powershell -command \".\\scripts\\build-cpp.ps1\" -IsBaseline $$False"
-          - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
+          - ".\\scripts\\build-cpp.ps1 -IsBaseline $$False"
+          - "Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a"
       - key: "bun-windows-x64"
         label: ":windows: x64 - bun"
         depends_on:
@@ -675,7 +675,7 @@ steps:
           - 'buildkite-agent artifact download "**" release --step bun-windows-x64-zig'
           - 'buildkite-agent artifact download "**" release --step bun-windows-x64-cpp'
           - 'buildkite-agent artifact download "**" release --step bun-windows-x64-deps'
-          - "powershell -command \".\\scripts\\link-buildkite.ps1 -IsBaseline $$False\""
+          - ".\\scripts\\link-buildkite.ps1 -IsBaseline $$False"
       - key: "bun-windows-x64-test"
         label: ":windows: x64 - bun-test-%n"
         parallelism: 10
@@ -705,7 +705,7 @@ steps:
         env:
           CPU_TARGET: "nehalem"
         command:
-          - "powershell -command \".\\scripts\\all-dependencies.ps1\""
+          - ".\\scripts\\all-dependencies.ps1"
       - key: "bun-windows-x64-baseline-zig"
         label: ":windows: x64-baseline - bun-zig"
         agents:
@@ -748,8 +748,8 @@ steps:
         command:
           - "mkdir build"
           - 'buildkite-agent artifact download "**" build --step bun-windows-x64-baseline-codegen'
-          - "powershell -command \".\\scripts\\build-cpp.ps1\" -IsBaseline $$True"
-          - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
+          - ".\\scripts\\build-cpp.ps1 -IsBaseline $$True"
+          - "Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a"
       - key: "bun-windows-x64-baseline"
         label: ":windows: x64-baseline - bun"
         depends_on:
@@ -771,7 +771,7 @@ steps:
           - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-zig'
           - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-cpp'
           - 'buildkite-agent artifact download "**" release --step bun-windows-x64-baseline-deps'
-          - "powershell -command \".\\scripts\\link-buildkite.ps1 -IsBaseline $$True\""
+          - ".\\scripts\\link-buildkite.ps1 -IsBaseline $$True"
       - key: "bun-windows-x64-baseline-test"
         label: ":windows: x64-baseline - bun-test-%n"
         parallelism: 10

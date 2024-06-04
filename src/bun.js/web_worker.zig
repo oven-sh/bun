@@ -359,7 +359,6 @@ pub const WebWorker = struct {
         log("[{d}] requestTerminate", .{this.execution_context_id});
 
         if (this.vm) |vm| {
-            vm.jsc.notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
 

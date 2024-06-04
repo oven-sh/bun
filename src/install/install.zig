@@ -10810,7 +10810,7 @@ pub const PackageManager = struct {
             Global.crash();
         }
 
-        const patch_key = std.fmt.allocPrint(manager.allocator, "{s}@{s}", .{ name, resolution_label }) catch bun.outOfMemory();
+        const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();
         const patchfile_path = manager.allocator.dupe(u8, path_in_patches_dir) catch bun.outOfMemory();
         _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ patched_pkg_folder, ".bun-patch-tag" }, .auto));
 

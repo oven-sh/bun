@@ -921,13 +921,23 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
 
     
 #else
+    int r;
      do {
-        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS || errno == EAGAIN) {
+        errno = 0;
+        r = connect(fd, (struct sockaddr *)addr, namelen);
+    } while (r == -1 && errno == EINTR);
+    
+    // connect() can return -1 with an errno of 0.
+    // the errno is the correct one in that case.
+    if (r == -1 && errno != 0) {
+        if (errno == EINPROGRESS) {
             return 0;
         }
-    } while (errno == EINTR);
 
-    return errno;
+        return errno;
+    }
+    
+    return 0;
 #endif
 }
 

@@ -333,7 +333,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             port: u16 = 0,
         };
 
-        fn markSocketAsDead(socket: HTTPSocket) void {
+        pub fn markSocketAsDead(socket: HTTPSocket) void {
             socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
         }
 
@@ -1952,7 +1952,9 @@ pub const AsyncHTTP = struct {
         batch.push(ThreadPool.Batch.from(&this.task));
     }
 
-    fn sendSyncCallback(this: *SingleHTTPChannel, result: HTTPClientResult) void {
+    fn sendSyncCallback(this: *SingleHTTPChannel, async_http: *AsyncHTTP, result: HTTPClientResult) void {
+        async_http.real.?.* = async_http.*;
+        async_http.real.?.response_buffer = async_http.response_buffer;
         this.channel.writeItem(result) catch unreachable;
     }
 
@@ -1979,11 +1981,12 @@ pub const AsyncHTTP = struct {
         unreachable;
     }
 
-    pub fn onAsyncHTTPCallback(this: *AsyncHTTP, result: HTTPClientResult) void {
+    pub fn onAsyncHTTPCallback(this: *AsyncHTTP, async_http: *AsyncHTTP, result: HTTPClientResult) void {
         assert(this.real != null);
 
         var callback = this.result_callback;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
+
         // TODO: this condition seems wrong: if we started with a non-default value, we might
         // report a redirect even if none happened
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
@@ -2000,24 +2003,21 @@ pub const AsyncHTTP = struct {
         }
 
         if (result.has_more) {
-            callback.function(callback.ctx, result);
+            callback.function(callback.ctx, async_http, result);
         } else {
             {
                 this.client.deinit();
                 defer default_allocator.destroy(this);
-                this.real.?.* = this.*;
-                this.real.?.response_buffer = this.response_buffer;
-
                 log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
-                callback.function(callback.ctx, result);
+                callback.function(callback.ctx, async_http, result);
             }
 
             const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .Monotonic);
             assert(active_requests > 0);
+        }
 
-            if (active_requests >= AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
-                http_thread.drainEvents();
-            }
+        if (AsyncHTTP.active_requests_count.load(.Monotonic) < AsyncHTTP.max_simultaneous_requests.load(.Monotonic)) {
+            http_thread.drainEvents();
         }
     }
 
@@ -2166,6 +2166,7 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
             this.connected_url.getPortAuto(),
         );
     } else {
+        NewHTTPContext(is_ssl).markSocketAsDead(socket);
         socket.close(.normal);
     }
 
@@ -2904,7 +2905,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     this.state.reset(this.allocator);
     this.proxy_tunneling = false;
 
-    callback.run(result);
+    callback.run(@fieldParentPtr(AsyncHTTP, "client", this), result);
 }
 
 // We have to clone metadata immediately after use
@@ -2972,8 +2973,6 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const callback = this.result_callback;
 
         if (is_done) {
-            socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
-
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(
                     socket,
@@ -2981,6 +2980,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                     this.connected_url.getPortAuto(),
                 );
             } else if (!socket.isClosed()) {
+                NewHTTPContext(is_ssl).markSocketAsDead(socket);
                 socket.close(.normal);
             }
 
@@ -2992,7 +2992,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         }
 
         result.body.?.* = body;
-        callback.run(result);
+        callback.run(@fieldParentPtr(AsyncHTTP, "client", this), result);
 
         if (comptime print_every > 0) {
             print_every_i += 1;
@@ -3044,10 +3044,10 @@ pub const HTTPClientResult = struct {
         ctx: *anyopaque,
         function: Function,
 
-        pub const Function = *const fn (*anyopaque, HTTPClientResult) void;
+        pub const Function = *const fn (*anyopaque, *AsyncHTTP, HTTPClientResult) void;
 
-        pub fn run(self: Callback, result: HTTPClientResult) void {
-            self.function(self.ctx, result);
+        pub fn run(self: Callback, async_http: *AsyncHTTP, result: HTTPClientResult) void {
+            self.function(self.ctx, async_http, result);
         }
 
         pub fn New(comptime Type: type, comptime callback: anytype) type {
@@ -3059,9 +3059,9 @@ pub const HTTPClientResult = struct {
                     };
                 }
 
-                pub fn wrapped_callback(ptr: *anyopaque, result: HTTPClientResult) void {
+                pub fn wrapped_callback(ptr: *anyopaque, async_http: *AsyncHTTP, result: HTTPClientResult) void {
                     const casted = @as(Type, @ptrCast(@alignCast(ptr)));
-                    @call(bun.callmod_inline, callback, .{ casted, result });
+                    @call(bun.callmod_inline, callback, .{ casted, async_http, result });
                 }
             };
         }

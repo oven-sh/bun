@@ -169,6 +169,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .err = e };
         }
 
+        pub inline fn initErrWithP(e: C.SystemErrno, syscall: Syscall.Tag, path: anytype) Maybe(ReturnType, ErrorType) {
+            return .{ .err = .{
+                .errno = @intFromEnum(e),
+                .syscall = syscall,
+                .path = path,
+            } };
+        }
+
         pub inline fn asErr(this: *const @This()) ?ErrorType {
             if (this.* == .err) return this.err;
             return null;
@@ -5049,6 +5057,8 @@ pub const Process = struct {
     pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
     pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
+    pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
+    pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
 };
 
 comptime {

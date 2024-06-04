@@ -1179,7 +1179,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -1270,7 +1270,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -5502,7 +5502,7 @@ pub const NodeFS = struct {
                                 return .{
                                     .result = .{
                                         .buffer = Buffer.fromBytes(
-                                            bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                             bun.default_allocator,
                                             .Uint8Array,
                                         ),
@@ -5511,13 +5511,13 @@ pub const NodeFS = struct {
                             } else if (comptime string_type == .default)
                                 return .{
                                     .result = .{
-                                        .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                        .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 }
                             else
                                 return .{
                                     .result = .{
-                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 };
                         }
@@ -6627,7 +6627,12 @@ pub const NodeFS = struct {
                 mode_ |= C.darwin.COPYFILE_EXCL;
             }
 
-            return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+            const first_try = ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse return ret.success;
+            if (first_try == .err and first_try.err.errno == @intFromEnum(C.E.NOENT)) {
+                bun.makePath(std.fs.cwd(), bun.path.dirname(dest, .auto)) catch {};
+                return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+            }
+            return first_try;
         }
 
         if (Environment.isLinux) {
@@ -6774,30 +6779,30 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
+            const src_enoent_maybe = ret.initErrWithP(.ENOENT, .copyfile, this.osPathIntoSyncErrorBuf(src));
+            const dst_enoent_maybe = ret.initErrWithP(.ENOENT, .copyfile, this.osPathIntoSyncErrorBuf(dest));
             const stat_ = reuse_stat orelse switch (windows.GetFileAttributesW(src)) {
-                windows.INVALID_FILE_ATTRIBUTES => return .{ .err = .{
-                    .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                    .syscall = .copyfile,
-                    .path = this.osPathIntoSyncErrorBuf(src),
-                } },
+                windows.INVALID_FILE_ATTRIBUTES => return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(src)).?,
                 else => |result| result,
             };
             if (stat_ & windows.FILE_ATTRIBUTE_REPARSE_POINT == 0) {
                 if (windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite())) == 0) {
-                    const err = windows.GetLastError();
-                    const errpath = switch (err) {
-                        .FILE_EXISTS, .ALREADY_EXISTS => dest,
-                        else => src,
-                    };
-                    return shouldIgnoreEbusy(
-                        args.src,
-                        args.dest,
-                        Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath)) orelse .{ .err = .{
-                            .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                            .syscall = .copyfile,
-                            .path = this.osPathIntoSyncErrorBuf(src),
-                        } },
-                    );
+                    var err = windows.GetLastError();
+                    var errpath: bun.OSPathSliceZ = undefined;
+                    switch (err) {
+                        .FILE_EXISTS, .ALREADY_EXISTS => errpath = dest,
+                        .PATH_NOT_FOUND => {
+                            bun.makePathW(std.fs.cwd(), bun.path.dirnameW(dest)) catch {};
+                            const second_try = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
+                            if (second_try > 0) return ret.success;
+                            err = windows.GetLastError();
+                            errpath = dest;
+                            if (err == .FILE_EXISTS or err == .ALREADY_EXISTS) errpath = src;
+                        },
+                        else => errpath = src,
+                    }
+                    const result = ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse src_enoent_maybe;
+                    return shouldIgnoreEbusy(args.src, args.dest, result);
                 }
                 return ret.success;
             } else {
@@ -6808,24 +6813,14 @@ pub const NodeFS = struct {
                 var wbuf: bun.WPathBuffer = undefined;
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), &wbuf, wbuf.len, 0);
                 if (len == 0) {
-                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse .{ .err = .{
-                        .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                        .syscall = .copyfile,
-                        .path = this.osPathIntoSyncErrorBuf(dest),
-                    } };
+                    return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)
                     std.os.windows.SYMBOLIC_LINK_FLAG_DIRECTORY
                 else
                     0;
                 if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) == 0) {
-                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse .{
-                        .err = .{
-                            .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                            .syscall = .copyfile,
-                            .path = this.osPathIntoSyncErrorBuf(dest),
-                        },
-                    };
+                    return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 return ret.success;
             }

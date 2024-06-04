@@ -763,7 +763,7 @@ pub const Listener = struct {
             }
         }
 
-        var this: *Listener = handlers.vm.allocator.create(Listener) catch @panic("OOM");
+        var this: *Listener = handlers.vm.allocator.create(Listener) catch bun.outOfMemory();
         this.* = socket;
         this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;
 
@@ -798,7 +798,7 @@ pub const Listener = struct {
         const Socket = NewSocket(ssl);
         bun.assert(ssl == listener.ssl);
 
-        var this_socket = listener.handlers.vm.allocator.create(Socket) catch @panic("Out of memory");
+        var this_socket = listener.handlers.vm.allocator.create(Socket) catch bun.outOfMemory();
         this_socket.* = Socket{
             .handlers = &listener.handlers,
             .this_value = .zero,
@@ -1048,7 +1048,7 @@ pub const Listener = struct {
 
         default_data.ensureStillAlive();
 
-        var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+        var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
         handlers_ptr.* = handlers;
         handlers_ptr.is_server = false;
 
@@ -1057,7 +1057,7 @@ pub const Listener = struct {
         handlers_ptr.promise.set(globalObject, promise_value);
 
         if (ssl_enabled) {
-            var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
+            var tls = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
 
             tls.* = .{
                 .handlers = handlers_ptr,
@@ -1078,7 +1078,7 @@ pub const Listener = struct {
 
             return promise_value;
         } else {
-            var tcp = handlers.vm.allocator.create(TCPSocket) catch @panic("OOM");
+            var tcp = handlers.vm.allocator.create(TCPSocket) catch bun.outOfMemory();
 
             tcp.* = .{
                 .handlers = handlers_ptr,
@@ -1225,6 +1225,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
+
             var vm = handlers.vm;
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
@@ -1340,10 +1341,10 @@ fn NewSocket(comptime ssl: bool) type {
                 if (!this.detached) {
                     // we have to close the socket before the socket context is closed
                     // otherwise we will get a segfault
-                    // uSockets will defer closing the TCP socket until the next tick
+                    // uSockets will defer freeing the TCP socket until the next tick
                     if (!this.socket.isClosed()) {
                         this.detached = true;
-                        this.socket.close(0, null);
+                        this.socket.close(.normal);
                         // onClose will call markInactive again
                         return;
                     }
@@ -1488,7 +1489,6 @@ fn NewSocket(comptime ssl: bool) type {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
             if (this.detached) return;
-
             const authorized = if (success == 1) true else false;
 
             this.authorized = authorized;
@@ -1519,6 +1519,15 @@ fn NewSocket(comptime ssl: bool) type {
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
                 result = callback.callWithThis(globalObject, this_value, &[_]JSValue{this_value});
+
+                // only call onOpen once for clients
+                if (!handlers.is_server) {
+                    // clean onOpen callback so only called in the first handshake and not in every renegotiation
+                    // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
+                    // servers don't support renegotiation
+                    this.handlers.onOpen.unprotect();
+                    this.handlers.onOpen = .zero;
+                }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
                 var authorization_error: JSValue = undefined;
@@ -1951,6 +1960,19 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn terminate(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (!this.detached) {
+                this.socket.close(.failure);
+            }
+
+            return JSValue.jsUndefined();
+        }
+
         pub fn shutdown(
             this: *This,
             _: *JSC.JSGlobalObject,
@@ -2015,7 +2037,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {
-                    this.socket.close(0, null);
+                    this.socket.close(.failure);
                 }
             }
 
@@ -2939,8 +2961,8 @@ fn NewSocket(comptime ssl: bool) type {
             const ext_size = @sizeOf(WrappedSocket);
 
             const is_server = this.handlers.is_server;
-            var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
-            var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+            var tls = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
+            var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
@@ -2979,8 +3001,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             tls.socket = new_socket;
 
-            var raw = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
-            var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+            var raw = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
+            var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
                 .vm = globalObject.bunVM(),
                 .globalObject = globalObject,

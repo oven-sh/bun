@@ -631,7 +631,7 @@ pub const Version = extern struct {
         if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
+    pub fn append(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this.*;
 
         if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
@@ -720,6 +720,157 @@ pub const Version = extern struct {
             return lhs.eql(rhs);
         }
     };
+
+    pub const PinnedVersion = enum {
+        major, // ^
+        minor, // ~
+        patch, // =
+    };
+
+    /// Modified version of pnpm's `whichVersionIsPinned`
+    /// https://github.com/pnpm/pnpm/blob/bc0618cf192a9cafd0ab171a3673e23ed0869bbd/packages/which-version-is-pinned/src/index.ts#L9
+    ///
+    /// Differences:
+    /// - It's not used for workspaces
+    /// - `npm:` is assumed already removed from aliased versions
+    /// - Invalid input is considered major pinned (important because these strings are coming
+    ///    from package.json)
+    ///
+    /// The goal of this function is to avoid a complete parse of semver that's unused
+    pub fn whichVersionIsPinned(input: string) PinnedVersion {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        var i: usize = 0;
+
+        const pinned: PinnedVersion = pinned: {
+            for (0..version.len) |j| {
+                switch (version[j]) {
+                    // newlines & whitespace
+                    ' ',
+                    '\t',
+                    '\n',
+                    '\r',
+                    std.ascii.control_code.vt,
+                    std.ascii.control_code.ff,
+
+                    // version separators
+                    'v',
+                    '=',
+                    => {},
+
+                    else => |c| {
+                        i = j;
+
+                        switch (c) {
+                            '~', '^' => {
+                                i += 1;
+
+                                for (i..version.len) |k| {
+                                    switch (version[k]) {
+                                        ' ',
+                                        '\t',
+                                        '\n',
+                                        '\r',
+                                        std.ascii.control_code.vt,
+                                        std.ascii.control_code.ff,
+                                        => {
+                                            // `v` and `=` not included.
+                                            // `~v==1` would update to `^1.1.0` if versions `1.0.0`, `1.0.1`, `1.1.0`, and `2.0.0` are available
+                                            // note that `~` changes to `^`
+                                        },
+
+                                        else => {
+                                            i = k;
+                                            break :pinned if (c == '~') .minor else .major;
+                                        },
+                                    }
+                                }
+
+                                // entire version after `~` is whitespace. invalid
+                                return .major;
+                            },
+
+                            '0'...'9' => break :pinned .patch,
+
+                            // could be invalid, could also be valid range syntax (>=, ...)
+                            // either way, pin major
+                            else => return .major,
+                        }
+                    },
+                }
+            }
+
+            // entire semver is whitespace, `v`, and `=`. Invalid
+            return .major;
+        };
+
+        // `pinned` is `.major`, `.minor`, or `.patch`. Check for each version core number:
+        // - if major is missing, return `if (pinned == .patch) .major else pinned`
+        // - if minor is missing, return `if (pinned == .patch) .minor else pinned`
+        // - if patch is missing, return `pinned`
+        // - if there's whitespace or non-digit characters between core numbers, return `.major`
+        // - if the end is reached, return `pinned`
+
+        // major
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        var d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .major else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // minor
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .minor else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // patch
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+
+            // patch is done and at input end, valid
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // Skip remaining valid pre/build tag characters and whitespace.
+        // Does not validate whitespace used inside pre/build tags.
+        if (!validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) return .major;
+        i += 1;
+
+        // at this point the semver is valid so we can return true if it ends
+        if (i >= version.len) return pinned;
+        d = version[i];
+        while (validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) {
+            i += 1;
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // We've come across a character that is not valid for tags or is whitespace.
+        // Trailing whitespace was trimmed so we can assume there's another range
+        return .major;
+    }
+
+    fn validPreOrBuildTagCharacter(c: u8) bool {
+        return switch (c) {
+            '-', '+', '.', 'A'...'Z', 'a'...'z', '0'...'9' => true,
+            else => false,
+        };
+    }
 
     pub fn orderWithoutTag(
         lhs: Version,
@@ -1112,7 +1263,8 @@ pub const Version = extern struct {
                     }
 
                     if (i < input.len and switch (input[i]) {
-                        '.' => true,
+                        // `.` is expected only if there are remaining core version numbers
+                        '.' => part_i != 3,
                         else => false,
                     }) {
                         i += 1;

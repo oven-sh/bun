@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
+🟡 Missing `proc.gid` `proc.uid`. `Stream` class not exported. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -61,7 +61,7 @@ Some methods are not optimized yet.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
@@ -69,7 +69,7 @@ Some methods are not optimized yet.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟢 Fully implemented.
+🟢 APIs are implemented, but `Agent` is not always used yet.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 

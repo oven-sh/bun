@@ -316,15 +316,19 @@ function execFile(file, args, options, callback) {
   function errorHandler(e) {
     ex = e;
 
-    if (child.stdout) child.stdout.destroy();
-    if (child.stderr) child.stderr.destroy();
+    const { stdout, stderr } = child;
+
+    if (stdout) stdout.destroy();
+    if (stderr) stderr.destroy();
 
     exitHandler();
   }
 
   function kill() {
-    if (child.stdout) child.stdout.destroy();
-    if (child.stderr) child.stderr.destroy();
+    const { stdout, stderr } = child;
+
+    if (stdout) stdout.destroy();
+    if (stderr) stderr.destroy();
 
     killed = true;
     try {
@@ -337,8 +341,8 @@ function execFile(file, args, options, callback) {
 
   if (options.timeout > 0) {
     timeoutId = setTimeout(function delayedKill() {
-      timeoutId && kill();
       timeoutId = null;
+      kill();
     }, options.timeout).unref();
   }
 
@@ -1001,20 +1005,13 @@ class ChildProcess extends EventEmitter {
   spawnargs;
   pid;
   channel;
+  killed = false;
 
   [Symbol.dispose]() {
     if (!this.killed) {
       this.kill();
     }
   }
-
-  get killed() {
-    if (this.#handle == null) return false;
-  }
-
-  // constructor(options) {
-  //   super(options);
-  // }
 
   #handleOnExit(exitCode, signalCode, err) {
     if (signalCode) {
@@ -1098,8 +1095,15 @@ class ChildProcess extends EventEmitter {
     switch (i) {
       case 0: {
         switch (io) {
-          case "pipe":
-            return new NativeWritable(this.#handle.stdin);
+          case "pipe": {
+            const stdin = this.#handle.stdin;
+
+            if (!stdin)
+              // This can happen if the process was already killed.
+              return new ShimmedStdin();
+
+            return new NativeWritable(stdin);
+          }
           case "inherit":
             return process.stdin || null;
           case "destroyed":
@@ -1112,7 +1116,13 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const pipe = ReadableFromWeb(this.#handle[fdToStdioName(i)], { encoding });
+            const value = this.#handle[fdToStdioName(i)];
+
+            if (!value)
+              // This can happen if the process was already killed.
+              return new ShimmedStdioOutStream();
+
+            const pipe = ReadableFromWeb(value, { encoding });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1326,15 +1336,23 @@ class ChildProcess extends EventEmitter {
   kill(sig?) {
     const signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
 
-    if (this.#handle) {
-      this.#handle.kill(signal);
+    const handle = this.#handle;
+    if (handle) {
+      if (handle.killed) {
+        this.killed = true;
+        return true;
+      }
+
+      try {
+        handle.kill(signal);
+        this.killed = true;
+        return true;
+      } catch (e) {
+        this.emit("error", e);
+      }
     }
 
-    // TODO: Figure out how to make this conform to the Node spec...
-    // The problem is that the handle does not report killed until the process exits
-    // So we can't return whether or not the process was killed because Bun.spawn seems to handle this async instead of sync like Node does
-    // return this.#handle?.killed ?? true;
-    return true;
+    return false;
   }
 
   #maybeClose() {

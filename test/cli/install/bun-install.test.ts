@@ -966,6 +966,7 @@ it("should handle installing the same peerDependency with different versions", a
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
+    "+ peer@0.0.2",
     "+ boba@0.0.2",
     "",
     "2 packages installed",
@@ -3970,7 +3971,12 @@ it("should consider peerDependencies during hoisting", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ baz@0.0.5",
+    "",
+    "4 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/baz-0.0.5.tgz`]);
   expect(requested).toBe(3);
@@ -4062,7 +4068,12 @@ it("should install peerDependencies when needed", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ baz@0.0.5",
+    "",
+    "4 packages installed",
+  ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`, `${root_url}/baz-0.0.5.tgz`]);
   expect(requested).toBe(3);
@@ -7665,7 +7676,12 @@ it("should install peer dependencies from root package", async () => {
   const err = await new Response(stderr).text();
   expect(err).toContain("Saved lockfile");
   const out = await new Response(stdout).text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ bar@0.0.2",
+    "",
+    "1 package installed",
+  ]);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
   expect(requested).toBe(2);

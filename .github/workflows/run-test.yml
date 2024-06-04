@@ -78,14 +78,20 @@ jobs:
           node-version: 20
       - name: Install Dependencies
         timeout-minutes: 5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bun install
       - name: Install Dependencies (test)
         timeout-minutes: 5
         run: |
           bun install --cwd test
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Dependencies (runner)
         timeout-minutes: 5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bun install --cwd packages/bun-internal-test
       - name: Run Tests
@@ -93,6 +99,7 @@ jobs:
         timeout-minutes: 90
         shell: bash
         env:
+          IS_BUN_CI: 1
           TMPDIR: ${{ runner.temp }}
           BUN_TAG: ${{ inputs.tag }}
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
@@ -102,6 +109,7 @@ jobs:
           TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
           SHELLOPTS: igncr
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node packages/bun-internal-test/src/runner.node.mjs $(which bun)
       - if: ${{ always() }}

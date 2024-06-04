@@ -2539,6 +2539,16 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
     }
 }
 
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePathW(dir: std.fs.Dir, sub_path: []const u16) !void {
+    // was going to copy/paste makePath and use all W versions but they didn't all exist
+    // and this buffer was needed anyway
+    var buf: PathBuffer = undefined;
+    const buf_len = simdutf.convert.utf16.to.utf8.le(sub_path, &buf);
+    return makePath(dir, buf[0..buf_len]);
+}
+
 pub const Async = @import("async");
 
 /// This is a helper for writing path string literals that are compatible with Windows.
@@ -2867,6 +2877,10 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime @hasDecl(T, "is_bun.New()")) {
+        // You will get weird memory bugs in debug builds if you use the wrong allocator.
+        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
+    }
     if (comptime is_heap_breakdown_enabled) {
         const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
         ptr.* = t;
@@ -2877,6 +2891,9 @@ pub inline fn new(comptime T: type, t: T) *T {
     ptr.* = t;
     return ptr;
 }
+
+pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
 
 pub inline fn dupe(comptime T: type, t: *T) *T {
     if (comptime is_heap_breakdown_enabled) {
@@ -2890,24 +2907,10 @@ pub inline fn dupe(comptime T: type, t: *T) *T {
     return ptr;
 }
 
-/// Free a globally-allocated a value
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            destroy(t);
-            return;
-        }
-    }
-
-    allocator.destroy(t);
-}
-
 pub fn New(comptime T: type) type {
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        pub const @"is_bun.New()" = true;
 
         pub inline fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
@@ -3036,18 +3039,6 @@ pub inline fn destroy(t: anytype) void {
     } else {
         default_allocator.destroy(t);
     }
-}
-
-pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            return new(T, t);
-        }
-    }
-
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
 }
 
 pub fn exitThread() noreturn {
@@ -3282,37 +3273,188 @@ pub inline fn unsafeAssert(condition: bool) void {
 
 pub const dns = @import("./dns.zig");
 
+pub fn getRoughTickCount() timespec {
+    if (comptime Environment.isMac) {
+        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
+        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.c.clock_getres(C.CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = C.CLOCK_MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = C.CLOCK_MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+
+        // We use this one because we can avoid reading the mach timebase info ourselves.
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isLinux) {
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                } else {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isWindows) {
+        const ms = getRoughTickCountMs();
+        return timespec{
+            .sec = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * 1_000_000),
+        };
+    }
+
+    return 0;
+}
+
 /// When you don't need a super accurate timestamp, this is a fast way to get one.
 ///
 /// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
 ///
 /// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
 pub fn getRoughTickCountMs() u64 {
-    if (comptime Environment.isMac) {
-        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
-        const mach_continuous_approximate_time = struct {
-            pub extern "C" fn mach_continuous_approximate_time() u64;
-        }.mach_continuous_approximate_time;
-
-        return mach_continuous_approximate_time() / std.time.ns_per_ms;
-    }
-
-    if (comptime Environment.isLinux) {
-        var timespec = std.os.linux.timespec{
-            .tv_nsec = 0,
-            .tv_sec = 0,
-        };
-        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC_COARSE, &timespec);
-        const ns: u64 = @intCast(@max((timespec.tv_sec *| std.time.ns_per_s) +| timespec.tv_nsec, 0));
-        return ns / std.time.ns_per_ms;
-    }
-
-    if (comptime Environment.isWindows) {
+    if (Environment.isWindows) {
         const GetTickCount64 = struct {
             pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
         }.GetTickCount64;
         return GetTickCount64();
     }
 
-    return 0;
+    const spec = getRoughTickCount();
+    return spec.ns() / std.time.ns_per_ms;
 }
+
+pub const timespec = extern struct {
+    sec: isize = 0,
+    nsec: isize = 0,
+
+    pub fn eql(this: *const timespec, other: *const timespec) bool {
+        return this.sec == other.sec and this.nsec == other.nsec;
+    }
+
+    pub fn toInstant(this: *const timespec) std.time.Instant {
+        if (comptime Environment.isPosix) {
+            return std.time.Instant{
+                .timestamp = @bitCast(this.*),
+            };
+        }
+
+        if (comptime Environment.isWindows) {
+            return std.time.Instant{
+                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
+            };
+        }
+    }
+
+    // TODO: this is wrong!
+    pub fn duration(this: *const timespec, other: *const timespec) timespec {
+        var sec_diff = this.sec - other.sec;
+        var nsec_diff = this.nsec - other.nsec;
+
+        if (nsec_diff < 0) {
+            sec_diff -= 1;
+            nsec_diff += std.time.ns_per_s;
+        }
+
+        return timespec{
+            .sec = sec_diff,
+            .nsec = nsec_diff,
+        };
+    }
+
+    pub fn order(a: *const timespec, b: *const timespec) std.math.Order {
+        const sec_order = std.math.order(a.sec, b.sec);
+        if (sec_order != .eq) return sec_order;
+        return std.math.order(a.nsec, b.nsec);
+    }
+
+    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
+    /// 584 years so if we get any overflows we just use maxInt(u64). If
+    /// any software is running in 584 years waiting on this timer...
+    /// shame on me I guess... but I'll be dead.
+    pub fn ns(this: *const timespec) u64 {
+        if (this.sec <= 0) {
+            return @max(this.nsec, 0);
+        }
+
+        assert(this.sec >= 0);
+        assert(this.nsec >= 0);
+
+        const max = std.math.maxInt(u64);
+        const s_ns = std.math.mul(
+            u64,
+            @as(u64, @intCast(this.sec)),
+            std.time.ns_per_s,
+        ) catch return max;
+
+        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+            return max;
+    }
+
+    pub fn ms(this: *const timespec) u64 {
+        return this.ns() / std.time.ns_per_ms;
+    }
+
+    pub fn greater(a: *const timespec, b: *const timespec) bool {
+        return a.order(b) == .gt;
+    }
+
+    pub fn now() timespec {
+        return getRoughTickCount();
+    }
+
+    pub fn sinceNow(start: *const timespec) u64 {
+        return now().duration(start).ns();
+    }
+
+    pub fn addMs(this: *const timespec, interval: i64) timespec {
+        const sec_inc = @divTrunc(interval, std.time.ms_per_s);
+        const nsec_inc = @rem(interval, std.time.ms_per_s) * std.time.ns_per_ms;
+
+        var new_timespec = this.*;
+
+        new_timespec.sec += sec_inc;
+        new_timespec.nsec += nsec_inc;
+
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec += 1;
+            new_timespec.nsec -= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
+
+    pub fn msFromNow(interval: i64) timespec {
+        return now().addMs(interval);
+    }
+};

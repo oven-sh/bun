@@ -337,7 +337,7 @@ pub fn constructor(
 
     const all_ascii = isAllAscii(pat_str);
 
-    var glob = alloc.create(Glob) catch @panic("OOM");
+    var glob = alloc.create(Glob) catch bun.outOfMemory();
     glob.* = .{ .pattern = pat_str, .is_ascii = all_ascii };
 
     if (!all_ascii) {

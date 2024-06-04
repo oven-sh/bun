@@ -10692,7 +10692,7 @@ pub const PackageManager = struct {
                 break :old_folder bun.path.join(&[_][]const u8{
                     cache_dir_path,
                     stuff.cache_dir_subpath,
-                }, .auto);
+                }, .posix);
             };
             break :brk switch (bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
                 Output.prettyError(
@@ -10778,7 +10778,7 @@ pub const PackageManager = struct {
                 manager.options.patch_features.commit.patches_dir,
                 patch_filename,
             },
-            .auto,
+            .posix,
         );
 
         var nodefs = bun.JSC.Node.NodeFS{};

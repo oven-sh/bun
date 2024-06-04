@@ -1373,9 +1373,28 @@ pub const JS = struct {
 
 pub fn gitDiff(
     allocator: std.mem.Allocator,
-    old_folder: []const u8,
-    new_folder: []const u8,
+    old_folder_: []const u8,
+    new_folder_: []const u8,
 ) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+    const old_folder: []const u8 = if (comptime bun.Environment.isWindows) brk: {
+        // backslash in the path fucks everything up
+        const cpy = allocator.alloc(u8, old_folder_.len) catch bun.outOfMemory();
+        @memcpy(cpy, old_folder_);
+        std.mem.replaceScalar(u8, cpy, '\\', '/');
+        break :brk cpy;
+    } else old_folder_;
+    const new_folder = if (comptime bun.Environment.isWindows) brk: {
+        const cpy = allocator.alloc(u8, new_folder_.len) catch bun.outOfMemory();
+        @memcpy(cpy, new_folder_);
+        std.mem.replaceScalar(u8, cpy, '\\', '/');
+        break :brk cpy;
+    } else new_folder_;
+
+    defer if (comptime bun.Environment.isWindows) {
+        allocator.free(old_folder);
+        allocator.free(new_folder);
+    };
+
     var child_proc = std.ChildProcess.init(
         &[_][]const u8{
             "git",

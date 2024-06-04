@@ -60,6 +60,30 @@ it("fetch with valid tls should not throw", async () => {
 });
 
 it("fetch with valid tls and non-native checkServerIdentity should work", async () => {
+  for (const isBusy of [true, false]) {
+    let count = 0;
+    const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
+      await fetch(url, {
+        keepalive: false,
+        tls: {
+          checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
+            count++;
+            expect(url).toContain(hostname);
+            return tls.checkServerIdentity(hostname, cert);
+          },
+        },
+      }).then((res: Response) => res.blob());
+    });
+    if (isBusy) {
+      const start = performance.now();
+      while (performance.now() - start < 500) {}
+    }
+    await Promise.all(promises);
+    expect(count).toBe(2);
+  }
+});
+
+it("fetch with valid tls and non-native checkServerIdentity should work", async () => {
   let count = 0;
   const promises = [`https://example.com`, `https://www.example.com`].map(async url => {
     await fetch(url, {
@@ -68,12 +92,14 @@ it("fetch with valid tls and non-native checkServerIdentity should work", async 
         checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
           count++;
           expect(url).toContain(hostname);
-          return tls.checkServerIdentity(hostname, cert);
+          throw new Error("CustomError");
         },
       },
-    }).then((res: Response) => res.blob());
+    });
   });
-  await Promise.all(promises);
+  const start = performance.now();
+  while (performance.now() - start < 1000) {}
+  expect((await Promise.allSettled(promises)).every(p => p.status === "rejected")).toBe(true);
   expect(count).toBe(2);
 });
 

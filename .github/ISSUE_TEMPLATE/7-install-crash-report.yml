@@ -1,7 +1,8 @@
-name: Prefilled crash report
-description: Report a crash in Bun
+name: bun install crash report
+description: Report a crash in bun install
 labels:
   - crash
+  - npm
 body:
   - type: markdown
     attributes:
@@ -14,10 +15,10 @@ body:
   - type: textarea
     id: code
     attributes:
-      label: JavaScript/TypeScript code that reproduces the crash?
-      description: If this crash happened in the Bun runtime, can you paste code we can run to reproduce the crash?
-      render: shell
-  - type: textarea
+      label: Package.json
+      description: Please provide your package.json file.
+      render: json
+  - type:
     id: logs
     attributes:
       label: Relevant log output

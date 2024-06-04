@@ -302,14 +302,14 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         }
     }
 
-    bool orignialSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
+    bool originalSkipNextComputeErrorInfo = skipNextComputeErrorInfo;
     skipNextComputeErrorInfo = true;
     if (errorObject->hasProperty(lexicalGlobalObject, vm.propertyNames->stack)) {
         skipNextComputeErrorInfo = true;
         errorObject->deleteProperty(lexicalGlobalObject, vm.propertyNames->stack);
     }
 
-    skipNextComputeErrorInfo = orignialSkipNextComputeErrorInfo;
+    skipNextComputeErrorInfo = originalSkipNextComputeErrorInfo;
 
     JSValue stackStringValue = jsString(vm, sb.toString());
 
@@ -593,7 +593,7 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
                 remappedFrames[i].position.line = sourcePositions->line;
-                remappedFrames[i].position.column = sourcePositions->startColumn;
+                remappedFrames[i].position.column = sourcePositions->column;
             } else {
                 remappedFrames[i].position.line = OrdinalNumber::beforeFirst();
                 remappedFrames[i].position.column = OrdinalNumber::beforeFirst();
@@ -2484,7 +2484,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
             remappedFrames[i].position.line = sourcePositions->line;
-            remappedFrames[i].position.column = sourcePositions->startColumn;
+            remappedFrames[i].position.column = sourcePositions->column;
         } else {
             remappedFrames[i].position.line = OrdinalNumber::beforeFirst();
             remappedFrames[i].position.column = OrdinalNumber::beforeFirst();

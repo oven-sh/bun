@@ -59,7 +59,7 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
         m_lineNumber = sourcePositions->line;
-        m_columnNumber = sourcePositions->startColumn;
+        m_columnNumber = sourcePositions->column;
     }
 
     if (stackFrame.isEval()) {

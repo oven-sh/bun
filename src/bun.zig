@@ -3495,16 +3495,7 @@ pub fn OrdinalT(comptime Int: type) type {
         }
 
         pub fn isValid(ord: @This()) bool {
-            return ord.zeroBased() > 0;
-        }
-
-        pub fn format(
-            _: @This(),
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            _: anytype,
-        ) !void {
-            @compileError("Do not format `Ordinal` directly. Call oneBased or zeroBased to specify.");
+            return ord.zeroBased() >= 0;
         }
     };
 }

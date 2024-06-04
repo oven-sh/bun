@@ -3925,6 +3925,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
     position->line = line;
     position->column = column;
+    position->byte_position = expr.divot;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
         // Search for the beginning of the line

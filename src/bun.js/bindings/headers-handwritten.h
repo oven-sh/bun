@@ -141,6 +141,7 @@ const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 typedef struct ZigStackFramePosition {
     WTF::OrdinalNumber line;
     WTF::OrdinalNumber column;
+    int byte_position;
 } ZigStackFramePosition;
 
 typedef struct ZigStackFrame {

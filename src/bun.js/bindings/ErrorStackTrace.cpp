@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "ErrorStackTrace.h"
+#include "wtf/text/OrdinalNumber.h"
 
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
@@ -361,62 +362,9 @@ bool JSCStackFrame::calculateSourcePositions()
 
     JSC::BytecodeIndex bytecodeIndex = hasBytecodeIndex() ? m_bytecodeIndex : JSC::BytecodeIndex();
 
-    /* Get the "raw" position info.
-     * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset rather than m_codeBlock->expressionRangeForBytecodeOffset
-     * in order get the "raw" offsets and avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column numbers,
-     * (we don't need the column number from it, and we'll calculate the line "fixes" ourselves). */
-    ExpressionInfo::Entry info = m_codeBlock->unlinkedCodeBlock()->expressionInfoForBytecodeIndex(bytecodeIndex);
-    info.divot += m_codeBlock->sourceOffset();
-
-    /* On the first line of the source code, it seems that we need to "fix" the column with the starting
-     * offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt() as the
-     * offset in the first line rather than codeBlock->firstLineColumnOffset(), which seems simpler
-     * (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because firstLineColumnOffset
-     * values seems different from what we expect (according to v8's tests) and I haven't dove into the
-     * relevant parts in JSC (yet) to figure out why. */
-    unsigned columnOffset = info.lineColumn.line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
-
-    // "Fix" the line number
-    JSC::ScriptExecutable* executable = m_codeBlock->ownerExecutable();
-    info.lineColumn.line = executable->overrideLineNumber(m_vm).value_or(info.lineColumn.line + executable->firstLine());
-
-    // Calculate the staring\ending offsets of the entire expression
-    int expressionStart = info.divot - info.startOffset;
-    int expressionStop = info.divot + info.endOffset;
-
-    // Make sure the range is valid
-    StringView sourceString = m_codeBlock->source().provider()->source();
-    if (!expressionStop || expressionStart > static_cast<int>(sourceString.length())) {
-        return false;
-    }
-
-    // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
-    while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
-        lineStart--;
-    }
-    // Search for the end of the line
-    unsigned int lineStop = expressionStop;
-    unsigned int sourceLength = sourceString.length();
-    while ((lineStop < sourceLength) && ('\n' != sourceString[lineStop])) {
-        lineStop++;
-    }
-
-    /* Finally, store the source "positions" info.
-     * Notes:
-     * - The retrieved column seem to point the "end column". To make sure we're current, we'll calculate the
-     *   columns ourselves, since we've already found where the line starts. Note that in v8 it should be 0-based
-     *   here (in contrast the 1-based column number in v8::StackFrame).
-     * - The static_casts are ugly, but comes from differences between JSC and v8's api, and should be OK
-     *   since no source should be longer than "max int" chars.
-     */
-    m_sourcePositions.expressionStart = WTF::OrdinalNumber::fromZeroBasedInt(expressionStart);
-    m_sourcePositions.expressionStop = WTF::OrdinalNumber::fromZeroBasedInt(expressionStop);
-    m_sourcePositions.line = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(info.lineColumn.line));
-    m_sourcePositions.startColumn = WTF::OrdinalNumber::fromZeroBasedInt((expressionStart - lineStart) + columnOffset);
-    m_sourcePositions.endColumn = WTF::OrdinalNumber::fromZeroBasedInt(m_sourcePositions.startColumn.zeroBasedInt() + (expressionStop - expressionStart));
-    m_sourcePositions.lineStart = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(lineStart));
-    m_sourcePositions.lineStop = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(lineStop));
+    auto lineColumn = m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
+    m_sourcePositions.line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+    m_sourcePositions.column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
     return true;
 }

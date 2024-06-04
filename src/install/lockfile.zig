@@ -4028,19 +4028,42 @@ pub const Package = extern struct {
                     }
                 }
             },
-            .workspace => {
+            .workspace => workspace: {
                 if (workspace_path) |path| {
                     if (workspace_range) |range| {
                         if (workspace_version) |ver| {
                             if (range.satisfies(ver, buf, buf)) {
                                 dependency_version.literal = path;
                                 dependency_version.value.workspace = path;
+                                break :workspace;
                             }
                         }
-                    } else {
-                        dependency_version.literal = path;
-                        dependency_version.value.workspace = path;
+
+                        // important to trim before len == 0 check. `workspace:foo@      ` should install successfully
+                        const version_literal = strings.trim(range.input, &strings.whitespace_chars);
+                        if (version_literal.len == 0 or range.@"is *"() or Semver.Version.isTaggedVersionOnly(version_literal)) {
+                            dependency_version.literal = path;
+                            dependency_version.value.workspace = path;
+                            break :workspace;
+                        }
+
+                        // workspace is not required to have a version, but if it does
+                        // and this version doesn't match it, fail to install
+                        try log.addErrorFmt(
+                            &source,
+                            logger.Loc.Empty,
+                            allocator,
+                            "No matching version for workspace dependency \"{s}\". Version: \"{s}\"",
+                            .{
+                                external_alias.slice(buf),
+                                dependency_version.literal.slice(buf),
+                            },
+                        );
+                        return error.InstallFailed;
                     }
+
+                    dependency_version.literal = path;
+                    dependency_version.value.workspace = path;
                 } else {
                     const workspace = dependency_version.value.workspace.slice(buf);
                     const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {

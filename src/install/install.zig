@@ -1910,23 +1910,6 @@ pub const PackageInstall = struct {
         destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
-    // these are just a symlink/junction
-    pub fn uninstallLinkBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
-        if (comptime Environment.isWindows) {
-            bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
-                if (err == error.ENOTDIR) {
-                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath);
-                }
-            };
-        } else {
-            bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
-                if (err == error.EISDIR or err == error.EPERM) {
-                    _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
-                }
-            };
-        }
-    }
-
     pub fn uninstallBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
         var rand_path_buf: [48]u8 = undefined;
         const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
@@ -2067,7 +2050,7 @@ pub const PackageInstall = struct {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallLinkBeforeInstall(destination_dir);
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
 
         const subdir = std.fs.path.dirname(dest_path);
 

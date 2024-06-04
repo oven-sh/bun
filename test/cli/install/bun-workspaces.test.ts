@@ -3,7 +3,7 @@ import { bunExe, bunEnv as env, runBunInstall, tmpdirSync, toMatchNodeModulesAt 
 import { join } from "path";
 import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { writeFile, mkdir } from "fs/promises";
-import { beforeEach, test, expect } from "bun:test";
+import { beforeEach, test, expect, describe } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
@@ -275,4 +275,156 @@ test("workspaces with invalid versions should still install", async () => {
     name: "build",
     version: "3.0.0_pre+bui_ld",
   });
+});
+
+describe("workspace aliases", async () => {
+  test("combination", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a0": "workspace:@org/a@latest",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "@org/a",
+          dependencies: {
+            "a1": "workspace:@org/b@     ",
+            "a2": "workspace:c@*",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "@org/b",
+          dependencies: {
+            "a3": "workspace:c@    ",
+            "a4": "workspace:@org/a@latest",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg3", "package.json"),
+        JSON.stringify({
+          name: "c",
+          dependencies: {
+            "a5": "workspace:@org/a@*",
+          },
+        }),
+      ),
+    ]);
+
+    console.log({ packageDir });
+
+    await runBunInstall(env, packageDir);
+    const files = await Promise.all(
+      ["a0", "a1", "a2", "a3", "a4", "a5"].map(name =>
+        file(join(packageDir, "node_modules", name, "package.json")).json(),
+      ),
+    );
+
+    expect(files).toMatchObject([
+      { name: "a0" },
+      { name: "@org/b" },
+      { name: "c" },
+      { name: "c" },
+      { name: "@org/a" },
+      { name: "@org/b" },
+    ]);
+  });
+  var shouldPass: string[] = [
+    "workspace:@org/b@latest",
+    "workspace:@org/b@*",
+    // missing version after `@`
+    "workspace:@org/b@",
+  ];
+  for (const version of shouldPass) {
+    test(`version range ${version} and workspace with no version`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["packages/*"],
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "@org/a",
+            dependencies: {
+              "a1": version,
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg2", "package.json"),
+          JSON.stringify({
+            name: "@org/b",
+          }),
+        ),
+      ]);
+
+      await runBunInstall(env, packageDir);
+      const files = await Promise.all([
+        file(join(packageDir, "node_modules", "@org", "a", "package.json")).json(),
+        file(join(packageDir, "node_modules", "@org", "b", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg1", "node_modules", "a1", "package.json")).json(),
+      ]);
+
+      expect(files).toMatchObject([{ name: "@org/a" }, { name: "@org/b" }, { name: "@org/b" }]);
+    });
+  }
+  let shouldFail: string[] = ["workspace:@org/b@1.0.0", "workspace:@org/b@1", "workspace:@org/b"];
+  for (const version of shouldFail) {
+    test(`version range ${version} and workspace with no version (should fail)`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["packages/*"],
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "@org/a",
+            dependencies: {
+              "a1": version,
+            },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg2", "package.json"),
+          JSON.stringify({
+            name: "@org/b",
+          }),
+        ),
+      ]);
+
+      const { stderr, exited } = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      if (version === "workspace:@org/b") {
+        expect(err).toContain('workspace dependency "a1" not found');
+      } else {
+        expect(err).toContain(`No matching version for workspace dependency "a1". Version: "${version}"`);
+      }
+      expect(await exited).toBe(1);
+    });
+  }
 });

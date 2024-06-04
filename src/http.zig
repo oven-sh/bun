@@ -843,7 +843,9 @@ pub const HTTPThread = struct {
             }
             Output.flush();
 
+            this.loop.loop.inc();
             this.loop.loop.tick();
+            this.loop.loop.dec();
 
             // this.loop.run();
             if (comptime Environment.isDebug) {

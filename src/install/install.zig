@@ -5304,7 +5304,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -5355,7 +5355,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -5398,7 +5398,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }

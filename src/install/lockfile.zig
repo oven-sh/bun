@@ -1847,7 +1847,7 @@ pub const Printer = struct {
 
                     try writer.writeAll("  resolved ");
 
-                    const url_formatter = resolution.fmtURL(&this.options, string_buf);
+                    const url_formatter = resolution.fmtURL(string_buf);
 
                     // Resolved URL is always quoted
                     try std.fmt.format(writer, "\"{any}\"\n", .{url_formatter});
@@ -6535,6 +6535,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.objectField("value");
                 const formatted = try std.fmt.bufPrint(&buf, "{s}", .{res.fmt(sb, .posix)});
                 try w.write(formatted);
+
+                try w.objectField("resolved");
+                const formatted_url = try std.fmt.bufPrint(&buf, "{}", .{res.fmtURL(sb)});
+                try w.write(formatted_url);
             }
 
             try w.objectField("dependencies");

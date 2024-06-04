@@ -597,7 +597,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     break;
                 }
             }
-            us_socket_close(0, s, 0, 0);
+            us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
             // there are no further attempting to connect
             if (!c->connecting_head) {
                 // start opening the next batch of connections
@@ -631,7 +631,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
         if (c) {
             for (struct us_socket_t *next = c->connecting_head; next; next = next->connect_next) {
                 if (next != s) {
-                    us_socket_close(0, next, 0, 0);
+                    us_socket_close(0, next, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
                 }
             }
             // now that the socket is open, we can release the associated us_connecting_socket_t if it exists

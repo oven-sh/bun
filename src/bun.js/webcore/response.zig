@@ -1724,14 +1724,25 @@ pub const Fetch = struct {
 
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
 
+            const prev_metadata = task.result.metadata;
+            const prev_cert_info = task.result.certificate_info;
             task.result = result;
 
-            // metadata should be provided only once so we preserve it until we consume it
-            if (result.metadata) |metadata| {
-                log("added callback metadata", .{});
-                bun.assert(task.metadata == null);
-                task.metadata = metadata;
+            if (task.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    task.result.certificate_info = cert_info;
+                }
             }
+
+            // metadata should be provided only once so we preserve it until we consume it
+            if (result.metadata orelse prev_metadata) |metadata| {
+                log("added callback metadata", .{});
+                if (task.metadata == null) {
+                    task.metadata = metadata;
+                    task.result.metadata = null;
+                }
+            }
+
             task.body_size = result.body_size;
 
             const success = result.isSuccess();
@@ -1752,6 +1763,7 @@ pub const Fetch = struct {
                 }
                 if (success and result.has_more) {
                     // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    task.deref();
                     return;
                 }
             } else {

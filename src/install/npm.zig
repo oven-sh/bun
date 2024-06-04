@@ -219,6 +219,7 @@ pub const Registry = struct {
     const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
+        registry: string,
         response: Pico.Response,
         body: []const u8,
         log: *logger.Log,
@@ -272,7 +273,7 @@ pub const Registry = struct {
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
-                PackageManifest.Serializer.saveAsync(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory());
+                PackageManifest.Serializer.saveAsync(&package, registry, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory());
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -566,19 +567,23 @@ pub const PackageManifest = struct {
         return this.pkg.name.slice(this.string_buf);
     }
 
-    pub fn byteLength(this: *const PackageManifest) usize {
+    pub fn byteLength(this: *const PackageManifest, registry: string) usize {
         var counter = std.io.countingWriter(std.io.null_writer);
         const writer = counter.writer();
 
-        Serializer.write(this, @TypeOf(writer), writer) catch return 0;
+        Serializer.write(this, registry, @TypeOf(writer), writer) catch return 0;
         return counter.bytes_written;
     }
 
     pub const Serializer = struct {
-        pub const version = "bun-npm-manifest-cache-v0.0.2\n";
+        // - version 3: added serialization of registry url. it's used to invalidate when it changes
+        pub const version = "bun-npm-manifest-cache-v0.0.3\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
+            if (header_bytes.len != 49)
+                @compileError("header bytes must be exactly 49 bytes long, length is not serialized");
+
             // skip name
             const fields = std.meta.fields(Npm.PackageManifest);
 
@@ -645,7 +650,7 @@ pub const PackageManifest = struct {
             return result;
         }
 
-        pub fn write(this: *const PackageManifest, comptime Writer: type, writer: Writer) !void {
+        pub fn write(this: *const PackageManifest, registry: string, comptime Writer: type, writer: Writer) !void {
             var pos: u64 = 0;
             try writer.writeAll(header_bytes);
             pos += header_bytes.len;
@@ -663,17 +668,27 @@ pub const PackageManifest = struct {
                     try writeArray(Writer, writer, std.meta.Child(@TypeOf(field)), field, &pos);
                 }
             }
+
+            try writer.writeInt(u64, registry.len, .little);
+            try writer.writeAll(registry);
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir, outpath: [:0]const u8) !void {
+        fn writeFile(
+            this: *const PackageManifest,
+            registry: string,
+            tmp_path: [:0]const u8,
+            tmpdir: std.fs.Dir,
+            cache_dir: std.fs.Dir,
+            outpath: [:0]const u8,
+        ) !void {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
             var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
 
             const allocator = stack_fallback.get();
-            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength() + 64);
+            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(registry) + 64);
             defer buffer.deinit();
             const writer = &buffer.writer();
-            try Serializer.write(this, @TypeOf(writer), writer);
+            try Serializer.write(this, registry, @TypeOf(writer), writer);
             // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
             //
@@ -800,9 +815,10 @@ pub const PackageManifest = struct {
         /// Therefore, we choose to not increment the pending task count or wake up the main thread.
         ///
         /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
-        pub fn saveAsync(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+        pub fn saveAsync(this: *const PackageManifest, registry: string, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
             const SaveTask = struct {
                 manifest: PackageManifest,
+                registry: string,
                 tmpdir: std.fs.Dir,
                 cache_dir: std.fs.Dir,
 
@@ -815,7 +831,7 @@ pub const PackageManifest = struct {
                         save_task.destroy();
                     }
 
-                    Serializer.save(&save_task.manifest, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                    Serializer.save(&save_task.manifest, save_task.registry, save_task.tmpdir, save_task.cache_dir) catch |err| {
                         if (PackageManager.verbose_install) {
                             Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
                             Output.flush();
@@ -826,6 +842,7 @@ pub const PackageManifest = struct {
 
             const task = SaveTask.new(.{
                 .manifest = this.*,
+                .registry = registry,
                 .tmpdir = tmpdir,
                 .cache_dir = cache_dir,
             });
@@ -834,7 +851,7 @@ pub const PackageManifest = struct {
             PackageManager.instance.thread_pool.schedule(batch);
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        pub fn save(this: *const PackageManifest, registry: string, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
@@ -847,10 +864,10 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try writeFile(this, tmp_path, tmpdir, cache_dir, out_path);
+            try writeFile(this, registry, tmp_path, tmpdir, cache_dir, out_path);
         }
 
-        pub fn loadByFileID(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
+        pub fn loadByFileID(allocator: std.mem.Allocator, registry: string, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
             const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
@@ -869,37 +886,22 @@ pub const PackageManifest = struct {
 
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
-            return try readAll(bytes);
+            return try readAll(bytes, registry);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            var timer: std.time.Timer = undefined;
-            if (PackageManager.verbose_install) {
-                timer = std.time.Timer.start() catch @panic("timer fail");
-            }
-
-            const result = try loadByFileID(allocator, cache_dir, bun.Wyhash11.hash(0, package_name)) orelse return null;
-
-            if (PackageManager.verbose_install) {
-                Output.prettyError("\n ", .{});
-                Output.printTimer(&timer);
-                Output.prettyErrorln("<d> [cache hit] {s}<r>", .{package_name});
-            }
-            return result;
-        }
-
-        pub fn readAll(bytes: []const u8) !PackageManifest {
+        pub fn readAll(bytes: []const u8, registry: string) !?PackageManifest {
             if (!strings.eqlComptime(bytes[0..header_bytes.len], header_bytes)) {
-                return error.InvalidPackageManifest;
+                return null;
             }
             var pkg_stream = std.io.fixedBufferStream(bytes);
             pkg_stream.pos = header_bytes.len;
+
+            var reader = pkg_stream.reader();
             var package_manifest = PackageManifest{};
 
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
-                    var reader = pkg_stream.reader();
                     package_manifest.pkg = try reader.readStruct(NpmPackage);
                 } else {
                     @field(package_manifest, field_name) = try readArray(
@@ -907,6 +909,12 @@ pub const PackageManifest = struct {
                         std.meta.Child(@TypeOf(@field(package_manifest, field_name))),
                     );
                 }
+            }
+
+            const registry_len = try reader.readInt(u64, .little);
+            const serialized_registry = reader.context.buffer[reader.context.pos..][0..registry_len];
+            if (!strings.eqlLong(serialized_registry, registry, true)) {
+                return null;
             }
 
             return package_manifest;

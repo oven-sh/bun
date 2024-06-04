@@ -1448,7 +1448,8 @@ pub const Printer = struct {
             const name = dependency.name.slice(string_buf);
 
             if (this.manager) |manager| {
-                if (manager.formatLaterVersionInCache(name, dependency.name_hash, resolution)) |later_version_fmt| {
+                const package_name = packages_slice.items(.name)[package_id].slice(string_buf);
+                if (manager.formatLaterVersionInCache(package_name, dependency.name_hash, resolution)) |later_version_fmt| {
                     const fmt = comptime brk: {
                         if (enable_ansi_colors) {
                             break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);

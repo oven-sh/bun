@@ -29,9 +29,14 @@ pub fn readFileAt(
 
 pub fn readFile(
     allocator: std.mem.Allocator,
-    fd: bun.FileDescriptor,
+    fd_: bun.FileDescriptor,
     max_bytes: usize,
 ) bun.sys.Maybe([]u8) {
+    const fd = if (comptime bun.Environment.isPosix)
+        fd_
+    else
+        bun.toLibUVOwnedFD(fd_) catch return .{ .err = bun.sys.Error.fromCode(.MFILE, .uv_open_osfhandle) };
+
     const stat = switch (bun.sys.fstat(fd)) {
         .result => |s| s,
         .err => |e| return .{ .err = e },

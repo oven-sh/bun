@@ -1263,7 +1263,8 @@ pub const Version = extern struct {
                     }
 
                     if (i < input.len and switch (input[i]) {
-                        '.' => true,
+                        // `.` is expected only if there are remaining core version numbers
+                        '.' => part_i != 3,
                         else => false,
                     }) {
                         i += 1;

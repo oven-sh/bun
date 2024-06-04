@@ -6624,6 +6624,10 @@ const prereleaseFailTests = [
       title: "greater than or equal to highest prerelease + 1",
       depVersion: ">=5.0.0-alpha.154",
     },
+    {
+      title: "`.` instead of `-` should fail",
+      depVersion: "5.0.0.alpha.150",
+    },
   ],
   // prereleases-4 has one version
   // - 2.0.0-pre.0

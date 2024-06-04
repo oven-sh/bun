@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "ErrorStackTrace.h"
+#include "JavaScriptCore/Error.h"
 #include "wtf/text/OrdinalNumber.h"
 
 #include <JavaScriptCore/CatchScope.h>
@@ -15,6 +16,8 @@
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/NativeCallee.h>
 #include <wtf/IterationStatus.h>
+
+#include "ErrorStackFrame.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -359,12 +362,13 @@ bool JSCStackFrame::calculateSourcePositions()
     if (!m_codeBlock) {
         return false;
     }
+    if (!hasBytecodeIndex()) {
+        return false;
+    }
 
-    JSC::BytecodeIndex bytecodeIndex = hasBytecodeIndex() ? m_bytecodeIndex : JSC::BytecodeIndex();
-
-    auto lineColumn = m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex);
-    m_sourcePositions.line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-    m_sourcePositions.column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+    auto location = Bun::getAdjustedPositionForBytecode(m_codeBlock, m_bytecodeIndex);
+    m_sourcePositions.line = location.line;
+    m_sourcePositions.column = location.column;
 
     return true;
 }

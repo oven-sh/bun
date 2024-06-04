@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/JSCJSValue.h"
@@ -111,6 +110,8 @@
 
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/CustomGetterSetter.h"
+
+#include "ErrorStackFrame.h"
 
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
@@ -3904,11 +3905,11 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition* position)
 {
-    auto m_codeBlock = stackFrame->codeBlock();
-    if (!m_codeBlock)
+    auto code = stackFrame->codeBlock();
+    if (!code)
         return;
 
-    auto* provider = m_codeBlock->source().provider();
+    auto* provider = code->source().provider();
     if (UNLIKELY(!provider))
         return;
     // Make sure the range is valid:
@@ -3916,26 +3917,25 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     WTF::StringView sourceString = provider->source();
     if (UNLIKELY(sourceString.isNull()))
         return;
+    if (!stackFrame->hasBytecodeIndex()) {
+        auto lineColumn = stackFrame->computeLineAndColumn();
+        position->line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+        position->column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+        position->byte_position = -1;
+        return;
+    }
 
-    JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
-
-    auto expr = m_codeBlock->expressionInfoForBytecodeIndex(bytecodeOffset);
-    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line);
-    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column);
-
-    position->line = line;
-    position->column = column;
-    position->byte_position = expr.divot;
+    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
         // Search for the beginning of the line
-        unsigned int lineStart = expr.divot;
+        unsigned int lineStart = location.byte_position;
         while (lineStart > 0 && sourceString[lineStart] != '\n') {
             lineStart--;
         }
 
         // Search for the end of the line
-        unsigned int lineEnd = expr.divot;
+        unsigned int lineEnd = location.byte_position;
         unsigned int maxSearch = sourceString.length();
         while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
             lineEnd++;
@@ -3945,7 +3945,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
         // Most of the time, when you look at a stack trace, you want a couple lines above
         source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineEnd - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = line;
+        source_line_numbers[0] = location.line;
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
@@ -3974,7 +3974,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                     sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1)
                         .toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = line.fromZeroBasedInt(line.zeroBasedInt() - source_line_i);
+                source_line_numbers[source_line_i] = location.line.fromZeroBasedInt(location.line.zeroBasedInt() - source_line_i);
                 source_line_i++;
 
                 remaining_lines_to_grab--;
@@ -3983,6 +3983,8 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
             }
         }
     }
+
+    *position = location;
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,

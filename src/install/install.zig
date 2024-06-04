@@ -284,7 +284,7 @@ pub const PatchTask = struct {
 
         /// this is non-null if this was called before a Task, for example extracting
         task_id: ?Task.Id.Type = null,
-        dependency_id: ?DependencyID = null,
+        dependency_id: ?struct = null,
 
         result: ?bun.anyhow.Error = null,
     };
@@ -6452,7 +6452,10 @@ pub const PackageManager = struct {
                         //     }
                         // }
                     } else if (ExtractCompletionContext == *PackageInstaller) {
-                        extract_ctx.installPackageImpl(ptask.callback.apply.dependency_id.?, log_level, false);
+                        extract_ctx.current_tree_id = ptask.callback.apply.install_context.tree_id;
+                        extract_ctx.current_tree_id = ptask.callback.apply.install_context.path;
+                        // something like installEnqueuedPakagesImpl
+                        // extract_ctx.installPackageImpl(ptask.callback.apply.install_context.dependency_id.?, log_level, false);
                     }
                 }
             }
@@ -11668,7 +11671,12 @@ pub const PackageManager = struct {
                             installer.patch.patch_contents_hash,
                             patch_name_and_version_hash.?,
                         );
-                        task.callback.apply.dependency_id = dependency_id;
+                        task.callback.apply.install_context. = .{
+
+                        = dependency_id;
+                        task.callback.apply.install_context.tree_id = this.current_tree_id;
+                        task.callback.apply.install_context.path = this.node_modules.path.clone() catch bun.outOfMemory();
+                        };
                         this.manager.enqueuePatchTask(task);
                         return;
                     }

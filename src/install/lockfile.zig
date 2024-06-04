@@ -607,10 +607,16 @@ pub const Tree = struct {
         for (this_dependencies) |dep_id| {
             const dep = builder.dependencies[dep_id];
             if (dep.name_hash != dependency.name_hash) continue;
-            const mismatch = builder.resolutions[dep_id] != package_id;
+
+            if (builder.resolutions[dep_id] == package_id) {
+                // this dependency is the same package as the other, hoist
+                return hoisted; // 1
+            }
 
             if (comptime as_defined) {
-                if (mismatch and dep.behavior.isDev() != dependency.behavior.isDev()) {
+                // same dev dependency as another package in the same package.json, but different version.
+                // choose dev dep over other if enabled
+                if (dep.behavior.isDev() != dependency.behavior.isDev()) {
                     if (builder.prefer_dev_dependencies and dep.behavior.isDev()) {
                         return hoisted; // 1
                     }
@@ -619,24 +625,42 @@ pub const Tree = struct {
                 }
             }
 
-            if (mismatch and !dependency.behavior.isPeer()) {
-                if (as_defined and !dep.behavior.isPeer()) {
-                    builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
-                        builder.packageName(package_id),
-                        builder.packageVersion(package_id),
-                        builder.packageName(builder.resolutions[dep_id]),
-                        builder.packageVersion(builder.resolutions[dep_id]),
-                        dependency.name.fmt(builder.buf()),
-                        dependency.version.literal.fmt(builder.buf()),
-                    });
-                    return error.DependencyLoop;
+            // now we either keep the dependency at this place in the tree,
+            // or hoist if peer version allows it
+
+            if (dependency.behavior.isPeer()) {
+                if (dependency.version.tag == .npm) {
+                    const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+                    const version = dependency.version.value.npm.version;
+                    if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
+                        return hoisted; // 1
+                    }
                 }
-                // ignore versioning conflicts caused by peer dependencies
-                return dependency_loop; // 3
+
+                // Root dependencies are manually chosen by the user. Allow them
+                // to hoist other peers even if they don't satisfy the version
+                if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
+                    // TODO: warning about peer dependency version mismatch
+                    return hoisted; // 1
+                }
             }
-            return hoisted; // 1
+
+            if (as_defined and !dep.behavior.isPeer()) {
+                builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+                    builder.packageName(package_id),
+                    builder.packageVersion(package_id),
+                    builder.packageName(builder.resolutions[dep_id]),
+                    builder.packageVersion(builder.resolutions[dep_id]),
+                    dependency.name.fmt(builder.buf()),
+                    dependency.version.literal.fmt(builder.buf()),
+                });
+                return error.DependencyLoop;
+            }
+
+            return dependency_loop; // 3
         }
 
+        // this dependency was not found in this tree, try hoisting or placing in the next parent
         if (this.parent < error_id) {
             const id = trees[this.parent].hoistDependency(
                 false,
@@ -650,6 +674,7 @@ pub const Tree = struct {
             if (!as_defined or id != dependency_loop) return id; // 1 or 2
         }
 
+        // place the dependency in the current tree
         return this.id; // 2
     }
 };
@@ -1051,8 +1076,9 @@ const Cloner = struct {
         // package ids and dependency ids have changed
         this.manager.clearCachedItemsDependingOnLockfileBuffer();
 
-        if (this.lockfile.buffers.dependencies.items.len > 0)
+        if (this.lockfile.packages.len != 0) {
             try this.hoist(this.lockfile);
+        }
 
         // capacity is used for calculating byte size
         // so we need to make sure it's exact
@@ -1061,8 +1087,6 @@ const Cloner = struct {
     }
 
     fn hoist(this: *Cloner, lockfile: *Lockfile) anyerror!void {
-        if (lockfile.packages.len == 0) return;
-
         const allocator = lockfile.allocator;
         var slice = lockfile.packages.slice();
         var builder = Tree.Builder{
@@ -1697,7 +1721,7 @@ pub const Printer = struct {
             try Yarn.packages(this, Writer, writer);
         }
 
-        pub fn packages(
+        fn packages(
             this: *Printer,
             comptime Writer: type,
             writer: Writer,
@@ -1712,8 +1736,9 @@ pub const Printer = struct {
             const dependencies_buffer = this.lockfile.buffers.dependencies.items;
             const RequestedVersion = std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80);
             var requested_versions = RequestedVersion.init(this.lockfile.allocator);
-            var all_requested_versions = try this.lockfile.allocator.alloc(Dependency.Version, resolutions_buffer.len);
-            defer this.lockfile.allocator.free(all_requested_versions);
+            const all_requested_versions_buf = try this.lockfile.allocator.alloc(Dependency.Version, resolutions_buffer.len);
+            var all_requested_versions = all_requested_versions_buf;
+            defer this.lockfile.allocator.free(all_requested_versions_buf);
             const package_count = @as(PackageID, @truncate(names.len));
             var alphabetized_names = try this.lockfile.allocator.alloc(PackageID, package_count - 1);
             defer this.lockfile.allocator.free(alphabetized_names);
@@ -3446,9 +3471,17 @@ pub const Package = extern struct {
                 list: for (keys, version_strings, 0..) |key, version_string_, i| {
                     // Duplicate peer & dev dependencies are promoted to whichever appeared first
                     // In practice, npm validates this so it shouldn't happen
-                    if (comptime group.behavior.isPeer() or group.behavior.isDev()) {
-                        for (dependencies[0..total_dependencies_count]) |dependency| {
-                            if (dependency.name_hash == key.hash) continue :list;
+                    var duplicate_at: ?usize = null;
+                    if (comptime group.behavior.isPeer() or group.behavior.isDev() or group.behavior.isOptional()) {
+                        for (dependencies[0..total_dependencies_count], 0..) |dependency, j| {
+                            if (dependency.name_hash == key.hash) {
+                                if (comptime group.behavior.isOptional()) {
+                                    duplicate_at = j;
+                                    break;
+                                }
+
+                                continue :list;
+                            }
                         }
                     }
 
@@ -3475,13 +3508,16 @@ pub const Package = extern struct {
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
                     if (comptime group.behavior.isOptional()) {
-                        for (dependencies[0..total_dependencies_count]) |*dep| {
-                            if (dep.name_hash == key.hash) {
-                                // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
-                                // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
-                                dep.* = dependency;
-                                continue :list;
+                        if (duplicate_at) |j| {
+                            // need to shift dependencies after the duplicate to maintain sort order
+                            for (j + 1..total_dependencies_count) |k| {
+                                dependencies[k - 1] = dependencies[k];
                             }
+
+                            // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
+                            // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
+                            dependencies[total_dependencies_count - 1] = dependency;
+                            continue :list;
                         }
                     }
 

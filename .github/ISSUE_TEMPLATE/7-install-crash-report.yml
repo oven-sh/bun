@@ -17,7 +17,7 @@ body:
     attributes:
       label: Package.json
       description: Please provide your package.json file.
-      render: json
+      render: shell
   - type:
     id: logs
     attributes:

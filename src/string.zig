@@ -1190,26 +1190,47 @@ pub const String = extern struct {
 
     extern fn JSC__createError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
 
-    fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !String {
-        var num_16bit: usize = 0;
-        inline for (strings) |str| {
-            if (!str.is8Bit()) num_16bit += 1;
+    fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !OwnedString {
+        if (comptime n == 0) {
+            return OwnedString.init(String.static(""));
         }
 
-        if (num_16bit == n) {
-            // all are 16bit
-            var slices: [n][]const u16 = undefined;
-            for (strings, 0..) |str, i| {
-                slices[i] = switch (str.tag) {
-                    .WTFStringImpl => str.value.WTFStringImpl.utf16Slice(),
-                    .ZigString, .StaticZigString => str.value.ZigString.utf16SliceAligned(),
-                    else => &[_]u16{},
-                };
+        var same_encoding: ?bun.strings.EncodingNonAscii = null;
+        inline for (strings) |str| {
+            const enc = str.encoding();
+            if (same_encoding != null and same_encoding.? != enc) {
+                same_encoding = null;
+                break;
             }
-            const result = try std.mem.concat(allocator, u16, &slices);
-            return init(ZigString.from16Slice(result));
+            same_encoding = enc;
+        }
+
+        if (same_encoding) |encoding_| {
+            // fast path, all strings have the same encoding: just concat the bytes
+            switch (encoding_) {
+                inline .latin1, .utf8 => |enc| {
+                    var slices: [n][]const u8 = undefined;
+                    inline for (strings, 0..) |str, i| {
+                        slices[i] = str.byteSlice();
+                    }
+                    const result = try std.mem.concat(allocator, u8, &slices);
+                    return OwnedString.initFromOwnedSlice(result, enc, allocator);
+                },
+                .utf16 => {
+                    var slices: [n][]const u16 = undefined;
+                    for (strings, 0..) |str, i| {
+                        slices[i] = switch (str.tag) {
+                            .WTFStringImpl => str.value.WTFStringImpl.utf16Slice(),
+                            .ZigString, .StaticZigString => str.value.ZigString.utf16SliceAligned(),
+                            else => &[_]u16{},
+                        };
+                    }
+                    const result = try std.mem.concat(allocator, u16, &slices);
+                    return OwnedString.initFromOwnedSlice(result, .utf16, allocator);
+                },
+            }
         } else {
-            // either all 8bit, or mixed 8bit and 16bit
+            // slow path, different encodings: convert all to utf8
             var slices_holded: [n]SliceWithUnderlyingString = undefined;
             var slices: [n][]const u8 = undefined;
             inline for (strings, 0..) |str, i| {
@@ -1220,14 +1241,14 @@ pub const String = extern struct {
             inline for (0..n) |i| {
                 slices_holded[i].deinit();
             }
-            return createUTF8(result);
+            return OwnedString.initFromOwnedSlice(result, .utf8, allocator);
         }
     }
 
     /// Creates a new String from a given tuple (of comptime-known size) of String.
     ///
     /// Note: the callee owns the resulting string and must call `.deref()` on it once done
-    pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) !String {
+    pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) !OwnedString {
         return try concat(strings.len, allocator, strings);
     }
 
@@ -1372,5 +1393,39 @@ pub const SliceWithUnderlyingString = struct {
         }
 
         return this.underlying.toJS(globalObject);
+    }
+};
+
+/// A wrapper for an String which is owned.
+/// The owner must call .deinit() after done with it.
+pub const OwnedString = struct {
+    str: String,
+    allocator: bun.NullableAllocator = .{},
+
+    pub fn init(str: String) OwnedString {
+        str.ref();
+        return .{ .str = str };
+    }
+
+    pub fn initFromOwnedSlice(owned_slice: anytype, comptime encoding: bun.strings.EncodingNonAscii, allocator: std.mem.Allocator) OwnedString {
+        switch (encoding) {
+            .latin1, .utf8 => {
+                var zstr = ZigString.init(owned_slice);
+                if (encoding == .utf8) {
+                    zstr.markUTF8();
+                }
+                return .{ .str = String.init(zstr), .allocator = bun.NullableAllocator.init(allocator) };
+            },
+            .utf16 => {
+                return .{ .str = String.init(ZigString.from16Slice(owned_slice)), .allocator = bun.NullableAllocator.init(allocator) };
+            },
+        }
+    }
+
+    pub fn deinit(this: OwnedString) void {
+        this.str.deref();
+        if (this.allocator.get()) |allocator| {
+            allocator.free(this.str.byteSlice());
+        }
     }
 };

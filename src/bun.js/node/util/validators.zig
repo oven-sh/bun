@@ -60,66 +60,30 @@ pub fn throwRangeError(
 }
 
 /// -(2^53 - 1)
-pub const NUMBER__MIN_SAFE_INTEGER: i64 = -9007199254740991;
+pub const NUMBER__MIN_SAFE_INTEGER: comptime_int = -9007199254740991;
 /// (2^53 – 1)
-pub const NUMBER__MAX_SAFE_INTEGER: i64 = 9007199254740991;
+pub const NUMBER__MAX_SAFE_INTEGER: comptime_int = 9007199254740991;
 
-pub fn validateInteger(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i64, max_value: ?i64) !i64 {
-    const min = min_value orelse NUMBER__MIN_SAFE_INTEGER;
-    const max = max_value orelse NUMBER__MAX_SAFE_INTEGER;
+pub fn validateInteger(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?T, max_value: ?T) !T {
+    const min = min_value orelse @as(T, @intCast(@max(std.math.minInt(T), NUMBER__MIN_SAFE_INTEGER)));
+    const max = max_value orelse @as(T, @intCast(@min(std.math.maxInt(T), NUMBER__MAX_SAFE_INTEGER)));
 
     if (!value.isNumber())
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
     if (!value.isAnyInt()) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {s}", name_args ++ .{value});
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(globalThis, &formatter)});
     }
 
     const num = value.asInt52();
     if (num < min or num > max) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(globalThis, &formatter) });
     }
-    return num;
+    return @intCast(num);
 }
 
-pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min_value: ?i32, max_value: ?i32) !i32 {
-    const min = min_value orelse std.math.minInt(i32);
-    const max = max_value orelse std.math.maxInt(i32);
-    // The defaults for min and max correspond to the limits of 32-bit integers.
-    if (!value.isNumber()) {
-        try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
-    }
-    if (!value.isInt32()) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {s}", name_args ++ .{value});
-    }
-    const num = value.asInt32();
-    if (num < min or num > max) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
-    }
-    return num;
-}
-
-pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, greater_than_zero: bool) !u32 {
-    if (!value.isNumber()) {
-        try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
-    }
-    if (!value.isAnyInt()) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {s}", name_args ++ .{value});
-    }
-    const num: i64 = value.asInt52();
-    const min: i64 = if (greater_than_zero) 1 else 0;
-    const max: i64 = @intCast(std.math.maxInt(u32));
-    if (num < min or num > max) {
-        try throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
-    }
-    return @truncate(num);
-}
-
-pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
-    if (!value.isString())
-        try throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
-}
-
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) !f64 {
+pub fn validateFloat(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) !f64 {
     if (!value.isNumber())
         try throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
 
@@ -144,6 +108,11 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
         }
     }
     return num;
+}
+
+pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !void {
+    if (!value.isString())
+        try throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
 pub fn validateBoolean(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !bool {
@@ -247,4 +216,75 @@ pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: 
     };
     try throwErrInvalidArgTypeWithMessage(globalThis, name_fmt ++ " must be one of: {s}", name_args ++ .{values_info});
     return error.InvalidArgument;
+}
+
+pub const ParseOptions = struct {
+    throw: bool,
+    /// If a struct field is undefined, use the field default value instead of throwing error
+    allowUndefinedFields: bool,
+};
+
+pub fn parseStruct(self: JSValue, globalObject: *JSC.JSGlobalObject, comptime T: type, name: string, comptime options: ParseOptions) !T {
+    try validateObject(globalObject, self, "{s}", .{name}, .{
+        .allow_array = true,
+    });
+
+    const fields = std.meta.fields(T);
+    var item: T = if (comptime options.allowUndefinedFields) T{} else undefined;
+    inline for (fields) |field| {
+        const jsvalue = self.get(globalObject, field.name) orelse JSValue.undefined;
+        if (!jsvalue.isUndefined() or !options.allowUndefinedFields) {
+            @field(item, field.name) = try parseValue(jsvalue, globalObject, field.type, field.name, options);
+        }
+    }
+    return item;
+}
+
+pub fn parseValue(self: JSValue, globalObject: *JSC.JSGlobalObject, comptime T: type, name: string, comptime options: ParseOptions) !T {
+    return switch (@typeInfo(T)) {
+        .Null => try self.parse(globalObject, T, options),
+        .Optional => |optionalType| {
+            if (self.isUndefined() or self.isNull()) {
+                return null;
+            } else {
+                return try parseValue(self, globalObject, optionalType.child, name, options);
+            }
+        },
+        .Bool => {
+            return try validateBoolean(globalObject, self, "{s}", .{name});
+        },
+        .Int => |int_type| {
+            _ = int_type;
+            return try validateInteger(T, globalObject, self, "{s}", .{name}, null, null);
+        },
+        .Float => |float_type| {
+            _ = float_type;
+            return @floatCast(validateFloat(globalObject, self, "{s}", .{name}));
+        },
+        .Struct => parseStruct(self, globalObject, T, name, options),
+        .Enum => |enum_type| {
+            _ = enum_type;
+            return try validateStringEnum(T, globalObject, self, "{s}", .{name});
+        },
+
+        //.Array => |arrayType|,
+        //.Type,
+        //.Void,
+        //.NoReturn,
+        //.Pointer => |info|,
+        //.ComptimeFloat,
+        //.ComptimeInt,
+        //.Undefined,
+        //.ErrorUnion |info|,
+        //.ErrorSet |info|,
+        //.Enum |info|,
+        //.Union |info|,
+        //.Fn |info|,
+        //.Opaque |info|,
+        //.Frame |info|,
+        //.AnyFrame |info|,
+        //.Vector |info|,
+        //.EnumLiteral,
+        else => @compileError("Unsupported type"),
+    };
 }

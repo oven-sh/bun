@@ -5970,6 +5970,10 @@ pub const CallFrame = opaque {
     pub fn argumentsCount(self: *const CallFrame) usize {
         return @as(usize, @intCast((@as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__argumentCountIncludingThis)[0].asInt32() - 1));
     }
+
+    pub fn argumentsSlice(self: *const CallFrame) []const JSValue {
+        return self.argumentsPtr()[0..self.argumentsCount()];
+    }
 };
 
 // pub const WellKnownSymbols = extern struct {

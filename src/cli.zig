@@ -246,6 +246,7 @@ pub const Arguments = struct {
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
+        clap.parseParam("--expand                         Output more detailed messages") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
@@ -479,6 +480,7 @@ pub const Arguments = struct {
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
             ctx.test_options.run_todo = args.flag("--todo");
             ctx.test_options.only = args.flag("--only");
+            ctx.test_options.expand = args.flag("--expand");
         }
 
         ctx.args.absolute_working_dir = cwd;
@@ -1142,6 +1144,7 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        expand: bool = false,
         bail: u32 = 0,
         coverage: TestCommand.CodeCoverageOptions = .{},
         test_filter_regex: ?*RegularExpression = null,

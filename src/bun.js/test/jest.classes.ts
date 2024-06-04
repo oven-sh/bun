@@ -95,10 +95,7 @@ export default [
     configurable: false,
     klass: {},
     proto: {
-      asymmetricMatch: {
-        fn: "asymmetricMatch",
-        length: 1,
-      },
+      asymmetricMatch: { fn: "asymmetricMatch", length: 1 },
     },
   }),
   define({
@@ -111,22 +108,22 @@ export default [
     configurable: false,
     klass: {},
     proto: {
-      utils: {
-        getter: "getUtils",
-      },
-      isNot: {
-        getter: "getIsNot",
-      },
-      promise: {
-        getter: "getPromise",
-      },
-      expand: {
-        getter: "getExpand",
-      },
-      equals: {
-        fn: "equals",
-        length: 3,
-      },
+      // test state
+      currentTestName: { getter: "getCurrentTestName" },
+      testPath: { getter: "getTestPath" },
+      assertionCalls: { getter: "getAssertionCalls" },
+      expectedAssertionsNumber: { getter: "getExpectedAssertionsNumber" },
+      isExpectingAssertions: { getter: "getIsExpectingAssertions" },
+      snapshotState: { getter: "getSnapshotState" },
+      expand: { getter: "getExpand" },
+
+      // matcher state
+      isNot: { getter: "getIsNot" },
+      promise: { getter: "getPromise" },
+
+      // utils
+      utils: { getter: "getUtils" },
+      equals: { fn: "equals", length: 3 },
     },
   }),
   define({
@@ -139,22 +136,11 @@ export default [
     configurable: false,
     klass: {},
     proto: {
-      stringify: {
-        fn: "stringify",
-        length: 1,
-      },
-      printExpected: {
-        fn: "printExpected",
-        length: 1,
-      },
-      printReceived: {
-        fn: "printReceived",
-        length: 1,
-      },
-      matcherHint: {
-        fn: "matcherHint",
-        length: 1,
-      },
+      stringify: { fn: "stringify", length: 1 },
+      printExpected: { fn: "printExpected", length: 1 },
+      printReceived: { fn: "printReceived", length: 1 },
+      matcherHint: { fn: "matcherHint", length: 4 },
+      diff: { fn: "diff", length: 2 },
     },
   }),
   define({
@@ -167,46 +153,19 @@ export default [
     configurable: false,
     klass: {},
     proto: {
-      anything: {
-        fn: "anything",
-        length: 1,
-      },
-      any: {
-        fn: "any",
-        length: 1,
-      },
-      arrayContaining: {
-        fn: "arrayContaining",
-        length: 1,
-      },
-      closeTo: {
-        fn: "closeTo",
-        length: 1,
-      },
-      objectContaining: {
-        fn: "objectContaining",
-        length: 1,
-      },
-      stringContaining: {
-        fn: "stringContaining",
-        length: 1,
-      },
-      stringMatching: {
-        fn: "stringMatching",
-        length: 1,
-      },
-      not: {
-        getter: "getNot",
-        this: true,
-      },
-      resolvesTo: {
-        getter: "getResolvesTo",
-        this: true,
-      },
-      rejectsTo: {
-        getter: "getRejectsTo",
-        this: true,
-      },
+      // modifiers (static)
+      not: { getter: "getNot", this: true },
+      resolvesTo: { getter: "getResolvesTo", this: true },
+      rejectsTo: { getter: "getRejectsTo", this: true },
+
+      /// asymmetric matchers
+      any: { fn: "any", length: 1 },
+      anything: { fn: "anything", length: 1 },
+      arrayContaining: { fn: "arrayContaining", length: 1 },
+      closeTo: { fn: "closeTo", length: 1 },
+      objectContaining: { fn: "objectContaining", length: 1 },
+      stringContaining: { fn: "stringContaining", length: 1 },
+      stringMatching: { fn: "stringMatching", length: 1 },
     },
   }),
   define({
@@ -218,63 +177,28 @@ export default [
     values: ["capturedValue", "resultValue"],
     configurable: false,
     klass: {
-      extend: {
-        fn: "extend",
-        length: 1,
-      },
-      anything: {
-        fn: "anything",
-        length: 1,
-      },
-      any: {
-        fn: "any",
-        length: 1,
-      },
-      arrayContaining: {
-        fn: "arrayContaining",
-        length: 1,
-      },
-      assertions: {
-        fn: "assertions",
-        length: 1,
-      },
-      hasAssertions: {
-        fn: "hasAssertions",
-        length: 1,
-      },
-      closeTo: {
-        fn: "closeTo",
-        length: 1,
-      },
-      objectContaining: {
-        fn: "objectContaining",
-        length: 1,
-      },
-      stringContaining: {
-        fn: "stringContaining",
-        length: 1,
-      },
-      stringMatching: {
-        fn: "stringMatching",
-        length: 1,
-      },
-      addSnapshotSerializer: {
-        fn: "addSnapshotSerializer",
-        length: 1,
-      },
-      not: {
-        getter: "getStaticNot",
-      },
-      resolvesTo: {
-        getter: "getStaticResolvesTo",
-      },
-      rejectsTo: {
-        getter: "getStaticRejectsTo",
-      },
-      unreachable: {
-        fn: "doUnreachable",
-        length: 1,
-      },
+      // modifiers (static)
+      not: { getter: "getStaticNot" },
+      resolvesTo: { getter: "getStaticResolvesTo" },
+      rejectsTo: { getter: "getStaticRejectsTo" },
+
+      // misc
+      addEqualityTesters: { fn: "addEqualityTesters", length: 1 },
+      addSnapshotSerializer: { fn: "addSnapshotSerializer", length: 1 },
+      assertions: { fn: "assertions", length: 1 },
+      hasAssertions: { fn: "hasAssertions", length: 0 },
+      extend: { fn: "extend", length: 1 },
+      getState: { fn: "getState", length: 0 },
+      unreachable: { fn: "doUnreachable", length: 1 },
+
+      /// asymmetric matchers
+      any: { fn: "any", length: 1 },
+      anything: { fn: "anything", length: 1 },
+      arrayContaining: { fn: "arrayContaining", length: 1 },
+      closeTo: { fn: "closeTo", length: 1 },
+      objectContaining: { fn: "objectContaining", length: 1 },
+      stringContaining: { fn: "stringContaining", length: 1 },
+      stringMatching: { fn: "stringMatching", length: 1 },
     },
     proto: {
       pass: {

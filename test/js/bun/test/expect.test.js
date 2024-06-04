@@ -4497,3 +4497,32 @@ describe("expect()", () => {
     expect(" ").toContain("");
   });
 });
+
+describe("expect.getState()", () => {
+  test("basic", () => {
+    const ASSERTIONS_TOTAL = 11; // need due to using `expect.assertions()`
+
+    const state = expect.getState();
+
+    expect(state.assertionCalls).toBe(0);
+    expect(state.assertionCalls).toBe(1); //expect(state.numPassingAsserts).toBe(1);
+    expect(state.assertionCalls).toBe(2);
+    expect(state.assertionCalls).toBe(3); //expect(state.numPassingAsserts).toBe(3);
+
+    expect(state.currentTestName).toBe("basic");
+    expect(state.testPath).toEndWith(/*"expect.test.js"*/ ".js"); // FIXME: has some issues with test-interop.js
+    expect(state.expand).toBeBoolean();
+
+    expect(state.isExpectingAssertions).toBe(false);
+    expect.hasAssertions();
+    expect(state.isExpectingAssertions).toBe(true);
+
+    expect(state.expectedAssertionsNumber).toBe(null);
+    expect.assertions(ASSERTIONS_TOTAL);
+    expect(state.expectedAssertionsNumber).toBe(ASSERTIONS_TOTAL);
+
+    //expect(state.suppressedErrors).toBeArrayOfSize(0);
+
+    //expect(state.snapshotState).toBe(snapshotState: expect.anything();
+  });
+});

@@ -18,7 +18,7 @@ body:
       label: Package.json
       description: Please provide your package.json file.
       render: shell
-  - type:
+  - type: textarea
     id: logs
     attributes:
       label: Relevant log output

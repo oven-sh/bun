@@ -68,9 +68,9 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
 
     /// JavaScriptCore places error divots at different places than v8
     // Uncomment to debug this:
-    printf("lc = %d : %d (byte = %d)\n", pos.line.oneBasedInt(), pos.column.oneBasedInt(), expr.divot);
-    printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
-    printf("name = %s\n", inst->name());
+    // printf("lc = %d : %d (byte = %d)\n", pos.line.oneBasedInt(), pos.column.oneBasedInt(), expr.divot);
+    // printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
+    // printf("name = %s\n", inst->name());
 
     switch (inst->opcodeID()) {
     case op_construct:

@@ -1096,12 +1096,39 @@ for (const [key, blob] of build.outputs) {
       options: opts,
       captureFile: (file, fnName = "capture") => {
         const fileContents = readFile(file);
-        const regex = new RegExp(`\\b${fnName}\\s*\\(((?:\\(\\))?.*?)\\)`, "g");
-        const matches = [...fileContents.matchAll(regex)];
+        let i = 0;
+        const length = fileContents.length;
+        const matches = [];
+        while (i < length) {
+          i = fileContents.indexOf(fnName, i);
+          if (i === -1) {
+            break;
+          }
+          const start = i;
+          let depth = 0;
+          while (i < length) {
+            const char = fileContents[i];
+            if (char === "(") {
+              depth++;
+            } else if (char === ")") {
+              depth--;
+              if (depth === 0) {
+                break;
+              }
+            }
+            i++;
+          }
+          if (depth !== 0) {
+            throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
+          }
+          matches.push(fileContents.slice(start + fnName.length + 1, i));
+          i++;
+        }
+
         if (matches.length === 0) {
           throw new Error(`No ${fnName} calls found in ${file}`);
         }
-        return matches.map(match => match[1]);
+        return matches;
       },
     } satisfies BundlerTestBundleAPI;
 

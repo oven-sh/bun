@@ -64,7 +64,6 @@ function printInfo() {
 
 /**
  * @param {string} target
- * @returns {Promise<number>}
  */
 async function runTests(target) {
   let execPath;
@@ -93,16 +92,26 @@ async function runTests(target) {
     const result = await runTask(title, fn);
 
     if (isBuildKite) {
-      const { testPath, stdout } = result;
+      const { ok, testPath, stdout } = result;
       const logsPath = join(cwd, "logs", `${testPath}.log`);
       mkdirSync(dirname(logsPath), { recursive: true });
       appendFileSync(logsPath, stripAnsi(stdout));
+
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
         const label = getBuildLabel();
         reportAnnotationToBuildKite(label, markdown);
       }
-    } else if (isGitHubAction) {
+
+      if (!ok) {
+        const titleFailed = `${getAnsi("red")}${title} - ${error}${getAnsi("reset")}`;
+        await runTask(titleFailed, () => {
+          process.stderr.write(stdout);
+        });
+      }
+    }
+
+    if (isGitHubAction) {
       const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
       if (summaryPath) {
         const markdown = formatTestToMarkdown(result);
@@ -119,16 +128,13 @@ async function runTests(target) {
   }
 
   if (results.some(({ ok }) => !ok)) {
-    // If install failed, don't run the tests.
-    return 1;
+    return;
   }
 
   for (const testPath of tests.slice(firstTest, lastTest)) {
     const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
     await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
   }
-
-  return results.some(({ ok }) => !ok) ? 1 : 0;
 }
 
 /**
@@ -327,7 +333,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     try {
       rmSync(testPath, { recursive: true, force: true });
     } catch (error) {
-      console.error(error);
+      console.warn(error);
     }
   }
 }
@@ -420,8 +426,8 @@ function pipeTestStdout(io, chunk) {
 function parseTestStdout(stdout, testPath) {
   const tests = [];
   const errors = [];
-  const lines = [];
 
+  let lines = [];
   let skipCount = 0;
   let testErrors = [];
   let done;
@@ -429,16 +435,18 @@ function parseTestStdout(stdout, testPath) {
     const string = stripAnsi(chunk);
 
     if (!string.startsWith("::")) {
-      if (skipCount === 0) {
-        lines.push(chunk);
-      }
+      lines.push(chunk);
 
       if (string.startsWith("✓")) {
         skipCount++;
       } else {
-        if (skipCount > 0) {
-          const omitLine = `${getAnsi("gray")}... omitted ${skipCount} tests ...${getAnsi("reset")}`;
-          lines.push(omitLine, chunk);
+        // If there are more than 2 consecutive passing tests,
+        // omit the passing tests between them.
+        if (skipCount > 2) {
+          const removeStart = lines.length - skipCount;
+          const removeCount = skipCount - 2;
+          const omitLine = `${getAnsi("gray")}... omitted ${removeCount} tests ...${getAnsi("reset")}`;
+          lines = lines.toSpliced(removeStart, removeCount, omitLine);
         }
         skipCount = 0;
       }
@@ -1028,9 +1036,6 @@ async function runTask(title, fn) {
   }
   try {
     return await fn();
-  } catch (error) {
-    console.error(error);
-    process.exit(1);
   } finally {
     if (isGitHubAction) {
       console.log("::endgroup::");
@@ -1113,11 +1118,10 @@ function reportAnnotationToBuildKite(label, content, attempt = 0) {
   if (status === 0) {
     return;
   }
+  const cause = error ?? signal ?? `code ${status}`;
   if (attempt > 0) {
-    console.error("Failed to create annotation:", { label, error, status, signal });
-    process.exit(1);
+    throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
-  const cause = signal ?? `code ${status}`;
   const preview = `\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\``;
   const message = `Failed to create annotation for \`${label}\`: ${cause}\n${preview}`;
   reportAnnotationToBuildKite(`${label}-error`, message, attempt + 1);
@@ -1264,5 +1268,5 @@ if (!target) {
 }
 
 runTask("Environment", printInfo);
-const exitCode = await runTests(target);
-process.exit(exitCode);
+await runTests(target);
+process.exit(0);

@@ -150,6 +150,37 @@ test("dependency on same name as workspace and dist-tag", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "3 packages installed"]);
 });
 
+test("successfully installs workspace when path already exists in node_modules", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["pkg1"],
+      }),
+    ),
+    write(
+      join(packageDir, "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+      }),
+    ),
+
+    // stale package in node_modules
+    write(
+      join(packageDir, "node_modules", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+    name: "pkg1",
+  });
+});
+
 test("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
   await Promise.all([
     write(

@@ -54,7 +54,11 @@ pub fn count16Z(this: *StringBuilder, slice: [:0]const u16) void {
 
 pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: std.mem.Allocator) ?[:0]u8 {
     var buf = this.writable();
-    if (slice.len == 0) return &.{};
+    if (slice.len == 0) {
+        buf[0] = 0;
+        this.len += 1;
+        return buf[0..0 :0];
+    }
 
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(slice, buf);
     if (result.status == .success) {

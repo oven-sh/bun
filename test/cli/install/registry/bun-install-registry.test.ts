@@ -7419,11 +7419,12 @@ describe("yarn tests", () => {
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
       "no-deps",
+      "fake-peer-deps",
       "peer-deps",
       "pkg-a",
       "pkg-b",
     ]);
-    expect(await file(join(packageDir, "pkg-b", "node_modules", "fake-peer-deps", "package.json")).json()).toEqual({
+    expect(await file(join(packageDir, "node_modules", "fake-peer-deps", "package.json")).json()).toEqual({
       name: "peer-deps",
       version: "1.0.0",
       peerDependencies: {

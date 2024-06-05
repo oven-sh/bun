@@ -229,7 +229,7 @@ pub const Registry = struct {
     const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
-        registry_hash: u64,
+        scope: *const Registry.Scope,
         response: Pico.Response,
         body: []const u8,
         log: *logger.Log,
@@ -285,7 +285,7 @@ pub const Registry = struct {
             if (package_manager.options.enable.manifest_cache) {
                 PackageManifest.Serializer.saveAsync(
                     &package,
-                    registry_hash,
+                    scope,
                     package_manager.getTemporaryDirectory(),
                     package_manager.getCacheDirectory(),
                 );
@@ -582,11 +582,11 @@ pub const PackageManifest = struct {
         return this.pkg.name.slice(this.string_buf);
     }
 
-    pub fn byteLength(this: *const PackageManifest, registry_hash: u64) usize {
+    pub fn byteLength(this: *const PackageManifest, scope: *const Registry.Scope) usize {
         var counter = std.io.countingWriter(std.io.null_writer);
         const writer = counter.writer();
 
-        Serializer.write(this, registry_hash, @TypeOf(writer), writer) catch return 0;
+        Serializer.write(this, scope, @TypeOf(writer), writer) catch return 0;
         return counter.bytes_written;
     }
 
@@ -665,7 +665,7 @@ pub const PackageManifest = struct {
             return result;
         }
 
-        pub fn write(this: *const PackageManifest, registry_hash: u64, comptime Writer: type, writer: Writer) !void {
+        pub fn write(this: *const PackageManifest, scope: *const Registry.Scope, comptime Writer: type, writer: Writer) !void {
             var pos: u64 = 0;
             try writer.writeAll(header_bytes);
             pos += header_bytes.len;
@@ -684,12 +684,13 @@ pub const PackageManifest = struct {
                 }
             }
 
-            try writer.writeInt(u64, registry_hash, .little);
+            try writer.writeInt(u64, scope.url_hash, .little);
+            try writer.writeInt(u64, strings.withoutTrailingSlash(scope.url.href).len, .little);
         }
 
         fn writeFile(
             this: *const PackageManifest,
-            registry_hash: u64,
+            scope: *const Registry.Scope,
             tmp_path: [:0]const u8,
             tmpdir: std.fs.Dir,
             cache_dir: std.fs.Dir,
@@ -699,10 +700,10 @@ pub const PackageManifest = struct {
             var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
 
             const allocator = stack_fallback.get();
-            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(registry_hash) + 64);
+            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);
             defer buffer.deinit();
             const writer = &buffer.writer();
-            try Serializer.write(this, registry_hash, @TypeOf(writer), writer);
+            try Serializer.write(this, scope, @TypeOf(writer), writer);
             // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
             //
@@ -829,10 +830,10 @@ pub const PackageManifest = struct {
         /// Therefore, we choose to not increment the pending task count or wake up the main thread.
         ///
         /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
-        pub fn saveAsync(this: *const PackageManifest, registry_hash: u64, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+        pub fn saveAsync(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
             const SaveTask = struct {
                 manifest: PackageManifest,
-                registry_hash: u64,
+                scope: *const Registry.Scope,
                 tmpdir: std.fs.Dir,
                 cache_dir: std.fs.Dir,
 
@@ -845,7 +846,7 @@ pub const PackageManifest = struct {
                         save_task.destroy();
                     }
 
-                    Serializer.save(&save_task.manifest, save_task.registry_hash, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                    Serializer.save(&save_task.manifest, save_task.scope, save_task.tmpdir, save_task.cache_dir) catch |err| {
                         if (PackageManager.verbose_install) {
                             Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
                             Output.flush();
@@ -856,7 +857,7 @@ pub const PackageManifest = struct {
 
             const task = SaveTask.new(.{
                 .manifest = this.*,
-                .registry_hash = registry_hash,
+                .scope = scope,
                 .tmpdir = tmpdir,
                 .cache_dir = cache_dir,
             });
@@ -865,7 +866,7 @@ pub const PackageManifest = struct {
             PackageManager.instance.thread_pool.schedule(batch);
         }
 
-        pub fn save(this: *const PackageManifest, registry_hash: u64, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: [("18446744073709551615".len * 2) + "_".len + ".npm".len + 1]u8 = undefined;
@@ -878,24 +879,24 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
 
-            const out_path = if (Registry.default_url_hash == registry_hash)
+            const out_path = if (Registry.default_url_hash == scope.url_hash)
                 std.fmt.bufPrintZ(&out_path_buf, "{any}-{any}.npm", .{
                     file_id_hex_fmt,
-                    bun.fmt.hexIntLower(registry_hash),
+                    bun.fmt.hexIntLower(scope.url_hash),
                 }) catch unreachable
             else
                 std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{file_id_hex_fmt}) catch unreachable;
 
-            try writeFile(this, registry_hash, tmp_path, tmpdir, cache_dir, out_path);
+            try writeFile(this, scope, tmp_path, tmpdir, cache_dir, out_path);
         }
 
-        pub fn loadByFileID(allocator: std.mem.Allocator, registry_hash: u64, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
+        pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
             const hex_fmt = bun.fmt.hexIntLower(file_id);
-            const file_path = if (registry_hash == Registry.default_url_hash)
+            const file_path = if (scope.url_hash == Registry.default_url_hash)
                 try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt})
             else
-                try std.fmt.bufPrintZ(&file_path_buf, "{any}-{any}.npm", .{ hex_fmt, bun.fmt.hexIntLower(registry_hash) });
+                try std.fmt.bufPrintZ(&file_path_buf, "{any}-{any}.npm", .{ hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
 
             var cache_file = cache_dir.openFileZ(
                 file_path,
@@ -912,10 +913,10 @@ pub const PackageManifest = struct {
 
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
-            return try readAll(bytes, registry_hash);
+            return try readAll(bytes, scope);
         }
 
-        fn readAll(bytes: []const u8, registry_hash: u64) !?PackageManifest {
+        fn readAll(bytes: []const u8, scope: *const Registry.Scope) !?PackageManifest {
             if (!strings.eqlComptime(bytes[0..header_bytes.len], header_bytes)) {
                 return null;
             }
@@ -937,8 +938,13 @@ pub const PackageManifest = struct {
                 }
             }
 
-            const serialized_registry_hash = try reader.readInt(u64, .little);
-            if (registry_hash != serialized_registry_hash) {
+            const registry_hash = try reader.readInt(u64, .little);
+            if (scope.url_hash != registry_hash) {
+                return null;
+            }
+
+            const registry_length = try reader.readInt(u64, .little);
+            if (strings.withoutTrailingSlash(scope.url.href).len != registry_length) {
                 return null;
             }
 

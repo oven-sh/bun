@@ -4,11 +4,17 @@ param (
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
-$Tag = If ($IsBaseline) { "-Baseline" } Else { "" }
-$LowerTag = If ($IsBaseline) { "-baseline" } Else { "" }
+$Tag = If ($IsBaseline) { "bun-windows-x64-baseline" } Else { "bun-windows-x64" }
+$TagSuffix = If ($IsBaseline) { "-Baseline" } Else { "" }
 $Flags = If ($IsBaseline) { "-DUSE_BASELINE_BUILD=1" } Else { "" }
 
-.\scripts\env.ps1 $Tag
+.\scripts\env.ps1 $TagSuffix
+
+mkdir -Force release
+buildkite-agent artifact download "**" release --step "${Tag}-codegen"
+buildkite-agent artifact download "**" release --step "${Tag}-zig"
+buildkite-agent artifact download "**" release --step "${Tag}-cpp"
+buildkite-agent artifact download "**" release --step "${Tag}-deps"
 
 Set-Location release
 $CANARY_REVISION = 0
@@ -27,7 +33,7 @@ ninja -v
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
 Set-Location ..
-$Dist = mkdir -Force "bun-windows-x64${LowerTag}"
+$Dist = mkdir -Force "${Tag}"
 cp -r release\bun.exe "$Dist\bun.exe"
 Compress-Archive -Force "$Dist" "${Dist}.zip"
 $Dist = "$Dist-profile"

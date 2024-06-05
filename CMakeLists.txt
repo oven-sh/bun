@@ -314,7 +314,6 @@ option(USE_SYSTEM_ICU "Use the system-provided libicu. May fix startup crashes w
 
 option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
 
-option(ZIG_COMPILER "Path to the Zig compiler" "system")
 option(ZIG_OPTIMIZE "Optimization level for Zig" ${DEFAULT_ZIG_OPTIMIZE})
 option(USE_DEBUG_JSC "Enable assertions and use a debug build of JavaScriptCore" ${DEFAULT_USE_DEBUG_JSC})
 option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)

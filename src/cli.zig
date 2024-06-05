@@ -1031,10 +1031,10 @@ pub const HelpCommand = struct {
 
         const args = .{
             packages_to_x_filler[package_x_i],
-            packages_to_create_filler[package_create_i],
             packages_to_add_filler[package_add_i],
             packages_to_remove_filler[package_remove_i],
-            packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
+            packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len]
+            packages_to_create_filler[package_create_i],
         };
 
         switch (reason) {

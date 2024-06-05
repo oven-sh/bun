@@ -556,17 +556,7 @@ pub const ZigStackFrame = extern struct {
             frame.file = try std.fmt.allocPrint(allocator, "{}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
-        // frame.position.source_offset = this.position.source_offset;
-
-        // For remapped code, we add 1 to the line number
-        // frame.position.line = this.position.line + @as(i32, @intFromBool(this.remapped));
-
-        frame.position.line = this.position.line;
-        frame.position.column = this.position.column;
-        // frame.position.column_start = this.position.column_start;
-        // frame.position.column_stop = this.position.column_stop;
-        // frame.position.expression_start = this.position.expression_start;
-        // frame.position.expression_stop = this.position.expression_stop;
+        frame.position = this.position;
         frame.scope = @as(Api.StackFrameScope, @enumFromInt(@intFromEnum(this.code_type)));
 
         return frame;

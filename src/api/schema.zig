@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub const Reader = struct {
     const Self = @This();
@@ -423,7 +424,7 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = @import("root").bun.JSC.ZigStackFramePosition;
+    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
 
     pub const SourceLine = struct {
         /// line

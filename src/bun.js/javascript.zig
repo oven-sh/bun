@@ -3001,15 +3001,9 @@ pub const VirtualMachine = struct {
                     line_number.* = current_line_number;
                     current_line_number -= 1;
                 }
+                
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
-
-                // top.position.column_stop = @as(i32, @intCast(source_lines[lines.len - 1].length()));
-                // top.position.line_stop = top.position.column_stop;
-
-                // This expression range is no longer accurate
-                // top.position.expression_start = mapping.original.columns;
-                // top.position.expression_stop = top.position.column_stop;
             }
         }
 

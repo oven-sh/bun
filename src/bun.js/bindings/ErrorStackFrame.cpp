@@ -14,14 +14,14 @@ using namespace JSC;
 void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* code)
 {
     if (pos.byte_position - amount < 0) {
-        pos.line = OrdinalNumber::fromZeroBasedInt(0);
-        pos.column = OrdinalNumber::fromZeroBasedInt(0);
+        pos.line_zero_based = 0;
+        pos.column_zero_based = 0;
         pos.byte_position = 0;
         return;
     }
 
-    pos.column = OrdinalNumber::fromZeroBasedInt(pos.column.zeroBasedInt() - amount);
-    if (pos.column.zeroBasedInt() < 0) {
+    pos.column_zero_based = pos.column_zero_based - amount;
+    if (pos.column_zero_based < 0) {
         auto source = code->source().provider()->source();
         if (!source.is8Bit()) {
             // Debug-only assertion
@@ -29,15 +29,15 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
             // fit's into latin1 / 8-bit strings for on-average lower memory usage.
             ASSERT_NOT_REACHED("16-bit source re-mapping is not implemented here.");
 
-            pos.line = OrdinalNumber::fromZeroBasedInt(0);
-            pos.column = OrdinalNumber::fromZeroBasedInt(0);
+            pos.line_zero_based = 0;
+            pos.column_zero_based = 0;
             pos.byte_position = 0;
             return;
         }
 
         for (int i = 0; i < amount; i++) {
             if (source[pos.byte_position - i] == '\n') {
-                pos.line = OrdinalNumber::fromZeroBasedInt(pos.line.zeroBasedInt() - 1);
+                pos.line_zero_based = pos.line_zero_based - 1;
             }
         }
 
@@ -48,7 +48,7 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
             columns += 1;
             i -= 1;
         }
-        pos.column = OrdinalNumber::fromZeroBasedInt(columns);
+        pos.column_zero_based = columns;
     }
 
     pos.byte_position -= amount;
@@ -59,8 +59,8 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
     auto expr = code->expressionInfoForBytecodeIndex(bc);
 
     ZigStackFramePosition pos {
-        .line = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line),
-        .column = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column),
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(expr.lineColumn.column).zeroBasedInt(),
         .byte_position = (int)expr.divot,
     };
 

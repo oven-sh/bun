@@ -866,6 +866,14 @@ pub const PackageManifest = struct {
             PackageManager.instance.thread_pool.schedule(batch);
         }
 
+        fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
+            const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
+            return if (scope.url_hash == Registry.default_url_hash)
+                try std.fmt.bufPrintZ(buf, "{any}.npm", .{file_id_hex_fmt})
+            else
+                try std.fmt.bufPrintZ(buf, "{any}-{any}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
+        }
+
         pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
@@ -878,28 +886,15 @@ pub const PackageManifest = struct {
             try dest_path_stream_writer.print("{any}.npm-{any}", .{ file_id_hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-
-            const out_path = if (Registry.default_url_hash == scope.url_hash)
-                std.fmt.bufPrintZ(&out_path_buf, "{any}-{any}.npm", .{
-                    file_id_hex_fmt,
-                    bun.fmt.hexIntLower(scope.url_hash),
-                }) catch unreachable
-            else
-                std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{file_id_hex_fmt}) catch unreachable;
-
+            const out_path = try manifestFileName(&out_path_buf, file_id, scope);
             try writeFile(this, scope, tmp_path, tmpdir, cache_dir, out_path);
         }
 
         pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
-            const hex_fmt = bun.fmt.hexIntLower(file_id);
-            const file_path = if (scope.url_hash == Registry.default_url_hash)
-                try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt})
-            else
-                try std.fmt.bufPrintZ(&file_path_buf, "{any}-{any}.npm", .{ hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
-
+            const file_name = try manifestFileName(&file_path_buf, file_id, scope);
             var cache_file = cache_dir.openFileZ(
-                file_path,
+                file_name,
                 .{ .mode = .read_only },
             ) catch return null;
             defer cache_file.close();
@@ -912,7 +907,9 @@ pub const PackageManifest = struct {
             );
 
             errdefer allocator.free(bytes);
-            if (bytes.len < header_bytes.len) return null;
+            if (bytes.len < header_bytes.len) {
+                return null;
+            }
             return try readAll(bytes, scope);
         }
 

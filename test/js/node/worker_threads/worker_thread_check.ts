@@ -1,4 +1,4 @@
-const CONCURRENCY = 10;
+const CONCURRENCY = 20;
 const RUN_COUNT = 5;
 
 import { Worker, isMainThread, workerData } from "worker_threads";
@@ -8,7 +8,7 @@ const sleep = Bun.sleep;
 if (isMainThread) {
   let action = process.argv.at(-1);
   if (process.argv.length === 2) {
-    action = "fetch+blob";
+    action = "readFile";
   }
   const body = new Blob(["Hello, world!".repeat(100)]);
   let httpCount = 0;
@@ -47,9 +47,9 @@ if (isMainThread) {
       worker.on("online", () => {
         sleep(1)
           .then(() => {
-            if (action === "fetch+blob") {
-              return pendingHTTPCountPromises[i].promise;
-            }
+            // if (action === "fetch+blob") {
+            //   return pendingHTTPCountPromises[i].promise;
+            // }
           })
           .then(() => {
             worker.terminate();
@@ -66,6 +66,7 @@ if (isMainThread) {
 } else {
   Bun.gc(true);
   const { action, port } = workerData;
+  self.addEventListener("message", () => {});
 
   switch (action) {
     case "Bun.connect": {
@@ -103,6 +104,10 @@ if (isMainThread) {
     case "fetch+blob": {
       const resp = await fetch("http://localhost:" + port);
       await resp.blob();
+      break;
+    }
+    case "readFile": {
+      await Bun.file(import.meta.path).text();
       break;
     }
   }

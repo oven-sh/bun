@@ -1626,6 +1626,10 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn beginShutdown(this: *VirtualMachine) void {
+        this.is_shutting_down = true;
+    }
+
     pub fn initWorker(
         worker: *WebWorker,
         opts: Options,

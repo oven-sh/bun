@@ -1225,6 +1225,10 @@ pub const PosixLoop = extern struct {
         this.num_polls -= 1;
     }
 
+    pub fn deinit(this: *PosixLoop) void {
+        us_loop_free(this);
+    }
+
     pub fn ref(this: *PosixLoop) void {
         log("ref {d} + 1 = {d}", .{ this.num_polls, this.num_polls + 1 });
         this.num_polls += 1;
@@ -2785,6 +2789,10 @@ pub const WindowsLoop = extern struct {
 
     pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
+    }
+
+    pub fn deinit(this: *WindowsLoop) void {
+        us_loop_free(this);
     }
 
     extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;

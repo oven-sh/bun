@@ -18,8 +18,7 @@ import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 const spawnTimeout = 30_000;
-const softTestTimeout = 60_000;
-const hardTestTimeout = 3 * softTestTimeout;
+const testTimeout = 3 * 60_000;
 
 const isMacOS = process.platform === "darwin";
 const isWindows = process.platform === "win32";
@@ -377,11 +376,10 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath) {
-  const timeout = isSequentialTest(testPath) ? hardTestTimeout : softTestTimeout;
   const { ok, error, stdout } = await spawnBun(execPath, {
     args: ["test", testPath],
     cwd: cwd,
-    timeout: timeout,
+    timeout: testTimeout,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },
@@ -438,12 +436,12 @@ function parseTestStdout(stdout, testPath) {
     if (!string.startsWith("::")) {
       lines.push(chunk);
 
-      if (string.startsWith("✓")) {
+      if (string.startsWith("✓") || string.startsWith("»") || string.startsWith("✎")) {
         skipCount++;
       } else {
-        // If there are more than 2 consecutive passing tests,
-        // omit the passing tests between them.
-        if (skipCount > 2) {
+        // If there are more than 3 consecutive non-failing tests,
+        // omit the non-failing tests between them.
+        if (skipCount > 3) {
           const removeStart = lines.length - skipCount;
           const removeCount = skipCount - 2;
           const omitLine = `${getAnsi("gray")}... omitted ${removeCount} tests ...${getAnsi("reset")}`;
@@ -530,7 +528,7 @@ function parseTestStdout(stdout, testPath) {
 async function spawnBunInstall(execPath, options) {
   const { ok, error, stdout, duration } = await spawnBun(execPath, {
     args: ["install"],
-    timeout: isWindows ? hardTestTimeout : softTestTimeout,
+    timeout: testTimeout,
     ...options,
   });
   const relativePath = relative(cwd, options.cwd);
@@ -597,19 +595,31 @@ function getGitRef() {
  * @returns {string}
  */
 function getTmpdir() {
-  if (isMacOS) {
-    if (existsSync("/tmp")) {
-      return "/tmp";
-    }
-  }
   if (isWindows) {
-    for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
+    for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
       const tmpdir = process.env[key] || "";
-      if (!/^\/[a-zA-Z]\//.test(tmpdir)) {
+      if (!/^\/[a-z]\//i.test(tmpdir)) {
+        continue;
+      }
+      // HACK: There are too many bugs with cygwin directories.
+      // We should probably run Windows tests in both cygwin and powershell.
+      if (/cygwin|cygdrive/i.test(tmpdir)) {
         continue;
       }
       const driveLetter = tmpdir[1];
       return normalizeWindows(`${driveLetter.toUpperCase()}:${tmpdir.substring(2)}`);
+    }
+    const appData = process.env["LOCALAPPDATA"];
+    if (appData) {
+      const appDataTemp = join(appData, "Temp");
+      if (existsSync(appDataTemp)) {
+        return appDataTemp;
+      }
+    }
+  }
+  if (isMacOS) {
+    if (existsSync("/tmp")) {
+      return "/tmp";
     }
   }
   return tmpdir();
@@ -629,20 +639,6 @@ function isJavaScript(path) {
  */
 function isTest(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
-}
-
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isSequentialTest(path) {
-  if (/\/(integration|io|net|spawn|shell|socket|tcp|udp|dgram|http|http2|server|listen|fs|fetch)\//.test(path)) {
-    return true;
-  }
-  if (/stress|bench|leak/.test(path)) {
-    return true;
-  }
-  return false;
 }
 
 /**

@@ -196,47 +196,6 @@ pub const Error = struct {
         return copy;
     }
 
-    pub fn fromZigErr(err: anyerror, syscall: Syscall.Tag) Error {
-        return .{
-            .errno = @as(Int, @intCast(@intFromEnum(switch (err) {
-                error.FileNotFound => bun.C.E.NOENT,
-                error.AccessDenied => bun.C.E.ACCES,
-                error.SharingViolation => bun.C.E.AGAIN,
-                error.PathAlreadyExists => bun.C.E.EXIST,
-                error.PipeBusy => bun.C.E.BUSY,
-                error.NameTooLong => bun.C.E.NAMETOOLONG,
-                error.InvalidUtf8 => bun.C.E.ILSEQ,
-                error.BadPathName => bun.C.E.INVAL,
-                error.Unexpected => bun.C.E.IO,
-                error.NetworkNotFound => bun.C.E.NETUNREACH,
-                error.InvalidHandle => bun.C.E.BADF,
-                error.SymLinkLoop => bun.C.E.LOOP,
-                error.ProcessFdQuotaExceeded => bun.C.E.MFILE,
-                error.SystemFdQuotaExceeded => bun.C.E.NFILE,
-                error.NoDevice => bun.C.E.NODEV,
-                error.SystemResources => bun.C.E.NOMEM,
-                error.FileTooBig => bun.C.E.FBIG,
-                error.IsDir => bun.C.E.ISDIR,
-                error.NoSpaceLeft => bun.C.E.NOSPC,
-                error.NotDir => bun.C.E.NOTDIR,
-                error.DeviceBusy => bun.C.E.BUSY,
-                error.FileLocksNotSupported => bun.C.E.NOLCK,
-                error.FileBusy => bun.C.E.TXTBSY,
-                error.WouldBlock => if (@hasField(bun.C.E, "WOULDBLOCK")) bun.C.E.WOULDBLOCK else bun.C.E.AGAIN,
-                error.InputOutput => bun.C.E.IO,
-                error.OperationAborted => bun.C.E.CANCELED,
-                error.BrokenPipe => bun.C.E.PIPE,
-                error.ConnectionResetByPeer => bun.C.E.CONNRESET,
-                error.ConnectionTimedOut => bun.C.E.TIMEDOUT,
-                error.NotOpenForReading => bun.C.E.BADF,
-                error.SocketNotConnected => bun.C.E.NOTCONN,
-                error.OutOfMemory => bun.C.E.NOMEM,
-                else => bun.C.E.IO,
-            }))),
-            .syscall = syscall,
-        };
-    }
-
     pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {
         return .{
             .errno = @as(Int, @intCast(@intFromEnum(errno))),

@@ -2902,7 +2902,7 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     this.state.reset(this.allocator);
     this.proxy_tunneling = false;
 
-    callback.run(@fieldParentPtr(AsyncHTTP, "client", this), result);
+    callback.run(@fieldParentPtr("client", this), result);
 }
 
 // We have to clone metadata immediately after use
@@ -2989,7 +2989,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         }
 
         result.body.?.* = body;
-        callback.run(@fieldParentPtr(AsyncHTTP, "client", this), result);
+        callback.run(@fieldParentPtr("client", this), result);
 
         if (comptime print_every > 0) {
             print_every_i += 1;

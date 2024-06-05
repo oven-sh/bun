@@ -771,12 +771,12 @@ pub const Fetch = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
         pub fn ref(this: *FetchTasklet) void {
-            const count = this.ref_count.fetchAdd(1, .Monotonic);
+            const count = this.ref_count.fetchAdd(1, .monotonic);
             bun.debugAssert(count > 0);
         }
 
         pub fn deref(this: *FetchTasklet) void {
-            const count = this.ref_count.fetchSub(1, .Monotonic);
+            const count = this.ref_count.fetchSub(1, .monotonic);
             bun.debugAssert(count > 0);
 
             if (count == 1) {
@@ -879,7 +879,7 @@ pub const Fetch = struct {
         fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
-            bun.assert(this.ref_count.load(.Monotonic) == 0);
+            bun.assert(this.ref_count.load(.monotonic) == 0);
 
             this.clearData();
 
@@ -1058,7 +1058,7 @@ pub const Fetch = struct {
             log("onProgressUpdate", .{});
             defer this.deref();
             this.mutex.lock();
-            this.has_schedule_callback.store(false, .Monotonic);
+            this.has_schedule_callback.store(false, .monotonic);
 
             if (this.is_waiting_body) {
                 this.onBodyReceived();

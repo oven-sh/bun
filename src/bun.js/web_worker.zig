@@ -54,11 +54,11 @@ pub const WebWorker = struct {
     }
 
     pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-        return this.requested_terminate.load(.Monotonic);
+        return this.requested_terminate.load(.monotonic);
     }
 
     pub fn setRequestedTerminate(this: *WebWorker) bool {
-        return this.requested_terminate.swap(true, .Release);
+        return this.requested_terminate.swap(true, .release);
     }
 
     export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {

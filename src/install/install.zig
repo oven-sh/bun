@@ -10663,14 +10663,15 @@ pub const PackageManager = struct {
             },
         };
 
-        const package_json_source_str = brk: {
+        const package_json_source: logger.Source = brk: {
             const patched_pkg_folderZ = pathbuf[0..patched_pkg_folder.len :0];
             const pkgjsonpath = bun.path.joinZ(&[_][]const u8{
                 patched_pkg_folderZ,
                 "package.json",
             }, .auto);
-            const stat = switch (bun.sys.stat(pkgjsonpath)) {
-                .result => |s| s,
+
+            switch (bun.sys.File.toSource(pkgjsonpath, manager.allocator)) {
+                .result => |s| break :brk s,
                 .err => |e| {
                     Output.prettyError(
                         "<r><red>error<r>: failed to read package.json: {}<r>\n",
@@ -10679,40 +10680,9 @@ pub const PackageManager = struct {
                     Output.flush();
                     Global.crash();
                 },
-            };
-            const fd = switch (bun.sys.open(pkgjsonpath, std.os.O.RDONLY, 0)) {
-                .result => |s| s,
-                .err => |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to open package.json: {}<r>\n",
-                        .{e.withPath(pkgjsonpath).toSystemError()},
-                    );
-                    Output.flush();
-                    Global.crash();
-                },
-            };
-            var buf = manager.allocator.alloc(u8, @intCast(stat.size)) catch bun.outOfMemory();
-            const rbuf = switch (bun.sys.File.readFillBuf(
-                .{ .handle = fd },
-                buf[0..],
-            )) {
-                .result => |b| b,
-                .err => |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to read from package.json: {}<r>\n",
-                        .{e.withPath(pkgjsonpath).toSystemError()},
-                    );
-                    Output.flush();
-                    Global.crash();
-                },
-            };
-            break :brk rbuf;
+            }
         };
-        defer manager.allocator.free(package_json_source_str);
-        const package_json_source = logger.Source.initPathString(
-            patched_pkg_folder,
-            package_json_source_str,
-        );
+        defer manager.allocator.free(package_json_source.contents);
 
         var package = Lockfile.Package{};
         try package.parse(lockfile, manager.allocator, manager.log, package_json_source, void, {}, Features.folder);

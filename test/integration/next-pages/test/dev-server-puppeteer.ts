@@ -15,8 +15,13 @@ if (process.argv.length > 2) {
 const b = await launch({
   headless: true,
   dumpio: true,
-  // Fixes 'dock_plist is not an NSDictionary' on AWS macOS
-  args: ["--no-sandbox", "--single-process"],
+  args: [
+    // Fixes 'dock_plist is not an NSDictionary' on AWS macOS
+    "--no-sandbox",
+    "--single-process",
+    // Fixes 'error: Navigating frame was detached'
+    "--disable-features=site-per-process",
+  ],
 });
 
 async function main() {

@@ -4042,6 +4042,7 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
 /// trimSubsequentLeadingChars("foo\n\n\n\n", '\n') -> "foo\n"
 /// ```
 pub fn trimSubsequentLeadingChars(slice: []const u8, char: u8) []const u8 {
+    if (slice.len == 0) return slice;
     var end = slice.len - 1;
     var endend = slice.len;
     while (end > 0 and slice[end] == char) : (end -= 1) {

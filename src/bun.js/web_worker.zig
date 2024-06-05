@@ -379,7 +379,9 @@ pub const WebWorker = struct {
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
+
             vm.is_shutting_down = true;
+            vm.onBeforeExit();
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;

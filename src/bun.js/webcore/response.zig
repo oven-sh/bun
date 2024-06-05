@@ -775,13 +775,19 @@ pub const Fetch = struct {
             bun.debugAssert(count > 0);
         }
 
-        pub fn deref(this: *FetchTasklet) void {
+        pub fn derefWithCount(this: *FetchTasklet) u32 {
             const count = this.ref_count.fetchSub(1, .Monotonic);
             bun.debugAssert(count > 0);
 
             if (count == 1) {
                 this.deinit();
             }
+
+            return count;
+        }
+
+        pub fn deref(this: *FetchTasklet) void {
+            _ = this.derefWithCount();
         }
 
         pub const HTTPRequestBody = union(enum) {
@@ -1507,6 +1513,8 @@ pub const Fetch = struct {
 
         export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
             log("onResponseFinalize", .{});
+            const vm = JSC.VirtualMachine.get();
+
             if (this.native_response) |response| {
                 const body = response.body;
                 // Three scenarios:
@@ -1520,6 +1528,10 @@ pub const Fetch = struct {
                 // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
                 if (body.value != .Locked or this.readable_stream_ref.held.has()) {
                     // Scenario 1 or 3.
+
+                    if (vm.isShuttingDown()) {
+                        this.ignoreRemainingResponseBody();
+                    }
                     return;
                 }
 
@@ -1530,6 +1542,10 @@ pub const Fetch = struct {
                     }
                 } else {
                     // Scenario 3.
+                    this.ignoreRemainingResponseBody();
+                }
+            } else {
+                if (vm.isShuttingDown()) {
                     this.ignoreRemainingResponseBody();
                 }
             }
@@ -1770,6 +1786,11 @@ pub const Fetch = struct {
                 }
                 if (success and result.has_more) {
                     // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    task.deref();
+                    return;
+                }
+
+                if (!result.has_more and task.javascript_vm.isShuttingDown()) {
                     task.deref();
                     return;
                 }

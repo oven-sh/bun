@@ -424,16 +424,23 @@ extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 
 // https://github.com/nodejs/node/blob/1936160c31afc9780e4365de033789f39b7cbc0c/src/api/hooks.cc#L49
-extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
+extern "C" int32_t Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, uint8_t exitCode)
 {
     if (!globalObject->hasProcessObject()) {
-        return;
+        return 0;
     }
 
     auto* process = jsCast<Process*>(globalObject->processObject());
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(exitCode));
-    process->wrapped().emit(Identifier::fromString(globalObject->vm(), "beforeExit"_s), arguments);
+    auto& emitter = process->wrapped();
+    const Identifier onBeforeExit = Identifier::fromString(globalObject->vm(), "beforeExit"_s);
+    if (emitter.hasActiveEventListeners(onBeforeExit)) {
+        emitter.emit(onBeforeExit, arguments);
+        return 1;
+    }
+
+    return 0;
 }
 
 extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t exitCode)

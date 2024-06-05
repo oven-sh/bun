@@ -429,7 +429,7 @@ pub const Run = struct {
             );
         }
         const exit_code = this.vm.exit_handler.exit_code;
-
+        vm.is_shutting_down = true;
         vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();

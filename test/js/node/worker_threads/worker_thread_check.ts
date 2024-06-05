@@ -3,26 +3,37 @@ const RUN_COUNT = 5;
 
 import { Worker, isMainThread, workerData } from "worker_threads";
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep = Bun.sleep;
 
 if (isMainThread) {
   let action = process.argv.at(-1);
   if (process.argv.length === 2) {
-    action = "Bun.connect";
+    action = "fetch+blob";
   }
-
+  const body = new Blob(["Hello, world!".repeat(100)]);
+  let httpCount = 0;
+  let onHTTPCount = (a: number) => {};
   const server = Bun.serve({
     port: 0,
     fetch() {
-      return new Response();
+      onHTTPCount(httpCount++);
+      return new Response(body);
     },
   });
   let remaining = RUN_COUNT;
 
   while (remaining--) {
     const promises = [];
-
+    const initialHTTPCount = httpCount;
+    let httpCountThisRun = 0;
+    let pendingHTTPCountPromises = [];
+    onHTTPCount = a => {
+      setTimeout(() => {
+        pendingHTTPCountPromises[httpCountThisRun++].resolve();
+      }, 0);
+    };
     for (let i = 0; i < CONCURRENCY; i++) {
+      pendingHTTPCountPromises.push(Promise.withResolvers());
       const worker = new Worker(import.meta.url, {
         workerData: {
           action,
@@ -36,7 +47,12 @@ if (isMainThread) {
       worker.on("online", () => {
         sleep(1)
           .then(() => {
-            return worker.terminate();
+            if (action === "fetch+blob") {
+              return pendingHTTPCountPromises[i].promise;
+            }
+          })
+          .then(() => {
+            worker.terminate();
           })
           .finally(resolve);
       });
@@ -81,6 +97,10 @@ if (isMainThread) {
       break;
     }
     case "fetch": {
+      await fetch("http://localhost:" + port);
+      break;
+    }
+    case "fetch+blob": {
       const resp = await fetch("http://localhost:" + port);
       await resp.blob();
       break;

@@ -515,7 +515,7 @@ pub const ExitHandler = struct {
         vm.exit_handler.exit_code = code;
     }
 
-    extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) void;
+    extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) c_int;
     extern fn Process__dispatchOnExit(*JSC.JSGlobalObject, code: u8) void;
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
 
@@ -528,10 +528,11 @@ pub const ExitHandler = struct {
         }
     }
 
-    pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
+    /// returns `true` if a 'beforeExit' handler was called. `false` otherwise.
+    pub fn dispatchOnBeforeExit(this: *ExitHandler) bool {
         JSC.markBinding(@src());
         const vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        return Process__dispatchOnBeforeExit(vm.global, this.exit_code) != 0;
     }
 };
 
@@ -1057,19 +1058,26 @@ pub const VirtualMachine = struct {
     }
 
     pub fn onBeforeExit(this: *VirtualMachine) void {
-        this.exit_handler.dispatchOnBeforeExit();
+        if (!this.exit_handler.dispatchOnBeforeExit()) {
+            return;
+        }
+
         var dispatch = false;
-        while (true) {
+        while (!this.isShuttingDown()) {
             while (this.isEventLoopAlive()) : (dispatch = true) {
                 this.tick();
                 this.eventLoop().autoTickActive();
+
+                if (this.isShuttingDown()) {
+                    break;
+                }
             }
 
             if (dispatch) {
-                this.exit_handler.dispatchOnBeforeExit();
                 dispatch = false;
-
-                if (this.isEventLoopAlive()) continue;
+                if (this.exit_handler.dispatchOnBeforeExit()) {
+                    if (this.isEventLoopAlive()) continue;
+                }
             }
 
             break;

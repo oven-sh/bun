@@ -9,9 +9,9 @@ if [ -z "$tag" ]; then
 fi
 
 mkdir -p release
-buildkite-agent artifact download '**' release --step $tag-deps
-buildkite-agent artifact download '**' release --step $tag-zig
-buildkite-agent artifact download '**' release --step $tag-cpp
+buildkite-agent artifact download '**' release --step bun-$tag-deps
+buildkite-agent artifact download '**' release --step bun-$tag-zig
+buildkite-agent artifact download '**' release --step bun-$tag-cpp
 
 cmake \
   -G Ninja \

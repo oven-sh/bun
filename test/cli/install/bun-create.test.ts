@@ -107,6 +107,24 @@ it("should create template from local folder", async () => {
   expect(dirStat.isDirectory()).toBe(true);
 });
 
+it("should not mention cd prompt when created in current directory", async () => {
+  const { stdout, exited } = spawn({
+    cmd: [bunExe(), "create", "https://github.com/dylan-conway/create-test", "."],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "inherit",
+    env,
+  });
+
+  await exited;
+
+  const out = await Bun.readableStreamToText(stdout);
+
+  expect(out).toContain("bun dev");
+  expect(out).not.toContain("\n\n  cd \n  bun dev\n\n");
+});
+
 for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"]) {
   it(`should create and install github template from ${repo}`, async () => {
     const { stderr, stdout, exited } = spawn({

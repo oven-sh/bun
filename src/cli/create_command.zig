@@ -1548,18 +1548,34 @@ pub const CreateCommand = struct {
             , .{create_react_app_entry_point_path});
         }
 
-        Output.pretty(
-            \\
-            \\<d>#<r><b> To get started, run:<r>
-            \\
-            \\  <b><cyan>cd {s}<r>
-            \\  <b><cyan>{s}<r>
-            \\
-            \\
-        , .{
-            filesystem.relativeTo(destination),
-            start_command,
-        });
+        const rel_destination = filesystem.relativeTo(destination);
+        const is_empty_destination = rel_destination.len == 0;
+
+        if (is_empty_destination) {
+            Output.pretty(
+                \\
+                \\<d>#<r><b> To get started, run:<r>
+                \\
+                \\  <b><cyan>{s}<r>
+                \\
+                \\
+            , .{
+                start_command,
+            });
+        } else {
+            Output.pretty(
+                \\
+                \\<d>#<r><b> To get started, run:<r>
+                \\
+                \\  <b><cyan>cd {s}<r>
+                \\  <b><cyan>{s}<r>
+                \\
+                \\
+            , .{
+                rel_destination,
+                start_command,
+            });
+        }
 
         Output.flush();
 

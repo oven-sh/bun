@@ -109,14 +109,6 @@ pub const Expect = struct {
         }
     };
 
-    pub fn getSignatureOrCustomLabel(comptime has_custom_label: bool, comptime matcher_name: string, comptime args: string, comptime not: bool) string {
-        if (comptime has_custom_label) {
-            return "{}<r>";
-        }
-
-        return "{}" ++ getSignature(matcher_name, args, not);
-    }
-
     pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
         const received = "<d>expect(<r><red>received<r><d>).<r>";
         comptime if (not) {
@@ -125,7 +117,7 @@ pub const Expect = struct {
         return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
     }
 
-    pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) void {
+    pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, custom_label: bun.String, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) void {
         switch (Output.enable_ansi_colors) {
             inline else => |colors| {
                 const chain = switch (flags.promise) {
@@ -133,12 +125,23 @@ pub const Expect = struct {
                     .rejects => if (flags.not) Output.prettyFmt("rejects<d>.<r>not<d>.<r>", colors) else Output.prettyFmt("rejects<d>.<r>", colors),
                     .none => if (flags.not) Output.prettyFmt("not<d>.<r>", colors) else "",
                 };
-                const fmt = comptime Output.prettyFmt("<d>expect(<r><red>received<r><d>).<r>{s}{s}<d>(<r>{s}<d>)<r>\n\n" ++ message_fmt, colors);
-                globalThis.throwPretty(fmt, .{
-                    chain,
-                    matcher_name,
-                    matcher_params,
-                } ++ message_args);
+                switch (!custom_label.isEmpty()) {
+                    inline else => |use_default_label| {
+                        if (use_default_label) {
+                            const fmt = comptime Output.prettyFmt("<d>expect(<r><red>received<r><d>).<r>{s}{s}<d>(<r>{s}<d>)<r>\n\n" ++ message_fmt, colors);
+                            globalThis.throwPretty(fmt, .{
+                                chain,
+                                matcher_name,
+                                matcher_params,
+                            } ++ message_args);
+                        } else {
+                            const fmt = comptime Output.prettyFmt("{}\n\n" ++ message_fmt, colors);
+                            globalThis.throwPretty(fmt, .{
+                                custom_label,
+                            } ++ message_args);
+                        }
+                    },
+                }
             },
         }
     }
@@ -182,13 +185,13 @@ pub const Expect = struct {
         const matcher_params = switch (Output.enable_ansi_colors) {
             inline else => |colors| comptime Output.prettyFmt(matcher_params_fmt, colors),
         };
-        return processPromise(this.flags, globalThis, value, matcher_name, matcher_params, false);
+        return processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
     }
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
-    pub fn processPromise(flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, matcher_name: anytype, matcher_params: anytype, comptime silent: bool) ?JSValue {
+    pub fn processPromise(custom_label: bun.String, flags: Expect.Flags, globalThis: *JSGlobalObject, value: JSValue, matcher_name: anytype, matcher_params: anytype, comptime silent: bool) ?JSValue {
         switch (flags.promise) {
             inline .resolves, .rejects => |resolution| {
                 if (value.asAnyPromise()) |promise| {
@@ -205,7 +208,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                    throwPrettyMatcherError(globalThis, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
+                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
                                 }
                                 return null;
                             },
@@ -217,7 +220,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                    throwPrettyMatcherError(globalThis, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
+                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
                                 }
                                 return null;
                             },
@@ -232,7 +235,7 @@ pub const Expect = struct {
                     if (!silent) {
                         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                         const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
-                        throwPrettyMatcherError(globalThis, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
+                        throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
                     }
                     return null;
                 }
@@ -270,7 +273,7 @@ pub const Expect = struct {
         outFlags.* = flags.encode();
 
         // (note that matcher_name/matcher_args are not used because silent=true)
-        if (processPromise(flags, globalThis, value.*, "", "", true)) |result| {
+        if (processPromise(bun.String.empty, flags, globalThis, value.*, "", "", true)) |result| {
             value.* = result;
             return true;
         }
@@ -4335,7 +4338,7 @@ pub const Expect = struct {
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
-        throwPrettyMatcherError(globalThis, matcher_name, matcher_params, .{}, "{s}", .{message_text});
+        throwPrettyMatcherError(globalThis, bun.String.empty, matcher_name, matcher_params, .{}, "{s}", .{message_text});
         return false;
     }
 
@@ -4377,7 +4380,7 @@ pub const Expect = struct {
             globalThis.throw("Internal consistency error: failed to retrieve the captured value", .{});
             return .zero;
         };
-        value = Expect.processPromise(expect.flags, globalThis, value, matcher_name, matcher_params, false) orelse return .zero;
+        value = Expect.processPromise(expect.custom_label, expect.flags, globalThis, value, matcher_name, matcher_params, false) orelse return .zero;
         value.ensureStillAlive();
 
         incrementExpectCallCounter();

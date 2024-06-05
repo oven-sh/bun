@@ -86,7 +86,5 @@ cmake -B build -S . \
   -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ="$cwd/bun-zig.o" \
   -DCANARY="$CANARY" \
-  -DZIG_LIB_DIR=src/deps/zig/lib \
-  -DZIG_COMPILER="$zig" \
-  -DZIG_COMPILER_="$zig"
+  -DZIG_LIB_DIR=src/deps/zig/lib
 ONLY_ZIG=1 ninja -C build "$cwd/bun-zig.o" -v

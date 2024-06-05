@@ -198,7 +198,9 @@ async function spawnSafe({
     if (!signalCode && exitCode === undefined) {
       subprocess.stdout.destroy();
       subprocess.stderr.destroy();
-      subprocess.kill(9);
+      if (!subprocess.killed) {
+        subprocess.kill(9);
+      }
     }
     resolve();
   };

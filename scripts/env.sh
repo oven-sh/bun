@@ -48,7 +48,7 @@ export CMAKE_FLAGS=(
   -DCMAKE_C_STANDARD_REQUIRED=ON
 )
 
-CCACHE=$(which ccache || which sccache || '')
+CCACHE=$(which ccache || which sccache || echo "")
 if [ -n "$CCACHE" ]; then
   CMAKE_FLAGS+=(
     -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE"

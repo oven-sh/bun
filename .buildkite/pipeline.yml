@@ -76,7 +76,7 @@ steps:
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         command:
           - "./test/runner.node.mjs bun-darwin-aarch64"
@@ -155,7 +155,7 @@ steps:
           os: "darwin"
           arch: "x64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         command:
           - "./test/runner.node.mjs bun-darwin-x64"
@@ -234,7 +234,7 @@ steps:
           os: "darwin"
           arch: "x64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         command:
           - "./test/runner.node.mjs bun-darwin-x64-baseline"
@@ -313,7 +313,7 @@ steps:
           os: "linux"
           arch: "aarch64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         command:
           - "./test/runner.node.mjs bun-linux-aarch64"
@@ -392,7 +392,7 @@ steps:
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         command:
           - "./test/runner.node.mjs bun-linux-x64"
@@ -471,7 +471,7 @@ steps:
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         command:
           - "./test/runner.node.mjs bun-linux-x64-baseline"
@@ -560,10 +560,11 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         env:
           CHERE_INVOKING: "1"
+          TMPDIR: "$$LOCALAPPDATA\\Temp"
         command:
           - 'C:\\cygwin64\\bin\\bash --login -c ''node test/runner.node.mjs bun-windows-x64'''
 
@@ -651,9 +652,10 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "logs/*"
+          - "logs/**/*.log"
           - "summary.md"
         env:
           CHERE_INVOKING: "1"
+          TMPDIR: "$$LOCALAPPDATA\\Temp"
         command:
           - 'C:\\cygwin64\\bin\\bash --login -c ''node test/runner.node.mjs bun-windows-x64-baseline'''

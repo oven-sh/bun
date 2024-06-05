@@ -1071,7 +1071,7 @@ function formatTestToMarkdown(...results) {
       }
     }
 
-    const testTitle = testPath.replace(/\//g, "/");
+    const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
 
     markdown += "<details><summary>";

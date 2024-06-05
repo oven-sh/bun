@@ -25,8 +25,8 @@ cmake \
 ninja -v
 
 chmod +x bun-profile bun
-mkdir -p $tag-profile/ $tag/
-mv bun-profile $tag-profile/bun-profile
-mv bun $tag/bun
-zip -r $tag-profile.zip $tag-profile
-zip -r $tag.zip $tag
+mkdir -p bun-$tag-profile/ bun-$tag/
+mv bun-profile bun-$tag-profile/bun-profile
+mv bun bun-$tag/bun
+zip -r bun-$tag-profile.zip bun-$tag-profile
+zip -r bun-$tag.zip bun-$tag

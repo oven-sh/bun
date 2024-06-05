@@ -3639,6 +3639,10 @@ pub const WebSocketServer = struct {
         }
 
         pub fn unprotect(this: Handler) void {
+            if (this.vm.isShuttingDown()) {
+                return;
+            }
+
             this.onOpen.unprotect();
             this.onMessage.unprotect();
             this.onClose.unprotect();
@@ -3905,10 +3909,16 @@ pub const ServerWebSocket = struct {
         const value_to_cache = this.this_value;
 
         var handler = this.handler;
+        const vm = this.handler.vm;
         handler.active_connections +|= 1;
         const globalObject = handler.globalObject;
-
         const onOpenHandler = handler.onOpen;
+        if (vm.isShuttingDown()) {
+            log("onOpen called after script execution", .{});
+            ws.close();
+            return;
+        }
+
         this.this_value = .zero;
         this.flags.opened = false;
         if (value_to_cache != .zero) {
@@ -3919,7 +3929,7 @@ pub const ServerWebSocket = struct {
         if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
         const this_value = this.getThisValue();
         var args = [_]JSValue{this_value};
-        const vm = this.handler.vm;
+
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
@@ -3974,6 +3984,12 @@ pub const ServerWebSocket = struct {
         var globalObject = this.handler.globalObject;
         // This is the start of a task.
         const vm = this.handler.vm;
+        if (vm.isShuttingDown()) {
+            log("onMessage called after script execution", .{});
+            ws.close();
+            return;
+        }
+
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
@@ -4027,7 +4043,8 @@ pub const ServerWebSocket = struct {
         log("onDrain", .{});
 
         const handler = this.handler;
-        if (this.isClosed())
+        const vm = handler.vm;
+        if (this.isClosed() or vm.isShuttingDown())
             return;
 
         if (handler.onDrain != .zero) {
@@ -4038,7 +4055,6 @@ pub const ServerWebSocket = struct {
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
-            const vm = JSC.VirtualMachine.get();
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
@@ -4075,10 +4091,9 @@ pub const ServerWebSocket = struct {
 
         const handler = this.handler;
         var cb = handler.onPing;
-        if (cb.isEmptyOrUndefinedOrNull()) return;
+        const vm = handler.vm;
+        if (cb.isEmptyOrUndefinedOrNull() or vm.isShuttingDown()) return;
         const globalThis = handler.globalObject;
-
-        const vm = JSC.VirtualMachine.get();
 
         // This is the start of a task.
         const loop = vm.eventLoop();
@@ -4105,6 +4120,8 @@ pub const ServerWebSocket = struct {
 
         const globalThis = handler.globalObject;
         const vm = handler.vm;
+
+        if (vm.isShuttingDown()) return;
 
         // This is the start of a task.
         const loop = vm.eventLoop();
@@ -4133,10 +4150,12 @@ pub const ServerWebSocket = struct {
             }
         }
 
+        const vm = handler.vm;
+        if (vm.isShuttingDown()) return;
+
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
             var str = ZigString.init(message);
             const globalObject = handler.globalObject;
-            const vm = handler.vm;
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
@@ -5644,7 +5663,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
             };
 
-            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch bun.outOfMemory();
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
@@ -5788,7 +5807,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
-            var server = bun.default_allocator.create(ThisServer) catch @panic("Out of memory!");
+            var server = bun.default_allocator.create(ThisServer) catch bun.outOfMemory();
             server.* = .{
                 .globalThis = globalThis,
                 .config = config,
@@ -5798,7 +5817,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
 
             if (RequestContext.pool == null) {
-                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
+                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch bun.outOfMemory();
                 RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(server.allocator);
             }
 

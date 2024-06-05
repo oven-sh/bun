@@ -10491,7 +10491,8 @@ fn NewParser_(
         fn discardScopesUpTo(p: *P, scope_index: usize) void {
             // Remove any direct children from their parent
             const scope = p.current_scope;
-            const children = &scope.children;
+            var children = scope.children;
+            defer scope.children = children;
 
             for (p.scopes_in_order.items[scope_index..]) |_child| {
                 const child = _child orelse continue;
@@ -10500,9 +10501,7 @@ fn NewParser_(
                     var i: usize = children.len - 1;
                     while (i >= 0) {
                         if (children.mut(i).* == child.scope) {
-                            var list = children.listManaged(p.allocator);
-                            _ = list.orderedRemove(i);
-                            children.update(list);
+                            _ = children.orderedRemove(i);
                             break;
                         }
                         i -= 1;

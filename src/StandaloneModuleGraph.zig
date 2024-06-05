@@ -78,11 +78,11 @@ pub const StandaloneModuleGraph = struct {
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
             if (this.blob_ == null) {
-                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator) catch @panic("out of memory");
+                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator) catch bun.outOfMemory();
                 // make it never free
                 store.ref();
 
-                var blob_ = bun.default_allocator.create(bun.JSC.WebCore.Blob) catch @panic("out of memory");
+                var blob_ = bun.default_allocator.create(bun.JSC.WebCore.Blob) catch bun.outOfMemory();
                 blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
                 blob_.allocator = bun.default_allocator;
 
@@ -346,7 +346,7 @@ pub const StandaloneModuleGraph = struct {
                                         std.fs.path.sep_str,
                                         zname,
                                         &.{0},
-                                    }) catch @panic("OOM");
+                                    }) catch bun.outOfMemory();
                                     zname = zname_z[0..zname_z.len -| 1 :0];
                                     continue;
                                 }

@@ -1662,7 +1662,7 @@ pub const BundleV2 = struct {
 
         errdefer {
             var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
             completion.log = out_log;
         }
 
@@ -1688,7 +1688,7 @@ pub const BundleV2 = struct {
             .next = null,
         };
         var out_log = Logger.Log.init(bun.default_allocator);
-        this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+        this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
         completion.log = out_log;
         completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
     }
@@ -1854,7 +1854,7 @@ pub const BundleV2 = struct {
             estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
-        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch @panic("OOM");
+        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch bun.outOfMemory();
 
         var last_error: ?anyerror = null;
 
@@ -3700,9 +3700,9 @@ const LinkerGraph = struct {
 
         {
             var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch @panic("Out of memory");
+            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch bun.outOfMemory();
             for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
-                dest.* = src.clone(this.allocator) catch @panic("Out of memory");
+                dest.* = src.clone(this.allocator) catch bun.outOfMemory();
             }
             this.symbols = js_ast.Symbol.Map.initList(symbols);
         }
@@ -3908,7 +3908,7 @@ const LinkerContext = struct {
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const mutable = MutableString.initEmpty(allocator);
-            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch @panic("Out of memory")).list.items;
+            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
         }
     };
 

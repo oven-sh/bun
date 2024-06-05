@@ -1082,7 +1082,7 @@ pub const PackageManifest = struct {
         };
 
         if (json.asProperty("name")) |name_q| {
-            const field = name_q.expr.asString(allocator) orelse return null;
+            const received_name = name_q.expr.asString(allocator) orelse return null;
 
             // This is intentionally a case insensitive comparision. If the registry is running on a system
             // with a case insensitive filesystem, you'll be able to install dependencies with casing that doesn't match.
@@ -1096,12 +1096,52 @@ pub const PackageManifest = struct {
             // }
             //
             // https://github.com/oven-sh/bun/issues/5189
-            if (!strings.eqlCaseInsensitiveASCII(expected_name, field, true)) {
-                Output.panic("<r>internal: <red>package name mismatch<r> expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, field });
+            const equal = if (expected_name.len == 0 or expected_name[0] != '@')
+                // Unscoped package, just normal case insensitive comparison
+                strings.eqlCaseInsensitiveASCII(expected_name, received_name, true)
+            else brk: {
+                // Scoped package. The registry might url encode the package name changing either or both `@` and `/` into `%40` and `%2F`.
+                // e.g. "name": "@std%2fsemver" // real world example from crash report
+
+                // Expected name `@` exists, check received has either `@` or `%40`
+                var received_remain = received_name;
+                if (received_remain.len > 0 and received_remain[0] == '@') {
+                    received_remain = received_remain[1..];
+                } else if (received_remain.len > 2 and strings.eqlComptime(received_remain[0..3], "%40")) {
+                    received_remain = received_remain[3..];
+                } else {
+                    break :brk false;
+                }
+
+                var expected_remain = expected_name[1..];
+
+                // orelse is invalid because scoped package is missing `/`, but we allow just in case
+                const slash_index = strings.indexOfChar(expected_remain, '/') orelse break :brk strings.eqlCaseInsensitiveASCII(expected_remain, received_remain, true);
+
+                if (slash_index >= received_remain.len) break :brk false;
+
+                if (!strings.eqlCaseInsensitiveASCIIIgnoreLength(expected_remain[0..slash_index], received_remain[0..slash_index])) break :brk false;
+                expected_remain = expected_remain[slash_index + 1 ..];
+
+                // Expected name `/` exists, check that received is either `/`, `%2f`, or `%2F`
+                received_remain = received_remain[slash_index..];
+                if (received_remain.len > 0 and received_remain[0] == '/') {
+                    received_remain = received_remain[1..];
+                } else if (received_remain.len > 2 and strings.eqlCaseInsensitiveASCIIIgnoreLength(received_remain[0..3], "%2f")) {
+                    received_remain = received_remain[3..];
+                } else {
+                    break :brk false;
+                }
+
+                break :brk strings.eqlCaseInsensitiveASCII(expected_remain, received_remain, true);
+            };
+
+            if (!equal) {
+                Output.panic("<r>internal: <red>Package name mismatch.<r> Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
                 return null;
             }
 
-            string_builder.count(field);
+            string_builder.count(expected_name);
         }
 
         if (json.asProperty("modified")) |name_q| {
@@ -1295,10 +1335,10 @@ pub const PackageManifest = struct {
             string_buf = ptr[0..string_builder.cap];
         }
 
-        if (json.asProperty("name")) |name_q| {
-            const field = name_q.expr.asString(allocator) orelse return null;
-            result.pkg.name = string_builder.append(ExternalString, field);
-        }
+        // Using `expected_name` instead of the name from the manifest. We've already
+        // checked that they are equal above, but `expected_name` will not have `@`
+        // or `/` changed to `%40` or `%2f`, ensuring lookups will work later
+        result.pkg.name = string_builder.append(ExternalString, expected_name);
 
         get_versions: {
             if (json.asProperty("versions")) |versions_q| {

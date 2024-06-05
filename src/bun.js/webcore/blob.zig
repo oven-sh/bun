@@ -3622,7 +3622,7 @@ pub const Blob = struct {
                 duped.content_type_was_set = duped.content_type.len > 0;
             }
         } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
-            duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch @panic("Out of memory");
+            duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
         }
 
         duped.allocator = null;

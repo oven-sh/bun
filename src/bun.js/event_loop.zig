@@ -399,7 +399,6 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
 const RuntimeTranspilerStore = JSC.RuntimeTranspilerStore;
-const AsyncPatchApplyTask = bun.patch.JS.PatchApplyTask.AsyncPatchApplyTask;
 // Task.get(ReadFileTask) -> ?ReadFileTask
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -479,8 +478,6 @@ pub const Task = TaggedPointerUnion(.{
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
-
-    AsyncPatchApplyTask,
 });
 const UnboundedQueue = @import("./unbounded_queue.zig").UnboundedQueue;
 pub const ConcurrentTask = struct {
@@ -918,10 +915,6 @@ pub const EventLoop = struct {
         while (@field(this, queue_name).readItem()) |task| {
             defer counter += 1;
             switch (task.tag()) {
-                @field(Task.Tag, typeBaseName(@typeName(AsyncPatchApplyTask))) => {
-                    var shell_ls_task: *AsyncPatchApplyTask = task.get(AsyncPatchApplyTask).?;
-                    shell_ls_task.runFromJS();
-                },
                 @field(Task.Tag, typeBaseName(@typeName(ShellAsync))) => {
                     var shell_ls_task: *ShellAsync = task.get(ShellAsync).?;
                     shell_ls_task.runFromMainThread();

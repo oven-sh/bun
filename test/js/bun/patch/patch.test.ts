@@ -3,9 +3,8 @@ import { describe, test, expect, it } from "bun:test";
 import { patchInternals } from "bun:internal-for-testing";
 import { tempDirWithFiles } from "harness";
 import { join } from "node:path";
-import { apply } from "bun:patch";
 import fs from "fs/promises";
-const { parse } = patchInternals;
+const { parse, apply } = patchInternals;
 
 const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
   const { stdout, stderr } =

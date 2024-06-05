@@ -1206,6 +1206,33 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
+    const ApplyArgs = struct {
+        patchfile_txt: JSC.ZigString.Slice,
+        patchfile: PatchFile,
+        dirfd: bun.FileDescriptor,
+
+        pub fn deinit(this: *ApplyArgs) void {
+            this.patchfile_txt.deinit();
+            this.patchfile.deinit(bun.default_allocator);
+            if (bun.FileDescriptor.cwd().eq(this.dirfd)) {
+                _ = bun.sys.close(this.dirfd);
+            }
+        }
+    };
+    pub fn applySync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var args = switch (parseApplyArgs(globalThis, callframe)) {
+            .err => |e| return e,
+            .result => |a| a,
+        };
+        defer args.deinit();
+
+        if (args.patchfile.apply(bun.default_allocator, args.dir_fd)) |err| {
+            globalThis.throwValue(err.toErrorInstance(globalThis));
+            return .undefined;
+        }
+
+        return .true;
+    }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
     pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments_ = callframe.arguments(2);
@@ -1234,65 +1261,6 @@ pub const TestingAPIs = struct {
         const outstr = bun.String.fromUTF8(str);
         return outstr.toJS(globalThis);
     }
-};
-
-pub const JS = struct {
-    const ApplyArgs = struct {
-        patchfile_txt: JSC.ZigString.Slice,
-        patchfile: PatchFile,
-        dirfd: bun.FileDescriptor,
-
-        pub fn deinit(this: *ApplyArgs) void {
-            this.patchfile_txt.deinit();
-            this.patchfile.deinit(bun.default_allocator);
-            if (bun.FileDescriptor.cwd().eq(this.dirfd)) {
-                _ = bun.sys.close(this.dirfd);
-            }
-        }
-    };
-
-    pub const PatchApplyTask = struct {
-        args: ApplyArgs,
-
-        globalThis: *JSC.JSGlobalObject,
-        err: ?JSC.SystemError = null,
-
-        pub const AsyncPatchApplyTask = JSC.ConcurrentPromiseTask(PatchApplyTask);
-
-        pub fn create(
-            globalThis: *JSC.JSGlobalObject,
-            args: ApplyArgs,
-        ) !*AsyncPatchApplyTask {
-            const task = bun.new(PatchApplyTask, PatchApplyTask{
-                .args = args,
-                .globalThis = globalThis,
-            });
-            return try AsyncPatchApplyTask.createOnJSThread(bun.default_allocator, globalThis, task);
-        }
-
-        pub fn run(this: *PatchApplyTask) void {
-            if (this.args.patchfile.apply(bun.default_allocator, this.args.dirfd)) |err| {
-                this.err = err;
-            }
-        }
-
-        pub fn then(this: *PatchApplyTask, promise: *JSC.JSPromise) void {
-            defer this.deinit();
-
-            if (this.err) |err| {
-                const errJs = err.toErrorInstance(this.globalThis);
-                promise.reject(this.globalThis, errJs);
-                return;
-            }
-
-            promise.resolve(this.globalThis, .true);
-        }
-
-        fn deinit(this: *PatchApplyTask) void {
-            this.args.deinit();
-            bun.destroy(this);
-        }
-    };
 
     pub fn parseApplyArgs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSC.Node.Maybe(ApplyArgs, JSC.JSValue) {
         const arguments_ = callframe.arguments(2);
@@ -1339,35 +1307,6 @@ pub const JS = struct {
                 .patchfile_txt = patchfile_src,
             },
         };
-    }
-
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const args = switch (parseApplyArgs(globalThis, callframe)) {
-            .err => |e| return e,
-            .result => |a| a,
-        };
-
-        const task = PatchApplyTask.create(globalThis, args) catch |e| {
-            globalThis.throwError(e, "failed to create PatchApplyTask");
-            return .undefined;
-        };
-        task.schedule();
-        return task.promise.value();
-    }
-
-    pub fn applySync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        var args = switch (parseApplyArgs(globalThis, callframe)) {
-            .err => |e| return e,
-            .result => |a| a,
-        };
-        defer args.deinit();
-
-        if (args.patchfile.apply(bun.default_allocator, args.dir_fd)) |err| {
-            globalThis.throwValue(err.toErrorInstance(globalThis));
-            return .undefined;
-        }
-
-        return .true;
     }
 };
 

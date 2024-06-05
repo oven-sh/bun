@@ -7620,8 +7620,6 @@ pub const PackageManager = struct {
                     this.positionals = cli.positionals;
                 }
 
-                // if (sub
-
                 if (cli.production) {
                     this.local_package_features.dev_dependencies = false;
                     this.enable.fail_early = true;
@@ -7642,7 +7640,7 @@ pub const PackageManager = struct {
                 if (!this.update.development) this.update.optional = cli.optional;
 
                 if (subcommand == .patch) {
-                    // TODO
+                    // TODO args
                 } else if (subcommand == .patch_commit) {
                     this.patch_features = .{
                         .commit = .{

@@ -7445,8 +7445,8 @@ describe("yarn tests", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
-      "no-deps",
       "fake-peer-deps",
+      "no-deps",
       "peer-deps",
       "pkg-a",
       "pkg-b",

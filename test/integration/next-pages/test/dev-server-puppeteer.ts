@@ -15,6 +15,8 @@ if (process.argv.length > 2) {
 const b = await launch({
   headless: true,
   dumpio: true,
+  // Fixes 'dock_plist is not an NSDictionary' on AWS macOS
+  args: ["--no-sandbox", "--single-process"],
 });
 
 async function main() {

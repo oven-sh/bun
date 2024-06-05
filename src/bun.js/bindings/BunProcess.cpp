@@ -435,7 +435,7 @@ extern "C" int32_t Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject
     arguments.append(jsNumber(exitCode));
     auto& emitter = process->wrapped();
     const Identifier onBeforeExit = Identifier::fromString(globalObject->vm(), "beforeExit"_s);
-    if (emitter.hasActiveEventListeners(onBeforeExit)) {
+    if (emitter.hasEventListeners(onBeforeExit)) {
         emitter.emit(onBeforeExit, arguments);
         return 1;
     }

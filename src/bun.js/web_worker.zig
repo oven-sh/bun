@@ -379,31 +379,21 @@ pub const WebWorker = struct {
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
-
             vm.beginShutdown();
-            vm.onBeforeExit();
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
             vm_to_deinit = vm;
+
+            // Prevent attempting to run GC after the VM has been deinitialized.
+            vm.gc_controller.disabled = true;
         }
         var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
 
         if (vm_to_deinit) |vm| {
-            vm.gc_controller.disabled = true;
-
-            // By this point, everything *should* be cleaned up. But, if there
-            // are any leftover tasks in the event loop that were already
-            // scheduled, let's go ahead and run them so that their cleanup code
-            // can run.
-            while (vm.event_loop_handle.?.isActive()) {
-                vm.event_loop_handle.?.tick();
-            }
-
             this.deinit();
-
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
 

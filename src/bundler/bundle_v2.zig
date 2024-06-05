@@ -6727,6 +6727,7 @@ const LinkerContext = struct {
             const print_options = js_printer.Options{
                 // TODO: IIFE
                 .indent = indent,
+                .has_run_symbol_renamer = true,
 
                 .allocator = worker.allocator,
                 .require_ref = runtimeRequireRef,
@@ -7615,6 +7616,7 @@ const LinkerContext = struct {
         const print_options = js_printer.Options{
             // TODO: IIFE
             .indent = 0,
+            .has_run_symbol_renamer = true,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,
@@ -8902,6 +8904,7 @@ const LinkerContext = struct {
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
             .module_type = c.options.output_format,
+            .has_run_symbol_renamer = true,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,

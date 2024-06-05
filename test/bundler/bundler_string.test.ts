@@ -48,8 +48,8 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   BigIntDivide: { expr: "`${6n / 2n}`", print: "3" },
   BigIntModulo: { expr: "`${6n % 4n}`", print: "2" },
   BigIntExponent: { expr: "`${2n ** 3n}`", print: "8" },
-  ArrowFunction: { expr: "`${() => 123}`", captureRaw: "`${(" }, // capture is weird in this scenario
-  Function: { expr: "`${function() { return 123; }}`", captureRaw: "`${function(" },
+  ArrowFunction: { expr: "`${() => 123}`", captureRaw: "`${()=>123}`" },
+  Function: { expr: "`${function() { return 123; }}`", captureRaw: "`${function(){return 123}}`" },
   Identifier: { expr: "`${ident}`", captureRaw: "`${ident}`" },
   IdentifierAdd: { expr: "`${ident + ident}`", captureRaw: "`${ident+ident}`" },
   IdentifierConstAdd: { expr: "`${2 + ident}`", captureRaw: "`${2+ident}`" },

@@ -774,7 +774,7 @@ should equal
           (_this.expected = expected),
           (_this.operator = operator),
           Error.captureStackTrace && Error.captureStackTrace(_assertThisInitialized(_this), stackStartFn),
-          console.log({ x: _this.stack }),
+          _this.stack,
           (_this.name = "AssertionError"),
           _possibleConstructorReturn(_this)
         );
@@ -852,7 +852,6 @@ var require_assert = __commonJS({
       assert = (module2.exports = ok),
       NO_EXCEPTION_SENTINEL = {};
     function innerFail(obj) {
-      console.log(obj);
       throw obj.message instanceof Error ? obj.message : new AssertionError(obj);
     }
     function fail(actual, expected, message, operator, stackStartFn) {

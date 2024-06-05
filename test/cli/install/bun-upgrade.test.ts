@@ -96,13 +96,15 @@ it("two valid argument, should succeed", async () => {
 });
 
 it("zero arguments, should succeed", async () => {
+  const [major, minor, patch] = Bun.version.split(".").map(v => parseInt(v));
+  const newerTag = `bun-v${major}.${minor}.${patch + 1}`;
   using server = Bun.serve({
     tls: tls,
     port: 0,
     async fetch() {
       return new Response(
         JSON.stringify({
-          "tag_name": "bun-v1.1.4",
+          "tag_name": newerTag,
           "assets": [
             {
               "url": "foo",

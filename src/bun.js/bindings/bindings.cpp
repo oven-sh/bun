@@ -3919,8 +3919,8 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         return;
     if (!stackFrame->hasBytecodeIndex()) {
         auto lineColumn = stackFrame->computeLineAndColumn();
-        position->line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-        position->column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+        position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         position->byte_position = -1;
         return;
     }
@@ -3945,7 +3945,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
         // Most of the time, when you look at a stack trace, you want a couple lines above
         source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineEnd - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = location.line;
+        source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
@@ -3974,7 +3974,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                     sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1)
                         .toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = location.line.fromZeroBasedInt(location.line.zeroBasedInt() - source_line_i);
+                source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;
 
                 remaining_lines_to_grab--;
@@ -4271,8 +4271,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     String sourceURL = frame.sourceURL.toString();
                     current.function_name = Bun::toStringRef(functionName);
                     current.source_url = Bun::toStringRef(sourceURL);
-                    current.position.line = frame.lineNumber;
-                    current.position.column = frame.columnNumber;
+                    current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                    current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
                     current.remapped = true;
 
@@ -4301,17 +4301,17 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
 
                 if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
-                    except->stack.frames_ptr[0].position.column = OrdinalNumber::fromOneBasedInt(column.toInt32(global));
+                    except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
                 }
 
                 if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
-                    except->stack.frames_ptr[0].position.line = OrdinalNumber::fromOneBasedInt(line.toInt32(global));
+                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
                     if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
                         if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                             auto str = jsStr->value(global);
                             except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
+                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
                             except->stack.source_lines_len = 1;
                             except->remapped = true;
                         }
@@ -4373,9 +4373,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             if (line) {
                 // TODO: don't sourcemap it twice
                 if (auto originalLine = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "originalLine"_s))) {
-                    except->stack.frames_ptr[0].position.line = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global));
+                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
                 } else {
-                    except->stack.frames_ptr[0].position.line = OrdinalNumber::fromOneBasedInt(line.toInt32(global));
+                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
                 }
                 except->stack.frames_len = 1;
             }

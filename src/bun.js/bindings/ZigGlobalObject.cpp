@@ -387,8 +387,8 @@ WTF::String Bun::formatStackTrace(
                 ZigStackFrame remappedFrame = {};
                 memset(&remappedFrame, 0, sizeof(ZigStackFrame));
 
-                remappedFrame.position.line = originalLine;
-                remappedFrame.position.column = OrdinalNumber::fromZeroBasedInt(0);
+                remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
+                remappedFrame.position.column_zero_based = 0;
 
                 String sourceURLForFrame = err->sourceURL();
 
@@ -416,12 +416,12 @@ WTF::String Bun::formatStackTrace(
                 if (remappedFrame.remapped) {
                     errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);
                     hasSet = true;
-                    line = remappedFrame.position.line;
+                    line = remappedFrame.position.line();
                 }
 
                 if (remappedFrame.remapped) {
                     sb.append(":"_s);
-                    sb.append(remappedFrame.position.line.oneBasedInt());
+                    sb.append(remappedFrame.position.line().oneBasedInt());
                 } else {
                     sb.append(":"_s);
                     sb.append(originalLine.oneBasedInt());
@@ -489,8 +489,8 @@ WTF::String Bun::formatStackTrace(
             OrdinalNumber thisLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
             OrdinalNumber thisColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
             ZigStackFrame remappedFrame = {};
-            remappedFrame.position.line = thisLine;
-            remappedFrame.position.column = thisColumn;
+            remappedFrame.position.line_zero_based = thisLine.zeroBasedInt();
+            remappedFrame.position.column_zero_based = thisColumn.zeroBasedInt();
 
             String sourceURLForFrame = frame.sourceURL(vm);
 
@@ -524,9 +524,9 @@ WTF::String Bun::formatStackTrace(
             sb.append(" ("_s);
             sb.append(sourceURLForFrame);
             sb.append(":"_s);
-            sb.append(remappedFrame.position.line.oneBasedInt());
+            sb.append(remappedFrame.position.line().oneBasedInt());
             sb.append(":"_s);
-            sb.append(remappedFrame.position.column.oneBasedInt());
+            sb.append(remappedFrame.position.column().oneBasedInt());
             sb.append(")"_s);
         } else {
             sb.append(" (native)"_s);
@@ -592,11 +592,11 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
             remappedFrames[i] = {};
             remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-                remappedFrames[i].position.line = sourcePositions->line;
-                remappedFrames[i].position.column = sourcePositions->column;
+                remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
+                remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
             } else {
-                remappedFrames[i].position.line = OrdinalNumber::beforeFirst();
-                remappedFrames[i].position.column = OrdinalNumber::beforeFirst();
+                remappedFrames[i].position.line_zero_based = -1;
+                remappedFrames[i].position.column_zero_based = -1;
             }
         }
 
@@ -606,8 +606,8 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
             JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
             CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
             if (remappedFrames[i].remapped) {
-                callSite->setColumnNumber(remappedFrames[i].position.column);
-                callSite->setLineNumber(remappedFrames[i].position.line);
+                callSite->setColumnNumber(remappedFrames[i].position.column());
+                callSite->setLineNumber(remappedFrames[i].position.line());
             }
         }
     }
@@ -2483,11 +2483,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
         remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
-            remappedFrames[i].position.line = sourcePositions->line;
-            remappedFrames[i].position.column = sourcePositions->column;
+            remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
+            remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
         } else {
-            remappedFrames[i].position.line = OrdinalNumber::beforeFirst();
-            remappedFrames[i].position.column = OrdinalNumber::beforeFirst();
+            remappedFrames[i].position.line_zero_based = -1;
+            remappedFrames[i].position.column_zero_based = -1;
         }
     }
 
@@ -2501,8 +2501,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         JSC::JSValue callSiteValue = callSites->getIndex(lexicalGlobalObject, i);
         CallSite* callSite = JSC::jsDynamicCast<CallSite*>(callSiteValue);
         if (remappedFrames[i].remapped) {
-            callSite->setColumnNumber(remappedFrames[i].position.column);
-            callSite->setLineNumber(remappedFrames[i].position.line);
+            callSite->setColumnNumber(remappedFrames[i].position.column());
+            callSite->setLineNumber(remappedFrames[i].position.line());
         }
     }
 

@@ -4797,12 +4797,10 @@ JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalOb
 JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    if (!value.isObject()) {
+        return JSC::JSValue::encode({});
     }
-
-    return JSValue::encode(
-        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+    return JSValue::encode(value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)

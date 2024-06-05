@@ -26,3 +26,17 @@ test("expect-label toEqual", () => {
 
   expect(stripAnsiColors(err.message)).toContain("lol!\n\nExpected");
 });
+
+test("non-strings do not crash", () => {
+  try {
+    expect("a", undefined).toEqual("b");
+  } catch {}
+  try {
+    // @ts-ignore
+    expect("a", Symbol("a")).toEqual("b");
+  } catch {}
+  try {
+    // @ts-ignore
+    expect("a", null).toEqual("b");
+  } catch {}
+});

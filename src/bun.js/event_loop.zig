@@ -1507,10 +1507,10 @@ pub const EventLoop = struct {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
         switch (promise.status(this.virtual_machine.jsc)) {
             JSC.JSPromise.Status.Pending => {
-                while (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
                     this.tick();
 
-                    if (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
                         this.autoTick();
                     }
                 }

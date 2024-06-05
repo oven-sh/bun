@@ -1,5 +1,6 @@
 // ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
-const expected_version = 2;
+// Version 2 -> 3: "Infinity" becomes "1/0".
+const expected_version = 3;
 
 const bun = @import("root").bun;
 const std = @import("std");

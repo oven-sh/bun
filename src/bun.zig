@@ -2139,7 +2139,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        var out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        const out_argv = try allocator.alloc([:0]u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2149,11 +2149,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         try string_builder.allocate(allocator);
 
-        for (argvu16, 0..) |argraw, i| {
+        for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
-            // Command line is expected to be valid UTF-16le so this never
-            // fails and it's okay to unwrap pointer
-            out_argv[i] = string_builder.append16(arg).?;
+
+            // Command line is expected to be valid UTF-16le
+            // ...but sometimes, it's not valid. https://github.com/oven-sh/bun/issues/11610
+            out.* = string_builder.append16(arg, default_allocator) orelse @panic("Failed to allocate memory for argv");
         }
 
         argv = out_argv;

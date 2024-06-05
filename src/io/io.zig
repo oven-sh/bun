@@ -13,68 +13,6 @@ const assert = bun.assert;
 
 pub const Source = @import("./source.zig").Source;
 
-pub fn readFileAt(
-    allocator: std.mem.Allocator,
-    dirfd: bun.FileDescriptor,
-    path: [:0]const u8,
-    max_bytes: usize,
-) bun.sys.Maybe([]u8) {
-    const fd = switch (bun.sys.openat(dirfd, path, std.os.O.RDONLY, 0)) {
-        .err => |e| return .{ .err = e.withPath(path) },
-        .result => |fd| fd,
-    };
-    defer _ = bun.sys.close(fd);
-    return readFile(allocator, fd, max_bytes);
-}
-
-pub fn readFile(
-    allocator: std.mem.Allocator,
-    fd_: bun.FileDescriptor,
-    max_bytes: usize,
-) bun.sys.Maybe([]u8) {
-    const fd = if (comptime bun.Environment.isPosix)
-        fd_
-    else
-        bun.toLibUVOwnedFD(fd_) catch return .{ .err = bun.sys.Error.fromCode(.MFILE, .uv_open_osfhandle) };
-
-    const stat = switch (bun.sys.fstat(fd)) {
-        .result => |s| s,
-        .err => |e| return .{ .err = e },
-    };
-    const size: usize = @intCast(stat.size);
-    if (size > max_bytes) return .{ .err = bun.sys.Error.fromCode(bun.C.E.@"2BIG", .read).withFd(fd) };
-    const buf = allocator.alloc(u8, size) catch bun.outOfMemory();
-    const read = switch (readIntoBuf(fd, buf)) {
-        .err => |e| return .{ .err = e },
-        .result => |r| r,
-    };
-    return .{ .result = read };
-}
-
-pub fn writeAll(fd: bun.FileDescriptor, buf: []const u8) bun.sys.Maybe(void) {
-    var written: usize = 0;
-    while (written < buf.len) {
-        written += switch (bun.sys.write(fd, buf[written..])) {
-            .result => |v| v,
-            .err => |e| if (e.getErrno() == bun.C.E.INTR) 0 else return .{ .err = e },
-        };
-    }
-    return bun.sys.Maybe(void).success;
-}
-
-/// Read all data from `fd` into `buf` until `buf` is filled or EOF is returned.
-///
-pub fn readIntoBuf(fd: bun.FileDescriptor, buf: anytype) bun.sys.Maybe([]u8) {
-    var read: usize = 0;
-    while (read < buf.len) {
-        read += switch (bun.sys.read(fd, buf[read..])) {
-            .result => |v| if (v == 0) break else v,
-            .err => |e| if (e.getErrno() == bun.C.E.INTR) 0 else return .{ .err = e },
-        };
-    }
-    return .{ .result = buf[0..read] };
-}
-
 pub const Loop = struct {
     pending: Request.Queue = .{},
     waker: bun.Async.Waker,

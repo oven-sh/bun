@@ -95,6 +95,10 @@ function generate(ssl) {
         fn: "end",
         length: 3,
       },
+      terminate: {
+        fn: "terminate",
+        length: 0,
+      },
 
       //   },
       listener: {

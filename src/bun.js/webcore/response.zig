@@ -768,6 +768,22 @@ pub const Fetch = struct {
 
         tracker: JSC.AsyncTaskTracker,
 
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+        pub fn ref(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchAdd(1, .Monotonic);
+            bun.debugAssert(count > 0);
+        }
+
+        pub fn deref(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .Monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                this.deinit();
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -816,6 +832,11 @@ pub const Fetch = struct {
                 this.hostname = null;
             }
 
+            if (this.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+                this.result.certificate_info = null;
+            }
+
             this.request_headers.entries.deinit(allocator);
             this.request_headers.buf.deinit(allocator);
             this.request_headers = Headers{ .allocator = undefined };
@@ -832,8 +853,9 @@ pub const Fetch = struct {
             this.response_buffer.deinit();
             this.response.deinit();
             if (this.native_response) |response| {
-                response.unref();
                 this.native_response = null;
+
+                response.unref();
             }
 
             this.readable_stream_ref.deinit();
@@ -841,8 +863,10 @@ pub const Fetch = struct {
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
-            if (this.abort_reason != .zero)
+            if (this.abort_reason != .zero) {
                 this.abort_reason.unprotect();
+                this.abort_reason = .zero;
+            }
 
             this.check_server_identity.deinit();
 
@@ -852,8 +876,13 @@ pub const Fetch = struct {
             }
         }
 
-        pub fn deinit(this: *FetchTasklet) void {
+        fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
+
+            bun.assert(this.ref_count.load(.Monotonic) == 0);
+
+            this.clearData();
+
             var reporter = this.memory_reporter;
             const allocator = reporter.allocator();
 
@@ -880,7 +909,6 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
-            this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             const is_done = !success or !this.result.has_more;
@@ -891,13 +919,11 @@ pub const Fetch = struct {
                     this.scheduled_response_buffer.reset();
                 }
 
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
                     const vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                 }
             }
 
@@ -1030,14 +1056,18 @@ pub const Fetch = struct {
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
+            defer this.deref();
+            this.mutex.lock();
+            this.has_schedule_callback.store(false, .Monotonic);
+
             if (this.is_waiting_body) {
-                return this.onBodyReceived();
+                this.onBodyReceived();
+                return;
             }
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
             const globalThis = this.global_this;
-            this.mutex.lock();
 
             if (this.is_waiting_abort) {
                 // has_more will be false when the request is aborted/finished
@@ -1050,8 +1080,7 @@ pub const Fetch = struct {
                 const vm = globalThis.bunVM();
 
                 poll_ref.unref(vm);
-                this.clearData();
-                this.deinit();
+                this.deref();
                 return;
             }
             const promise_value = this.promise.valueOrEmpty();
@@ -1062,11 +1091,9 @@ pub const Fetch = struct {
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 this.promise.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
-                this.clearData();
-                this.deinit();
+                this.deref();
                 return;
             }
 
@@ -1089,21 +1116,18 @@ pub const Fetch = struct {
 
                     tracker.didDispatch(globalThis);
                     this.promise.deinit();
-                    this.has_schedule_callback.store(false, .Monotonic);
                     this.mutex.unlock();
                     if (this.is_waiting_abort) {
                         return;
                     }
                     // we are already done we can deinit
                     poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                     return;
                 }
                 // everything ok
                 if (this.metadata == null) {
                     log("onProgressUpdate: metadata is null", .{});
-                    this.has_schedule_callback.store(false, .Monotonic);
                     // cannot continue without metadata
                     this.mutex.unlock();
                     return;
@@ -1116,12 +1140,10 @@ pub const Fetch = struct {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                 }
             }
             const success = this.result.isSuccess();
@@ -1696,19 +1718,38 @@ pub const Fetch = struct {
             return node;
         }
 
-        pub fn callback(task: *FetchTasklet, result: http.HTTPClientResult) void {
+        pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+            task.ref();
+
             task.mutex.lock();
             defer task.mutex.unlock();
+
+            task.http.?.* = async_http.*;
+            task.http.?.response_buffer = async_http.response_buffer;
+
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
 
+            const prev_metadata = task.result.metadata;
+            const prev_cert_info = task.result.certificate_info;
             task.result = result;
 
-            // metadata should be provided only once so we preserve it until we consume it
-            if (result.metadata) |metadata| {
-                log("added callback metadata", .{});
-                bun.assert(task.metadata == null);
-                task.metadata = metadata;
+            // Preserve pending certificate info if it was preovided in the previous update.
+            if (task.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    task.result.certificate_info = cert_info;
+                }
             }
+
+            // metadata should be provided only once
+            if (result.metadata orelse prev_metadata) |metadata| {
+                log("added callback metadata", .{});
+                if (task.metadata == null) {
+                    task.metadata = metadata;
+                }
+
+                task.result.metadata = null;
+            }
+
             task.body_size = result.body_size;
 
             const success = result.isSuccess();
@@ -1729,11 +1770,12 @@ pub const Fetch = struct {
                 }
                 if (success and result.has_more) {
                     // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    task.deref();
                     return;
                 }
             } else {
                 if (success) {
-                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
+                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch bun.outOfMemory();
                 }
                 // reset for reuse
                 task.response_buffer.reset();
@@ -1741,6 +1783,7 @@ pub const Fetch = struct {
 
             if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
+                    task.deref();
                     return;
                 }
             }
@@ -1799,7 +1842,7 @@ pub const Fetch = struct {
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;
-        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
+        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);

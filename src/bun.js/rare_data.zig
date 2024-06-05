@@ -74,6 +74,8 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     for (this.listening_sockets_for_watch_mode.items) |socket| {
+        // Prevent TIME_WAIT state
+        Syscall.disableLinger(socket);
         _ = Syscall.close(socket);
     }
     this.listening_sockets_for_watch_mode = .{};
@@ -91,7 +93,7 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
     if (this.mime_types == null) {
         this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
-        ) catch @panic("Out of memory");
+        ) catch bun.outOfMemory();
     }
 
     return this.mime_types.?.get(str);
@@ -133,12 +135,12 @@ pub const HotMap = struct {
     }
 
     pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
-        const entry = this._map.getOrPut(key) catch @panic("Out of memory");
+        const entry = this._map.getOrPut(key) catch bun.outOfMemory();
         if (entry.found_existing) {
             @panic("HotMap already contains key");
         }
 
-        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch @panic("Out of memory");
+        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch bun.outOfMemory();
         entry.value_ptr.* = Entry.init(ptr);
     }
 

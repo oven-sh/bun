@@ -832,6 +832,11 @@ pub const Fetch = struct {
                 this.hostname = null;
             }
 
+            if (this.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+                this.result.certificate_info = null;
+            }
+
             this.request_headers.entries.deinit(allocator);
             this.request_headers.buf.deinit(allocator);
             this.request_headers = Headers{ .allocator = undefined };
@@ -1728,19 +1733,21 @@ pub const Fetch = struct {
             const prev_cert_info = task.result.certificate_info;
             task.result = result;
 
+            // Preserve pending certificate info if it was preovided in the previous update.
             if (task.result.certificate_info == null) {
                 if (prev_cert_info) |cert_info| {
                     task.result.certificate_info = cert_info;
                 }
             }
 
-            // metadata should be provided only once so we preserve it until we consume it
+            // metadata should be provided only once
             if (result.metadata orelse prev_metadata) |metadata| {
                 log("added callback metadata", .{});
                 if (task.metadata == null) {
                     task.metadata = metadata;
-                    task.result.metadata = null;
                 }
+
+                task.result.metadata = null;
             }
 
             task.body_size = result.body_size;

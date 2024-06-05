@@ -3001,7 +3001,6 @@ pub const VirtualMachine = struct {
                     line_number.* = current_line_number;
                     current_line_number -= 1;
                 }
-                
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
             }

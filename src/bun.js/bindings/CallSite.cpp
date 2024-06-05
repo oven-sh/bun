@@ -58,8 +58,8 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
-        m_lineNumber = sourcePositions->line.oneBasedInt();
-        m_columnNumber = sourcePositions->startColumn.oneBasedInt();
+        m_lineNumber = sourcePositions->line;
+        m_columnNumber = sourcePositions->column;
     }
 
     if (stackFrame.isEval()) {
@@ -105,8 +105,8 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
     JSString* myFunctionName = functionName().toString(globalObject);
     JSString* mySourceURL = sourceURL().toString(globalObject);
 
-    JSString* myColumnNumber = columnNumber() >= 0 ? JSValue(columnNumber()).toString(globalObject) : jsEmptyString(vm);
-    JSString* myLineNumber = lineNumber() >= 0 ? JSValue(lineNumber()).toString(globalObject) : jsEmptyString(vm);
+    JSString* myColumnNumber = columnNumber().zeroBasedInt() >= 0 ? JSValue(columnNumber().oneBasedInt()).toString(globalObject) : jsEmptyString(vm);
+    JSString* myLineNumber = lineNumber().zeroBasedInt() >= 0 ? JSValue(lineNumber().oneBasedInt()).toString(globalObject) : jsEmptyString(vm);
 
     bool myIsConstructor = isConstructor();
 

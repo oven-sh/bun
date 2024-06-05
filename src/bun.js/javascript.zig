@@ -97,6 +97,8 @@ const BuildMessage = JSC.BuildMessage;
 const ResolveMessage = JSC.ResolveMessage;
 const Async = bun.Async;
 
+const Ordinal = bun.Ordinal;
+
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
     return struct {
@@ -752,7 +754,7 @@ pub const VirtualMachine = struct {
         return this.debugger != null;
     }
 
-    pub inline fn isShuttingDown(this: *const VirtualMachine) bool {
+    pub fn isShuttingDown(this: *const VirtualMachine) bool {
         return this.is_shutting_down;
     }
 
@@ -924,6 +926,11 @@ pub const VirtualMachine = struct {
     extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
 
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
+        if (this.isShuttingDown()) {
+            Output.debugWarn("unhandledRejection during shutdown.", .{});
+            return true;
+        }
+
         if (isBunTest) {
             this.unhandled_error_counter += 1;
             this.onUnhandledRejection(this, globalObject, reason);
@@ -939,6 +946,11 @@ pub const VirtualMachine = struct {
     }
 
     pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool {
+        if (this.isShuttingDown()) {
+            Output.debugWarn("uncaughtException during shutdown.", .{});
+            return true;
+        }
+
         if (isBunTest) {
             this.unhandled_error_counter += 1;
             this.onUnhandledRejection(this, globalObject, err);
@@ -1066,9 +1078,13 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn scriptExecutionStatus(this: *VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+    pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+        if (this.is_shutting_down) {
+            return .stopped;
+        }
+
         if (this.worker) |worker| {
-            if (worker.requested_terminate) {
+            if (worker.hasRequestedTerminate()) {
                 return .stopped;
             }
         }
@@ -2036,7 +2052,7 @@ pub const VirtualMachine = struct {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 error.NameTooLong,
-            ) catch @panic("Out of Memory");
+            ) catch bun.outOfMemory();
             const msg = logger.Msg{
                 .data = logger.rangeData(
                     null,
@@ -2463,7 +2479,7 @@ pub const VirtualMachine = struct {
             .Internal = promise,
         });
         if (this.worker) |worker| {
-            if (worker.requested_terminate) {
+            if (worker.hasRequestedTerminate()) {
                 return error.WorkerTerminated;
             }
         }
@@ -2820,8 +2836,8 @@ pub const VirtualMachine = struct {
 
             if (this.source_mappings.resolveMapping(
                 sourceURL.slice(),
-                @max(frame.position.line, 0),
-                @max(frame.position.column_start, 0),
+                @max(frame.position.line.zeroBased(), 0),
+                @max(frame.position.column.zeroBased(), 0),
                 .no_source_contents,
             )) |lookup| {
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
@@ -2829,8 +2845,8 @@ pub const VirtualMachine = struct {
                     frame.source_url = source_url;
                 }
                 const mapping = lookup.mapping;
-                frame.position.line = mapping.original.lines;
-                frame.position.column_start = mapping.original.columns;
+                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
+                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
                 frame.remapped = true;
             } else {
                 // we don't want it to be remapped again
@@ -2930,8 +2946,8 @@ pub const VirtualMachine = struct {
                 .mapping = .{
                     .generated = .{},
                     .original = .{
-                        .lines = @max(top.position.line, 0),
-                        .columns = @max(top.position.column_start, 0),
+                        .lines = @max(top.position.line.zeroBased(), 0),
+                        .columns = @max(top.position.column.zeroBased(), 0),
                     },
                     .source_index = 0,
                 },
@@ -2942,8 +2958,8 @@ pub const VirtualMachine = struct {
         else
             this.source_mappings.resolveMapping(
                 top_source_url.slice(),
-                @max(top.position.line, 0),
-                @max(top.position.column_start, 0),
+                @max(top.position.line.zeroBased(), 0),
+                @max(top.position.column.zeroBased(), 0),
                 .source_contents,
             );
 
@@ -2972,18 +2988,13 @@ pub const VirtualMachine = struct {
             };
             source_code_slice.* = code;
 
-            top.position.line = mapping.original.lines;
-            top.position.line_start = mapping.original.lines;
-            top.position.line_stop = mapping.original.lines + 1;
-            top.position.column_start = mapping.original.columns;
-            top.position.column_stop = mapping.original.columns + 1;
+            top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
+            top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+
             exception.remapped = true;
             top.remapped = true;
-            // This expression range is no longer accurate
-            top.position.expression_start = mapping.original.columns;
-            top.position.expression_stop = mapping.original.columns + 1;
 
-            const last_line = @max(top.position.line, 0);
+            const last_line = @max(top.position.line.zeroBased(), 0);
             if (strings.getLinesInText(
                 code.slice(),
                 @intCast(last_line),
@@ -3006,13 +3017,6 @@ pub const VirtualMachine = struct {
                 }
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
-
-                top.position.column_stop = @as(i32, @intCast(source_lines[lines.len - 1].length()));
-                top.position.line_stop = top.position.column_stop;
-
-                // This expression range is no longer accurate
-                top.position.expression_start = mapping.original.columns;
-                top.position.expression_stop = top.position.column_stop;
             }
         }
 
@@ -3023,8 +3027,8 @@ pub const VirtualMachine = struct {
                 defer source_url.deinit();
                 if (this.source_mappings.resolveMapping(
                     source_url.slice(),
-                    @max(frame.position.line, 0),
-                    @max(frame.position.column_start, 0),
+                    @max(frame.position.line.zeroBased(), 0),
+                    @max(frame.position.column.zeroBased(), 0),
                     .no_source_contents,
                 )) |lookup| {
                     if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
@@ -3032,9 +3036,9 @@ pub const VirtualMachine = struct {
                         frame.source_url = src;
                     }
                     const mapping = lookup.mapping;
-                    frame.position.line = mapping.original.lines;
                     frame.remapped = true;
-                    frame.position.column_start = mapping.original.columns;
+                    frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
+                    frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
                 }
             }
         }
@@ -3183,8 +3187,8 @@ pub const VirtualMachine = struct {
                         .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
                     );
 
-                    if (clamped.len < max_line_length_with_divot or top.position.column_start > max_line_length_with_divot) {
-                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
+                    if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
+                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(
@@ -3366,8 +3370,8 @@ pub const VirtualMachine = struct {
                 const file = bun.path.relative(dir, source_url.slice());
                 writer.print("\n::error file={s},line={d},col={d},title=", .{
                     file,
-                    frame.position.line_start + 1,
-                    frame.position.column_start,
+                    frame.position.line.oneBased(),
+                    frame.position.column.oneBased(),
                 }) catch {};
                 has_location = true;
             }
@@ -3702,7 +3706,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
             }
 
-            var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
+            var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
                 .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,

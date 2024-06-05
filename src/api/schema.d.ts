@@ -355,14 +355,8 @@ export interface StackFrame {
 }
 
 export interface StackFramePosition {
-  source_offset: int32;
   line: int32;
-  line_start: int32;
-  line_stop: int32;
-  column_start: int32;
-  column_stop: int32;
-  expression_start: int32;
-  expression_stop: int32;
+  column: int32;
 }
 
 export interface SourceLine {

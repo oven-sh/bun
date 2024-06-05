@@ -3173,6 +3173,33 @@ describe("update", () => {
   });
 });
 
+test("packages dependening on each other with aliases does not infinitely loop", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "alias-loop-1": "1.0.0",
+        "alias-loop-2": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const files = await Promise.all([
+    file(join(packageDir, "node_modules", "alias-loop-1", "package.json")).json(),
+    file(join(packageDir, "node_modules", "alias-loop-2", "package.json")).json(),
+    file(join(packageDir, "node_modules", "alias1", "package.json")).json(),
+    file(join(packageDir, "node_modules", "alias2", "package.json")).json(),
+  ]);
+  expect(files).toMatchObject([
+    { name: "alias-loop-1", version: "1.0.0" },
+    { name: "alias-loop-2", version: "1.0.0" },
+    { name: "alias-loop-2", version: "1.0.0" },
+    { name: "alias-loop-1", version: "1.0.0" },
+  ]);
+});
+
 test("it should re-populate .bin folder if package is reinstalled", async () => {
   await writeFile(
     join(packageDir, "package.json"),

@@ -2589,7 +2589,7 @@ it("should handle aliased & direct dependency references", async () => {
   });
   expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["package.json"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["index.js", "package.json"]);
-  expect(await file(join(package_dir,  "node_modules", "moo", "package.json")).json()).toEqual({
+  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).json()).toEqual({
     name: "baz",
     version: "0.0.3",
     bin: {
@@ -7437,9 +7437,7 @@ it("should override aliased child npm dependency by matching workspace", async (
   expect(await file(join(package_dir, "node_modules", "@moo", "bar", "package.json")).text()).toEqual(bar_package);
   expect(await readlink(join(package_dir, "node_modules", "baz"))).toBeWorkspaceLink(join("..", "packages", "baz"));
   expect(await readdirSorted(join(package_dir, "packages", "baz"))).toEqual(["package.json"]);
-  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(
-    join("..", "packages", "bar"),
-  );
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
   await access(join(package_dir, "bun.lockb"));
 });
 

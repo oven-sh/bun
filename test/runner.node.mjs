@@ -92,7 +92,7 @@ async function runTests(target) {
     const result = await runTask(title, fn);
 
     if (isBuildKite) {
-      const { ok, testPath, stdout } = result;
+      const { ok, testPath, error, stdout } = result;
       const logsPath = join(cwd, "logs", `${testPath}.log`);
       mkdirSync(dirname(logsPath), { recursive: true });
       appendFileSync(logsPath, stripAnsi(stdout));

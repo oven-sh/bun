@@ -903,6 +903,11 @@ pub const Listener = struct {
 
     pub fn finalize(this: *Listener) callconv(.C) void {
         log("Finalize", .{});
+        if (this.listener) |listener| {
+            this.listener = null;
+            listener.close(this.ssl);
+        }
+
         this.deinit();
     }
 
@@ -911,11 +916,17 @@ pub const Listener = struct {
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);
         bun.assert(this.listener == null);
-        bun.assert(this.handlers.active_connections == 0);
         this.handlers.unprotect();
 
-        if (this.socket_context) |ctx| {
-            ctx.deinit(this.ssl);
+        if (this.handlers.active_connections > 0) {
+            if (this.socket_context) |ctx| {
+                ctx.close(this.ssl);
+            }
+            // TODO: fix this leak.
+        } else {
+            if (this.socket_context) |ctx| {
+                ctx.deinit(this.ssl);
+            }
         }
 
         this.connection.deinit();

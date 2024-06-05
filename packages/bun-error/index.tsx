@@ -511,13 +511,7 @@ const SourceLines = ({
   );
 };
 
-const BuildErrorSourceLines = ({
-  location,
-  filename,
-}: {
-  location: Location;
-  filename: string;
-}) => {
+const BuildErrorSourceLines = ({ location, filename }: { location: Location; filename: string }) => {
   const { line, line_text, column } = location;
   const sourceLines: SourceLine[] = [{ line, text: line_text }];
   const buildURL = React.useCallback((line, column) => srcFileURL(filename, line, column), [srcFileURL, filename]);
@@ -612,7 +606,7 @@ const NativeStackFrame = ({
   const {
     file,
     function_name: functionName,
-    position: { line, column_start: column },
+    position: { line, column },
     scope,
   } = frame;
   const fileName = normalizedFilename(file, cwd);
@@ -689,21 +683,21 @@ const NativeStackTrace = ({
   return (
     <div ref={ref} className={`BunError-NativeStackTrace`}>
       <a
-        href={urlBuilder(filename, position.line, position.column_start)}
+        href={urlBuilder(filename, position.line, position.column)}
         data-line={position.line}
-        data-column={position.column_start}
+        data-column={position.column}
         data-is-client="true"
         target="_blank"
         onClick={openWithoutFlashOfNewTab}
         className="BunError-NativeStackTrace-filename"
       >
-        {filename}:{position.line}:{position.column_start}
+        {filename}:{position.line}:{position.column}
       </a>
       {sourceLines.length > 0 && (
         <SourceLines
           highlight={position.line}
           sourceLines={sourceLines}
-          highlightColumnStart={position.column_start}
+          highlightColumnStart={position.column}
           buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
         >
@@ -715,7 +709,7 @@ const NativeStackTrace = ({
           highlight={position.line}
           sourceLines={sourceLines}
           setSourceLines={setSourceLines}
-          highlightColumnStart={position.column_start}
+          highlightColumnStart={position.column}
           buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
         >
@@ -737,13 +731,7 @@ const Indent = ({ by, children }) => {
   );
 };
 
-const JSException = ({
-  value,
-  isClient = false,
-}: {
-  value: JSExceptionType;
-  isClient: boolean;
-}) => {
+const JSException = ({ value, isClient = false }: { value: JSExceptionType; isClient: boolean }) => {
   const tag = isClient ? ErrorTagType.client : ErrorTagType.server;
   const [sourceLines, _setSourceLines] = React.useState(value?.stack?.source_lines ?? []);
   var message = value.message || "";
@@ -791,7 +779,7 @@ const JSException = ({
                 sourceLines={sourceLines}
                 setSourceLines={setSourceLines}
               >
-                <Indent by={value.stack.frames[0].position.column_start}>
+                <Indent by={value.stack.frames[0].position.column}>
                   <span className="BunError-error-typename">{fancyTypeError.runtimeTypeName}</span>
                 </Indent>
               </NativeStackTrace>
@@ -853,13 +841,7 @@ const JSException = ({
   }
 };
 
-const Summary = ({
-  errorCount,
-  onClose,
-}: {
-  errorCount: number;
-  onClose: () => void;
-}) => {
+const Summary = ({ errorCount, onClose }: { errorCount: number; onClose: () => void }) => {
   return (
     <div className="BunError-Summary">
       <div className="BunError-Summary-ErrorIcon"></div>
@@ -1001,11 +983,7 @@ const Footer = ({ toMarkdown, data }) => (
   </div>
 );
 
-const BuildFailureMessageContainer = ({
-  messages,
-}: {
-  messages: Message[];
-}) => {
+const BuildFailureMessageContainer = ({ messages }: { messages: Message[] }) => {
   return (
     <div id="BunErrorOverlay-container">
       <div className="BunError-content">
@@ -1153,14 +1131,14 @@ export function renderRuntimeError(error: Error) {
         file: error[fileNameProperty] || "",
         position: {
           line: +error[lineNumberProperty] || 1,
-          column_start: +error[columnNumberProperty] || 1,
+          column: +error[columnNumberProperty] || 1,
         },
       } as StackFrame);
     } else if (exception.stack && exception.stack.frames.length > 0) {
       exception.stack.frames[0].position.line = error[lineNumberProperty];
 
       if (Number.isFinite(error[columnNumberProperty])) {
-        exception.stack.frames[0].position.column_start = error[columnNumberProperty];
+        exception.stack.frames[0].position.column = error[columnNumberProperty];
       }
     }
   }
@@ -1214,27 +1192,27 @@ export function renderRuntimeError(error: Error) {
           }
           var frame = exception.stack.frames[frameIndex];
 
-          const { line, column_start } = frame.position;
-          const remapped = remapPosition(mappings, line, column_start);
+          const { line, column } = frame.position;
+          const remapped = remapPosition(mappings, line, column);
           if (!remapped) return null;
           frame.position.line_start = frame.position.line = remapped[0];
           frame.position.column_stop =
             frame.position.expression_stop =
             frame.position.expression_start =
-            frame.position.column_start =
+            frame.position.column =
               remapped[1];
         }, console.error);
       } else {
         if (!mappings) return null;
         var frame = exception.stack.frames[frameIndex];
-        const { line, column_start } = frame.position;
-        const remapped = remapPosition(mappings, line, column_start);
+        const { line, column } = frame.position;
+        const remapped = remapPosition(mappings, line, column);
         if (!remapped) return null;
         frame.position.line_start = frame.position.line = remapped[0];
         frame.position.column_stop =
           frame.position.expression_stop =
           frame.position.expression_start =
-          frame.position.column_start =
+          frame.position.column =
             remapped[1];
       }
     });

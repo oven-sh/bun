@@ -99,8 +99,7 @@ async function runTests(target) {
 
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
-        const label = getBuildLabel();
-        reportAnnotationToBuildKite(label, markdown);
+        reportAnnotationToBuildKite(title, markdown);
       }
 
       if (!ok) {

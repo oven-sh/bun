@@ -555,19 +555,16 @@ pub const Tree = struct {
 
             const dependency = builder.dependencies[dep_id];
 
-            // Do not hoist aliased packages
-            const destination = if (dependency.name_hash != name_hashes[pid])
-                next.id
-            else
-                next.hoistDependency(
-                    true,
-                    pid,
-                    dep_id,
-                    &dependency,
-                    dependency_lists,
-                    trees,
-                    builder,
-                ) catch |err| return err;
+            const destination = try next.hoistDependency(
+                true,
+                pid,
+                dep_id,
+                &dependency,
+                dependency_lists,
+                trees,
+                builder,
+            );
+
             switch (destination) {
                 Tree.dependency_loop, Tree.hoisted => continue,
                 else => {
@@ -3953,7 +3950,8 @@ pub const Package = extern struct {
             .npm => String.Builder.stringHash(dependency_version.value.npm.name.slice(buf)),
             .workspace => if (strings.hasPrefixComptime(sliced.slice, "workspace:")) brk: {
                 const input = sliced.slice["workspace:".len..];
-                if (!strings.eqlComptime(input, "*")) {
+                const trimmed = strings.trim(input, &strings.whitespace_chars);
+                if (trimmed.len != 1 or (trimmed[0] != '*' and trimmed[0] != '^' and trimmed[0] != '~')) {
                     const at = strings.lastIndexOfChar(input, '@') orelse 0;
                     if (at > 0) {
                         workspace_range = Semver.Query.parse(allocator, input[at + 1 ..], sliced) catch return error.InstallFailed;

@@ -331,12 +331,12 @@ describe("workspace aliases", async () => {
     );
 
     expect(files).toMatchObject([
-      { name: "a0" },
+      { name: "@org/a" },
       { name: "@org/b" },
       { name: "c" },
       { name: "c" },
       { name: "@org/a" },
-      { name: "@org/b" },
+      { name: "@org/a" },
     ]);
   });
   var shouldPass: string[] = [
@@ -376,7 +376,7 @@ describe("workspace aliases", async () => {
       const files = await Promise.all([
         file(join(packageDir, "node_modules", "@org", "a", "package.json")).json(),
         file(join(packageDir, "node_modules", "@org", "b", "package.json")).json(),
-        file(join(packageDir, "packages", "pkg1", "node_modules", "a1", "package.json")).json(),
+        file(join(packageDir, "node_modules", "a1", "package.json")).json(),
       ]);
 
       expect(files).toMatchObject([{ name: "@org/a" }, { name: "@org/b" }, { name: "@org/b" }]);

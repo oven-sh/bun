@@ -8995,8 +8995,6 @@ pub const PackageManager = struct {
 
     const patch_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
-        // clap.parseParam("--edit-dir <dir>                    The package that needs to be modified will be extracted to this directory") catch unreachable,
-        // clap.parseParam("--ignore-existing                     Ignore existing patch files when patching") catch unreachable,
     };
 
     const patch_commit_params = install_params_ ++ [_]ParamType{
@@ -9130,18 +9128,8 @@ pub const PackageManager = struct {
                         \\
                         \\Prepare a package for patching.
                         \\
-                        \\<b>Options:<r>
-                        \\  <cyan>--edit-dir<r>               <d>The package that needs to be modified will be extracted to this directory.<r>
-                        \\  <cyan>--ignore-existing<r>        <d>Ignore existing patch files when patching.<r>
-                        \\
                     ;
-                    // const outro_text =
-                    //     \\<b>Options:<r>
-                    //     \\  <d>--edit-dir<r>
-                    //     \\  <b><green>bun update<r>
-                    //     \\
-                    //     \\Full documentation is available at <magenta>https://bun.sh/docs/cli/update<r>
-                    // ;
+
                     Output.pretty("\n" ++ intro_text, .{});
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
@@ -9333,10 +9321,7 @@ pub const PackageManager = struct {
             }
 
             if (comptime subcommand == .patch) {
-                cli.patch = .{
-                    .edit_dir = args.option("--edit-dir"),
-                    .ignore_existing = args.flag("--ignore-existing"),
-                };
+                cli.patch = .{};
             }
 
             if (comptime subcommand == .patch_commit) {

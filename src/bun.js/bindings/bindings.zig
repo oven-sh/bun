@@ -4776,9 +4776,11 @@ pub const JSValue = enum(JSValueReprInt) {
         };
     }
 
+    // `this` must be known to be an object
     // intended to be more lightweight than ZigString.
-    // safe to use on things that are not cells (returns null)
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
+        if (bun.Environment.allow_assert)
+            bun.assert(this.isObject());
         const result = fastGet_(this, global, @intFromEnum(builtin_name));
         if (result == .zero or
             // JS APIs treat {}.a as mostly the same as though it was not defined
@@ -4874,6 +4876,8 @@ pub const JSValue = enum(JSValueReprInt) {
 
     /// safe to use on any JSValue
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
+        if (!this.isObject())
+            return false;
         const function = this.fastGet(global, BuiltinName.toString) orelse
             return false;
         return function.isCell() and function.isCallable(global.vm());

@@ -2121,6 +2121,14 @@ pub const Interpreter = struct {
                     assert(this.child_state == .cmd_subst);
                 }
 
+                // This branch is true means that we expanded
+                // a single command substitution and it failed.
+                //
+                // This information is propagated to `Cmd` because in the case
+                // that the command substitution would be expanded to the
+                // command name (e.g. `$(lkdfjsldf)`), and it fails, the entire
+                // command should fail with the exit code of the command
+                // substitution.
                 if (exit_code != 0 and
                     this.node.* == .simple and
                     this.node.simple == .cmd_subst)
@@ -4552,6 +4560,13 @@ pub const Interpreter = struct {
                     this.writeFailingError("{s}", .{buf});
                     return;
                 }
+                // Handling this case from the shell spec:
+                // "If there is no command name, but the command contained a
+                // command substitution, the command shall complete with the
+                // exit status of the last command substitution performed."
+                //
+                // See the comment where `this.out_exit_code` is assigned for
+                // more info.
                 const e: *Expansion = child.ptr.as(Expansion);
                 if (this.state == .expanding_args and
                     e.node.* == .simple and
@@ -4591,6 +4606,18 @@ pub const Interpreter = struct {
 
                 const first_arg = this.args.items[0] orelse {
                     // Sometimes the expansion can result in an empty string
+                    //
+                    //  For example:
+                    //
+                    //     await $`echo "" > script.sh`
+                    //     await $`(bash ./script.sh)`
+                    //     await $`$(lkdlksdfjsf)`
+                    //
+                    // In this case, we should just exit.
+                    //
+                    // BUT, if the expansion contained a single command
+                    // substitution (third example above), then we need to
+                    // return the exit code of that command substitution.
                     this.parent.childDone(this, this.exit_code orelse 0);
                     return;
                 };

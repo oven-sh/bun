@@ -23,7 +23,8 @@ steps:
       - key: "bun-darwin-aarch64-zig"
         label: ":darwin: aarch64 - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -99,7 +100,8 @@ steps:
       - key: "bun-darwin-x64-zig"
         label: ":darwin: x64 - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -175,7 +177,8 @@ steps:
       - key: "bun-darwin-x64-baseline-zig"
         label: ":darwin: x64-baseline - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -251,7 +254,8 @@ steps:
       - key: "bun-linux-aarch64-zig"
         label: ":linux: aarch64 - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -327,7 +331,8 @@ steps:
       - key: "bun-linux-x64-zig"
         label: ":linux: x64 - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -403,7 +408,8 @@ steps:
       - key: "bun-linux-x64-baseline-zig"
         label: ":linux: x64-baseline - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -475,7 +481,8 @@ steps:
       - key: "bun-windows-x64-zig"
         label: ":windows: x64 - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:
@@ -562,7 +569,8 @@ steps:
       - key: "bun-windows-x64-baseline-zig"
         label: ":windows: x64-baseline - bun-zig"
         agents:
-          zig: "true"
+          os: "darwin"
+          arch: "aarch64"
         artifact_paths:
           - "bun-zig.o"
         env:

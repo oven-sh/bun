@@ -153,6 +153,81 @@ Inflate.prototype._flush = function (callback) {
   callback(undefined, this[kHandle].decodeSync("", undefined, true));
 };
 
+//
+
+function deflateRaw(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
+  if (options && options.windowBits === 8) options.windowBits = 9;
+  const encoder = createDeflateEncoder(options, {}, callback);
+  encoder.encode(buffer, undefined, true);
+}
+
+function deflateSyncRaw(buffer, options) {
+  if (options && options.windowBits === 8) options.windowBits = 9;
+  const encoder = createDeflateEncoder(options, {}, null);
+  return encoder.encodeSync(buffer, undefined, true);
+}
+
+function inflateRaw(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
+  const decoder = createDeflateDecoder(options, {}, callback);
+  decoder.decode(buffer, undefined, true);
+}
+
+function inflateSyncRaw(buffer, options) {
+  const decoder = createDeflateDecoder(options, {}, null);
+  return decoder.decodeSync(buffer, undefined, true);
+}
+
+//
+
+function createDeflateRaw(opts) {
+  return new DeflateRaw(opts);
+}
+
+function DeflateRaw(opts) {
+  if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
+  if (opts && opts.windowBits === 8) opts.windowBits = 9;
+  this[kHandle] = createDeflateEncoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+DeflateRaw.prototype = {};
+ObjectSetPrototypeOf(DeflateRaw.prototype, stream.Transform.prototype);
+
+DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
+  callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
+};
+DeflateRaw.prototype._flush = function _flush(callback) {
+  callback(undefined, this[kHandle].encodeSync("", undefined, true));
+};
+
+function createInflateRaw(opts) {
+  return new InflateRaw(opts);
+}
+
+function InflateRaw(opts) {
+  if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
+  this[kHandle] = createDeflateDecoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+InflateRaw.prototype = {};
+ObjectSetPrototypeOf(InflateRaw.prototype, stream.Transform.prototype);
+
+InflateRaw.prototype._transform = function (chunk, encoding, callback) {
+  callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
+};
+InflateRaw.prototype._flush = function (callback) {
+  callback(undefined, this[kHandle].decodeSync("", undefined, true));
+};
+
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads
@@ -4210,15 +4285,7 @@ var require_lib = __commonJS({
     exports.constants = require_constants();
     exports.Gzip = Gzip;
     exports.Gunzip = Gunzip;
-    exports.DeflateRaw = DeflateRaw;
-    exports.InflateRaw = InflateRaw;
     exports.Unzip = Unzip;
-    exports.createDeflateRaw = function (o) {
-      return new DeflateRaw(o);
-    };
-    exports.createInflateRaw = function (o) {
-      return new InflateRaw(o);
-    };
     exports.createGzip = function (o) {
       return new Gzip(o);
     };
@@ -4237,16 +4304,6 @@ var require_lib = __commonJS({
     };
     exports.gzipSync = function (buffer, opts) {
       return zlibBufferSync(new Gzip(opts), buffer);
-    };
-    exports.deflateRaw = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new DeflateRaw(opts), buffer, callback);
-    };
-    exports.deflateRawSync = function (buffer, opts) {
-      return zlibBufferSync(new DeflateRaw(opts), buffer);
     };
     exports.unzip = function (buffer, opts, callback) {
       if (typeof opts === "function") {
@@ -4268,16 +4325,6 @@ var require_lib = __commonJS({
     exports.gunzipSync = function (buffer, opts) {
       return zlibBufferSync(new Gunzip(opts), buffer);
     };
-    exports.inflateRaw = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new InflateRaw(opts), buffer, callback);
-    };
-    exports.inflateRawSync = function (buffer, opts) {
-      return zlibBufferSync(new InflateRaw(opts), buffer);
-    };
 
     exports.brotliCompress = brotliCompress;
     exports.brotliDecompress = brotliDecompress;
@@ -4296,6 +4343,15 @@ var require_lib = __commonJS({
     exports.Deflate = Deflate;
     exports.createInflate = createInflate;
     exports.Inflate = Inflate;
+
+    exports.deflateRaw = deflateRaw;
+    exports.deflateSyncRaw = deflateSyncRaw;
+    exports.inflateRaw = inflateRaw;
+    exports.inflateSyncRaw = inflateSyncRaw;
+    exports.createDeflateRaw = createDeflateRaw;
+    exports.DeflateRaw = DeflateRaw;
+    exports.createInflateRaw = createInflateRaw;
+    exports.InflateRaw = InflateRaw;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];
@@ -4353,14 +4409,6 @@ var require_lib = __commonJS({
     function Gunzip(opts) {
       if (!(this instanceof Gunzip)) return new Gunzip(opts);
       Zlib.$call(this, opts, binding.GUNZIP);
-    }
-    function DeflateRaw(opts) {
-      if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-      Zlib.$call(this, opts, binding.DEFLATERAW);
-    }
-    function InflateRaw(opts) {
-      if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-      Zlib.$call(this, opts, binding.INFLATERAW);
     }
     function Unzip(opts) {
       if (!(this instanceof Unzip)) return new Unzip(opts);
@@ -4633,8 +4681,6 @@ var require_lib = __commonJS({
     };
     util.inherits(Gzip, Zlib);
     util.inherits(Gunzip, Zlib);
-    util.inherits(DeflateRaw, Zlib);
-    util.inherits(InflateRaw, Zlib);
     util.inherits(Unzip, Zlib);
   },
 });

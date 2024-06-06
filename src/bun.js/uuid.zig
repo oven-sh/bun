@@ -30,6 +30,7 @@ pub fn initWith(bytes: *const [16]u8) UUID {
 
     return uuid;
 }
+pub const stringLength = 36;
 
 // Indices in the UUID string representation for each byte.
 const encoded_pos = [16]u8{ 0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34 };

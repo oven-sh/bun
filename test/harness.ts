@@ -142,7 +142,6 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
         makeTree(joined, contents);
         continue;
       }
-      console.log("MAKING", joined);
       fs.writeFileSync(joined, contents);
     }
   }

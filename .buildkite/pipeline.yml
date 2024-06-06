@@ -606,7 +606,7 @@ steps:
         command:
           - "mkdir build"
           - 'buildkite-agent artifact download "**" build --step bun-windows-x64-baseline-codegen'
-          - "powershell -command \".\\scripts\\build-bun-cpp.ps1\" -IsBaseline $$True -Fast $$True"
+          - "powershell -command \".\\scripts\\build-bun-cpp.ps1\" -Baseline $$True -Fast $$True"
           - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
       - key: "bun-windows-x64-baseline"
         label: ":windows: x64-baseline - bun"

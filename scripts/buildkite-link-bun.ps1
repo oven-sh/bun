@@ -1,6 +1,6 @@
 param (
   [Parameter][bool]$Baseline = $False,
-  [Parameter][bool]$Fast = $True
+  [Parameter][bool]$Fast = $False
 )
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash

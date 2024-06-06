@@ -352,126 +352,6 @@ pub const PatchFile = struct {
 
         return JSC.Maybe(void).success;
     }
-
-    fn applyPatch2(patch: *const FilePatch) !void {
-        const file_path: []const u8 = patch.path;
-        const stat = try std.os.fstatat(std.fs.cwd().fd, file_path, 0);
-        const srcfile = try std.os.mmap(null, stat.size, std.os.PROT.READ, std.os.MAP.SHARED, -1, 0);
-        _ = srcfile; // autofix
-
-        var result = List(u8){};
-        defer result.deinit(bun.default_allocator);
-
-        const last = patch.hunks.items.len -| 1;
-        _ = last; // autofix
-        for (patch.hunks.items, 0..) |*hunk, i| {
-            _ = hunk; // autofix
-            _ = i; // autofix
-
-            // if (result.) {}
-        }
-    }
-
-    // const Chunk = union(enum) {
-    //     range: Range,
-    //     hunk: *const Hunk,
-
-    //     /// zero based line start and length
-    //     const Range = struct { start: usize, len: usize };
-
-    //     const Builder = struct {
-    //         result: List(Chunk) = .{},
-
-    //         fn build(
-    //             this: *Builder,
-    //             allocator: Allocator,
-    //             patch: *const FilePatch,
-    //             stat: std.os.Stat,
-    //         ) !List(Chunk) {
-    //             const file_size: usize = stat.size;
-
-    //             const last = patch.hunks.items.len -| 1;
-    //             for (patch.hunks.items, 0..) |*hunk, i| {
-    //                 // Add a filler range to fill in the gaps between hunks
-    //                 if (this.result.items.len == 0) {
-    //                     this.result.append(
-    //                         allocator,
-    //                         .{ .range = .{ .start = 0, .len = hunk.header.original.start - 1 } },
-    //                     ) catch unreachable;
-    //                 } else {
-    //                     var prev = &this.result.items[this.result.items.len - 1];
-    //                     switch (prev) {
-    //                         .range => {
-    //                             const diff = hunk.header.original.start - 1 - (prev.range.start + prev.range.len);
-    //                             prev.range.len += diff;
-    //                         },
-    //                         .hunk => {
-    //                             const diff = hunk.header.original.start - 1 - (prev.hunk.header.original.start - 1 + prev.hunk.header.original.len);
-    //                             const new_range: Range = .{
-    //                                 .start = prev.hunk.header.original.start - 1 + prev.hunk.header.original.len,
-    //                                 .len = diff,
-    //                             };
-    //                             try this.result.append(bun.default_allocator, .{ .range = new_range });
-    //                         },
-    //                     }
-    //                 }
-
-    //                 try this.result.append(bun.default_allocator, .{ .hunk = hunk });
-
-    //                 if (i == last) {
-    //                     const diff = file_size - (hunk.header.original.start - 1 + hunk.header.original.len);
-    //                     const new_range: Range = .{
-    //                         .start = hunk.header.original.start - 1 + hunk.header.original.len,
-    //                         .len = diff,
-    //                     };
-    //                     try this.result.append(bun.default_allocator, .{ .range = new_range });
-    //                 }
-    //             }
-    //         }
-    //     };
-
-    //     fn fromPatch(allocator: Allocator, patch: *const FilePatch) !List(Chunk) {
-    //         var builder = .{};
-    //         try builder.build(allocator, patch);
-    //     }
-    // };
-
-    // fn applyPatchSmall(patch: *const FilePatch, stat: std.os.Stat) !void {
-    //     const file_path: []const u8 = patch.path;
-    //     const total_size = brk: {
-    //         var total: usize = stat.size;
-    //         for (patch.hunks.items) |*hunk| {
-    //             total += @as(i64, @intCast(hunk.header.patched.len)) -
-    //                 @as(i64, @intCast(hunk.header.original.len));
-    //         }
-    //         break :brk total;
-    //     };
-
-    //     var membuf = try bun.default_allocator.alloc(u8, total_size);
-    //     _ = try std.fs.cwd().readFile(file_path, membuf);
-
-    //     var cursor_line: usize = 0;
-    //     var cursor_byte: usize = 0;
-    //     for (patch.hunks.items) |*hunk| {
-    //         const hunk_start = hunk.header.patched.start - 1;
-    //         // not sure when this happens, maybe not necessary
-    //         if (hunk_start < 0) continue;
-
-    //         const line_diff = hunk_start - cursor_line;
-
-    //         for (0..line_diff) |_| {
-    //             cursor_byte += std.mem.indexOf(u8, membuf[cursor_byte..], '\n') + 1;
-    //             cursor_line += 1;
-    //         }
-
-    //         for (hunk.parts.items) |*part_| {
-    //             const part: *PatchMutationPart = part_;
-    //             switch (part.type) {
-    //                 .deletion,
-    //             }
-    //         }
-    //     }
-    // }
 };
 
 const FileDeets = struct {
@@ -893,11 +773,11 @@ const PatchLinesParser = struct {
         while (lines.next()) |line| {
             switch (this.state) {
                 .parsing_header => {
-                    if (std.mem.startsWith(u8, line, "@@")) {
+                    if (bun.strings.hasPrefix(line, "@@")) {
                         this.state = .parsing_hunks;
                         this.current_file_patch.hunks = .{};
                         lines.back();
-                    } else if (std.mem.startsWith(u8, line, "diff --git ")) {
+                    } else if (bun.strings.hasPrefix(line, "diff --git ")) {
                         if (this.current_file_patch.diff_line_from_path != null) {
                             this.commitFilePatch();
                         }
@@ -911,30 +791,30 @@ const PatchLinesParser = struct {
                         };
                         this.current_file_patch.diff_line_from_path = match[0];
                         this.current_file_patch.diff_line_to_path = match[1];
-                    } else if (std.mem.startsWith(u8, line, "old mode ")) {
+                    } else if (bun.strings.hasPrefix(line, "old mode ")) {
                         this.current_file_patch.old_mode = std.mem.trim(u8, line["old mode ".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "new mode ")) {
+                    } else if (bun.strings.hasPrefix(line, "new mode ")) {
                         this.current_file_patch.new_mode = std.mem.trim(u8, line["new mode ".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "deleted file mode ")) {
+                    } else if (bun.strings.hasPrefix(line, "deleted file mode ")) {
                         this.current_file_patch.deleted_file_mode = std.mem.trim(u8, line["deleted file mode ".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "new file mode ")) {
+                    } else if (bun.strings.hasPrefix(line, "new file mode ")) {
                         this.current_file_patch.new_file_mode = std.mem.trim(u8, line["new file mode ".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "rename from ")) {
+                    } else if (bun.strings.hasPrefix(line, "rename from ")) {
                         this.current_file_patch.rename_from = std.mem.trim(u8, line["rename from ".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "rename to ")) {
+                    } else if (bun.strings.hasPrefix(line, "rename to ")) {
                         this.current_file_patch.rename_to = std.mem.trim(u8, line["rename to ".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "index ")) {
+                    } else if (bun.strings.hasPrefix(line, "index ")) {
                         const hashes = parseDiffHashes(line["index ".len..]) orelse continue;
                         this.current_file_patch.before_hash = hashes[0];
                         this.current_file_patch.after_hash = hashes[1];
-                    } else if (std.mem.startsWith(u8, line, "--- ")) {
+                    } else if (bun.strings.hasPrefix(line, "--- ")) {
                         this.current_file_patch.from_path = std.mem.trim(u8, line["--- a/".len..], WHITESPACE);
-                    } else if (std.mem.startsWith(u8, line, "+++ ")) {
+                    } else if (bun.strings.hasPrefix(line, "+++ ")) {
                         this.current_file_patch.to_path = std.mem.trim(u8, line["+++ b/".len..], WHITESPACE);
                     }
                 },
                 .parsing_hunks => {
-                    if (opts.support_legacy_diffs and std.mem.startsWith(u8, line, "--- a/")) {
+                    if (opts.support_legacy_diffs and bun.strings.hasPrefix(line, "--- a/")) {
                         this.state = .parsing_header;
                         this.commitFilePatch();
                         lines.back();
@@ -969,7 +849,7 @@ const PatchLinesParser = struct {
                             this.current_hunk = try parseHunkHeaderLine(line);
                         },
                         .pragma => {
-                            if (!std.mem.startsWith(u8, line, "\\ No newline at end of file")) {
+                            if (!bun.strings.hasPrefix(line, "\\ No newline at end of file")) {
                                 // TODO: store line
                                 return ParseErr.unrecognized_pragma;
                             }
@@ -1136,7 +1016,7 @@ const PatchLinesParser = struct {
         // index 2de83dd..842652c 100644
         //       ^
         //       we expect that we are here
-        bun.debugAssert(!std.mem.startsWith(u8, line, "index "));
+        bun.debugAssert(!bun.strings.hasPrefix(line, "index "));
 
         // From @pnpm/patch-package the regex is this:
         // const match = line.match(/(\w+)\.\.(\w+)/)
@@ -1174,7 +1054,7 @@ const PatchLinesParser = struct {
         // const match = line.match(/^diff --git a\/(.*?) b\/(.*?)\s*$/)
 
         const prefix = "diff --git a/";
-        if (!std.mem.startsWith(u8, line, prefix)) return null;
+        if (!bun.strings.hasPrefix(line, prefix)) return null;
         // diff --git a/banana.ts b/banana.ts
         //              ^
         var rest = line[prefix.len..];

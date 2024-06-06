@@ -1141,7 +1141,7 @@ function reportOutputToGitHubAction(name, value) {
     return;
   }
   const delimeter = Math.random().toString(36).substring(2, 15);
-  const content = `${name}<<${delimeter}\n${value}\n${delimeter}`;
+  const content = `${name}<<${delimeter}\n${value}\n${delimeter}\n`;
   appendFileSync(outputPath, content);
 }
 

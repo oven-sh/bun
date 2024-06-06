@@ -359,7 +359,7 @@ bool JSBroadcastChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknow
 {
     auto* jsBroadcastChannel = jsCast<JSBroadcastChannel*>(handle.slot()->asCell());
     auto& wrapped = jsBroadcastChannel->wrapped();
-    if (/*!wrapped.isContextStopped() && */ wrapped.hasPendingActivity()) {
+    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;

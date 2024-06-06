@@ -674,8 +674,10 @@ const Task = struct {
                 defer {
                     bun.default_allocator.free(body);
                 }
+
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
+                    manager.scopeForPackageName(manifest.name.slice()),
                     manifest.network.http.response.?,
                     body,
                     &this.log,
@@ -1912,23 +1914,6 @@ pub const PackageInstall = struct {
         destination_dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
-    // these are just a symlink/junction
-    pub fn uninstallLinkBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
-        if (comptime Environment.isWindows) {
-            bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
-                if (err == error.ENOTDIR) {
-                    _ = bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath);
-                }
-            };
-        } else {
-            bun.sys.unlinkat(bun.toFD(destination_dir), this.destination_dir_subpath).unwrap() catch |err| {
-                if (err == error.EISDIR or err == error.EPERM) {
-                    _ = bun.sys.rmdirat(bun.toFD(destination_dir), this.destination_dir_subpath);
-                }
-            };
-        }
-    }
-
     pub fn uninstallBeforeInstall(this: *PackageInstall, destination_dir: std.fs.Dir) void {
         var rand_path_buf: [48]u8 = undefined;
         const temp_path = std.fmt.bufPrintZ(&rand_path_buf, ".old-{}", .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))}) catch unreachable;
@@ -2069,7 +2054,7 @@ pub const PackageInstall = struct {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallLinkBeforeInstall(destination_dir);
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstallBeforeInstall(destination_dir);
 
         const subdir = std.fs.path.dirname(dest_path);
 
@@ -2352,23 +2337,28 @@ const PackageManifestMap = struct {
     };
     const HashMap = std.HashMapUnmanaged(PackageNameHash, Value, IdentityContext(PackageNameHash), 80);
 
-    pub fn byName(this: *PackageManifestMap, name: []const u8) ?*Npm.PackageManifest {
-        return this.byNameHash(String.Builder.stringHash(name));
+    pub fn byName(this: *PackageManifestMap, scope: *const Npm.Registry.Scope, name: []const u8) ?*Npm.PackageManifest {
+        return this.byNameHash(scope, String.Builder.stringHash(name));
     }
 
     pub fn insert(this: *PackageManifestMap, name_hash: PackageNameHash, manifest: *const Npm.PackageManifest) !void {
         try this.hash_map.put(bun.default_allocator, name_hash, .{ .manifest = manifest.* });
     }
 
-    pub fn byNameHash(this: *PackageManifestMap, name_hash: PackageNameHash) ?*Npm.PackageManifest {
-        return byNameHashAllowExpired(this, name_hash, null);
+    pub fn byNameHash(this: *PackageManifestMap, scope: *const Npm.Registry.Scope, name_hash: PackageNameHash) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, scope, name_hash, null);
     }
 
-    pub fn byNameAllowExpired(this: *PackageManifestMap, name: string, is_expired: ?*bool) ?*Npm.PackageManifest {
-        return byNameHashAllowExpired(this, String.Builder.stringHash(name), is_expired);
+    pub fn byNameAllowExpired(this: *PackageManifestMap, scope: *const Npm.Registry.Scope, name: string, is_expired: ?*bool) ?*Npm.PackageManifest {
+        return byNameHashAllowExpired(this, scope, String.Builder.stringHash(name), is_expired);
     }
 
-    pub fn byNameHashAllowExpired(this: *PackageManifestMap, name_hash: PackageNameHash, is_expired: ?*bool) ?*Npm.PackageManifest {
+    pub fn byNameHashAllowExpired(
+        this: *PackageManifestMap,
+        scope: *const Npm.Registry.Scope,
+        name_hash: PackageNameHash,
+        is_expired: ?*bool,
+    ) ?*Npm.PackageManifest {
         const entry = this.hash_map.getOrPut(bun.default_allocator, name_hash) catch bun.outOfMemory();
         if (entry.found_existing) {
             if (entry.value_ptr.* == .manifest) {
@@ -2386,7 +2376,12 @@ const PackageManifestMap = struct {
         }
 
         if (PackageManager.instance.options.enable.manifest_cache) {
-            if (Npm.PackageManifest.Serializer.loadByFileID(PackageManager.instance.allocator, PackageManager.instance.getCacheDirectory(), name_hash) catch null) |manifest| {
+            if (Npm.PackageManifest.Serializer.loadByFileID(
+                PackageManager.instance.allocator,
+                scope,
+                PackageManager.instance.getCacheDirectory(),
+                name_hash,
+            ) catch null) |manifest| {
                 if (PackageManager.instance.options.enable.manifest_cache_control and manifest.pkg.public_max_age > PackageManager.instance.timestamp_for_manifest_cache_control) {
                     entry.value_ptr.* = .{ .manifest = manifest };
                     return &entry.value_ptr.manifest;
@@ -3020,11 +3015,10 @@ pub const PackageManager = struct {
 
     pub fn formatLaterVersionInCache(
         this: *PackageManager,
-        name: []const u8,
+        package_name: string,
         name_hash: PackageNameHash,
         resolution: Resolution,
     ) ?Semver.Version.Formatter {
-        _ = name; // autofix
         switch (resolution.tag) {
             Resolution.Tag.npm => {
                 if (resolution.value.npm.version.tag.hasPre())
@@ -3036,7 +3030,7 @@ pub const PackageManager = struct {
                 if (this.isContinuousIntegration())
                     return null;
 
-                const manifest: *const Npm.PackageManifest = this.manifests.byNameHash(name_hash) orelse return null;
+                const manifest = this.manifests.byNameHash(this.scopeForPackageName(package_name), name_hash) orelse return null;
 
                 if (manifest.findByDistTag("latest")) |latest_version| {
                     if (latest_version.version.order(
@@ -4019,7 +4013,8 @@ pub const PackageManager = struct {
                 }
 
                 // Resolve the version from the loaded NPM manifest
-                const manifest = this.manifests.byNameHash(name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
+                const name_str = this.lockfile.str(&name);
+                const manifest = this.manifests.byNameHash(this.scopeForPackageName(name_str), name_hash) orelse return null; // manifest might still be downloading. This feels unreliable.
                 const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
@@ -4602,7 +4597,7 @@ pub const PackageManager = struct {
                                 if (!this.hasCreatedNetworkTask(task_id)) {
                                     if (this.options.enable.manifest_cache) {
                                         var expired = false;
-                                        if (this.manifests.byNameHashAllowExpired(name_hash, &expired)) |manifest| {
+                                        if (this.manifests.byNameHashAllowExpired(this.scopeForPackageName(name_str), name_hash, &expired)) |manifest| {
                                             loaded_manifest = manifest.*;
 
                                             // If it's an exact package version already living in the cache
@@ -5298,7 +5293,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -5349,7 +5344,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -5392,7 +5387,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(string_buf),
                             @errorName(err),
                         });
                     }
@@ -5634,7 +5629,13 @@ pub const PackageManager = struct {
                             }
 
                             entry.value_ptr.manifest.pkg.public_max_age = timestamp_this_tick.?;
-                            Npm.PackageManifest.Serializer.saveAsync(&entry.value_ptr.manifest, manager.getTemporaryDirectory(), manager.getCacheDirectory());
+
+                            Npm.PackageManifest.Serializer.saveAsync(
+                                &entry.value_ptr.manifest,
+                                manager.scopeForPackageName(name.slice()),
+                                manager.getTemporaryDirectory(),
+                                manager.getCacheDirectory(),
+                            );
 
                             const dependency_list_entry = manager.task_queue.getEntry(task.task_id).?;
 
@@ -6286,7 +6287,7 @@ pub const PackageManager = struct {
             if (base.url.len == 0) base.url = Npm.Registry.default_url;
             this.scope = try Npm.Registry.Scope.fromAPI("", base, allocator, env);
             defer {
-                this.did_override_default_scope = !strings.eqlComptime(this.scope.url.href, Npm.Registry.default_url);
+                this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
             }
             if (bun_install_) |bun_install| {
                 if (bun_install.scoped) |scoped| {

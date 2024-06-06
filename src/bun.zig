@@ -2139,7 +2139,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        var out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        const out_argv = try allocator.alloc([:0]u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2149,11 +2149,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         try string_builder.allocate(allocator);
 
-        for (argvu16, 0..) |argraw, i| {
+        for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
-            // Command line is expected to be valid UTF-16le so this never
-            // fails and it's okay to unwrap pointer
-            out_argv[i] = string_builder.append16(arg).?;
+
+            // Command line is expected to be valid UTF-16le
+            // ...but sometimes, it's not valid. https://github.com/oven-sh/bun/issues/11610
+            out.* = string_builder.append16(arg, default_allocator) orelse @panic("Failed to allocate memory for argv");
         }
 
         argv = out_argv;
@@ -3458,3 +3459,49 @@ pub const timespec = extern struct {
         return now().addMs(interval);
     }
 };
+
+pub const UUID = @import("./bun.js/uuid.zig");
+
+/// An abstract number of element in a sequence. The sequence has a first element.
+/// This type should be used instead of integer because 2 contradicting traditions can
+/// call a first element '0' or '1' which makes integer type ambiguous.
+pub fn OrdinalT(comptime Int: type) type {
+    return enum(Int) {
+        invalid = switch (@typeInfo(Int).Int.signedness) {
+            .unsigned => std.math.maxInt(Int),
+            .signed => -1,
+        },
+        start = 0,
+        _,
+
+        pub fn fromZeroBased(int: Int) @This() {
+            assert(int >= 0);
+            assert(int != std.math.maxInt(Int));
+            return @enumFromInt(int);
+        }
+
+        pub fn fromOneBased(int: Int) @This() {
+            assert(int > 0);
+            return @enumFromInt(int - 1);
+        }
+
+        pub fn zeroBased(ord: @This()) Int {
+            return @intFromEnum(ord);
+        }
+
+        pub fn oneBased(ord: @This()) Int {
+            return @intFromEnum(ord) + 1;
+        }
+
+        pub fn add(ord: @This(), inc: Int) @This() {
+            return fromZeroBased(ord.zeroBased() + inc);
+        }
+
+        pub fn isValid(ord: @This()) bool {
+            return ord.zeroBased() >= 0;
+        }
+    };
+}
+
+/// ABI-equivalent of WTF::OrdinalNumber
+pub const Ordinal = OrdinalT(c_int);

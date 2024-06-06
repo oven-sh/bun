@@ -69,6 +69,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
 
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
+extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
+
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsDOMURLConstructor);
@@ -134,8 +137,8 @@ using JSDOMURLDOMConstructor = JSDOMConstructor<JSDOMURL>;
 static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "parse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_parse, 1 } },
     { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 1 } },
-    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_createObjectURL, 1 } },
-    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_revokeObjectURL, 1 } },
+    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun__createObjectURL, 1 } },
+    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun__revokeObjectURL, 1 } },
 };
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

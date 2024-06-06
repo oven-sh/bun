@@ -90,7 +90,8 @@ it("should create template from local folder", async () => {
   const bunCreateDir = join(x_dir, "bun-create");
   const testTemplate = "test-template";
 
-  await mkdir(join(bunCreateDir, testTemplate), { recursive: true });
+  await Bun.write(join(bunCreateDir, testTemplate, "index.js"), "hi");
+  await Bun.write(join(bunCreateDir, testTemplate, "foo", "bar.js"), "hi");
 
   const { exited } = spawn({
     cmd: [bunExe(), "create", testTemplate],
@@ -101,11 +102,31 @@ it("should create template from local folder", async () => {
     env: { ...env, BUN_CREATE_DIR: bunCreateDir },
   });
 
-  await exited;
+  expect(await exited).toBe(0);
 
   const dirStat = await stat(join(x_dir, testTemplate));
   expect(dirStat.isDirectory()).toBe(true);
+  expect(await Bun.file(join(x_dir, testTemplate, "index.js")).text()).toBe("hi");
+  expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
+
+it("should not mention cd prompt when created in current directory", async () => {
+  const { stdout, exited } = spawn({
+    cmd: [bunExe(), "create", "https://github.com/dylan-conway/create-test", "."],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "inherit",
+    env,
+  });
+
+  await exited;
+
+  const out = await Bun.readableStreamToText(stdout);
+
+  expect(out).toContain("bun dev");
+  expect(out).not.toContain("\n\n  cd \n  bun dev\n\n");
+}, 20_000);
 
 for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"]) {
   it(`should create and install github template from ${repo}`, async () => {
@@ -124,5 +145,5 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
 
     expect(await exited).toBe(0);
-  });
+  }, 20_000);
 }

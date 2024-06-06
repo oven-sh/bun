@@ -169,7 +169,7 @@ Some methods are not optimized yet.
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` doesn't support the following options: `eval` `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
+🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
@@ -433,7 +433,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
 
-🟡 `URL.createObjectURL` is missing. See [Issue #3925](https://github.com/oven-sh/bun/issues/3925)
+🟢 Fully implemented.
 
 ### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
 

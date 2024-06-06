@@ -10564,8 +10564,8 @@ pub const PackageManager = struct {
         var progress = &this.progress;
 
         if (comptime log_level.showProgress()) {
-            root_node = progress.start("", 0);
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+            root_node = progress.start("", 0);
             download_node = root_node.start(ProgressStrings.download(), 0);
 
             install_node = root_node.start(ProgressStrings.install(), this.lockfile.packages.len);
@@ -10944,8 +10944,8 @@ pub const PackageManager = struct {
         }
     }
     pub fn startProgressBar(manager: *PackageManager) void {
-        manager.downloads_node = manager.progress.start(ProgressStrings.download(), 0);
         manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+        manager.downloads_node = manager.progress.start(ProgressStrings.download(), 0);
         manager.setNodeName(manager.downloads_node.?, ProgressStrings.download_no_emoji_, ProgressStrings.download_emoji, true);
         manager.downloads_node.?.setEstimatedTotalItems(manager.total_tasks + manager.extracted_count);
         manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pendingTaskCount());
@@ -11601,8 +11601,8 @@ pub const PackageManager = struct {
             var save_node: *Progress.Node = undefined;
 
             if (comptime log_level.showProgress()) {
-                save_node = manager.progress.start(ProgressStrings.save(), 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+                save_node = manager.progress.start(ProgressStrings.save(), 0);
                 save_node.activate();
 
                 manager.progress.refresh();
@@ -11637,8 +11637,8 @@ pub const PackageManager = struct {
         if (manager.options.do.save_yarn_lock) {
             var node: *Progress.Node = undefined;
             if (comptime log_level.showProgress()) {
-                node = manager.progress.start("Saving yarn.lock", 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+                node = manager.progress.start("Saving yarn.lock", 0);
                 manager.progress.refresh();
             } else if (comptime log_level != .silent) {
                 Output.prettyErrorln("Saved yarn.lock", .{});

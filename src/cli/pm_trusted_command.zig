@@ -322,8 +322,8 @@ pub const TrustCommand = struct {
         var progress = &pm.progress;
 
         if (pm.options.log_level.showProgress()) {
-            root_node = progress.start("", 0);
             progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+            root_node = progress.start("", 0);
 
             scripts_node = root_node.start(PackageManager.ProgressStrings.script(), scripts_count);
             pm.scripts_node = &scripts_node;

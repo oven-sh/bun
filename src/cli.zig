@@ -2089,7 +2089,6 @@ pub const Command = struct {
                 .ReplCommand => 'G',
                 .ReservedCommand => 'w',
                 .ExecCommand => 'e',
-                // TODO: @dave should we make this function return [2]u8 instead of u8, running out of letters in alphabet
                 .PatchCommand => 'x',
                 .PatchCommitCommand => 'z',
             };

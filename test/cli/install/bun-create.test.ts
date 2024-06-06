@@ -126,7 +126,7 @@ it("should not mention cd prompt when created in current directory", async () =>
 
   expect(out).toContain("bun dev");
   expect(out).not.toContain("\n\n  cd \n  bun dev\n\n");
-});
+}, 20_000);
 
 for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"]) {
   it(`should create and install github template from ${repo}`, async () => {
@@ -145,5 +145,5 @@ for (const repo of ["https://github.com/dylan-conway/create-test", "github.com/d
     expect(await exists(join(x_dir, "create-test", "node_modules", "jquery"))).toBe(true);
 
     expect(await exited).toBe(0);
-  });
+  }, 20_000);
 }

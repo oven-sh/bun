@@ -488,6 +488,16 @@ describe("expect()", () => {
     expect({ b: undefined }).not.toStrictEqual({ a: 1 });
     expect({ b: 1 }).not.toStrictEqual({ a: undefined });
     expect({ b: undefined }).not.toStrictEqual({ a: undefined });
+    // @ts-expect-error
+    expect({ c: undefined, a: 1, b: undefined }).toEqual({ a: 1 });
+    // @ts-expect-error
+    expect({ a: 1 }).toEqual({ c: undefined, a: 1, b: undefined });
+    expect({ c: undefined, a: 1, b: undefined }).not.toStrictEqual({ a: 1 });
+    // @ts-expect-error
+    expect({ a: 1, b: undefined }).toEqual({ a: 1, c: undefined });
+    // @ts-expect-error
+    expect({ a: 1, c: undefined }).toEqual({ a: 1, b: undefined });
+    expect({ a: 1, b: undefined }).not.toStrictEqual({ a: 1, c: undefined });
   });
 
   // Doesn't work on jest because of https://github.com/jestjs/jest/issues/10788

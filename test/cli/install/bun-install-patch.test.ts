@@ -90,6 +90,13 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
    return !!(~~i & 1);
  };
 `;
+
+  const filepathEscape: (x:string) => string = process.platform === "win32" ? (s: string) => {
+    const charsToEscape = new Set(['/', ':',])
+    return s.split('').map(c => charsToEscape.has(c) ? '_' : c).join('')
+
+  } : (x: string) => x;
+
   const versions: [version: string, patchVersion?: string][] = [
     ["1.0.0"],
     ["github:i-voted-for-trump/is-even", "github:i-voted-for-trump/is-even#585f800"],
@@ -97,11 +104,12 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       "git@github.com:i-voted-for-trump/is-even.git",
       "git+ssh://git@github.com:i-voted-for-trump/is-even.git#585f8002bb16f7bec723a47349b67df451f1b25d",
     ],
-  ];
+  ]
 
   describe("should patch a dependency when its dependencies are not hoisted", async () => {
     // is-even depends on is-odd ^0.1.2 and we add is-odd 3.0.1, which should be hoisted
     for (const [version, patchVersion_] of versions) {
+      const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
@@ -110,7 +118,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
             "module": "index.ts",
             "type": "module",
             "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/is-even@${version}.patch`,
+              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
             "dependencies": {
               "is-even": version,
@@ -118,7 +126,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
             },
           }),
           patches: {
-            [`is-even@${version}.patch`]: is_even_patch,
+            [patchFilename]: is_even_patch,
           },
           "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
         });
@@ -146,7 +154,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
         },
       }),
       patches: {
-        [`is-odd@0.1.2.patch`]: is_odd_patch,
+        "is-odd@0.1.2.patch": is_odd_patch,
       },
       "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
     });
@@ -159,6 +167,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
 
   describe("should patch a dependency", async () => {
     for (const [version, patchVersion_] of versions) {
+      const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
@@ -167,14 +176,14 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
             "module": "index.ts",
             "type": "module",
             "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/is-even@${version}.patch`,
+              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
             "dependencies": {
               "is-even": version,
             },
           }),
           patches: {
-            [`is-even@${version}.patch`]: is_even_patch,
+            [patchFilename]: is_even_patch,
           },
           "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
         });
@@ -189,20 +198,21 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
 
   test("should patch a transitive dependency", async () => {
     const version = "0.1.2";
+    const patchFilename = filepathEscape(`is-odd@${version}.patch`);
     const filedir = tempDirWithFiles("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
         "type": "module",
         "patchedDependencies": {
-          [`is-odd@${version}`]: `patches/is-odd@${version}.patch`,
+          [`is-odd@${version}`]: `patches/${patchFilename}`,
         },
         "dependencies": {
           "is-even": "1.0.0",
         },
       }),
       patches: {
-        [`is-odd@${version}.patch`]: is_odd_patch,
+        [patchFilename]: is_odd_patch,
       },
       "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
     });
@@ -215,6 +225,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
 
   describe("should patch a dependency after it was already installed", async () => {
     for (const [version, patchVersion_] of versions) {
+      const patchfileName = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
@@ -227,7 +238,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
             },
           }),
           patches: {
-            [`is-even@${version}.patch`]: is_even_patch,
+            [patchfileName]: is_even_patch,
           },
           "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
         });
@@ -241,7 +252,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
           "module": "index.ts",
           "type": "module",
           "patchedDependencies": {
-            [`is-even@${patchVersion}`]: `patches/is-even@${version}.patch`,
+            [`is-even@${patchVersion}`]: `patches/${patchfileName}`,
           },
           "dependencies": {
             "is-even": version,
@@ -303,6 +314,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   describe("should update a dependency when the patchfile changes", async () => {
     $.throws(true);
     for (const [version, patchVersion_] of versions) {
+      const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
         const filedir = tempDirWithFiles("patch1", {
@@ -311,14 +323,14 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
             "module": "index.ts",
             "type": "module",
             "patchedDependencies": {
-              [`is-even@${patchVersion}`]: `patches/is-even@${version}.patch`,
+              [`is-even@${patchVersion}`]: `patches/${patchFilename}`,
             },
             "dependencies": {
               "is-even": version,
             },
           }),
           patches: {
-            [`is-even@${version}.patch`]: is_even_patch2,
+            [patchFilename]: is_even_patch2,
           },
           "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
         });
@@ -349,7 +361,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
         },
       }),
       patches: {
-        "is-odd@0.1.2.patch": is_odd_patch2,
+        ["is-odd@0.1.2.patch"]: is_odd_patch2,
       },
       "index.ts": /* ts */ `import isEven from 'is-even'; isEven(2); console.log('lol')`,
     });

@@ -69,7 +69,7 @@ pub const max_hex_hash_len: comptime_int = brk: {
 pub const max_buntag_hash_buf_len: comptime_int = max_hex_hash_len + bun_hash_tag.len + 1;
 pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
-pub const patch = @import("./patch.zig");
+pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
 
 // these bytes are skipped

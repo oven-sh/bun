@@ -1219,14 +1219,14 @@ pub const TestingAPIs = struct {
             }
         }
     };
-    pub fn applySync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         var args = switch (parseApplyArgs(globalThis, callframe)) {
             .err => |e| return e,
             .result => |a| a,
         };
         defer args.deinit();
 
-        if (args.patchfile.apply(bun.default_allocator, args.dir_fd)) |err| {
+        if (args.patchfile.apply(bun.default_allocator, args.dirfd)) |err| {
             globalThis.throwValue(err.toErrorInstance(globalThis));
             return .undefined;
         }

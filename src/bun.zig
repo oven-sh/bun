@@ -49,8 +49,6 @@ pub const allocators = @import("./allocators.zig");
 
 pub const patch = @import("./patch.zig");
 
-pub const anyhow = @import("./anyhow.zig");
-
 pub const glob = @import("./glob.zig");
 
 pub const shell = struct {

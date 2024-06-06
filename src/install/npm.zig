@@ -670,6 +670,11 @@ pub const PackageManifest = struct {
             try writer.writeAll(header_bytes);
             pos += header_bytes.len;
 
+            try writer.writeInt(u64, scope.url_hash, .little);
+            try writer.writeInt(u64, strings.withoutTrailingSlash(scope.url.href).len, .little);
+
+            pos += 128 / 8;
+
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     const bytes = std.mem.asBytes(&this.pkg);
@@ -683,9 +688,6 @@ pub const PackageManifest = struct {
                     try writeArray(Writer, writer, std.meta.Child(@TypeOf(field)), field, &pos);
                 }
             }
-
-            try writer.writeInt(u64, scope.url_hash, .little);
-            try writer.writeInt(u64, strings.withoutTrailingSlash(scope.url.href).len, .little);
         }
 
         fn writeFile(
@@ -923,6 +925,16 @@ pub const PackageManifest = struct {
             var reader = pkg_stream.reader();
             var package_manifest = PackageManifest{};
 
+            const registry_hash = try reader.readInt(u64, .little);
+            if (scope.url_hash != registry_hash) {
+                return null;
+            }
+
+            const registry_length = try reader.readInt(u64, .little);
+            if (strings.withoutTrailingSlash(scope.url.href).len != registry_length) {
+                return null;
+            }
+
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
@@ -933,16 +945,6 @@ pub const PackageManifest = struct {
                         std.meta.Child(@TypeOf(@field(package_manifest, field_name))),
                     );
                 }
-            }
-
-            const registry_hash = try reader.readInt(u64, .little);
-            if (scope.url_hash != registry_hash) {
-                return null;
-            }
-
-            const registry_length = try reader.readInt(u64, .little);
-            if (strings.withoutTrailingSlash(scope.url.href).len != registry_length) {
-                return null;
             }
 
             return package_manifest;

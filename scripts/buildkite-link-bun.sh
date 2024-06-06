@@ -8,15 +8,20 @@ if [ -z "$tag" ]; then
   exit 1
 fi
 
+export USE_LTO="ON"
+if [[ $* == *--fast* ]]; then
+  export USE_LTO="OFF"
+fi
+
 mkdir -p release
 buildkite-agent artifact download '**' release --step bun-$tag-deps
 buildkite-agent artifact download '**' release --step bun-$tag-zig
 buildkite-agent artifact download '**' release --step bun-$tag-cpp
 
 cmake \
-  -G Ninja \
+  -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DUSE_LTO=ON \
+  -DUSE_LTO=${USE_LTO} \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
   -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \

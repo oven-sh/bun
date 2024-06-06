@@ -1,5 +1,6 @@
 param (
-  [Parameter(Mandatory)][bool]$IsBaseline = $False
+  [Parameter(Mandatory)][bool]$IsBaseline = $False,
+  [Parameter][bool]$Fast = $True
 )
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
@@ -7,6 +8,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 $Tag = If ($IsBaseline) { "bun-windows-x64-baseline" } Else { "bun-windows-x64" }
 $TagSuffix = If ($IsBaseline) { "-Baseline" } Else { "" }
 $Flags = If ($IsBaseline) { "-DUSE_BASELINE_BUILD=1" } Else { "" }
+$UseLto = If ($Fast) { "OFF" } Else { "ON" }
 
 .\scripts\env.ps1 $TagSuffix
 
@@ -23,6 +25,7 @@ cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CONFIGURE_DEPENDS=1 `
   "-DCANARY=${CANARY_REVISION}" `
   -DBUN_LINK_ONLY=1 `
+  "-DUSE_LTO=${UseLto}" `
   "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../release/src/deps)" `
   "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../release/bun-cpp-objects.a)" `
   "-DBUN_ZIG_OBJ=$(Resolve-Path ../release/bun-zig.o)" `

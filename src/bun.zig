@@ -3460,6 +3460,8 @@ pub const timespec = extern struct {
     }
 };
 
+pub const UUID = @import("./bun.js/uuid.zig");
+
 /// An abstract number of element in a sequence. The sequence has a first element.
 /// This type should be used instead of integer because 2 contradicting traditions can
 /// call a first element '0' or '1' which makes integer type ambiguous.

@@ -3210,6 +3210,18 @@ pub const Blob = struct {
         return null;
     }
 
+    pub fn getMimeTypeOrContentType(this: *const Blob) ?bun.http.MimeType {
+        if (this.content_type_was_set) {
+            return bun.http.MimeType.init(this.content_type, null, null);
+        }
+
+        if (this.store) |store| {
+            return store.mime_type;
+        }
+
+        return null;
+    }
+
     pub fn getType(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,

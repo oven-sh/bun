@@ -4,7 +4,7 @@ pub usingnamespace @import("./webcore/streams.zig");
 pub usingnamespace @import("./webcore/blob.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
-
+pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
 const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;

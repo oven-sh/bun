@@ -289,6 +289,13 @@ pub const DeflateEncoder = struct {
             }
         }
     };
+
+    pub fn reset(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = globalThis;
+        _ = callframe;
+        _ = bun.zlib.deflateReset(&this.stream.state);
+        return .undefined;
+    }
 };
 
 pub const DeflateDecoder = struct {
@@ -566,4 +573,11 @@ pub const DeflateDecoder = struct {
             }
         }
     };
+
+    pub fn reset(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = globalThis;
+        _ = callframe;
+        _ = bun.zlib.inflateReset(&this.stream.state);
+        return .undefined;
+    }
 };

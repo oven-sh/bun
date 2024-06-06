@@ -111,6 +111,8 @@ const InflateEndResult = enum(c_int) {
 /// All dynamically allocated data structures for this stream are freed. This function discards any unprocessed input and does not flush any pending output.
 pub extern fn inflateEnd(stream: *zStream_struct) InflateEndResult;
 
+pub extern fn inflateReset(stream: *zStream_struct) InflateEndResult;
+
 pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
     return struct {
         const ZlibReader = @This();
@@ -641,6 +643,8 @@ pub extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
 ///   may be set but then points to a static string (which must not be
 ///   deallocated).
 pub extern fn deflateEnd(stream: z_streamp) ReturnCode;
+
+pub extern fn deflateReset(stream: z_streamp) c_int;
 
 //   deflateBound() returns an upper bound on the compressed size after
 //  deflation of sourceLen bytes.  It must be called after deflateInit() or

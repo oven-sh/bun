@@ -302,6 +302,13 @@ pub const BrotliEncoder = struct {
         task.run();
         return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
     }
+
+    pub fn reset(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
+    }
 };
 
 pub const BrotliDecoder = struct {
@@ -586,4 +593,11 @@ pub const BrotliDecoder = struct {
             }
         }
     };
+
+    pub fn reset(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        _ = this;
+        _ = globalThis;
+        _ = callframe;
+        return .undefined;
+    }
 };

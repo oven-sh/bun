@@ -55,6 +55,7 @@ function BrotliCompress(opts) {
 BrotliCompress.prototype = {};
 ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);
 BrotliCompress.prototype.flush = ZlibBase_flush;
+BrotliCompress.prototype.reset = ZlibBase_reset;
 
 BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
   callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
@@ -75,6 +76,7 @@ function BrotliDecompress(opts) {
 BrotliDecompress.prototype = {};
 ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);
 BrotliDecompress.prototype.flush = ZlibBase_flush;
+BrotliDecompress.prototype.reset = ZlibBase_reset;
 
 BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
@@ -129,6 +131,7 @@ function Deflate(opts) {
 Deflate.prototype = {};
 ObjectSetPrototypeOf(Deflate.prototype, stream.Transform.prototype);
 Deflate.prototype.flush = ZlibBase_flush;
+Deflate.prototype.reset = ZlibBase_reset;
 
 Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
   callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
@@ -149,6 +152,7 @@ function Inflate(opts) {
 Inflate.prototype = {};
 ObjectSetPrototypeOf(Inflate.prototype, stream.Transform.prototype);
 Inflate.prototype.flush = ZlibBase_flush;
+Inflate.prototype.reset = ZlibBase_reset;
 
 Inflate.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
@@ -206,6 +210,7 @@ function DeflateRaw(opts) {
 DeflateRaw.prototype = {};
 ObjectSetPrototypeOf(DeflateRaw.prototype, stream.Transform.prototype);
 DeflateRaw.prototype.flush = ZlibBase_flush;
+DeflateRaw.prototype.reset = ZlibBase_reset;
 
 DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
   callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
@@ -226,6 +231,7 @@ function InflateRaw(opts) {
 InflateRaw.prototype = {};
 ObjectSetPrototypeOf(InflateRaw.prototype, stream.Transform.prototype);
 InflateRaw.prototype.flush = ZlibBase_flush;
+InflateRaw.prototype.reset = ZlibBase_reset;
 
 InflateRaw.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
@@ -257,6 +263,11 @@ function ZlibBase_flush(kind, callback) {
   } else {
     this.write(kFlushBuffers[kind], "", callback);
   }
+}
+
+function ZlibBase_reset() {
+  assert(this[kHandle], "zlib binding closed");
+  return this[kHandle].reset();
 }
 
 // TODO: **use a native binding from Bun for this!!**

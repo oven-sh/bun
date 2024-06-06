@@ -20,6 +20,10 @@ export default [
         fn: "encodeSync",
         length: 2,
       },
+      reset: {
+        fn: "reset",
+        length: 0,
+      },
     },
   }),
   define({
@@ -41,6 +45,10 @@ export default [
       decodeSync: {
         fn: "decodeSync",
         length: 2,
+      },
+      reset: {
+        fn: "reset",
+        length: 0,
       },
     },
   }),
@@ -64,6 +72,10 @@ export default [
         fn: "encodeSync",
         length: 2,
       },
+      reset: {
+        fn: "reset",
+        length: 0,
+      },
     },
   }),
   define({
@@ -85,6 +97,10 @@ export default [
       decodeSync: {
         fn: "decodeSync",
         length: 2,
+      },
+      reset: {
+        fn: "reset",
+        length: 0,
       },
     },
   }),

@@ -8995,8 +8995,8 @@ pub const PackageManager = struct {
 
     const patch_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
-        clap.parseParam("--edit-dir <dir>                    The package that needs to be modified will be extracted to this directory") catch unreachable,
-        clap.parseParam("--ignore-existing                     Ignore existing patch files when patching") catch unreachable,
+        // clap.parseParam("--edit-dir <dir>                    The package that needs to be modified will be extracted to this directory") catch unreachable,
+        // clap.parseParam("--ignore-existing                     Ignore existing patch files when patching") catch unreachable,
     };
 
     const patch_commit_params = install_params_ ++ [_]ParamType{
@@ -11188,10 +11188,6 @@ pub const PackageManager = struct {
                     if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
                     return;
                 },
-            }
-
-            if (std.mem.eql(u8, name, "is-even")) {
-                std.debug.print("HI\n", .{});
             }
 
             const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or !installer.verify(

@@ -1,8 +1,8 @@
 import { $ } from "bun";
 import { describe, test, expect, it } from "bun:test";
 import { patchInternals } from "bun:internal-for-testing";
-import { tempDirWithFiles } from "harness";
-import { join } from "node:path";
+import { tempDirWithFiles as __tempDirWithFiles } from "harness";
+import { join as __join } from "node:path";
 import fs from "fs/promises";
 const { parse, apply } = patchInternals;
 
@@ -41,6 +41,9 @@ const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<
   // .replace(/\n\\ No newline at end of file\n$/, "\n");
 };
 
+const tempDirWithFiles: typeof __tempDirWithFiles = process.platform === 'win32' ? (a, b) => __tempDirWithFiles(a.replaceAll('\\', '/'), b).replaceAll('\\', '/') : __tempDirWithFiles
+const join = process.platform === 'win32' ? (...strings: string[]): string => __join(...strings.map(s => s.replaceAll('\\', '/'))).replaceAll('\\', '/') : __join
+
 describe("apply", () => {
   describe("deletion", () => {
     test("simple", async () => {
@@ -54,8 +57,11 @@ describe("apply", () => {
       const afolder = join(tempdir, "a");
       const bfolder = join(tempdir, "b");
 
+      console.log('makeDiff args', afolder, bfolder)
       const patchfile = await makeDiff(afolder, bfolder, tempdir);
 
+      console.log('PATCHFILE', patchfile)
+      console.log('afolder', afolder)
       await apply(patchfile, afolder);
 
       expect(await $`cat ${join(afolder, "hey.txt")}`.cwd(tempdir).text()).toBe(files["b/hey.txt"]);
@@ -167,7 +173,8 @@ describe("apply", () => {
   });
 
   describe("mode change", () => {
-    test("simple", async () => {
+    // chmod doesn't do anything on windows so skiip
+    test.if(process.platform !== 'win32')("simple", async () => {
       const files = {
         "a/hi.txt": "hello!",
         "b/hi.txt": "hi!",

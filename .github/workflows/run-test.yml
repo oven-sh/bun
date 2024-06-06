@@ -100,7 +100,6 @@ jobs:
           TLS_POSTGRES_DATABASE_URL: ${{ secrets.TLS_POSTGRES_DATABASE_URL }}
           TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
-          SHELLOPTS: igncr
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node test/runner.node.mjs $(which bun)

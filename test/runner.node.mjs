@@ -111,14 +111,13 @@ async function runTests(target) {
     }
 
     if (isGitHubAction) {
-      const markdown = formatTestToMarkdown(result);
-      if (markdown) {
-        const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
-        if (summaryPath) {
-          appendFileSync(summaryPath, markdown);
-        }
-        appendFileSync("comment.md", markdown);
+      const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
+      if (summaryPath) {
+        const longMarkdown = formatTestToMarkdown(result);
+        appendFileSync(summaryPath, longMarkdown);
       }
+      const shortMarkdown = formatTestToMarkdown(result, true);
+      appendFileSync("comment.md", shortMarkdown);
     }
   };
 
@@ -137,7 +136,7 @@ async function runTests(target) {
   const failedTests = results.filter(({ ok }) => !ok);
   if (isGitHubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedTests.length);
-    const markdown = formatTestToMarkdown(...failedTests);
+    const markdown = formatTestToMarkdown(failedTests);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 }
@@ -1049,10 +1048,12 @@ async function runTask(title, fn) {
 }
 
 /**
- * @param  {...TestResult} results
+ * @param  {TestResult | TestResult[]} result
+ * @param  {boolean} concise
  * @returns {string}
  */
-function formatTestToMarkdown(...results) {
+function formatTestToMarkdown(result, concise) {
+  const results = Array.isArray(result) ? result : [result];
   const buildLabel = getBuildLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
@@ -1089,7 +1090,9 @@ function formatTestToMarkdown(...results) {
     }
     markdown += ` on ${platform}</summary>\n\n`;
 
-    if (isBuildKite) {
+    if (concise) {
+      // No preview
+    } else if (isBuildKite) {
       const preview = escapeCodeBlock(stdout);
       markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
     } else {

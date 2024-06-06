@@ -1,6 +1,8 @@
 #! /bin/bash
 # Script to bootstrap a Linux environment for CI.
 
+set -eo pipefail
+
 # Check if sudo privileges are available
 if [ "$EUID" -ne 0 ]; then
   echo "This script must be run using sudo."
@@ -51,6 +53,18 @@ curl -fsSL https://keys.openpgp.org/vks/v1/by-fingerprint/32A37959C2FA5C3C99EFBC
   | gpg --batch --yes --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/buildkite-agent-archive-keyring.gpg] https://apt.buildkite.com/buildkite-agent stable main" \
   | tee /etc/apt/sources.list.d/buildkite-agent.list > /dev/null
+
+# Install libssl1.1 if not Debian 11
+if [ "${DEBIAN_VERSION}" != "bullseye" ]; then
+  echo "deb http://security.ubuntu.com/ubuntu focal-security main" > tee /etc/apt/sources.list.d/focal-security.list
+  for key in '871920D1991BC93C' '3B4FE6ACC0B21F32'; do
+    gpg --keyserver keyserver.ubuntu.com --recv-keys "${key}"
+    gpg --export --armor "${key}" | apt-key add -
+  done
+  apt-get update
+  apt-get install -y --reinstall --no-install-recommends libssl1.1
+  rm -f /etc/apt/sources.list.d/focal-security.list
+fi
 
 # Install dependencies
 apt-get update

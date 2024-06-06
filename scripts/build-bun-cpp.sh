@@ -2,16 +2,43 @@
 set -euxo pipefail
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
-export CPU_TARGET="${1:-${CPU_TARGET:-native}}"
-export USE_LTO="ON"
-if [[ $* == *--fast* ]]; then
-  export USE_LTO="OFF"
-fi
+export USE_LTO="${USE_LTO:-ON}"
+case "$(uname -m)" in
+  aarch64|arm64)
+    export CPU_TARGET="${CPU_TARGET:-native}"
+    ;;
+  *)
+    export CPU_TARGET="${CPU_TARGET:-haswell}"
+    ;;
+esac
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --fast|--no-lto)
+      export USE_LTO="OFF"
+      shift
+      ;;
+    --baseline)
+      export CPU_TARGET="nehalem"
+      shift
+      ;;
+    --cpu)
+      export CPU_TARGET="$2"
+      shift
+      shift
+      ;;
+    *|-*|--*)
+      echo "Unknown option $1"
+      exit 1
+      ;;
+  esac
+done
 
 cmake -S . \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_LTO=${USE_LTO} \
+  -DCPU_TARGET=${CPU_TARGET} \
   -DBUN_CPP_ONLY=1 \
   -DNO_CONFIGURE_DEPENDS=1
 

@@ -832,6 +832,11 @@ pub const Fetch = struct {
                 this.hostname = null;
             }
 
+            if (this.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+                this.result.certificate_info = null;
+            }
+
             this.request_headers.entries.deinit(allocator);
             this.request_headers.buf.deinit(allocator);
             this.request_headers = Headers{ .allocator = undefined };
@@ -1728,19 +1733,21 @@ pub const Fetch = struct {
             const prev_cert_info = task.result.certificate_info;
             task.result = result;
 
+            // Preserve pending certificate info if it was preovided in the previous update.
             if (task.result.certificate_info == null) {
                 if (prev_cert_info) |cert_info| {
                     task.result.certificate_info = cert_info;
                 }
             }
 
-            // metadata should be provided only once so we preserve it until we consume it
+            // metadata should be provided only once
             if (result.metadata orelse prev_metadata) |metadata| {
                 log("added callback metadata", .{});
                 if (task.metadata == null) {
                     task.metadata = metadata;
-                    task.result.metadata = null;
                 }
+
+                task.result.metadata = null;
             }
 
             task.body_size = result.body_size;
@@ -1886,7 +1893,12 @@ pub const Fetch = struct {
         var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
         var url_proxy_buffer: []const u8 = "";
-        var is_file_url = false;
+        const URLType = enum {
+            remote,
+            file,
+            blob,
+        };
+        var url_type = URLType.remote;
         var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
 
@@ -1954,9 +1966,13 @@ pub const Fetch = struct {
                     err,
                 );
             };
-            is_file_url = url.isFile();
+            if (url.isFile()) {
+                url_type = URLType.file;
+            } else if (url.isBlob()) {
+                url_type = URLType.blob;
+            }
             url_proxy_buffer = url.href;
-            if (!is_file_url) {
+            if (url_type == URLType.remote) {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
                         if (options.fastGetOrElse(ctx.ptr(), .method, slow_getters)) |method_| {
@@ -2099,7 +2115,11 @@ pub const Fetch = struct {
                                     return .zero;
                                 };
                                 url = ZigURL.parse(buffer[0..url.href.len]);
-                                is_file_url = url.isFile();
+                                if (url.isFile()) {
+                                    url_type = URLType.file;
+                                } else if (url.isBlob()) {
+                                    url_type = URLType.blob;
+                                }
 
                                 proxy = ZigURL.parse(buffer[url.href.len..]);
                                 allocator.free(url_proxy_buffer);
@@ -2241,9 +2261,13 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             };
             url_proxy_buffer = url.href;
-            is_file_url = url.isFile();
+            if (url.isFile()) {
+                url_type = URLType.file;
+            } else if (url.isBlob()) {
+                url_type = URLType.blob;
+            }
 
-            if (!is_file_url) {
+            if (url_type == URLType.remote) {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
                         if (options.fastGet(ctx.ptr(), .method)) |method_| {
@@ -2413,7 +2437,7 @@ pub const Fetch = struct {
         // This is not 100% correct.
         // We don't pass along headers, we ignore method, we ignore status code...
         // But it's better than status quo.
-        if (is_file_url) {
+        if (url_type != .remote) {
             defer allocator.free(url_proxy_buffer);
             defer unix_socket_path.deinit();
             var path_buf: bun.PathBuffer = undefined;
@@ -2423,77 +2447,100 @@ pub const Fetch = struct {
             var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
                 @TypeOf(&stream.writer()),
                 &stream.writer(),
-                url.path,
+                switch (url_type) {
+                    .file => url.path,
+                    .blob => url.href["blob:".len..],
+                    .remote => unreachable,
+                },
             ) catch |err| {
                 globalThis.throwError(err, "Failed to decode file url");
                 return .zero;
             }];
+            var url_string: bun.String = bun.String.empty;
+            defer url_string.deref();
+            // This can be a blob: url or a file: url.
+            const blob_to_use = blob: {
 
-            const temp_file_path = brk: {
-                if (std.fs.path.isAbsolute(url_path_decoded)) {
-                    if (Environment.isWindows) {
-                        // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
-                        if (url_path_decoded[0] == '/') {
-                            url_path_decoded = url_path_decoded[1..];
+                // Support blob: urls
+                if (url_type == URLType.blob) {
+                    if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(url_path_decoded)) |blob| {
+                        url_string = bun.String.createFormat("blob:{s}", .{url_path_decoded}) catch bun.outOfMemory();
+                        break :blob blob;
+                    } else {
+                        // Consistent with what Node.js does - it rejects, not a 404.
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Failed to resolve blob:{s}", .{
+                            url_path_decoded,
+                        }, ctx);
+                        is_error = true;
+                        return JSPromise.rejectedPromiseValue(globalThis, err);
+                    }
+                }
+
+                const temp_file_path = brk: {
+                    if (std.fs.path.isAbsolute(url_path_decoded)) {
+                        if (Environment.isWindows) {
+                            // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
+                            if (url_path_decoded[0] == '/') {
+                                url_path_decoded = url_path_decoded[1..];
+                            }
+                            break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
+                                globalThis.throwError(err, "Failed to resolve file url");
+                                return .zero;
+                            };
                         }
-                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
+                        break :brk url_path_decoded;
+                    }
+
+                    var cwd_buf: bun.PathBuffer = undefined;
+                    const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                        globalThis.throwError(err, "Failed to resolve file url");
+                        return .zero;
+                    }) else globalThis.bunVM().bundler.fs.top_level_dir;
+
+                    const fullpath = bun.path.joinAbsStringBuf(
+                        cwd,
+                        &path_buf,
+                        &[_]string{
+                            globalThis.bunVM().main,
+                            "../",
+                            url_path_decoded,
+                        },
+                        .auto,
+                    );
+                    if (Environment.isWindows) {
+                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
                             globalThis.throwError(err, "Failed to resolve file url");
                             return .zero;
                         };
                     }
-                    break :brk url_path_decoded;
-                }
+                    break :brk fullpath;
+                };
 
-                var cwd_buf: bun.PathBuffer = undefined;
-                const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
-                    globalThis.throwError(err, "Failed to resolve file url");
-                    return .zero;
-                }) else globalThis.bunVM().bundler.fs.top_level_dir;
+                url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
 
-                const fullpath = bun.path.joinAbsStringBuf(
-                    cwd,
-                    &path_buf,
-                    &[_]string{
-                        globalThis.bunVM().main,
-                        "../",
-                        url_path_decoded,
+                var pathlike: JSC.Node.PathOrFileDescriptor = .{
+                    .path = .{
+                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        }),
                     },
-                    .auto,
+                };
+
+                break :blob Blob.findOrCreateFileFromPath(
+                    &pathlike,
+                    globalThis,
                 );
-                if (Environment.isWindows) {
-                    break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
-                        globalThis.throwError(err, "Failed to resolve file url");
-                        return .zero;
-                    };
-                }
-                break :brk fullpath;
             };
-
-            var file_url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
-            defer file_url_string.deref();
-
-            var pathlike: JSC.Node.PathOrFileDescriptor = .{
-                .path = .{
-                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    }),
-                },
-            };
-
-            const bun_file = Blob.findOrCreateFileFromPath(
-                &pathlike,
-                globalThis,
-            );
 
             const response = bun.new(Response, Response{
                 .body = Body{
-                    .value = .{ .Blob = bun_file },
+                    .value = .{ .Blob = blob_to_use },
                 },
                 .init = Response.Init{
                     .status_code = 200,
                 },
-                .url = file_url_string.clone(),
+                .url = url_string.clone(),
             });
 
             return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));

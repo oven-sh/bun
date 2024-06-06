@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/JSCJSValue.h"
@@ -53,6 +52,7 @@
 
 #include "wtf/Assertions.h"
 #include "wtf/text/ExternalStringImpl.h"
+#include "wtf/text/OrdinalNumber.h"
 #include "wtf/text/StringCommon.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
@@ -110,6 +110,8 @@
 
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/CustomGetterSetter.h"
+
+#include "ErrorStackFrame.h"
 
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
@@ -3898,83 +3900,52 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
         frame->function_name = Bun::toStringRef(JSC::getCalculatedDisplayName(vm, callee));
     }
 }
-// Based on
-// https://github.com/mceSystems/node-jsc/blob/master/deps/jscshim/src/shim/JSCStackTrace.cpp#L298
+
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
-    int32_t* source_line_numbers, uint8_t source_lines_count,
+    OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
     ZigStackFramePosition* position)
 {
-    auto m_codeBlock = stackFrame->codeBlock();
-    if (!m_codeBlock)
+    auto code = stackFrame->codeBlock();
+    if (!code)
         return;
 
-    // https://github.com/oven-sh/bun/issues/6951
-    auto* provider = m_codeBlock->source().provider();
-
+    auto* provider = code->source().provider();
     if (UNLIKELY(!provider))
         return;
-
-    // Make sure the range is valid
+    // Make sure the range is valid:
+    // https://github.com/oven-sh/bun/issues/6951
     WTF::StringView sourceString = provider->source();
-
     if (UNLIKELY(sourceString.isNull()))
         return;
-
-    JSC::BytecodeIndex bytecodeOffset = stackFrame->hasBytecodeIndex() ? stackFrame->bytecodeIndex() : JSC::BytecodeIndex();
-
-    /* Get the "raw" position info.
-     * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset
-     * rather than m_codeBlock->expressionRangeForBytecodeOffset in order get the "raw" offsets and
-     * avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column
-     * numbers, (we don't need the column number from it, and we'll calculate the line "fixes"
-     * ourselves). */
-    ExpressionInfo::Entry info = m_codeBlock->unlinkedCodeBlock()->expressionInfoForBytecodeIndex(bytecodeOffset);
-    info.divot += m_codeBlock->sourceOffset();
-
-    // TODO: evaluate if using the API from UnlinkedCodeBlock can be used instead of iterating
-    // through source text.
-
-    /* On the first line of the source code, it seems that we need to "fix" the column with the
-     * starting offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt()
-     * as the offset in the first line rather than codeBlock->firstLineColumnOffset(), which seems
-     * simpler (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because
-     * firstLineColumnOffset values seems different from what we expect (according to v8's tests)
-     * and I haven't dove into the relevant parts in JSC (yet) to figure out why. */
-    unsigned columnOffset = info.lineColumn.line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
-
-    // "Fix" the line number
-    JSC::ScriptExecutable* executable = m_codeBlock->ownerExecutable();
-    if (std::optional<int> overrideLine = executable->overrideLineNumber(m_codeBlock->vm())) {
-        info.lineColumn.line = overrideLine.value();
-    } else {
-        info.lineColumn.line += executable->firstLine();
-    }
-
-    // Calculate the staring\ending offsets of the entire expression
-    int expressionStart = info.divot - info.startOffset;
-    int expressionStop = info.divot + info.endOffset;
-    if (expressionStop < 1 || expressionStart > static_cast<int>(sourceString.length())) {
+    if (!stackFrame->hasBytecodeIndex()) {
+        auto lineColumn = stackFrame->computeLineAndColumn();
+        position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+        position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+        position->byte_position = -1;
         return;
     }
 
-    // Search for the beginning of the line
-    unsigned int lineStart = expressionStart > 0 ? expressionStart : 0;
-    while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
-        lineStart--;
-    }
-    // Search for the end of the line
-    unsigned int lineStop = expressionStop;
-    unsigned int sourceLength = sourceString.length();
-    while ((lineStop < sourceLength) && ('\n' != sourceString[lineStop])) {
-        lineStop++;
-    }
+    auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
+
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
-        auto chars = sourceString.span8().data();
+        // Search for the beginning of the line
+        unsigned int lineStart = location.byte_position;
+        while (lineStart > 0 && sourceString[lineStart] != '\n') {
+            lineStart--;
+        }
+
+        // Search for the end of the line
+        unsigned int lineEnd = location.byte_position;
+        unsigned int maxSearch = sourceString.length();
+        while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
+            lineEnd++;
+        }
+
+        const unsigned char* bytes = sourceString.span8().data();
 
         // Most of the time, when you look at a stack trace, you want a couple lines above
-
-        source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineStop - lineStart).toStringWithoutCopying());
-        source_line_numbers[0] = info.lineColumn.line - 1;
+        source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineEnd - lineStart).toStringWithoutCopying());
+        source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
             auto byte_offset_in_source_string = lineStart - 1;
@@ -3983,9 +3954,10 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
             {
                 // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && chars[byte_offset_in_source_string] != '\n') {
+                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
                     byte_offset_in_source_string--;
                 }
+
                 byte_offset_in_source_string -= byte_offset_in_source_string > 0;
             }
 
@@ -3993,14 +3965,16 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 unsigned int end_of_line_offset = byte_offset_in_source_string;
 
                 // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && chars[byte_offset_in_source_string] != '\n') {
+                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
                     byte_offset_in_source_string--;
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringRef(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1).toStringWithoutCopying());
+                source_lines[source_line_i] = Bun::toStringRef(
+                    sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1)
+                        .toStringWithoutCopying());
 
-                source_line_numbers[source_line_i] = info.lineColumn.line - source_line_i - 1;
+                source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;
 
                 remaining_lines_to_grab--;
@@ -4010,26 +3984,9 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
         }
     }
 
-    /* Finally, store the source "positions" info.
-     * Notes:
-     * - The retrieved column seem to point the "end column". To make sure we're current, we'll
-     *calculate the columns ourselves, since we've already found where the line starts. Note that in
-     *v8 it should be 0-based here (in contrast the 1-based column number in v8::StackFrame).
-     * - The static_casts are ugly, but comes from differences between JSC and v8's api, and should
-     *be OK since no source should be longer than "max int" chars.
-     * TODO: If expressionStart == expressionStop, then m_endColumn will be equal to m_startColumn.
-     *Should we handle this case?
-     */
-    position->expression_start = expressionStart;
-    position->expression_stop = expressionStop;
-    position->line = WTF::OrdinalNumber::fromOneBasedInt(static_cast<int>(info.lineColumn.line)).zeroBasedInt();
-    position->column_start = (expressionStart - lineStart) + columnOffset;
-    position->column_stop = position->column_start + (expressionStop - expressionStart);
-    position->line_start = lineStart;
-    position->line_stop = lineStop;
-
-    return;
+    *position = location;
 }
+
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
     ZigStackFrame* frame, bool is_top)
 {
@@ -4314,9 +4271,8 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                     String sourceURL = frame.sourceURL.toString();
                     current.function_name = Bun::toStringRef(functionName);
                     current.source_url = Bun::toStringRef(sourceURL);
-                    current.position.line = frame.lineNumber.zeroBasedInt();
-                    current.position.column_start = frame.columnNumber.zeroBasedInt();
-                    current.position.column_stop = frame.columnNumber.zeroBasedInt();
+                    current.position.line_zero_based = frame.lineNumber.zeroBasedInt();
+                    current.position.column_zero_based = frame.columnNumber.zeroBasedInt();
 
                     current.remapped = true;
 
@@ -4345,17 +4301,17 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
 
                 if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
-                    except->stack.frames_ptr[0].position.column_start = column.toInt32(global);
+                    except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
                 }
 
                 if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
-                    except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
                     if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
                         if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                             auto str = jsStr->value(global);
                             except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line;
+                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
                             except->stack.source_lines_len = 1;
                             except->remapped = true;
                         }
@@ -4417,9 +4373,9 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             if (line) {
                 // TODO: don't sourcemap it twice
                 if (auto originalLine = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "originalLine"_s))) {
-                    except->stack.frames_ptr[0].position.line = originalLine.toInt32(global);
+                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
                 } else {
-                    except->stack.frames_ptr[0].position.line = line.toInt32(global);
+                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
                 }
                 except->stack.frames_len = 1;
             }
@@ -4830,23 +4786,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSValue::encode({});
-    }
-
-    return JSValue::encode(
-        value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
+    ASSERT(value.isCell());
+    return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
 }
 
 JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    return JSValue::encode(
-        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+    ASSERT(value.isCell());
+    return JSValue::encode( value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)

@@ -7,13 +7,15 @@ const JSValue = JSC.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
+const Bool = std.atomic.Value(bool);
+
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
     /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
     status: std.atomic.Value(Status) = std.atomic.Value(Status).init(.start),
     /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
-    requested_terminate: bool = false,
+    requested_terminate: Bool = Bool.init(false),
     execution_context_id: u32 = 0,
     parent_context_id: u32 = 0,
     parent: *JSC.VirtualMachine,
@@ -49,6 +51,14 @@ pub const WebWorker = struct {
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
         const worker = vm.worker orelse return null;
         return worker.cpp_worker;
+    }
+
+    pub fn hasRequestedTerminate(this: *const WebWorker) bool {
+        return this.requested_terminate.load(.Monotonic);
+    }
+
+    pub fn setRequestedTerminate(this: *WebWorker) bool {
+        return this.requested_terminate.swap(true, .Release);
     }
 
     export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
@@ -166,7 +176,7 @@ pub const WebWorker = struct {
             Output.Source.configureNamedThread("Worker");
         }
 
-        if (this.requested_terminate) {
+        if (this.hasRequestedTerminate()) {
             this.deinit();
             return;
         }
@@ -264,7 +274,7 @@ pub const WebWorker = struct {
         JSC.markBinding(@src());
         WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
         if (vm.worker) |worker_| {
-            worker.requested_terminate = true;
+            _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
             worker_.exitAndDeinit();
         }
@@ -324,15 +334,15 @@ pub const WebWorker = struct {
 
         while (vm.isEventLoopAlive()) {
             vm.tick();
-            if (this.requested_terminate) break;
+            if (this.hasRequestedTerminate()) break;
             vm.eventLoop().autoTickActive();
-            if (this.requested_terminate) break;
+            if (this.hasRequestedTerminate()) break;
         }
 
-        log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.requested_terminate) "(terminated)" else "(event loop dead)" });
+        log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
 
         // Only call "beforeExit" if we weren't from a .terminate
-        if (!this.requested_terminate) {
+        if (!this.hasRequestedTerminate()) {
             // TODO: is this able to allow the event loop to continue?
             vm.onBeforeExit();
         }
@@ -344,9 +354,14 @@ pub const WebWorker = struct {
 
     /// This is worker.ref()/.unref() from JS (Caller thread)
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
-        if (this.requested_terminate) {
+        if (this.hasRequestedTerminate()) {
             return;
         }
+
+        this.setRefInternal(value);
+    }
+
+    pub fn setRefInternal(this: *WebWorker, value: bool) void {
         if (value) {
             this.parent_poll_ref.ref(this.parent);
         } else {
@@ -360,16 +375,16 @@ pub const WebWorker = struct {
         if (this.status.load(.Acquire) == .terminated) {
             return;
         }
-        if (this.requested_terminate) {
+        if (this.setRequestedTerminate()) {
             return;
         }
         log("[{d}] requestTerminate", .{this.execution_context_id});
-        this.setRef(false);
-        this.requested_terminate = true;
+
         if (this.vm) |vm| {
-            vm.jsc.notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
+
+        this.setRefInternal(false);
     }
 
     /// This handles cleanup, emitting the "close" event, and deinit.

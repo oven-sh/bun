@@ -230,8 +230,10 @@ const NetworkTask = struct {
 
     pub const DedupeMap = std.HashMap(u64, void, IdentityContext(u64), 80);
 
-    pub fn notify(this: *NetworkTask, _: anytype) void {
+    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
         defer this.package_manager.wake();
+        async_http.real.?.* = async_http.*;
+        async_http.real.?.response_buffer = async_http.response_buffer;
         this.package_manager.async_network_task_queue.push(this);
     }
 
@@ -6928,7 +6930,6 @@ pub const PackageManager = struct {
                                     // fetchSwapRemove because we want to update the first dependency with a matching
                                     // name, or none at all
                                     if (manager.updating_packages.fetchSwapRemove(key_str)) |entry| {
-                                        const original_version_literal = entry.value.original_version_literal;
                                         const is_alias = entry.value.is_alias;
                                         const dep_name = entry.key;
                                         for (workspace_deps, workspace_resolution_ids) |workspace_dep, package_id| {
@@ -6946,22 +6947,26 @@ pub const PackageManager = struct {
                                                 if (!manager.options.do.update_to_latest and npm_version.version.isExact()) break :updated;
                                             }
 
-                                            const original_version_to_use = brk: {
-                                                if (options.exact_versions or !is_alias) break :brk original_version_literal;
-                                                if (strings.lastIndexOfChar(original_version_literal, '@')) |at_index| {
-                                                    break :brk original_version_literal[at_index + 1 ..];
+                                            const new_version = new_version: {
+                                                const version_fmt = resolution.value.npm.version.fmt(string_buf);
+                                                if (options.exact_versions) {
+                                                    break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
                                                 }
-                                                break :brk original_version_literal;
-                                            };
 
-                                            const new_version = try switch (options.exact_versions or Semver.Version.@"is exact-ish"(original_version_to_use)) {
-                                                inline else => |exact_versions| std.fmt.allocPrint(
-                                                    allocator,
-                                                    if (comptime exact_versions) "{}" else "^{}",
-                                                    .{
-                                                        resolution.value.npm.version.fmt(string_buf),
-                                                    },
-                                                ),
+                                                const version_literal = version_literal: {
+                                                    if (!is_alias) break :version_literal entry.value.original_version_literal;
+                                                    if (strings.lastIndexOfChar(entry.value.original_version_literal, '@')) |at_index| {
+                                                        break :version_literal entry.value.original_version_literal[at_index + 1 ..];
+                                                    }
+                                                    break :version_literal entry.value.original_version_literal;
+                                                };
+
+                                                const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
+                                                break :new_version try switch (pinned_version) {
+                                                    .patch => std.fmt.allocPrint(allocator, "{}", .{version_fmt}),
+                                                    .minor => std.fmt.allocPrint(allocator, "~{}", .{version_fmt}),
+                                                    .major => std.fmt.allocPrint(allocator, "^{}", .{version_fmt}),
+                                                };
                                             };
 
                                             if (is_alias) {
@@ -7387,6 +7392,48 @@ pub const PackageManager = struct {
                 if (request.e_string) |e_string| {
                     e_string.data = switch (request.resolution.tag) {
                         .npm => brk: {
+                            if (manager.subcommand == .update and (request.version.tag == .dist_tag or request.version.tag == .npm)) {
+                                if (manager.updating_packages.fetchSwapRemove(request.name)) |entry| {
+                                    var alias_at_index: ?usize = null;
+
+                                    const new_version = new_version: {
+                                        const version_fmt = request.resolution.value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
+                                        if (options.exact_versions) {
+                                            break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
+                                        }
+
+                                        const version_literal = version_literal: {
+                                            if (!entry.value.is_alias) break :version_literal entry.value.original_version_literal;
+                                            if (strings.lastIndexOfChar(entry.value.original_version_literal, '@')) |at_index| {
+                                                alias_at_index = at_index;
+                                                break :version_literal entry.value.original_version_literal[at_index + 1 ..];
+                                            }
+
+                                            break :version_literal entry.value.original_version_literal;
+                                        };
+
+                                        const pinned_version = Semver.Version.whichVersionIsPinned(version_literal);
+                                        break :new_version try switch (pinned_version) {
+                                            .patch => std.fmt.allocPrint(allocator, "{}", .{version_fmt}),
+                                            .minor => std.fmt.allocPrint(allocator, "~{}", .{version_fmt}),
+                                            .major => std.fmt.allocPrint(allocator, "^{}", .{version_fmt}),
+                                        };
+                                    };
+
+                                    if (entry.value.is_alias) {
+                                        const dep_literal = entry.value.original_version_literal;
+
+                                        if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
+                                            break :brk try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                                dep_literal[0..at_index],
+                                                new_version,
+                                            });
+                                        }
+                                    }
+
+                                    break :brk new_version;
+                                }
+                            }
                             if (request.version.tag == .dist_tag or
                                 (manager.subcommand == .update and request.version.tag == .npm and !request.version.value.npm.version.isExact()))
                             {
@@ -7415,13 +7462,20 @@ pub const PackageManager = struct {
 
                             break :brk try allocator.dupe(u8, request.version.literal.slice(request.version_buf));
                         },
-                        .uninitialized => if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm)
-                            switch (request.version.tag) {
-                                .uninitialized => try allocator.dupe(u8, "latest"),
-                                else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                        .uninitialized => brk: {
+                            if (manager.subcommand == .update and manager.options.do.update_to_latest) {
+                                break :brk try allocator.dupe(u8, "latest");
                             }
-                        else
-                            e_string.data,
+
+                            if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
+                                break :brk switch (request.version.tag) {
+                                    .uninitialized => try allocator.dupe(u8, "latest"),
+                                    else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                                };
+                            } else {
+                                break :brk e_string.data;
+                            }
+                        },
 
                         .workspace => try allocator.dupe(u8, "workspace:*"),
                         else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),

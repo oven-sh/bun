@@ -3460,3 +3460,47 @@ pub const timespec = extern struct {
 };
 
 pub const UUID = @import("./bun.js/uuid.zig");
+
+/// An abstract number of element in a sequence. The sequence has a first element.
+/// This type should be used instead of integer because 2 contradicting traditions can
+/// call a first element '0' or '1' which makes integer type ambiguous.
+pub fn OrdinalT(comptime Int: type) type {
+    return enum(Int) {
+        invalid = switch (@typeInfo(Int).Int.signedness) {
+            .unsigned => std.math.maxInt(Int),
+            .signed => -1,
+        },
+        start = 0,
+        _,
+
+        pub fn fromZeroBased(int: Int) @This() {
+            assert(int >= 0);
+            assert(int != std.math.maxInt(Int));
+            return @enumFromInt(int);
+        }
+
+        pub fn fromOneBased(int: Int) @This() {
+            assert(int > 0);
+            return @enumFromInt(int - 1);
+        }
+
+        pub fn zeroBased(ord: @This()) Int {
+            return @intFromEnum(ord);
+        }
+
+        pub fn oneBased(ord: @This()) Int {
+            return @intFromEnum(ord) + 1;
+        }
+
+        pub fn add(ord: @This(), inc: Int) @This() {
+            return fromZeroBased(ord.zeroBased() + inc);
+        }
+
+        pub fn isValid(ord: @This()) bool {
+            return ord.zeroBased() >= 0;
+        }
+    };
+}
+
+/// ABI-equivalent of WTF::OrdinalNumber
+pub const Ordinal = OrdinalT(c_int);

@@ -41,7 +41,7 @@ await Bun.$`git reset`;
 await Bun.write("./CMakeLists.txt", cmakelists.replace(version[1], updated_version));
 
 await Bun.$`git add CMakeLists.txt`;
-await Bun.$`git commit -m "Release Bun v${updated_version}"`;
+await Bun.$`git commit -m "Bump to v${updated_version}"`;
 
 console.log("");
 console.log("Done.");

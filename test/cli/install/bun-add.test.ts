@@ -870,6 +870,42 @@ it("should add aliased dependency (GitHub)", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+const gitNameTests = [
+  { desc: "git dep without package.json", dep: "dylan-conway/install-test-3#v1.0.0" },
+  { desc: "git dep with package.json without name", dep: "dylan-conway/install-test-3#v1.0.1" },
+  { desc: "git dep with package.json with empty name", dep: "dylan-conway/install-test-3#v1.0.2" },
+];
+for (const { desc, dep } of gitNameTests) {
+  it(desc, async () => {
+    await Bun.write(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await Bun.readableStreamToText(stderr);
+    expect(err).not.toContain("error:");
+
+    expect(await exited).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "install-test-3": dep,
+      },
+    });
+  });
+}
+
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

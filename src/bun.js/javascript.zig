@@ -515,7 +515,7 @@ pub const ExitHandler = struct {
         vm.exit_handler.exit_code = code;
     }
 
-    extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) c_int;
+    extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) i32;
     extern fn Process__dispatchOnExit(*JSC.JSGlobalObject, code: u8) void;
     extern fn Bun__closeAllSQLiteDatabasesForTermination() void;
 

@@ -101,12 +101,25 @@ if (isMainThread) {
       await fetch("http://localhost:" + port);
       break;
     }
+    case "fetch-early-exit": {
+      fetch("http://localhost:" + port);
+      break;
+    }
     case "fetch+blob": {
       const resp = await fetch("http://localhost:" + port);
       await resp.blob();
       break;
     }
+    case "fetch+blob-early-exit": {
+      const resp = await fetch("http://localhost:" + port);
+      await resp.blob();
+      break;
+    }
     case "readFile": {
+      await Bun.file(import.meta.path).text();
+      break;
+    }
+    case "readFile-early-exit": {
       await Bun.file(import.meta.path).text();
       break;
     }

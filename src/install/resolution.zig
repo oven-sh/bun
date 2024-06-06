@@ -121,8 +121,8 @@ pub const Resolution = extern struct {
         };
     }
 
-    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, string_bytes: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = string_bytes, .options = options };
+    pub fn fmtURL(this: *const Resolution, string_bytes: []const u8) URLFormatter {
+        return URLFormatter{ .resolution = this, .buf = string_bytes };
     }
 
     pub fn fmtForDebug(this: *const Resolution, string_bytes: []const u8) DebugFormatter {
@@ -191,7 +191,6 @@ pub const Resolution = extern struct {
 
     pub const URLFormatter = struct {
         resolution: *const Resolution,
-        options: *const PackageManager.Options,
 
         buf: []const u8,
 

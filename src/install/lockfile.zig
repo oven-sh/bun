@@ -4557,17 +4557,24 @@ pub const Package = extern struct {
                 }
             }
 
-            // name is not validated by npm, so fallback to repo name for git dependencies
-            if (ResolverContext == PackageManager.GitResolver) {
+            // name is not validated by npm, so fallback to creating a new from the version literal
+            if (ResolverContext == *PackageManager.GitResolver) {
                 const resolution: *const Resolution = resolver.resolution;
                 const repo = switch (resolution.tag) {
-                    .git => resolution.value.git.repo.slice(lockfile.buffers.string_bytes.items),
-                    .github => resolution.value.github.repo.slice(lockfile.buffers.string_bytes.items),
+                    .git => resolution.value.git,
+                    .github => resolution.value.github,
 
                     else => break :name,
                 };
 
-                string_builder.count(repo);
+                resolver.new_name = Repository.createDependencyNameFromVersionLiteral(
+                    lockfile.allocator,
+                    &repo,
+                    lockfile,
+                    resolver.dep_id,
+                );
+
+                string_builder.count(resolver.new_name);
             }
         }
 
@@ -4830,6 +4837,16 @@ pub const Package = extern struct {
         const package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
 
         name: {
+            if (ResolverContext == *PackageManager.GitResolver) {
+                if (resolver.new_name.len != 0) {
+                    defer lockfile.allocator.free(resolver.new_name);
+                    const external_string = string_builder.append(ExternalString, resolver.new_name);
+                    package.name = external_string.value;
+                    package.name_hash = external_string.hash;
+                    break :name;
+                }
+            }
+
             if (json.asProperty("name")) |name_q| {
                 if (name_q.expr.asString(allocator)) |name| {
                     if (name.len != 0) {
@@ -4840,21 +4857,6 @@ pub const Package = extern struct {
                         break :name;
                     }
                 }
-            }
-
-            // name is not validated by npm, so fallback to repo name for git dependencies
-            if (ResolverContext == PackageManager.GitResolver) {
-                const resolution: *const Resolution = resolver.resolution;
-                const repo = switch (resolution.tag) {
-                    .git => resolution.value.git.repo.slice(lockfile.buffers.string_bytes.items),
-                    .github => resolution.value.github.repo.slice(lockfile.buffers.string_bytes.items),
-
-                    else => break :name,
-                };
-
-                const external_string = string_builder.append(ExternalString, repo);
-                package.name = external_string.value;
-                package.name_hash = external_string.hash;
             }
         }
 

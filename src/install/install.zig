@@ -5229,6 +5229,8 @@ pub const PackageManager = struct {
     pub const GitResolver = struct {
         resolved: string,
         resolution: *const Resolution,
+        dep_id: DependencyID,
+        new_name: []u8 = "",
 
         pub fn count(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
             builder.count(this.resolved);
@@ -5268,6 +5270,7 @@ pub const PackageManager = struct {
     fn processExtractedTarballPackage(
         manager: *PackageManager,
         package_id: *PackageID,
+        dep_id: DependencyID,
         resolution: *const Resolution,
         data: *const ExtractData,
         comptime log_level: Options.LogLevel,
@@ -5275,9 +5278,10 @@ pub const PackageManager = struct {
         switch (resolution.tag) {
             .git, .github => {
                 var package = package: {
-                    const resolver = GitResolver{
+                    var resolver = GitResolver{
                         .resolved = data.resolved,
                         .resolution = resolution,
+                        .dep_id = dep_id,
                     };
 
                     var pkg = Lockfile.Package{};
@@ -5292,8 +5296,8 @@ pub const PackageManager = struct {
                             manager.allocator,
                             manager.log,
                             package_json_source,
-                            GitResolver,
-                            resolver,
+                            *GitResolver,
+                            &resolver,
                             Features.npm,
                         ) catch |err| {
                             if (comptime log_level != .silent) {
@@ -5320,28 +5324,25 @@ pub const PackageManager = struct {
                         break :package pkg;
                     }
 
-                    // package.json doesn't exist, no dependencies to worry about
+                    // package.json doesn't exist, no dependencies to worry about but we need to decide on a name for the dependency
                     var repo = switch (resolution.tag) {
-                        .git => resolution.value.git.repo.slice(manager.lockfile.buffers.string_bytes.items),
-                        .github => resolution.value.github.repo.slice(manager.lockfile.buffers.string_bytes.items),
+                        .git => resolution.value.git,
+                        .github => resolution.value.github,
                         else => unreachable,
                     };
+
+                    const new_name = Repository.createDependencyNameFromVersionLiteral(manager.allocator, &repo, manager.lockfile, dep_id);
+                    defer manager.allocator.free(new_name);
 
                     {
                         var builder = manager.lockfile.stringBuilder();
 
-                        builder.count(repo);
+                        builder.count(new_name);
                         resolver.count(*Lockfile.StringBuilder, &builder, undefined);
 
                         builder.allocate() catch bun.outOfMemory();
 
-                        repo = switch (resolution.tag) {
-                            .git => resolution.value.git.repo.slice(manager.lockfile.buffers.string_bytes.items),
-                            .github => resolution.value.github.repo.slice(manager.lockfile.buffers.string_bytes.items),
-                            else => unreachable,
-                        };
-
-                        const name = builder.append(ExternalString, repo);
+                        const name = builder.append(ExternalString, new_name);
                         pkg.name = name.value;
                         pkg.name_hash = name.hash;
 
@@ -5931,7 +5932,7 @@ pub const PackageManager = struct {
                     bun.Analytics.Features.extracted_packages += 1;
 
                     // GitHub and tarball URL dependencies are not fully resolved until after the tarball is downloaded & extracted.
-                    if (manager.processExtractedTarballPackage(&package_id, resolution, &task.data.extract, comptime log_level)) |pkg| brk: {
+                    if (manager.processExtractedTarballPackage(&package_id, dependency_id, resolution, &task.data.extract, comptime log_level)) |pkg| brk: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
@@ -6071,6 +6072,7 @@ pub const PackageManager = struct {
 
                     if (manager.processExtractedTarballPackage(
                         &package_id,
+                        git_checkout.dependency_id,
                         resolution,
                         &task.data.git_checkout,
                         comptime log_level,

@@ -4081,10 +4081,7 @@ pub const PackageManager = struct {
                             //     .auto,
                             // );
                         };
-                        const folder_path_abs = if (std.fs.path.isAbsolute(folder_path)) folder_path else blk: {
-                            break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{folder_path}, .auto);
-                        };
-                        break :brk FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
+                        break :res FolderResolution.getOrPut(.{ .relative = .folder }, version, folder_path_abs, this);
                     }
 
                     // transitive folder dependencies do not have their dependencies resolved

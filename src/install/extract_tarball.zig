@@ -471,6 +471,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         return error.InstallFailed;
     };
 
+    const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
+
     var json_path: []u8 = "";
     var json_buf: []u8 = "";
     if (switch (this.resolution.tag) {
@@ -484,6 +486,14 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
+            if (this.resolution.tag == .github and err == error.ENOENT) {
+                // allow git dependencies without package.json
+                return .{
+                    .url = url,
+                    .resolved = resolved,
+                };
+            }
+
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -525,12 +535,13 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
-    const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
 
     return .{
         .url = url,
         .resolved = resolved,
-        .json_path = ret_json_path,
-        .json_buf = json_buf,
+        .json = .{
+            .path = ret_json_path,
+            .buf = json_buf,
+        },
     };
 }

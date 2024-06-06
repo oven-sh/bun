@@ -872,6 +872,19 @@ pub const Version = extern struct {
         };
     }
 
+    pub fn isTaggedVersionOnly(input: []const u8) bool {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        // first needs to be a-z
+        if (version.len == 0 or !std.ascii.isAlphabetic(version[0])) return false;
+
+        for (1..version.len) |i| {
+            if (!std.ascii.isAlphanumeric(version[i])) return false;
+        }
+
+        return true;
+    }
+
     pub fn orderWithoutTag(
         lhs: Version,
         rhs: Version,

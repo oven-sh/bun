@@ -123,11 +123,7 @@ test("overrides to npm specifier", async () => {
   );
   install(tmp, ["install", "express@4.18.2"]);
 
-  // BUG: the npm specifier is hoisted https://github.com/oven-sh/bun/issues/6433
-  // const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
-  const bytes = JSON.parse(
-    readFileSync(join(tmp, "node_modules/body-parser/node_modules/bytes/package.json"), "utf-8"),
-  );
+  const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
 
   expect(bytes.name).toBe("lodash");
   expect(bytes.version).toBe("4.0.0");

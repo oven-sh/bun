@@ -73,7 +73,7 @@ pub const BrotliEncoder = struct {
         }
 
         const out = this.toJS(globalThis);
-        @This().callbackSetCached(out, globalThis, callback);
+        BrotliEncoder.callbackSetCached(out, globalThis, callback);
         this.callback_value.set(globalThis, callback);
 
         return out;

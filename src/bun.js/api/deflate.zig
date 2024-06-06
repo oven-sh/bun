@@ -173,7 +173,7 @@ pub const DeflateEncoder = struct {
 
         const result = this.callback_value.get().?.call(this.globalThis, &.{
             if (this.write_failed)
-                // TODO: propagate error from brotli
+                // TODO: propagate error from zlib
                 this.globalThis.createErrorInstance("DeflateError", .{})
             else
                 JSC.JSValue.null,
@@ -450,7 +450,7 @@ pub const DeflateDecoder = struct {
 
         const result = this.callback_value.get().?.call(this.globalThis, &.{
             if (this.write_failed)
-                // TODO: propagate error from brotli
+                // TODO: propagate error from zlib
                 this.globalThis.createErrorInstance("DeflateError", .{})
             else
                 JSC.JSValue.null,

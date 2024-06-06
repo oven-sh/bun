@@ -89,6 +89,7 @@ async function runTests(target) {
    */
   const runTest = async (title, fn) => {
     const result = await runTask(title, fn);
+    results.push(result);
 
     if (isBuildKite) {
       const { ok, testPath, error, stdout } = result;
@@ -110,12 +111,13 @@ async function runTests(target) {
     }
 
     if (isGitHubAction) {
-      const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
-      if (summaryPath) {
-        const markdown = formatTestToMarkdown(result);
-        if (markdown) {
+      const markdown = formatTestToMarkdown(result);
+      if (markdown) {
+        const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
+        if (summaryPath) {
           appendFileSync(summaryPath, markdown);
         }
+        appendFileSync("comment.md", markdown);
       }
     }
   };
@@ -125,13 +127,18 @@ async function runTests(target) {
     await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
   }
 
-  if (results.some(({ ok }) => !ok)) {
-    return;
+  if (results.every(({ ok }) => ok)) {
+    for (const testPath of tests.slice(firstTest, lastTest)) {
+      const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
+      await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
+    }
   }
 
-  for (const testPath of tests.slice(firstTest, lastTest)) {
-    const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
-    await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
+  const failedTests = results.filter(({ ok }) => !ok);
+  if (isGitHubAction) {
+    reportOutputToGitHubAction("failing_tests_count", failedTests.length);
+    const markdown = formatTestToMarkdown(...failedTests);
+    reportOutputToGitHubAction("failing_tests", markdown);
   }
 }
 
@@ -404,7 +411,7 @@ async function spawnBunTest(execPath, testPath) {
  */
 function pipeTestStdout(io, chunk) {
   if (isGitHubAction) {
-    io.write(chunk);
+    io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
   } else {
     io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
   }
@@ -1122,6 +1129,20 @@ function reportAnnotationToBuildKite(label, content, attempt = 0) {
   const preview = `\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\``;
   const message = `Failed to create annotation for \`${label}\`: ${cause}\n${preview}`;
   reportAnnotationToBuildKite(`${label}-error`, message, attempt + 1);
+}
+
+/**
+ * @param {string} name
+ * @param {string} value
+ */
+function reportOutputToGitHubAction(name, value) {
+  const outputPath = process.env["GITHUB_OUTPUT"];
+  if (!outputPath) {
+    return;
+  }
+  const delimeter = Math.random().toString(36).substring(2, 15);
+  const content = `${name}<<${delimeter}\n${value}\n${delimeter}`;
+  appendFileSync(outputPath, content);
 }
 
 /**

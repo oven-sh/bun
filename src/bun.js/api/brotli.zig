@@ -302,22 +302,6 @@ pub const BrotliEncoder = struct {
         task.run();
         return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
     }
-
-    pub fn end(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
-
-        return .zero;
-    }
-
-    pub fn endSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
-
-        return .zero;
-    }
 };
 
 pub const BrotliDecoder = struct {
@@ -602,20 +586,4 @@ pub const BrotliDecoder = struct {
             }
         }
     };
-
-    pub fn end(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
-
-        return .zero;
-    }
-
-    pub fn endSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
-
-        return .zero;
-    }
 };

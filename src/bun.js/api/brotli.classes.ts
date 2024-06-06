@@ -20,14 +20,6 @@ export default [
         fn: "encodeSync",
         length: 2,
       },
-      end: {
-        fn: "end",
-        length: 2,
-      },
-      endSync: {
-        fn: "endSync",
-        length: 2,
-      },
     },
   }),
   define({
@@ -48,14 +40,6 @@ export default [
       },
       decodeSync: {
         fn: "decodeSync",
-        length: 2,
-      },
-      end: {
-        fn: "end",
-        length: 2,
-      },
-      endSync: {
-        fn: "endSync",
         length: 2,
       },
     },

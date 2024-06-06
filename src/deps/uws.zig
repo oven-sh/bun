@@ -1759,7 +1759,7 @@ pub const WebSocketBehavior = extern struct {
                         this,
                         ws,
                         code,
-                        if (length > 0) message[0..length] else "",
+                        if (length > 0 and message != null) message[0..length] else "",
                     },
                 );
             }

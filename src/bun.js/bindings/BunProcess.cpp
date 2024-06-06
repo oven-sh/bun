@@ -26,6 +26,7 @@
 
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "wtf/text/OrdinalNumber.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -1591,10 +1592,14 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
             String name = "Error"_s;
             String message = "JavaScript Callstack"_s;
-            unsigned int line = 0;
-            unsigned int column = 0;
+            OrdinalNumber line = OrdinalNumber::beforeFirst();
+            OrdinalNumber column = OrdinalNumber::beforeFirst();
             WTF::String sourceURL;
-            WTF::String stackProperty = Bun::formatStackTrace(vm, globalObject, name, message, line, column, sourceURL, stackFrames, nullptr);
+            WTF::String stackProperty = Bun::formatStackTrace(
+                vm, globalObject, name, message,
+                line, column,
+                sourceURL, stackFrames, nullptr);
+
             WTF::String stack;
             // first line after "Error:"
             size_t firstLine = stackProperty.find('\n');

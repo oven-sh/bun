@@ -234,6 +234,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 js_printer.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
+            try bufw.flush();
         }
     } else {
         dir.writeFile(std.fs.path.basename(specifier), written) catch return;

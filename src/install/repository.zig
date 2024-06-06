@@ -320,6 +320,14 @@ pub const Repository = extern struct {
         defer package_dir.close();
 
         const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", allocator).unwrap() catch |err| {
+            if (err == error.ENOENT) {
+                // allow git dependencies without package.json
+                return .{
+                    .url = url,
+                    .resolved = resolved,
+                };
+            }
+
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -348,8 +356,10 @@ pub const Repository = extern struct {
         return .{
             .url = url,
             .resolved = resolved,
-            .json_path = ret_json_path,
-            .json_buf = json_buf,
+            .json = .{
+                .path = ret_json_path,
+                .buf = json_buf,
+            },
         };
     }
 };

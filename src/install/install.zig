@@ -869,8 +869,10 @@ const Task = struct {
 pub const ExtractData = struct {
     url: string = "",
     resolved: string = "",
-    json_path: string = "",
-    json_buf: []u8 = "",
+    json: ?struct {
+        path: string = "",
+        buf: []u8 = "",
+    } = null,
 };
 
 pub const PackageInstall = struct {
@@ -5224,7 +5226,7 @@ pub const PackageManager = struct {
         }
     }
 
-    const GitResolver = struct {
+    pub const GitResolver = struct {
         resolved: string,
         resolution: *const Resolution,
 
@@ -5272,46 +5274,82 @@ pub const PackageManager = struct {
     ) ?Lockfile.Package {
         switch (resolution.tag) {
             .git, .github => {
-                const package_json_source = logger.Source.initPathString(
-                    data.json_path,
-                    data.json_buf,
-                );
-                var package = Lockfile.Package{};
-
-                package.parse(
-                    manager.lockfile,
-                    manager.allocator,
-                    manager.log,
-                    package_json_source,
-                    GitResolver,
-                    GitResolver{
+                var package = package: {
+                    const resolver = GitResolver{
                         .resolved = data.resolved,
                         .resolution = resolution,
-                    },
-                    Features.npm,
-                ) catch |err| {
-                    if (comptime log_level != .silent) {
-                        const string_buf = manager.lockfile.buffers.string_bytes.items;
-                        Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            resolution.fmtURL(string_buf),
-                            @errorName(err),
-                        });
+                    };
+
+                    var pkg = Lockfile.Package{};
+                    if (data.json) |json| {
+                        const package_json_source = logger.Source.initPathString(
+                            json.path,
+                            json.buf,
+                        );
+
+                        pkg.parse(
+                            manager.lockfile,
+                            manager.allocator,
+                            manager.log,
+                            package_json_source,
+                            GitResolver,
+                            resolver,
+                            Features.npm,
+                        ) catch |err| {
+                            if (comptime log_level != .silent) {
+                                const string_buf = manager.lockfile.buffers.string_bytes.items;
+                                Output.err(err, "failed to parse package.json for <b>{}<r>", .{
+                                    resolution.fmtURL(string_buf),
+                                });
+                            }
+                            Global.crash();
+                        };
+
+                        const has_scripts = pkg.scripts.hasAny() or brk: {
+                            const dir = std.fs.path.dirname(json.path) orelse "";
+                            const binding_dot_gyp_path = Path.joinAbsStringZ(
+                                dir,
+                                &[_]string{"binding.gyp"},
+                                .auto,
+                            );
+
+                            break :brk Syscall.exists(binding_dot_gyp_path);
+                        };
+
+                        pkg.meta.setHasInstallScript(has_scripts);
+                        break :package pkg;
                     }
-                    Global.crash();
+
+                    // package.json doesn't exist, no dependencies to worry about
+                    var repo = switch (resolution.tag) {
+                        .git => resolution.value.git.repo.slice(manager.lockfile.buffers.string_bytes.items),
+                        .github => resolution.value.github.repo.slice(manager.lockfile.buffers.string_bytes.items),
+                        else => unreachable,
+                    };
+
+                    {
+                        var builder = manager.lockfile.stringBuilder();
+
+                        builder.count(repo);
+                        resolver.count(*Lockfile.StringBuilder, &builder, undefined);
+
+                        builder.allocate() catch bun.outOfMemory();
+
+                        repo = switch (resolution.tag) {
+                            .git => resolution.value.git.repo.slice(manager.lockfile.buffers.string_bytes.items),
+                            .github => resolution.value.github.repo.slice(manager.lockfile.buffers.string_bytes.items),
+                            else => unreachable,
+                        };
+
+                        const name = builder.append(ExternalString, repo);
+                        pkg.name = name.value;
+                        pkg.name_hash = name.hash;
+
+                        pkg.resolution = resolver.resolve(*Lockfile.StringBuilder, &builder, undefined) catch unreachable;
+                    }
+
+                    break :package pkg;
                 };
-
-                const has_scripts = package.scripts.hasAny() or brk: {
-                    const dir = std.fs.path.dirname(data.json_path) orelse "";
-                    const binding_dot_gyp_path = Path.joinAbsStringZ(
-                        dir,
-                        &[_]string{"binding.gyp"},
-                        .auto,
-                    );
-
-                    break :brk Syscall.exists(binding_dot_gyp_path);
-                };
-
-                package.meta.setHasInstallScript(has_scripts);
 
                 package = manager.lockfile.appendPackage(package) catch unreachable;
                 package_id.* = package.meta.id;
@@ -5323,9 +5361,10 @@ pub const PackageManager = struct {
                 return package;
             },
             .local_tarball, .remote_tarball => {
+                const json = data.json.?;
                 const package_json_source = logger.Source.initPathString(
-                    data.json_path,
-                    data.json_buf,
+                    json.path,
+                    json.buf,
                 );
                 var package = Lockfile.Package{};
 
@@ -5352,7 +5391,7 @@ pub const PackageManager = struct {
                 };
 
                 const has_scripts = package.scripts.hasAny() or brk: {
-                    const dir = std.fs.path.dirname(data.json_path) orelse "";
+                    const dir = std.fs.path.dirname(json.path) orelse "";
                     const binding_dot_gyp_path = Path.joinAbsStringZ(
                         dir,
                         &[_]string{"binding.gyp"},
@@ -5373,13 +5412,14 @@ pub const PackageManager = struct {
 
                 return package;
             },
-            else => if (data.json_buf.len > 0) {
+            else => if (data.json.?.buf.len > 0) {
+                const json = data.json.?;
                 const package_json_source = logger.Source.initPathString(
-                    data.json_path,
-                    data.json_buf,
+                    json.path,
+                    json.buf,
                 );
                 initializeStore();
-                const json = json_parser.ParsePackageJSONUTF8(
+                const json_root = json_parser.ParsePackageJSONUTF8(
                     &package_json_source,
                     manager.log,
                     manager.allocator,
@@ -5394,11 +5434,11 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
                 var builder = manager.lockfile.stringBuilder();
-                Lockfile.Package.Scripts.parseCount(manager.allocator, &builder, json);
+                Lockfile.Package.Scripts.parseCount(manager.allocator, &builder, json_root);
                 builder.allocate() catch unreachable;
                 if (comptime Environment.allow_assert) bun.assert(package_id.* != invalid_package_id);
                 var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
-                scripts.parseAlloc(manager.allocator, &builder, json);
+                scripts.parseAlloc(manager.allocator, &builder, json_root);
                 scripts.filled = true;
             },
         }

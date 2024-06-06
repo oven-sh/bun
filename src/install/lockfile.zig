@@ -4547,9 +4547,27 @@ pub const Package = extern struct {
         package.name_hash = 0;
 
         // -- Count the sizes
-        if (json.asProperty("name")) |name_q| {
-            if (name_q.expr.asString(allocator)) |name| {
-                string_builder.count(name);
+        name: {
+            if (json.asProperty("name")) |name_q| {
+                if (name_q.expr.asString(allocator)) |name| {
+                    if (name.len != 0) {
+                        string_builder.count(name);
+                        break :name;
+                    }
+                }
+            }
+
+            // name is not validated by npm, so fallback to repo name for git dependencies
+            if (ResolverContext == PackageManager.GitResolver) {
+                const resolution: *const Resolution = resolver.resolution;
+                const repo = switch (resolution.tag) {
+                    .git => resolution.value.git.repo.slice(lockfile.buffers.string_bytes.items),
+                    .github => resolution.value.github.repo.slice(lockfile.buffers.string_bytes.items),
+
+                    else => break :name,
+                };
+
+                string_builder.count(repo);
             }
         }
 
@@ -4811,10 +4829,30 @@ pub const Package = extern struct {
 
         const package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
 
-        if (json.asProperty("name")) |name_q| {
-            if (name_q.expr.asString(allocator)) |name| {
-                const external_string = string_builder.append(ExternalString, name);
+        name: {
+            if (json.asProperty("name")) |name_q| {
+                if (name_q.expr.asString(allocator)) |name| {
+                    if (name.len != 0) {
+                        const external_string = string_builder.append(ExternalString, name);
 
+                        package.name = external_string.value;
+                        package.name_hash = external_string.hash;
+                        break :name;
+                    }
+                }
+            }
+
+            // name is not validated by npm, so fallback to repo name for git dependencies
+            if (ResolverContext == PackageManager.GitResolver) {
+                const resolution: *const Resolution = resolver.resolution;
+                const repo = switch (resolution.tag) {
+                    .git => resolution.value.git.repo.slice(lockfile.buffers.string_bytes.items),
+                    .github => resolution.value.github.repo.slice(lockfile.buffers.string_bytes.items),
+
+                    else => break :name,
+                };
+
+                const external_string = string_builder.append(ExternalString, repo);
                 package.name = external_string.value;
                 package.name_hash = external_string.hash;
             }

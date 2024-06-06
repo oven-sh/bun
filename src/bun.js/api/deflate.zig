@@ -52,23 +52,15 @@ pub const DeflateEncoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
-        const level_default = 6;
-        const level: u8 = blk: {
-            if (opts.get(globalThis, "level")) |level_val| {
-                if (level_val.isInt32()) {
-                    const level_i32 = level_val.toInt32();
-                    if (level_i32 < 0) break :blk level_default;
-                    if (level_i32 > 9) break :blk level_default;
-                    break :blk @intCast(level_i32);
-                }
-            }
-            break :blk level_default;
-        };
+        const level = globalThis.checkRangesOrGetDefault(opts, "level", u8, 0, 9, 6) orelse return .zero;
+        const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
+        const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return .zero;
+        const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return .zero;
 
         var this: *DeflateEncoder = DeflateEncoder.new(.{
             .globalThis = globalThis,
         });
-        this.stream.init(level) catch {
+        this.stream.init(level, windowBits, memLevel, strategy) catch {
             globalThis.throw("Failed to create DeflateEncoder", .{});
             return .zero;
         };

@@ -3243,6 +3243,20 @@ pub const JSGlobalObject = extern struct {
         // "createError",
         // "throwError",
     };
+
+    pub fn checkRangesOrGetDefault(this: *JSGlobalObject, obj: JSValue, field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
+        if (obj.get(this, field_name)) |level_val| {
+            if (level_val.isInt32()) {
+                const level_i32 = level_val.toInt32();
+                if (level_i32 < min or level_i32 > max) {
+                    this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
+                    return null;
+                }
+                return @intCast(level_i32);
+            }
+        }
+        return default;
+    }
 };
 
 pub const JSNativeFn = *const fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;

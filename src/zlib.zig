@@ -5,6 +5,7 @@ const bun = @import("root").bun;
 
 const mimalloc = @import("./allocators/mimalloc.zig");
 
+pub const MIN_WBITS = 8;
 pub const MAX_WBITS = 15;
 
 pub extern fn zlibVersion() [*:0]const u8;
@@ -908,9 +909,9 @@ const CHUNK = 1024 * 64;
 pub const ZlibCompressorStreaming = struct {
     state: z_stream = std.mem.zeroes(z_stream),
 
-    pub fn init(this: *ZlibCompressorStreaming, level: u8) !void {
-        const ret_code = deflateInit_(&this.state, level, zlibVersion(), @sizeOf(z_stream));
-        if (ret_code != .Ok) return error.Deflate;
+    pub fn init(this: *ZlibCompressorStreaming, level: u8, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
+        const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
+        if (ret_code != .Ok) return error.ZlibError;
         return;
     }
 

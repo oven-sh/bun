@@ -4062,8 +4062,7 @@ pub const PackageManager = struct {
 
             .folder => {
                 const res: FolderResolution = res: {
-                    if (this.isRootDependency(dependency_id)) {
-
+                    if (this.lockfile.isWorkspaceDependency(dependency_id)) {
                         // relative to cwd
                         const folder_path = this.lockfile.str(&version.value.folder);
                         var buf2: bun.PathBuffer = undefined;

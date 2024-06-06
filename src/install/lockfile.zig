@@ -555,7 +555,7 @@ pub const Tree = struct {
 
             const dependency = builder.dependencies[dep_id];
             // Do not hoist folder dependencies
-            const destination = if (resolutions[pid].tag == .folder)
+            const destination = if (resolutions[pid].tag == .folder and !builder.lockfile.isWorkspaceDependency(dep_id))
                 next.id
             else
                 try next.hoistDependency(
@@ -811,6 +811,20 @@ pub fn isWorkspaceRootDependency(this: *Lockfile, id: DependencyID) bool {
 /// Is this a direct dependency of the workspace the install is taking place in?
 pub fn isRootDependency(this: *Lockfile, manager: *PackageManager, id: DependencyID) bool {
     return this.packages.items(.dependencies)[manager.root_package_id.get(this, manager.workspace_name_hash)].contains(id);
+}
+
+/// Is this a direct dependency of any workspace (including workspace root)
+/// TODO make this faster by caching the workspace package ids
+pub fn isWorkspaceDependency(this: *Lockfile, id: DependencyID) bool {
+    const packages = this.packages.slice();
+    const resolutions = packages.items(.resolution);
+    const dependencies_lists = packages.items(.dependencies);
+    for (resolutions, dependencies_lists) |resolution, dependencies| {
+        if (resolution.tag != .workspace) continue;
+        if (dependencies.contains(id)) return true;
+    }
+
+    return false;
 }
 
 pub fn cleanWithLogger(

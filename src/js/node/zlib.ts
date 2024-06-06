@@ -6,6 +6,8 @@ const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
 const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+const createDeflateEncoder = $zig("node_zlib_binding.zig", "createDeflateEncoder");
+const createDeflateDecoder = $zig("node_zlib_binding.zig", "createDeflateDecoder");
 
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {
@@ -36,6 +38,8 @@ function brotliDecompressSync(buffer, opts) {
   const decoder = createBrotliDecoder(opts, {}, null);
   return decoder.decodeSync(buffer, undefined, true);
 }
+
+//
 
 function createBrotliCompress(opts) {
   return new BrotliCompress(opts);
@@ -74,6 +78,78 @@ BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
 };
 BrotliDecompress.prototype._flush = function (callback) {
+  callback(undefined, this[kHandle].decodeSync("", undefined, true));
+};
+
+//
+
+function deflate(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
+  const encoder = createDeflateEncoder(options, {}, callback);
+  encoder.encode(buffer, undefined, true);
+}
+
+function deflateSync(buffer, options) {
+  const encoder = createDeflateEncoder(options, {}, null);
+  return encoder.encodeSync(buffer, undefined, true);
+}
+
+function inflate(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
+  const decoder = createDeflateDecoder(options, {}, callback);
+  decoder.decode(buffer, undefined, true);
+}
+
+function inflateSync(buffer, options) {
+  const decoder = createDeflateDecoder(options, {}, null);
+  return decoder.decodeSync(buffer, undefined, true);
+}
+
+//
+
+function createDeflate(opts) {
+  return new Deflate(opts);
+}
+
+function Deflate(opts) {
+  if (!(this instanceof Deflate)) return new Deflate(opts);
+  this[kHandle] = createDeflateEncoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+Deflate.prototype = {};
+ObjectSetPrototypeOf(Deflate.prototype, stream.Transform.prototype);
+
+Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
+  callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
+};
+Deflate.prototype._flush = function _flush(callback) {
+  callback(undefined, this[kHandle].encodeSync("", undefined, true));
+};
+
+function createInflate(opts) {
+  return new Inflate(opts);
+}
+
+function Inflate(opts) {
+  if (!(this instanceof Inflate)) return new Inflate(opts);
+  this[kHandle] = createDeflateDecoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+Inflate.prototype = {};
+ObjectSetPrototypeOf(Inflate.prototype, stream.Transform.prototype);
+
+Inflate.prototype._transform = function (chunk, encoding, callback) {
+  callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
+};
+Inflate.prototype._flush = function (callback) {
   callback(undefined, this[kHandle].decodeSync("", undefined, true));
 };
 
@@ -4132,19 +4208,11 @@ var require_lib = __commonJS({
       writable: false,
     });
     exports.constants = require_constants();
-    exports.Deflate = Deflate;
-    exports.Inflate = Inflate;
     exports.Gzip = Gzip;
     exports.Gunzip = Gunzip;
     exports.DeflateRaw = DeflateRaw;
     exports.InflateRaw = InflateRaw;
     exports.Unzip = Unzip;
-    exports.createDeflate = function (o) {
-      return new Deflate(o);
-    };
-    exports.createInflate = function (o) {
-      return new Inflate(o);
-    };
     exports.createDeflateRaw = function (o) {
       return new DeflateRaw(o);
     };
@@ -4159,16 +4227,6 @@ var require_lib = __commonJS({
     };
     exports.createUnzip = function (o) {
       return new Unzip(o);
-    };
-    exports.deflate = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new Deflate(opts), buffer, callback);
-    };
-    exports.deflateSync = function (buffer, opts) {
-      return zlibBufferSync(new Deflate(opts), buffer);
     };
     exports.gzip = function (buffer, opts, callback) {
       if (typeof opts === "function") {
@@ -4200,16 +4258,6 @@ var require_lib = __commonJS({
     exports.unzipSync = function (buffer, opts) {
       return zlibBufferSync(new Unzip(opts), buffer);
     };
-    exports.inflate = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new Inflate(opts), buffer, callback);
-    };
-    exports.inflateSync = function (buffer, opts) {
-      return zlibBufferSync(new Inflate(opts), buffer);
-    };
     exports.gunzip = function (buffer, opts, callback) {
       if (typeof opts === "function") {
         callback = opts;
@@ -4239,6 +4287,15 @@ var require_lib = __commonJS({
     exports.BrotliCompress = BrotliCompress;
     exports.createBrotliDecompress = createBrotliDecompress;
     exports.BrotliDecompress = BrotliDecompress;
+
+    exports.deflate = deflate;
+    exports.deflateSync = deflateSync;
+    exports.inflate = inflate;
+    exports.inflateSync = inflateSync;
+    exports.createDeflate = createDeflate;
+    exports.Deflate = Deflate;
+    exports.createInflate = createInflate;
+    exports.Inflate = Inflate;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];
@@ -4288,14 +4345,6 @@ var require_lib = __commonJS({
       }
       var flushFlag = engine._finishFlushFlag;
       return engine._processChunk(buffer, flushFlag);
-    }
-    function Deflate(opts) {
-      if (!(this instanceof Deflate)) return new Deflate(opts);
-      Zlib.$call(this, opts, binding.DEFLATE);
-    }
-    function Inflate(opts) {
-      if (!(this instanceof Inflate)) return new Inflate(opts);
-      Zlib.$call(this, opts, binding.INFLATE);
     }
     function Gzip(opts) {
       if (!(this instanceof Gzip)) return new Gzip(opts);
@@ -4582,8 +4631,6 @@ var require_lib = __commonJS({
         cb();
       }
     };
-    util.inherits(Deflate, Zlib);
-    util.inherits(Inflate, Zlib);
     util.inherits(Gzip, Zlib);
     util.inherits(Gunzip, Zlib);
     util.inherits(DeflateRaw, Zlib);

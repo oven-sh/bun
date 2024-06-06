@@ -51,6 +51,8 @@ pub const API = struct {
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
     pub const BrotliEncoder = @import("./bun.js/api/brotli.zig").BrotliEncoder;
     pub const BrotliDecoder = @import("./bun.js/api/brotli.zig").BrotliDecoder;
+    pub const DeflateEncoder = @import("./bun.js/api/deflate.zig").DeflateEncoder;
+    pub const DeflateDecoder = @import("./bun.js/api/deflate.zig").DeflateDecoder;
 };
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
 pub const FFI = @import("./bun.js/api/ffi.zig").FFI;

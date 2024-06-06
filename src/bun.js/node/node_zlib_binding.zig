@@ -13,3 +13,11 @@ pub fn createBrotliEncoder(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue
 pub fn createBrotliDecoder(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     return JSC.JSFunction.create(global, "createBrotliDecoder", bun.JSC.API.BrotliDecoder.create, 3, .{});
 }
+
+pub fn createDeflateEncoder(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    return JSC.JSFunction.create(global, "createDeflateEncoder", bun.JSC.API.DeflateEncoder.create, 3, .{});
+}
+
+pub fn createDeflateDecoder(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    return JSC.JSFunction.create(global, "createDeflateDecoder", bun.JSC.API.DeflateDecoder.create, 3, .{});
+}

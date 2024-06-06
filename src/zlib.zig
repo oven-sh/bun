@@ -7,7 +7,7 @@ const mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const MAX_WBITS = 15;
 
-pub extern fn zlibVersion() [*c]const u8;
+pub extern fn zlibVersion() [*:0]const u8;
 
 pub extern fn compress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
 pub extern fn compress2(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong, level: c_int) c_int;
@@ -37,9 +37,10 @@ const z_crc_t = c_uint;
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
+const internal = @import("zlib-internal");
 const zStream_struct = @import("zlib-internal").zStream_struct;
-const z_stream = @import("zlib-internal").z_stream;
-const z_streamp = @import("zlib-internal").z_streamp;
+pub const z_stream = @import("zlib-internal").z_stream;
+pub const z_streamp = @import("zlib-internal").z_streamp;
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -98,7 +99,7 @@ pub extern fn inflateInit2_(strm: z_streamp, window_size: c_int, version: [*c]co
 /// inflate() will decompress and check either zlib-wrapped or gzip-wrapped deflate data. The header type is detected automatically, if requested when initializing with inflateInit2(). Any information contained in the gzip header is not retained unless inflateGetHeader() is used. When processing gzip-wrapped deflate data, strm->adler32 is set to the CRC-32 of the output produced so far. The CRC-32 is checked against the gzip trailer, as is the uncompressed length, modulo 2^32.
 ///
 /// inflate() returns Z_OK if some progress has been made (more input processed or more output produced), Z_STREAM_END if the end of the compressed data has been reached and all uncompressed output has been produced, Z_NEED_DICT if a preset dictionary is needed at this point, Z_DATA_ERROR if the input data was corrupted (input stream not conforming to the zlib format or incorrect check value, in which case strm->msg points to a string with a more specific error), Z_STREAM_ERROR if the stream structure was inconsistent (for example next_in or next_out was Z_NULL, or the state was inadvertently written over by the application), Z_MEM_ERROR if there was not enough memory, Z_BUF_ERROR if no progress was possible or if there was not enough room in the output buffer when Z_FINISH is used. Note that Z_BUF_ERROR is not fatal, and inflate() can be called again with more input and more output space to continue decompressing. If Z_DATA_ERROR is returned, the application may then call inflateSync() to look for a good compression block if a partial recovery of the data is to be attempted.
-extern fn inflate(stream: [*c]zStream_struct, flush: FlushValue) ReturnCode;
+pub extern fn inflate(stream: *zStream_struct, flush: FlushValue) ReturnCode;
 
 /// inflateEnd returns Z_OK if success, or Z_STREAM_ERROR if the stream state was inconsistent.
 const InflateEndResult = enum(c_int) {
@@ -107,7 +108,7 @@ const InflateEndResult = enum(c_int) {
 };
 
 /// All dynamically allocated data structures for this stream are freed. This function discards any unprocessed input and does not flush any pending output.
-extern fn inflateEnd(stream: [*c]zStream_struct) InflateEndResult;
+pub extern fn inflateEnd(stream: *zStream_struct) InflateEndResult;
 
 pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
     return struct {
@@ -520,7 +521,7 @@ pub const Options = struct {
 ///   with the version assumed by the caller (ZLIB_VERSION).  msg is set to null
 ///   if there is no error message.  deflateInit does not perform any compression:
 ///   this will be done by deflate().
-extern fn deflateInit_(strm: z_stream, level: c_int, stream_size: c_int) c_int;
+pub extern fn deflateInit_(strm: z_streamp, level: c_int, version: [*:0]const u8, stream_size: c_int) ReturnCode;
 
 ///
 ///    deflate compresses as much data as possible, and stops when the input
@@ -626,7 +627,7 @@ extern fn deflateInit_(strm: z_stream, level: c_int, stream_size: c_int) c_int;
 ///  fatal, and deflate() can be called again with more input and more output
 ///  space to continue compressing.
 ///
-extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
+pub extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
 
 ///
 ///     All dynamically allocated data structures for this stream are freed.
@@ -638,7 +639,7 @@ extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
 ///   prematurely (some input or output was discarded).  In the error case, msg
 ///   may be set but then points to a static string (which must not be
 ///   deallocated).
-extern fn deflateEnd(stream: z_streamp) ReturnCode;
+pub extern fn deflateEnd(stream: z_streamp) ReturnCode;
 
 //   deflateBound() returns an upper bound on the compressed size after
 //  deflation of sourceLen bytes.  It must be called after deflateInit() or
@@ -650,7 +651,7 @@ extern fn deflateEnd(stream: z_streamp) ReturnCode;
 //  to return Z_STREAM_END.  Note that it is possible for the compressed size to
 //  be larger than the value returned by deflateBound() if flush options other
 //  than Z_FINISH or Z_NO_FLUSH are used.
-extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
+pub extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
 
 ///
 ///     This is another version of deflateInit with more compression options.  The
@@ -704,7 +705,7 @@ extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
 ///   incompatible with the version assumed by the caller (ZLIB_VERSION).  msg is
 ///   set to null if there is no error message.  deflateInit2 does not perform any
 ///   compression: this will be done by deflate().
-extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
+pub extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
 
 /// Not for streaming!
 pub const ZlibCompressorArrayList = struct {
@@ -899,5 +900,153 @@ pub const ZlibCompressorArrayList = struct {
                 ReturnCode.Ok => {},
             }
         }
+    }
+};
+
+const CHUNK = 1024 * 64;
+
+pub const ZlibCompressorStreaming = struct {
+    state: z_stream = std.mem.zeroes(z_stream),
+
+    pub fn init(this: *ZlibCompressorStreaming, level: u8) !void {
+        const ret_code = deflateInit_(&this.state, level, zlibVersion(), @sizeOf(z_stream));
+        if (ret_code != .Ok) return error.Deflate;
+        return;
+    }
+
+    pub fn writer(this: *ZlibCompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {
+        return (WriterImpl(@TypeOf(out_writer)){ .ctx = this, .out_writer = out_writer }).writer();
+    }
+
+    fn WriterImpl(comptime T: type) type {
+        return struct {
+            ctx: *ZlibCompressorStreaming,
+            out_writer: T,
+
+            const WriteError = std.mem.Allocator.Error;
+            const Writer = std.io.Writer(@This(), WriteError, write);
+
+            fn writer(this: @This()) Writer {
+                return .{ .context = this };
+            }
+
+            fn write(this: @This(), bytes: []const u8) WriteError!usize {
+                const state = &this.ctx.state;
+                state.next_in = bytes.ptr;
+                state.avail_in = @intCast(bytes.len);
+
+                while (true) {
+                    var out: [CHUNK]u8 = undefined;
+                    state.avail_out = CHUNK;
+                    state.next_out = &out;
+
+                    const ret = deflate(state, .NoFlush);
+                    bun.assert(ret != .StreamError);
+                    const have = CHUNK - state.avail_out;
+                    try this.out_writer.writeAll(out[0..have]);
+                    if (state.avail_out == 0) continue;
+                    break;
+                }
+                bun.assert(state.avail_in == 0);
+
+                return bytes.len;
+            }
+        };
+    }
+
+    pub fn end(this: *ZlibCompressorStreaming, output: *std.ArrayListUnmanaged(u8)) !void {
+        const state = &this.state;
+        state.next_in = null;
+        state.avail_in = 0;
+        while (true) {
+            var out: [CHUNK]u8 = undefined;
+            state.avail_out = CHUNK;
+            state.next_out = &out;
+            const ret = deflate(state, .Finish);
+            bun.assert(ret != .StreamError);
+            const have = CHUNK - state.avail_out;
+            try output.appendSlice(bun.default_allocator, out[0..have]);
+            if (state.avail_out == 0) continue;
+            break;
+        }
+        bun.assert(state.avail_in == 0);
+
+        _ = deflateEnd(&this.state);
+    }
+};
+
+pub const ZlibDecompressorStreaming = struct {
+    state: z_stream = std.mem.zeroes(z_stream),
+
+    pub fn init(this: *ZlibDecompressorStreaming) !void {
+        const ret_code = inflateInit_(&this.state, zlibVersion(), @sizeOf(z_stream));
+        if (ret_code != .Ok) return error.Deflate;
+        return;
+    }
+
+    pub fn writer(this: *ZlibDecompressorStreaming, out_writer: anytype) WriterImpl(@TypeOf(out_writer)).Writer {
+        return (WriterImpl(@TypeOf(out_writer)){ .ctx = this, .out_writer = out_writer }).writer();
+    }
+
+    fn WriterImpl(comptime T: type) type {
+        return struct {
+            ctx: *ZlibDecompressorStreaming,
+            out_writer: T,
+
+            const WriteError = std.mem.Allocator.Error || error{ZlibError};
+            const Writer = std.io.Writer(@This(), WriteError, write);
+
+            fn writer(this: @This()) Writer {
+                return .{ .context = this };
+            }
+
+            fn write(this: @This(), bytes: []const u8) WriteError!usize {
+                const state = &this.ctx.state;
+                state.next_in = bytes.ptr;
+                state.avail_in = @intCast(bytes.len);
+
+                while (true) {
+                    var out: [CHUNK]u8 = undefined;
+                    state.avail_out = CHUNK;
+                    state.next_out = &out;
+
+                    const ret = inflate(state, .NoFlush);
+                    bun.assert(ret != .StreamError);
+                    if (ret == .NeedDict) return error.ZlibError;
+                    if (ret == .DataError) return error.ZlibError;
+                    if (ret == .MemError) return error.ZlibError;
+                    const have = CHUNK - state.avail_out;
+                    try this.out_writer.writeAll(out[0..have]);
+                    if (state.avail_out == 0) continue;
+                    break;
+                }
+                bun.assert(state.avail_in == 0);
+
+                return bytes.len;
+            }
+        };
+    }
+
+    pub fn end(this: *ZlibDecompressorStreaming, output: *std.ArrayListUnmanaged(u8)) !void {
+        const state = &this.state;
+        state.next_in = null;
+        state.avail_in = 0;
+        while (true) {
+            var out: [CHUNK]u8 = undefined;
+            state.avail_out = CHUNK;
+            state.next_out = &out;
+            const ret = inflate(state, .Finish);
+            bun.assert(ret != .StreamError);
+            if (ret == .NeedDict) return error.ZlibError;
+            if (ret == .DataError) return error.ZlibError;
+            if (ret == .MemError) return error.ZlibError;
+            const have = CHUNK - state.avail_out;
+            try output.appendSlice(bun.default_allocator, out[0..have]);
+            if (state.avail_out == 0) continue;
+            break;
+        }
+        bun.assert(state.avail_in == 0);
+
+        _ = inflateEnd(&this.state);
     }
 };

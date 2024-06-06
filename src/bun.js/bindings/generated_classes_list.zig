@@ -72,4 +72,6 @@ pub const Classes = struct {
     pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
     pub const BrotliEncoder = JSC.API.BrotliEncoder;
     pub const BrotliDecoder = JSC.API.BrotliDecoder;
+    pub const DeflateEncoder = JSC.API.DeflateEncoder;
+    pub const DeflateDecoder = JSC.API.DeflateDecoder;
 };

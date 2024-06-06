@@ -22,6 +22,7 @@ LLVM_VERSION=16
 NODE_VERSION=22
 PNPM_VERSION=9
 BUN_VERSION=1.1.8
+DEBIAN_VERSION=$(lsb_release -cs)
 
 # Install dependencies
 apt-get update
@@ -33,8 +34,8 @@ apt-get install -y --reinstall --no-install-recommends \
   curl
 
 # Add repositories
-echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list
-echo "deb-src https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list
+echo "deb https://apt.llvm.org/${DEBIAN_VERSION}/ llvm-toolchain-${DEBIAN_VERSION}-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list
+echo "deb-src https://apt.llvm.org/${DEBIAN_VERSION}/ llvm-toolchain-${DEBIAN_VERSION}-${LLVM_VERSION} main" >> /etc/apt/sources.list.d/llvm.list
 curl -fsSL "https://apt.llvm.org/llvm-snapshot.gpg.key" | apt-key add -
 echo "deb https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
 curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" | apt-key add -
@@ -44,7 +45,7 @@ install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
-  $(. /etc/os-release && echo "bullseye") stable" | \
+  $(. /etc/os-release && echo "${DEBIAN_VERSION}") stable" | \
   tee /etc/apt/sources.list.d/docker.list > /dev/null
 curl -fsSL https://keys.openpgp.org/vks/v1/by-fingerprint/32A37959C2FA5C3C99EFBC32A79206696452D198 \
   | gpg --batch --yes --dearmor -o /usr/share/keyrings/buildkite-agent-archive-keyring.gpg

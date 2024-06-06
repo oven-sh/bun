@@ -166,7 +166,7 @@ function deflateRaw(buffer, options, callback) {
   encoder.encode(buffer, undefined, true);
 }
 
-function deflateSyncRaw(buffer, options) {
+function deflateRawSync(buffer, options) {
   if (options && options.windowBits === 8) options.windowBits = 9;
   const encoder = createDeflateEncoder(options, {}, null);
   return encoder.encodeSync(buffer, undefined, true);
@@ -182,7 +182,7 @@ function inflateRaw(buffer, options, callback) {
   decoder.decode(buffer, undefined, true);
 }
 
-function inflateSyncRaw(buffer, options) {
+function inflateRawSync(buffer, options) {
   const decoder = createDeflateDecoder(options, {}, null);
   return decoder.decodeSync(buffer, undefined, true);
 }
@@ -4345,9 +4345,9 @@ var require_lib = __commonJS({
     exports.Inflate = Inflate;
 
     exports.deflateRaw = deflateRaw;
-    exports.deflateSyncRaw = deflateSyncRaw;
+    exports.deflateRawSync = deflateRawSync;
     exports.inflateRaw = inflateRaw;
-    exports.inflateSyncRaw = inflateSyncRaw;
+    exports.inflateRawSync = inflateRawSync;
     exports.createDeflateRaw = createDeflateRaw;
     exports.DeflateRaw = DeflateRaw;
     exports.createInflateRaw = createInflateRaw;

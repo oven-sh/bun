@@ -20203,38 +20203,8 @@ fn NewParser_(
                     class.properties = class_properties.items;
 
                     if (instance_members.items.len > 0 or class.extends != null) {
-                        if (constructor_function == null) {
-                            var properties = ListManaged(Property).fromOwnedSlice(p.allocator, class.properties);
-                            var constructor_stmts = ListManaged(Stmt).init(p.allocator);
-
-                            if (class.extends != null) {
-                                const target = p.newExpr(E.Super{}, stmt.loc);
-                                const arguments_ref = p.newSymbol(.unbound, arguments_str) catch unreachable;
-                                p.current_scope.generated.push(p.allocator, arguments_ref) catch unreachable;
-
-                                const super = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
-                                const args = ExprNodeList.one(p.allocator, super) catch unreachable;
-
-                                constructor_stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{ .target = target, .args = args }, stmt.loc) }, stmt.loc)) catch unreachable;
-                            }
-
-                            constructor_stmts.appendSlice(instance_members.items) catch unreachable;
-
-                            properties.insert(0, G.Property{
-                                .flags = Flags.Property.init(.{ .is_method = true }),
-                                .key = p.newExpr(E.String{ .data = "constructor" }, stmt.loc),
-                                .value = p.newExpr(E.Function{ .func = G.Fn{
-                                    .name = null,
-                                    .open_parens_loc = logger.Loc.Empty,
-                                    .args = &[_]Arg{},
-                                    .body = .{ .loc = stmt.loc, .stmts = constructor_stmts.items },
-                                    .flags = Flags.Function.init(.{}),
-                                } }, stmt.loc),
-                            }) catch unreachable;
-
-                            class.properties = properties.items;
-                        } else {
-                            var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
+                        if (constructor_function) |constructor| {
+                            var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
                             // statements coming from class body inserted after super call or beginning of constructor.
                             var super_index: ?usize = null;
                             for (constructor_stmts.items, 0..) |item, index| {
@@ -20246,11 +20216,8 @@ fn NewParser_(
                             const i = if (super_index) |j| j + 1 else 0;
                             constructor_stmts.insertSlice(i, instance_members.items) catch unreachable;
 
-                            constructor_function.?.func.body.stmts = constructor_stmts.items;
+                            constructor.func.body.stmts = constructor_stmts.items;
                         }
-
-                        // TODO: make sure "super()" comes before instance field initializers
-                        // https://github.com/evanw/esbuild/blob/e9413cc4f7ab87263ea244a999c6fa1f1e34dc65/internal/js_parser/js_parser_lower.go#L2742
                     }
 
                     var stmts_count: usize = 1 + static_members.items.len + instance_decorators.items.len + static_decorators.items.len;

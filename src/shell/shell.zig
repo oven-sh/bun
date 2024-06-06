@@ -4089,7 +4089,7 @@ pub fn escapeWTF8(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
     }
 }
 
-pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !bool {
+pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
     if (add_quotes) try outbuf.append('"');
 
     const non_ascii = bun.strings.firstNonASCII16([]const u16, str) orelse 0;
@@ -4099,11 +4099,11 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
     loop: while (i < str.len) {
         const char: u32 = brk: {
             if (i < non_ascii) {
-                i += 1;
+                defer i += 1;
                 break :brk str[i];
             }
             const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
-            if (ret.fail) return false;
+            if (ret.fail) return .{ .is_invalid = true };
             i += ret.len;
             break :brk ret.code_point;
         };
@@ -4119,7 +4119,7 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
         try outbuf.appendSlice(cp_buf[0..len]);
     }
     if (add_quotes) try outbuf.append('"');
-    return true;
+    return .{ .is_invalid = false };
 }
 
 pub fn needsEscapeBunstr(bunstr: bun.String) bool {

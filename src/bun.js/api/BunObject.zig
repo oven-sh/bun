@@ -406,11 +406,11 @@ pub fn shellEscape(
 
     if (bunstr.isUTF16()) {
         if (bun.shell.needsEscapeUTF16(bunstr.utf16())) {
-            const has_invalid_utf16 = bun.shell.escapeUtf16(bunstr.utf16(), &outbuf, true) catch {
+            const result = bun.shell.escapeUtf16(bunstr.utf16(), &outbuf, true) catch {
                 globalThis.throwOutOfMemory();
                 return .undefined;
             };
-            if (has_invalid_utf16) {
+            if (result.is_invalid) {
                 globalThis.throw("String has invalid utf-16: {s}", .{bunstr.byteSlice()});
                 return .undefined;
             }

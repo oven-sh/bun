@@ -49,6 +49,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         pub fn next(this: *@This()) ?bun.String {
             const i: usize = this.iter_i;
             if (i >= this.len) {
+                this.i = this.iter_i;
                 return null;
             }
 
@@ -58,7 +59,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             if (comptime options.include_value) {
                 const current = Bun__JSPropertyIterator__getNameAndValue(this.impl, this.globalObject, this.object, &name, i);
                 if (current.isEmpty()) {
-                    return null;
+                    return this.next();
                 }
                 current.ensureStillAlive();
                 this.value = current;
@@ -67,12 +68,12 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             }
 
             if (name.tag == .Dead) {
-                return null;
+                return this.next();
             }
 
             if (comptime options.skip_empty_name) {
                 if (name.isEmpty()) {
-                    return null;
+                    return this.next();
                 }
             }
 

@@ -117,7 +117,13 @@ pub fn crashHandler(
                 panic_mutex.lock();
                 defer panic_mutex.unlock();
 
-                const writer = Output.errorWriter();
+                // Use an raw unbuffered writer to stderr to avoid losing information on
+                // panic in a panic. There is also a possibility that `Output` related code
+                // is not configured correctly, so that would also mask the message.
+                //
+                // Output.errorWriter() is not used here because it may not be configured
+                // if the program crashes immediatly at startup.
+                const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug
                 // builds Mainly, we demangle the backtrace immediately instead
@@ -140,10 +146,17 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.os.abort();
                     printMetadata(writer) catch std.os.abort();
-
-                    Output.flush();
                 } else {
-                    Output.err("oh no", "multiple threads are crashing", .{});
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                    }
+                    writer.writeAll("oh no") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.os.abort();
+                    } else {
+                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                    }
+                    writer.writeAll("multiple threads are crashing") catch std.os.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
@@ -173,10 +186,12 @@ pub fn crashHandler(
                         else => @compileError("TODO"),
                     }
 
-                    Output.prettyErrorln(":<r> {}", .{reason});
+                    writer.writeAll(": ") catch std.os.abort();
+                    if (Output.enable_ansi_colors) {
+                        writer.writeAll(Output.prettyFmt("<r>", true)) catch std.os.abort();
+                    }
+                    writer.print("{}\n", .{reason}) catch std.os.abort();
                 }
-
-                Output.flush();
 
                 var addr_buf: [10]usize = undefined;
                 var trace_buf: std.builtin.StackTrace = undefined;
@@ -194,35 +209,39 @@ pub fn crashHandler(
                 if (debug_trace) {
                     dumpStackTrace(trace.*);
 
-                    // TODO: REMOVE
                     trace_str_buf.writer().print("{}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
-                        .action = .open_issue,
+                        .action = .view_trace,
                     }}) catch std.os.abort();
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
+                        writer.writeAll("oh no") catch std.os.abort();
+                        if (Output.enable_ansi_colors) {
+                            writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.os.abort();
+                        } else {
+                            writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                        }
                         if (reason == .out_of_memory) {
-                            Output.err("oh no",
+                            writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            , .{});
+                            ) catch std.os.abort();
                         } else {
-                            Output.err("oh no",
+                            writer.writeAll(
                                 \\Bun has crashed. This indicates a bug in Bun, not your code.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            , .{});
+                            ) catch std.os.abort();
                         }
-                        Output.flush();
                     }
 
                     if (Output.enable_ansi_colors) {
@@ -247,8 +266,6 @@ pub fn crashHandler(
                 } else {
                     writer.writeAll("\n") catch std.os.abort();
                 }
-
-                Output.flush();
             }
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
@@ -308,6 +325,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         error.InvalidArgument,
         error.@"Invalid Bunfig",
+        error.InstallFailed,
         => if (!show_trace) Global.exit(1),
 
         error.SyntaxError => {
@@ -462,7 +480,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
                         \\
-                        \\<r><red>error<r>: An unknown error ocurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
+                        \\<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>
                         \\
                         \\<d>Current limit: {d}<r>
                         \\
@@ -507,14 +525,14 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     }
                 } else {
                     Output.errGeneric(
-                        "An unknown error ocurred <d>(<red>{s}<r><d>)<r>",
+                        "An unknown error occurred <d>(<red>{s}<r><d>)<r>",
                         .{@errorName(err)},
                     );
                     show_trace = true;
                 }
             } else {
                 Output.errGeneric(
-                    \\An unknown error ocurred <d>(<red>{s}<r><d>)<r>
+                    \\An unknown error occurred <d>(<red>{s}<r><d>)<r>
                 ,
                     .{@errorName(err)},
                 );
@@ -543,7 +561,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                 if (bun.Environment.isDebug)
                     "'main' returned <red>error.{s}<r>"
                 else
-                    "An internal error ocurred (<red>{s}<r>)",
+                    "An internal error occurred (<red>{s}<r>)",
                 .{@errorName(err)},
             );
             show_trace = true;
@@ -598,8 +616,9 @@ else
     "x64";
 
 const metadata_version_line = std.fmt.comptimePrint(
-    "Bun v{s} {s} {s}{s}\n",
+    "Bun {s}v{s} {s} {s}{s}\n",
     .{
+        if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,
@@ -629,7 +648,25 @@ fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyop
     );
 }
 
-pub fn updatePosixSegfaultHandler(act: ?*const std.os.Sigaction) !void {
+var did_register_sigaltstack = false;
+var sigaltstack: [512 * 1024]u8 = undefined;
+
+pub fn updatePosixSegfaultHandler(act: ?*std.os.Sigaction) !void {
+    if (act) |act_| {
+        if (!did_register_sigaltstack) {
+            var stack: std.c.stack_t = .{
+                .flags = 0,
+                .size = sigaltstack.len,
+                .sp = &sigaltstack,
+            };
+
+            if (std.c.sigaltstack(&stack, null) == 0) {
+                act_.flags |= std.os.SA.ONSTACK;
+                did_register_sigaltstack = true;
+            }
+        }
+    }
+
     try std.os.sigaction(std.os.SIG.SEGV, act, null);
     try std.os.sigaction(std.os.SIG.ILL, act, null);
     try std.os.sigaction(std.os.SIG.BUS, act, null);
@@ -645,7 +682,7 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            const act = std.os.Sigaction{
+            var act = std.os.Sigaction{
                 .handler = .{ .sigaction = handleSegfaultPosix },
                 .mask = std.os.empty_sigset,
                 .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
@@ -666,7 +703,7 @@ pub fn resetSegfaultHandler() void {
         return;
     }
 
-    const act = std.os.Sigaction{
+    var act = std.os.Sigaction{
         .handler = .{ .handler = std.os.SIG.DFL },
         .mask = std.os.empty_sigset,
         .flags = 0,
@@ -704,9 +741,9 @@ pub fn printMetadata(writer: anytype) !void {
     try writer.writeAll(metadata_version_line);
     {
         try writer.print("Args: ", .{});
-        var arg_chars_left: usize = 196;
+        var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {
-            if (i != 0) try writer.writeAll(", ");
+            if (i != 0) try writer.writeAll(" ");
             try bun.fmt.quotedWriter(writer, arg[0..@min(arg.len, arg_chars_left)]);
             arg_chars_left -|= arg.len;
             if (arg_chars_left == 0) {
@@ -766,7 +803,7 @@ fn waitForOtherThreadToFinishPanicking() void {
     }
 }
 
-/// Each platform is encoded is a single character. It is placed right after the
+/// Each platform is encoded as a single character. It is placed right after the
 /// slash after the version, so someone just reading the trace string can tell
 /// what platform it came from. L, M, and W are for Linux, macOS, and Windows,
 /// with capital letters indicating aarch64, lowercase indicating x86_64.
@@ -791,6 +828,16 @@ const Platform = enum(u8) {
         "_" ++ @tagName(builtin.target.cpu.arch) ++
         (if (bun.Environment.baseline) "_baseline" else ""));
 };
+
+/// Note to the decoder on how to process this string. This ensures backwards
+/// compatibility with older versions of the tracestring.
+///
+/// '1' - original. uses 7 char hash with VLQ encoded stack-frames
+/// '2' - same as '1' but this build is known to be a canary build
+const version_char = if (bun.Environment.is_canary)
+    "2"
+else
+    "1";
 
 const git_sha = if (bun.Environment.git_sha.len > 0) bun.Environment.git_sha[0..7] else "unknown";
 
@@ -962,7 +1009,7 @@ const StackLine = struct {
 };
 
 const TraceString = struct {
-    trace: *std.builtin.StackTrace,
+    trace: *const std.builtin.StackTrace,
     reason: CrashReason,
     action: Action,
 
@@ -988,7 +1035,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     );
     try writer.writeByte(if (bun.CLI.Cli.cmd) |cmd| cmd.char() else '_');
 
-    try writer.writeAll("1" ++ git_sha);
+    try writer.writeAll(version_char ++ git_sha);
 
     const packed_features = bun.analytics.packedFeatures();
     try writeU64AsTwoVLQs(writer, @bitCast(packed_features));
@@ -1101,10 +1148,13 @@ fn isReportingEnabled() bool {
     if (!bun.analytics.isEnabled())
         return false;
 
-    // TODO: currently we are only testing automatic reporting
-    // in canary. later, this should be set to releases.
     if (bun.Environment.is_canary)
         return true;
+
+    // Change in v1.1.10: enable crash reporter auto upload on macOS and Windows.
+    if (bun.Environment.isMac or bun.Environment.isWindows) {
+        return true;
+    }
 
     return false;
 }
@@ -1311,6 +1361,16 @@ const stdDumpStackTrace = debug.dumpStackTrace;
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     const stderr = std.io.getStdErr().writer();
+    if (!bun.Environment.isDebug) {
+        // debug symbols aren't available, lets print a tracestring
+        stderr.print("View Debug Trace: {}\n", .{TraceString{
+            .action = .view_trace,
+            .reason = .{ .zig_error = error.DumpStackTrace },
+            .trace = &trace,
+        }});
+        return;
+    }
+
     switch (bun.Environment.os) {
         .windows => attempt_dump: {
             // Windows has issues with opening the PDB file sometimes.
@@ -1321,7 +1381,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             var arena = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
-                stderr.print("Unable to dump stack trace: {s}\n", .{@errorName(err)}) catch return;
+                stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
             return;
@@ -1335,21 +1395,57 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             return;
         },
     }
-    // TODO: It would be reasonable, but hacky, to spawn LLVM-symbolizer here in
-    // order to get the demangled stack traces.
-    var name_bytes: [1024]u8 = undefined;
-    for (trace.instruction_addresses[0..trace.index]) |addr| {
-        const line = StackLine.fromAddress(addr, &name_bytes) orelse {
-            stderr.print("- ??? at 0x{X}\n", .{addr}) catch break;
-            continue;
-        };
-        stderr.print("- {}\n", .{line}) catch break;
-    }
+
+    var arena = bun.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    var sfa = std.heap.stackFallback(16384, arena.allocator());
+    const alloc = sfa.get();
+
+    var argv = std.ArrayList([]const u8).init(alloc);
+
     const program = switch (bun.Environment.os) {
         .windows => "pdb-addr2line",
         else => "llvm-symbolizer",
     };
-    stderr.print("note: Use " ++ program ++ " to demangle the above trace.\n", .{}) catch return;
+    argv.append(program) catch return;
+
+    argv.append("--exe") catch return;
+    argv.append(
+        switch (bun.Environment.os) {
+            .windows => brk: {
+                const image_path = bun.strings.toUTF8Alloc(alloc, bun.windows.exePathW()) catch return;
+                break :brk std.mem.concat(alloc, u8, &.{
+                    image_path[0 .. image_path.len - 3],
+                    "pdb",
+                }) catch return;
+            },
+            else => bun.selfExePath() catch return,
+        },
+    ) catch return;
+
+    var name_bytes: [1024]u8 = undefined;
+    for (trace.instruction_addresses[0..trace.index]) |addr| {
+        const line = StackLine.fromAddress(addr, &name_bytes) orelse
+            continue;
+        argv.append(std.fmt.allocPrint(alloc, "0x{X}", .{line.address}) catch return) catch return;
+    }
+
+    // std.process is used here because bun.spawnSync with libuv does not work within
+    // the crash handler.
+    const proc = std.process.Child.run(.{
+        .allocator = alloc,
+        .argv = argv.items,
+    }) catch {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+        return;
+    };
+    if (proc.term != .Exited or proc.term.Exited != 0) {
+        stderr.print("Failed to invoke command: {s}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch return;
+    }
+    defer alloc.free(proc.stderr);
+    defer alloc.free(proc.stdout);
+    stderr.writeAll(proc.stdout) catch return;
+    stderr.writeAll(proc.stderr) catch return;
 }
 
 pub const js_bindings = struct {
@@ -1415,13 +1511,17 @@ pub const js_bindings = struct {
     }
 
     pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const obj = JSValue.createEmptyObject(global, 1);
+        const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
         for (list, 0..) |feature, i| {
             array.putIndex(global, @intCast(i), bun.String.static(feature).toJS(global));
         }
         obj.put(global, JSC.ZigString.static("features"), array);
+        obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
+        obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+        obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+        obj.put(global, JSC.ZigString.static("generated_at"), bun.JSC.JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };

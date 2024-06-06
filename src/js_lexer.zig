@@ -77,7 +77,7 @@ pub const JSONOptions = struct {
     always_decode_escape_sequences: bool = false,
 };
 
-pub fn decodeUTF8(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
+pub fn decodeStringLiteralEscapeSequencesToUTF16(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
     var log = logger.Log.init(allocator);
     defer log.deinit();
     const source = logger.Source.initEmptyFile("");
@@ -2733,7 +2733,7 @@ fn NewLexer_(
             // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
             // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
             // include a <CR> or <CR><LF> sequence.
-            var bytes = MutableString.initCopy(lexer.allocator, text) catch @panic("Out of memory");
+            var bytes = MutableString.initCopy(lexer.allocator, text) catch bun.outOfMemory();
             var end: usize = 0;
             var i: usize = 0;
             var c: u8 = '0';

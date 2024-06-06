@@ -36,21 +36,30 @@ const S = JSAst.S;
 
 const debug = Output.scoped(.migrate, false);
 
-pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, bun_lockfile_path: stringZ) LoadFromDiskResult {
+pub fn detectAndLoadOtherLockfile(
+    this: *Lockfile,
+    manager: *Install.PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    bun_lockfile_path: stringZ,
+) LoadFromDiskResult {
     const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(bun_lockfile_path, '/') orelse 0];
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
-    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var buf: bun.PathBuffer = undefined;
     @memcpy(buf[0..dirname.len], dirname);
 
     npm: {
         const npm_lockfile_name = "package-lock.json";
         @memcpy(buf[dirname.len .. dirname.len + npm_lockfile_name.len], npm_lockfile_name);
         buf[dirname.len + npm_lockfile_name.len] = 0;
-        const lockfile_path = buf[0 .. dirname.len + npm_lockfile_name.len :0];
         var timer = std.time.Timer.start() catch unreachable;
-        const data = bun.sys.File.readFrom(std.fs.cwd(), lockfile_path, allocator).unwrap() catch break :npm;
-        const lockfile = migrateNPMLockfile(this, allocator, log, data, lockfile_path) catch |err| {
+        const lockfile = bun.sys.openat(bun.FD.cwd(), buf[0 .. dirname.len + npm_lockfile_name.len :0], std.os.O.RDONLY, 0).unwrap() catch break :npm;
+        defer _ = bun.sys.close(lockfile);
+        var lockfile_path_buf: bun.PathBuffer = undefined;
+        const lockfile_path = bun.getFdPathZ(lockfile, &lockfile_path_buf) catch break :npm;
+        const data = bun.sys.File.from(lockfile).readToEnd(allocator).unwrap() catch break :npm;
+        const migrate_result = migrateNPMLockfile(this, manager, allocator, log, data, lockfile_path) catch |err| {
             if (err == error.NPMLockfileVersionMismatch) {
                 Output.prettyErrorln(
                     \\<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3
@@ -70,14 +79,14 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
             return LoadFromDiskResult{ .err = .{ .step = .migrating, .value = err } };
         };
 
-        if (lockfile == .ok) {
+        if (migrate_result == .ok) {
             Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
             Output.prettyError(" ", .{});
             Output.prettyErrorln("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
             Output.flush();
         }
 
-        return lockfile;
+        return migrate_result;
     }
 
     return LoadFromDiskResult{ .not_found = {} };
@@ -109,13 +118,20 @@ const dependency_keys = .{
     .optionalDependencies,
 };
 
-pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, data: string, path: string) !LoadFromDiskResult {
+pub fn migrateNPMLockfile(
+    this: *Lockfile,
+    manager: *Install.PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    data: string,
+    abs_path: string,
+) !LoadFromDiskResult {
     debug("begin lockfile migration", .{});
 
     this.initEmpty(allocator);
     Install.initializeStore();
 
-    const json_src = logger.Source.initPathString(path, data);
+    const json_src = logger.Source.initPathString(abs_path, data);
     const json = bun.JSON.ParseJSONUTF8(&json_src, log, allocator) catch return error.InvalidNPMLockfile;
 
     if (json.data != .e_object) {
@@ -177,6 +193,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
                 &workspaces,
                 allocator,
+                &manager.workspace_package_json_cache,
                 log,
                 json_array,
                 &json_src,
@@ -323,7 +340,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             const pkg_name = packageNameFromPath(pkg_path);
             if (version_prop != null and pkg_name.len > 0) {
                 // construct registry url
-                const registry = Install.PackageManager.instance.scopeForPackageName(pkg_name);
+                const registry = manager.scopeForPackageName(pkg_name);
                 var count: usize = 0;
                 count += registry.url.href.len + pkg_name.len + "/-/".len;
                 if (pkg_name[0] == '@') {
@@ -410,9 +427,45 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
         // the counting pass
         const pkg = entry.value.?.data.e_object;
 
-        if (pkg.get("link") != null or if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
-
         const pkg_path = entry.key.?.asString(allocator).?;
+
+        if (pkg.get("link")) |link| {
+            if (workspace_map) |wksp| {
+                if (link.data != .e_boolean) continue;
+                if (link.data.e_boolean.value) {
+                    if (pkg.get("resolved")) |resolved| {
+                        if (resolved.data != .e_string) continue;
+                        const resolved_str = resolved.asString(allocator).?;
+                        if (wksp.map.get(resolved_str)) |wksp_entry| {
+                            const pkg_name = packageNameFromPath(pkg_path);
+                            if (!strings.eqlLong(wksp_entry.name, pkg_name, true)) {
+                                const pkg_name_hash = stringHash(pkg_name);
+                                const path_entry = this.workspace_paths.getOrPut(allocator, pkg_name_hash) catch bun.outOfMemory();
+                                if (!path_entry.found_existing) {
+                                    // Package resolve path is an entry in the workspace map, but
+                                    // the package name is different. This package doesn't exist
+                                    // in node_modules, but we still allow packages to resolve to it's
+                                    // resolution.
+                                    path_entry.value_ptr.* = builder.append(String, resolved_str);
+
+                                    if (wksp_entry.version) |version_string| {
+                                        const sliced_version = Semver.SlicedString.init(version_string, version_string);
+                                        const result = Semver.Version.parse(sliced_version);
+                                        if (result.valid and result.wildcard == .none) {
+                                            this.workspace_versions.put(allocator, pkg_name_hash, result.version.min()) catch bun.outOfMemory();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            continue;
+        }
+
+        if (if (pkg.get("inBundle") orelse pkg.get("extraneous")) |x| x.data == .e_boolean and x.data.e_boolean.value else false) continue;
 
         const workspace_entry = if (workspace_map) |map| map.map.get(pkg_path) else null;
         const is_workspace = workspace_entry != null;
@@ -1003,7 +1056,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
-    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false, .silent)).*;
+    this.* = (try this.cleanWithLogger(manager, &.{}, log, false, .silent)).*;
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});

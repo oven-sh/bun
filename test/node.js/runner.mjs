@@ -16,6 +16,7 @@ const cwd = new URL("../../", testPath);
 
 async function main() {
   const { values, positionals } = parseArgs({
+    allowPositionals: true,
     options: {
       help: {
         type: "boolean",
@@ -56,7 +57,7 @@ async function main() {
   }
 
   pullTests();
-  const summary = await runTests(values);
+  const summary = await runTests(values, positionals);
   const regressedTests = appendSummary(summary);
   printSummary(summary, regressedTests);
 
@@ -113,7 +114,7 @@ function pullTests(force) {
   }
 }
 
-async function runTests(options) {
+async function runTests(options, filters) {
   const { interactive } = options;
   const bunPath = process.isBun ? process.execPath : "bun";
   const execPath = options["exec-path"] || bunPath;
@@ -129,13 +130,17 @@ async function runTests(options) {
   const results = [];
   const tests = getTests(testPath);
   for (const { label, filename, status: filter } of tests) {
+    if (filters?.length && !filters.some(filter => label?.includes(filter))) {
+      continue;
+    }
+
     if (filter !== "OK") {
       results.push({ label, filename, status: filter });
       continue;
     }
 
     const { pathname: filePath } = new URL(filename, testPath);
-    const tmp = mkdtempSync(join(tmpdir(), "bun-"));
+    const tmp = tmpdirSync();
     const timestamp = Date.now();
     const {
       status: exitCode,

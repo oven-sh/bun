@@ -605,6 +605,10 @@ pub const Version = extern struct {
         return lhs.order(rhs, ctx, ctx);
     }
 
+    pub fn isZero(this: Version) bool {
+        return this.patch == 0 and this.minor == 0 and this.major == 0;
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,
@@ -627,7 +631,7 @@ pub const Version = extern struct {
         if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
+    pub fn append(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this.*;
 
         if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
@@ -716,6 +720,170 @@ pub const Version = extern struct {
             return lhs.eql(rhs);
         }
     };
+
+    pub const PinnedVersion = enum {
+        major, // ^
+        minor, // ~
+        patch, // =
+    };
+
+    /// Modified version of pnpm's `whichVersionIsPinned`
+    /// https://github.com/pnpm/pnpm/blob/bc0618cf192a9cafd0ab171a3673e23ed0869bbd/packages/which-version-is-pinned/src/index.ts#L9
+    ///
+    /// Differences:
+    /// - It's not used for workspaces
+    /// - `npm:` is assumed already removed from aliased versions
+    /// - Invalid input is considered major pinned (important because these strings are coming
+    ///    from package.json)
+    ///
+    /// The goal of this function is to avoid a complete parse of semver that's unused
+    pub fn whichVersionIsPinned(input: string) PinnedVersion {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        var i: usize = 0;
+
+        const pinned: PinnedVersion = pinned: {
+            for (0..version.len) |j| {
+                switch (version[j]) {
+                    // newlines & whitespace
+                    ' ',
+                    '\t',
+                    '\n',
+                    '\r',
+                    std.ascii.control_code.vt,
+                    std.ascii.control_code.ff,
+
+                    // version separators
+                    'v',
+                    '=',
+                    => {},
+
+                    else => |c| {
+                        i = j;
+
+                        switch (c) {
+                            '~', '^' => {
+                                i += 1;
+
+                                for (i..version.len) |k| {
+                                    switch (version[k]) {
+                                        ' ',
+                                        '\t',
+                                        '\n',
+                                        '\r',
+                                        std.ascii.control_code.vt,
+                                        std.ascii.control_code.ff,
+                                        => {
+                                            // `v` and `=` not included.
+                                            // `~v==1` would update to `^1.1.0` if versions `1.0.0`, `1.0.1`, `1.1.0`, and `2.0.0` are available
+                                            // note that `~` changes to `^`
+                                        },
+
+                                        else => {
+                                            i = k;
+                                            break :pinned if (c == '~') .minor else .major;
+                                        },
+                                    }
+                                }
+
+                                // entire version after `~` is whitespace. invalid
+                                return .major;
+                            },
+
+                            '0'...'9' => break :pinned .patch,
+
+                            // could be invalid, could also be valid range syntax (>=, ...)
+                            // either way, pin major
+                            else => return .major,
+                        }
+                    },
+                }
+            }
+
+            // entire semver is whitespace, `v`, and `=`. Invalid
+            return .major;
+        };
+
+        // `pinned` is `.major`, `.minor`, or `.patch`. Check for each version core number:
+        // - if major is missing, return `if (pinned == .patch) .major else pinned`
+        // - if minor is missing, return `if (pinned == .patch) .minor else pinned`
+        // - if patch is missing, return `pinned`
+        // - if there's whitespace or non-digit characters between core numbers, return `.major`
+        // - if the end is reached, return `pinned`
+
+        // major
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        var d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .major else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // minor
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .minor else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // patch
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+
+            // patch is done and at input end, valid
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // Skip remaining valid pre/build tag characters and whitespace.
+        // Does not validate whitespace used inside pre/build tags.
+        if (!validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) return .major;
+        i += 1;
+
+        // at this point the semver is valid so we can return true if it ends
+        if (i >= version.len) return pinned;
+        d = version[i];
+        while (validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) {
+            i += 1;
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // We've come across a character that is not valid for tags or is whitespace.
+        // Trailing whitespace was trimmed so we can assume there's another range
+        return .major;
+    }
+
+    fn validPreOrBuildTagCharacter(c: u8) bool {
+        return switch (c) {
+            '-', '+', '.', 'A'...'Z', 'a'...'z', '0'...'9' => true,
+            else => false,
+        };
+    }
+
+    pub fn isTaggedVersionOnly(input: []const u8) bool {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        // first needs to be a-z
+        if (version.len == 0 or !std.ascii.isAlphabetic(version[0])) return false;
+
+        for (1..version.len) |i| {
+            if (!std.ascii.isAlphanumeric(version[i])) return false;
+        }
+
+        return true;
+    }
 
     pub fn orderWithoutTag(
         lhs: Version,
@@ -939,27 +1107,6 @@ pub const Version = extern struct {
             while (i < input.len) : (i += 1) {
                 const c = input[i];
                 switch (c) {
-                    ' ' => {
-                        switch (state) {
-                            .none => {},
-                            .pre => {
-                                result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                            .build => {
-                                result.tag.build = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                        }
-                        result.len = @as(u32, @truncate(i));
-                        break;
-                    },
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
@@ -977,7 +1124,32 @@ pub const Version = extern struct {
                             start = i + 1;
                         }
                     },
-                    else => {},
+
+                    // only continue if character is a valid pre/build tag character
+                    // https://semver.org/#spec-item-9
+                    'a'...'z', 'A'...'Z', '0'...'9', '.' => {},
+
+                    else => {
+                        switch (state) {
+                            .none => {},
+                            .pre => {
+                                result.tag.pre = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                            .build => {
+                                result.tag.build = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                        }
+                        result.len = @truncate(i);
+                        break;
+                    },
                 }
             }
 
@@ -1104,7 +1276,8 @@ pub const Version = extern struct {
                     }
 
                     if (i < input.len and switch (input[i]) {
-                        '.' => true,
+                        // `.` is expected only if there are remaining core version numbers
+                        '.' => part_i != 3,
                         else => false,
                     }) {
                         i += 1;
@@ -1117,8 +1290,7 @@ pub const Version = extern struct {
                 },
                 '-', '+' => {
                     // Just a plain tag with no version is invalid.
-
-                    if (part_i < 2) {
+                    if (part_i < 2 and result.wildcard == .none) {
                         result.valid = false;
                         is_done = true;
                         break;
@@ -1179,7 +1351,7 @@ pub const Version = extern struct {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
                     if (result.wildcard == .none and part_i >= 2 and switch (c) {
-                        'a'...'z', 'A'...'Z', '_' => true,
+                        'a'...'z', 'A'...'Z' => true,
                         else => false,
                     }) {
                         part_start_i = i;
@@ -1276,6 +1448,18 @@ pub const Range = struct {
     left: Comparator = .{},
     right: Comparator = .{},
 
+    pub fn format(this: Range, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.left.op == .unset and this.right.op == .unset) {
+            return;
+        }
+
+        if (this.right.op == .unset) {
+            try std.fmt.format(writer, "{}", .{this.left});
+        } else {
+            try std.fmt.format(writer, "{} {}", .{ this.left, this.right });
+        }
+    }
+
     /// *
     /// >= 0.0.0
     /// >= 0
@@ -1366,12 +1550,59 @@ pub const Range = struct {
         return lhs.left.eql(rhs.left) and lhs.right.eql(rhs.right);
     }
 
+    pub const Formatter = struct {
+        buffer: []const u8,
+        range: *const Range,
+
+        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.range.left.op == Op.unset and this.range.right.op == Op.unset) {
+                return;
+            }
+
+            if (this.range.right.op == .unset) {
+                try std.fmt.format(writer, "{}", .{this.range.left.fmt(this.buffer)});
+            } else {
+                try std.fmt.format(writer, "{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            }
+        }
+    };
+
+    pub fn fmt(this: *const Range, buf: []const u8) @This().Formatter {
+        return .{ .buffer = buf, .range = this };
+    }
+
     pub const Comparator = struct {
         op: Op = .unset,
         version: Version = .{},
 
         pub inline fn eql(lhs: Comparator, rhs: Comparator) bool {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
+        }
+
+        pub const Formatter = struct {
+            buffer: []const u8,
+            comparator: *const Comparator,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.comparator.op == Op.unset) {
+                    return;
+                }
+
+                switch (this.comparator.op) {
+                    .unset => unreachable, // see above,
+                    .eql => try writer.writeAll("=="),
+                    .lt => try writer.writeAll("<"),
+                    .lte => try writer.writeAll("<="),
+                    .gt => try writer.writeAll(">"),
+                    .gte => try writer.writeAll(">="),
+                }
+
+                try std.fmt.format(writer, "{}", .{this.comparator.version.fmt(this.buffer)});
+            }
+        };
+
+        pub fn fmt(this: *const Comparator, buf: []const u8) @This().Formatter {
+            return .{ .buffer = buf, .comparator = this };
         }
 
         pub fn satisfies(
@@ -1470,6 +1701,27 @@ pub const Query = struct {
     // AND
     next: ?*Query = null,
 
+    const Formatter = struct {
+        query: *const Query,
+        buffer: []const u8,
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const this = formatter.query;
+
+            if (this.next) |ptr| {
+                if (ptr.range.hasLeft() or ptr.range.hasRight()) {
+                    try std.fmt.format(writer, "{} && {}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
+                    return;
+                }
+            }
+
+            try std.fmt.format(writer, "{}", .{this.range.fmt(formatter.buffer)});
+        }
+    };
+
+    pub fn fmt(this: *const Query, buf: []const u8) @This().Formatter {
+        return .{ .query = this, .buffer = buf };
+    }
+
     /// Linked-list of Queries OR'd together
     /// "^1 || ^2"
     /// ----|-----
@@ -1480,6 +1732,24 @@ pub const Query = struct {
 
         // OR
         next: ?*List = null,
+
+        const Formatter = struct {
+            list: *const List,
+            buffer: []const u8,
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.list;
+
+                if (this.next) |ptr| {
+                    try std.fmt.format(writer, "{} || {}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
+                } else {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buffer)});
+                }
+            }
+        };
+
+        pub fn fmt(this: *const List, buf: []const u8) @This().Formatter {
+            return .{ .list = this, .buffer = buf };
+        }
 
         pub fn satisfies(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
             return list.head.satisfies(
@@ -1555,6 +1825,45 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        const Formatter = struct {
+            group: *const Group,
+            buf: string,
+
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.group;
+
+                if (this.tail == null and this.head.tail == null and !this.head.head.range.hasLeft()) {
+                    return;
+                }
+
+                if (this.tail == null and this.head.tail == null) {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buf)});
+                    return;
+                }
+
+                var list = &this.head;
+                while (list.next) |next| {
+                    try std.fmt.format(writer, "{} && ", .{list.fmt(formatter.buf)});
+                    list = next;
+                }
+
+                try std.fmt.format(writer, "{}", .{list.fmt(formatter.buf)});
+            }
+        };
+
+        pub fn fmt(this: *const Group, buf: string) @This().Formatter {
+            return .{
+                .group = this,
+                .buf = buf,
+            };
+        }
+
+        pub fn jsonStringify(this: *const Group, writer: anytype) !void {
+            const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
+            defer bun.default_allocator.free(temp);
+            try std.json.encodeJsonString(temp, .{}, writer);
+        }
+
         pub fn deinit(this: *Group) void {
             var list = this.head;
             var allocator = this.allocator;
@@ -1607,6 +1916,16 @@ pub const Query = struct {
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
+        }
+
+        pub fn @"is *"(this: *const Group) bool {
+            const left = this.head.head.range.left;
+            return this.head.head.range.right.op == .unset and
+                left.op == .gte and
+                this.head.next == null and
+                this.head.head.next == null and
+                left.version.isZero() and
+                !this.flags.isSet(Flags.build);
         }
 
         pub inline fn eql(lhs: Group, rhs: Group) bool {

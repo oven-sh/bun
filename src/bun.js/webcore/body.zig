@@ -31,13 +31,13 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const NullableAllocator = bun.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
-const StringJoiner = @import("../../string_joiner.zig");
+const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
 const Blob = JSC.WebCore.Blob;
@@ -193,10 +193,11 @@ pub const Body = struct {
             value.action = action;
             if (value.readable.get()) |readable| handle_stream: {
                 switch (action) {
-                    .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer => {
+                    .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer, .getBytes => {
                         value.promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
+                            .getBytes => globalThis.readableStreamToBytes(readable.value),
                             .getText => globalThis.readableStreamToText(readable.value),
                             .getBlob => globalThis.readableStreamToBlob(readable.value),
                             .getFormData => |form_data| brk: {
@@ -256,6 +257,7 @@ pub const Body = struct {
             getText: void,
             getJSON: void,
             getArrayBuffer: void,
+            getBytes: void,
             getBlob: void,
             getFormData: ?*bun.FormData.AsyncFormData,
         };
@@ -664,8 +666,11 @@ pub const Body = struct {
                         },
                         .getArrayBuffer => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            // toArrayBuffer checks for non-UTF8 strings
                             promise.resolve(global, blob.toArrayBuffer(global, .transfer));
+                        },
+                        .getBytes => {
+                            var blob = new.useAsAnyBlobAllowNonUTF8String();
+                            promise.resolve(global, blob.toUint8Array(global, .transfer));
                         },
                         .getFormData => inner: {
                             var blob = new.useAsAnyBlob();
@@ -678,7 +683,7 @@ pub const Body = struct {
                             async_form_data.toJS(global, blob.slice(), promise);
                         },
                         else => {
-                            var ptr = bun.new(Blob, new.use());
+                            var ptr = Blob.new(new.use());
                             ptr.allocator = bun.default_allocator;
                             promise.resolve(global, ptr.toJS(global));
                         },
@@ -732,7 +737,7 @@ pub const Body = struct {
                         );
                     } else {
                         new_blob = Blob.init(
-                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch @panic("Out of memory"),
+                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
                             bun.default_allocator,
                             JSC.VirtualMachine.get().global,
                         );
@@ -828,6 +833,7 @@ pub const Body = struct {
         }
 
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {
+            error_instance.ensureStillAlive();
             if (this.* == .Locked) {
                 var locked = this.Locked;
                 locked.deinit = true;
@@ -842,7 +848,7 @@ pub const Body = struct {
                 }
 
                 if (locked.readable.get()) |readable| {
-                    readable.done(global);
+                    readable.abort(global);
                     locked.readable.deinit();
                 }
                 // will be unprotected by body value deinit
@@ -1058,6 +1064,29 @@ pub fn BodyMixin(comptime Type: type) type {
             return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
         }
 
+        pub fn getBytes(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Used) {
+                return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Locked) {
+                if (value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
+                return value.Locked.setPromise(globalObject, .{ .getBytes = {} });
+            }
+
+            // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+            var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
+            return JSC.JSPromise.wrap(globalObject, blob.toUint8Array(globalObject, .transfer));
+        }
+
         pub fn getFormData(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
@@ -1140,7 +1169,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
             }
 
-            var blob = bun.new(Blob, value.use());
+            var blob = Blob.new(value.use());
             blob.allocator = getAllocator(globalObject);
 
             if (blob.content_type.len == 0 and blob.store != null) {
@@ -1284,7 +1313,7 @@ pub const BodyValueBufferer = struct {
 
         const chunk = stream.slice();
         log("onStreamPipe chunk {}", .{chunk.len});
-        _ = sink.stream_buffer.write(chunk) catch @panic("OOM");
+        _ = sink.stream_buffer.write(chunk) catch bun.outOfMemory();
         if (stream.isDone()) {
             const bytes = sink.stream_buffer.list.items;
             log("onStreamPipe done {}", .{bytes.len});
@@ -1439,7 +1468,7 @@ pub const BodyValueBufferer = struct {
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
-                    _ = sink.stream_buffer.write(bytes) catch @panic("OOM");
+                    _ = sink.stream_buffer.write(bytes) catch bun.outOfMemory();
                     return;
                 },
             }

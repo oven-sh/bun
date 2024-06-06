@@ -64,7 +64,7 @@ const ScanOpts = struct {
             }
 
             // Convert to an absolute path
-            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf: bun.PathBuffer = undefined;
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
                 .err => |err| {
@@ -231,11 +231,11 @@ pub const WalkTask = struct {
 };
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
-    if (globWalk.matchedPaths.items.len == 0) {
+    if (globWalk.matchedPaths.keys().len == 0) {
         return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
 
-    return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
+    return BunString.toJSArray(globalThis, globWalk.matchedPaths.keys());
 }
 
 /// The reference to the arena is not used after the scope because it is copied
@@ -337,7 +337,7 @@ pub fn constructor(
 
     const all_ascii = isAllAscii(pat_str);
 
-    var glob = alloc.create(Glob) catch @panic("OOM");
+    var glob = alloc.create(Glob) catch bun.outOfMemory();
     glob.* = .{ .pattern = pat_str, .is_ascii = all_ascii };
 
     if (!all_ascii) {

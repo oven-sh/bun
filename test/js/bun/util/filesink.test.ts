@@ -1,8 +1,6 @@
-import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
-import { isWindows } from "harness";
+import { isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -45,7 +43,7 @@ describe("FileSink", () => {
   });
 
   function getPath(label: string) {
-    const path = join(tmpdir(), `bun-test-${Bun.hash(label).toString(10)}.${(Math.random() * 1_000_000) | 0}.txt`);
+    const path = join(tmpdirSync(), `${Bun.hash(label).toString(10)}.txt`);
     try {
       require("fs").unlinkSync(path);
     } catch (e) {}
@@ -56,7 +54,7 @@ describe("FileSink", () => {
   var decoder = new TextDecoder();
 
   function getFd(label: string, byteLength = 0) {
-    const path = join(tmpdir(), `bun-test-${Bun.hash(label).toString(10)}.${(Math.random() * 1_000_000) | 0}.txt`);
+    const path = join(tmpdirSync(), `${Bun.hash(label).toString(10)}.txt`);
     try {
       require("fs").unlinkSync(path);
     } catch (e) {}

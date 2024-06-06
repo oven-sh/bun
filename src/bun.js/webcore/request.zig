@@ -32,13 +32,13 @@ const JSPromise = JSC.JSPromise;
 const JSValue = JSC.JSValue;
 const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
-const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const NullableAllocator = bun.NullableAllocator;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
-const StringJoiner = @import("../../string_joiner.zig");
+const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 
 const InlineBlob = JSC.WebCore.InlineBlob;
@@ -77,6 +77,7 @@ pub const Request = struct {
     pub usingnamespace JSC.Codegen.JSRequest;
 
     pub const getText = RequestMixin.getText;
+    pub const getBytes = RequestMixin.getBytes;
     pub const getBody = RequestMixin.getBody;
     pub const getBodyUsed = RequestMixin.getBodyUsed;
     pub const getJSON = RequestMixin.getJSON;
@@ -518,7 +519,7 @@ pub const Request = struct {
             const value_type = value.jsType();
             const explicit_check = values_to_try.len == 2 and value_type == .FinalObject and values_to_try[1].jsType() == .DOMWrapper;
             if (value_type == .DOMWrapper) {
-                if (value.as(Request)) |request| {
+                if (value.asDirect(Request)) |request| {
                     if (values_to_try.len == 1) {
                         request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
                         return req;
@@ -547,7 +548,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.as(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(JSC.WebCore.Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);

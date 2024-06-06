@@ -41,7 +41,6 @@ class InternalModuleRegistry;
 #include "BunPlugin.h"
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
-#include "ProcessBindingConstants.h"
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
@@ -234,10 +233,6 @@ public:
     JSC::JSObject* JSStringDecoder() const { return m_JSStringDecoderClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSStringDecoderPrototype() const { return m_JSStringDecoderClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* JSReadableStateStructure() const { return m_JSReadableStateClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* JSReadableState() const { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
-    JSC::JSValue JSReadableStatePrototype() const { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
-
     JSC::Structure* NodeVMScriptStructure() const { return m_NodeVMScriptClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
@@ -254,11 +249,10 @@ public:
     JSC::JSFunction* performMicrotaskFunction() const { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
+    JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectFunction() const { return m_utilInspectFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeColorFunction() const { return m_utilInspectStylizeColorFunction.getInitializedOnMainThread(this); }
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
-
-    JSC::JSFunction* emitReadableNextTickFunction() const { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
 
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
@@ -267,8 +261,6 @@ public:
     JSObject* processBindingConstants() const { return m_processBindingConstants.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
-
-    JSFunction* bunSleepThenCallback() const { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
 
     Structure* globalObjectStructure() const { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
@@ -341,23 +333,16 @@ public:
         Bun__HTTPRequestContextDebugTLS__onRejectStream,
         Bun__HTTPRequestContextDebugTLS__onResolve,
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
-
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
-
         Bun__TestScope__onReject,
         Bun__TestScope__onResolve,
-
-        CallbackJob__onResolve,
-        CallbackJob__onReject,
-
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
-
         Bun__onResolveEntryPointResult,
         Bun__onRejectEntryPointResult,
     };
-    static constexpr size_t promiseFunctionsSize = 26;
+    static constexpr size_t promiseFunctionsSize = 24;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
@@ -391,6 +376,7 @@ public:
     mutable WriteBarrier<JSFunction> m_assignToStream;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
+    mutable WriteBarrier<JSFunction> m_readableStreamToBytes;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
@@ -513,7 +499,6 @@ public:
     LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSReadableStateClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
@@ -535,9 +520,9 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_nativeMicrotaskTrampoline;
     LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectFunction;
+    LazyProperty<JSGlobalObject, Structure> m_utilInspectOptionsStructure;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeColorFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_utilInspectStylizeNoColorFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
@@ -553,7 +538,6 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
-    LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
@@ -604,7 +588,7 @@ public:
 // TODO: move this
 namespace Bun {
 
-String formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, unsigned& line, unsigned& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+String formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
 }
 

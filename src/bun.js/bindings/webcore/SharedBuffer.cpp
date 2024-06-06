@@ -34,6 +34,7 @@
 #include <wtf/persistence/PersistentCoders.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/UTF8Conversion.h>
+#include "headers-handwritten.h"
 
 namespace WebCore {
 
@@ -667,22 +668,15 @@ RefPtr<SharedBuffer> utf8Buffer(const String& string)
     }
 
     Vector<uint8_t> buffer(length * 3);
-
-    // Convert to runs of 8-bit characters.
-    char* p = reinterpret_cast<char*>(buffer.data());
+    WTF::Unicode::ConversionResult<char8_t> result;
     if (length) {
-        if (string.is8Bit()) {
-            const LChar* d = string.characters8();
-            if (!WTF::Unicode::convertLatin1ToUTF8(&d, d + length, &p, p + buffer.size()))
-                return nullptr;
-        } else {
-            const UChar* d = string.characters16();
-            if (WTF::Unicode::convertUTF16ToUTF8(&d, d + length, &p, p + buffer.size()) != WTF::Unicode::ConversionResult::Success)
-                return nullptr;
-        }
+        if (string.is8Bit())
+            result = WTF::Unicode::convert(string.span8(), spanReinterpretCast<char8_t>(buffer.mutableSpan()));
+        else
+            result = WTF::Unicode::convert(string.span16(), spanReinterpretCast<char8_t>(buffer.mutableSpan()));
     }
 
-    buffer.shrink(p - reinterpret_cast<char*>(buffer.data()));
+    buffer.shrink(result.buffer.size());
     return SharedBuffer::create(WTFMove(buffer));
 }
 

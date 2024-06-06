@@ -27,8 +27,10 @@ on:
         type: boolean
 
 env:
-  LLVM_VERSION: 17
-  BUN_VERSION: 1.1.2
+  LLVM_VERSION: 16
+  BUN_VERSION: 1.1.8
+  LC_CTYPE: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
 
 jobs:
   build-submodules:
@@ -79,7 +81,7 @@ jobs:
             openssl@1.1 \
             ninja \
             golang \
-            gnu-sed --force
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -136,7 +138,7 @@ jobs:
             openssl@1.1 \
             ninja \
             golang \
-            gnu-sed --force
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
@@ -218,7 +220,7 @@ jobs:
             openssl@1.1 \
             ninja \
             golang \
-            gnu-sed --force
+            gnu-sed --force --overwrite
           echo "$(brew --prefix ccache)/bin" >> $GITHUB_PATH
           echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
           echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH

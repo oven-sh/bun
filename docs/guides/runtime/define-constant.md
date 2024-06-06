@@ -1,5 +1,5 @@
 ---
-name: Define static globals & constants
+name: Define and replace static globals & constants
 ---
 
 The `--define` flag lets you declare statically-analyzable constants and globals. It replace all usages of an identifier or property in a JavaScript or TypeScript file with a constant value. This feature is supported at runtime and also in `bun build`. This is sort of similar to `#define` in C/C++, except for JavaScript.
@@ -55,6 +55,8 @@ And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 console.log("Production mode");
 ```
 
+---
+
 ## What types of values are supported?
 
 Values can be strings, identifiers, properties, or JSON.
@@ -77,9 +79,7 @@ if (typeof window !== "undefined") {
 }
 ```
 
-You can also set the value to be another identifier.
-
-For example, to make all usages of `global` be `globalThis`, you can use the following command.
+You can also set the value to be another identifier. For example, to make all usages of `global` be `globalThis`, you can use the following command.
 
 ```sh
 bun --define global="globalThis" src/index.ts
@@ -136,41 +136,10 @@ console.log("Hello, world!");
 
 ## How is this different than setting a variable?
 
-You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination.
-
-```ts
-// In JavaScript, property accesses can have side effects
-// getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy)
-// Even if you set process.env.NODE_ENV to "production", on the next line
-// It is not safe for static analysis tools to assume that process.env.NODE_ENV is "production".
-process.env.NODE_ENV = "production";
-
-if (process.env.NODE_ENV === "production") {
-  console.log("Production mode");
-} else {
-  console.log("Development mode");
-}
-```
+You can also set `process.env.NODE_ENV` to `"production"` in your code, but that won't help with dead code elimination. In JavaScript, property accesses can have side effects. Getters & setters can be functions, and even dynamically defined (due to prototype chains and Proxy). Even if you set `process.env.NODE_ENV` to `"production"`, on the next line, it is not safe for static analysis tools to assume that `process.env.NODE_ENV`is`"production"`.
 
 ## How is this different than find-and-replace or string replacement?
 
 The `--define` flag operates on the AST (Abstract Syntax Tree) level, not on the text level. It happens during the transpilation process, which means it can be used in optimizations like dead code elimination.
 
 String replacement tools tend to have escaping issues and replace unintended parts of the code.
-
-```ts
-export default `${MY_DEFINE_VALUE}`;
-```
-
-Using `--define=MY_DEFINE_VALUE="}ABC"`,
-
-```ts
-export default "}ABC";
-```
-
-Using a string replacement tool:
-
-```ts
-// Note the missing "}" at the beginning:
-export default `${}ABC`;
-```

@@ -8,20 +8,15 @@ const {
 const NumberIsInteger = Number.isInteger;
 
 function ReadStream(fd) {
-  if (!(this instanceof ReadStream)) return new ReadStream(fd);
+  if (!(this instanceof ReadStream)) {
+    return new ReadStream(fd);
+  }
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").ReadStream.$call(this, "", {
-    fd,
-  });
-  Object.setPrototypeOf(stream, ReadStream.prototype);
+  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
 
-  stream.isRaw = false;
-  stream.isTTY = true;
-
-  $assert(stream instanceof ReadStream);
-
-  return stream;
+  this.isRaw = false;
+  this.isTTY = true;
 }
 
 Object.defineProperty(ReadStream, "prototype", {
@@ -37,6 +32,16 @@ Object.defineProperty(ReadStream, "prototype", {
       // On POSIX, I tried to use the same approach, but it didn't work reliably,
       // so we just use the file descriptor and use termios APIs directly.
       if (process.platform === "win32") {
+        // Special case for stdin, as it has a shared uv_tty handle
+        // and it's stream is constructed differently
+        if (this.fd === 0) {
+          const err = ttySetMode(flag);
+          if (err) {
+            this.emit("error", new Error("setRawMode failed with errno: " + err));
+          }
+          return this;
+        }
+
         const handle = this.$bunNativePtr;
         if (!handle) {
           this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));

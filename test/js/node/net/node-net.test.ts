@@ -1,12 +1,10 @@
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
-import { realpathSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
+import { describe, expect, it } from "bun:test";
+import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
 import { join } from "path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
+const socket_domain = tmpdirSync();
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -35,7 +33,7 @@ it("should support net.isIPv6()", () => {
 describe("net.Socket read", () => {
   var unix_servers = 0;
   for (let [message, label] of [
-    // ["Hello World!".repeat(1024), "long message"],
+    ["Hello World!".repeat(1024), "long message"],
     ["Hello!", "short message"],
   ]) {
     describe(label, () => {
@@ -253,6 +251,36 @@ describe("net.Socket read", () => {
             .on("error", done);
         }, socket_domain),
       );
+
+      it(
+        "should support onread callback",
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const options = {
+            host: server.hostname,
+            port: server.port,
+            onread: {
+              buffer: Buffer.alloc(4096),
+              callback: (size, buf) => {
+                data += buf.slice(0, size).toString("utf8");
+              },
+            },
+          };
+          const socket = createConnection(options, () => {
+            expect(socket).toBeDefined();
+            expect(socket.connecting).toBe(false);
+          })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                done(e);
+              }
+            })
+            .on("error", done);
+        }),
+      );
     });
   }
 });
@@ -354,6 +382,34 @@ describe("net.Socket write", () => {
       socket.end();
     }),
   );
+
+  it("should allow reconnecting after end()", async () => {
+    const server = new Server(socket => socket.end());
+    const port = await new Promise(resolve => {
+      server.once("listening", () => resolve(server.address().port));
+      server.listen();
+    });
+
+    const socket = new Socket();
+    socket.on("data", data => console.log(data.toString()));
+    socket.on("error", err => console.error(err));
+
+    async function run() {
+      return new Promise((resolve, reject) => {
+        socket.once("connect", (...args) => {
+          socket.write("script\n", err => {
+            if (err) return reject(err);
+            socket.end(() => setTimeout(resolve, 3));
+          });
+        });
+        socket.connect(port, "127.0.0.1");
+      });
+    }
+
+    for (let i = 0; i < 10; i++) {
+      await run();
+    }
+  });
 });
 
 it("should handle connection error", done => {

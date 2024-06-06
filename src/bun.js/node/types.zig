@@ -169,6 +169,14 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             return .{ .err = e };
         }
 
+        pub inline fn initErrWithP(e: C.SystemErrno, syscall: Syscall.Tag, path: anytype) Maybe(ReturnType, ErrorType) {
+            return .{ .err = .{
+                .errno = @intFromEnum(e),
+                .syscall = syscall,
+                .path = path,
+            } };
+        }
+
         pub inline fn asErr(this: *const @This()) ?ErrorType {
             if (this.* == .err) return this.err;
             return null;
@@ -333,23 +341,23 @@ pub const BlobOrStringOrBuffer = union(enum) {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
         return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?BlobOrStringOrBuffer {
+        return fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, false);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, is_async: bool) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 store.ref();
             }
-
             return .{ .blob = blob.* };
         }
-
-        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValue(global, allocator, value, encoding_value) orelse return null };
+        return .{ .string_or_buffer = StringOrBuffer.fromJSWithEncodingValueMaybeAsync(global, allocator, value, encoding_value, is_async) orelse return null };
     }
 };
 
@@ -450,12 +458,7 @@ pub const StringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJSMaybeAsync(
-        global: *JSC.JSGlobalObject,
-        allocator: std.mem.Allocator,
-        value: JSC.JSValue,
-        is_async: bool,
-    ) ?StringOrBuffer {
+    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool) ?StringOrBuffer {
         return switch (value.jsType()) {
             JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
                 const str = bun.String.tryFromJS(value, global) orelse return null;
@@ -495,9 +498,11 @@ pub const StringOrBuffer = union(enum) {
             else => null,
         };
     }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
         return fromJSMaybeAsync(global, allocator, value, false);
     }
+
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding) ?StringOrBuffer {
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, false);
     }
@@ -535,6 +540,15 @@ pub const StringOrBuffer = union(enum) {
         };
 
         return fromJSWithEncoding(global, allocator, value, encoding);
+    }
+
+    pub fn fromJSWithEncodingValueMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue, maybe_async: bool) ?StringOrBuffer {
+        const encoding: Encoding = brk: {
+            if (!encoding_value.isCell())
+                break :brk .utf8;
+            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
+        };
+        return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async);
     }
 };
 
@@ -1743,6 +1757,7 @@ pub const Stats = union(enum) {
 /// @since v12.12.0
 pub const Dirent = struct {
     name: bun.String,
+    path: bun.String,
     // not publicly exposed
     kind: Kind,
 
@@ -1761,6 +1776,10 @@ pub const Dirent = struct {
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         return this.name.toJS(globalObject);
+    }
+
+    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return this.path.toJS(globalThis);
     }
 
     pub fn isBlockDevice(
@@ -1813,8 +1832,13 @@ pub const Dirent = struct {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 
-    pub fn finalize(this: *Dirent) callconv(.C) void {
+    pub fn deref(this: *const Dirent) void {
         this.name.deref();
+        this.path.deref();
+    }
+
+    pub fn finalize(this: *Dirent) callconv(.C) void {
+        this.deref();
         bun.destroy(this);
     }
 };
@@ -3495,6 +3519,13 @@ pub const Path = struct {
         return buf[0..bufSize];
     }
 
+    pub fn normalizeT(comptime T: type, path: []const T, buf: []T) []const T {
+        return switch (Environment.os) {
+            .windows => normalizeWindowsT(T, path, buf),
+            else => normalizePosixT(T, path, buf),
+        };
+    }
+
     pub inline fn normalizePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T) JSC.JSValue {
         return toJSString(globalObject, normalizePosixT(T, path, buf));
     }
@@ -4743,7 +4774,7 @@ pub const Path = struct {
             buf[3] = CHAR_BACKWARD_SLASH;
             return MaybeSlice(T){ .result = buf[0..bufSize] };
         }
-        return MaybeSlice(T){ .result = path };
+        return MaybeSlice(T){ .result = resolvedPath };
     }
 
     pub inline fn toNamespacedPathWindowsJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, buf: []T, buf2: []T) JSC.JSValue {
@@ -5026,6 +5057,8 @@ pub const Process = struct {
     pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
     pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
+    pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;
+    pub export const Bun__versions_zstd: [*:0]const u8 = bun.Global.versions.zstd;
 };
 
 comptime {

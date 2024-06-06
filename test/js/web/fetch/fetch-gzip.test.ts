@@ -3,7 +3,7 @@ import { it, expect } from "bun:test";
 import { gcTick } from "harness";
 
 it("fetch() with a buffered gzip response works (one chunk)", async () => {
-  var server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
 
     async fetch(req) {
@@ -29,11 +29,10 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
     expect(second.equals(clone)).toBe(true);
   })();
   gcTick(true);
-  server.stop();
 });
 
 it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
-  var server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
 
     async fetch(req) {
@@ -54,11 +53,10 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
   expect(
     new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
   ).toBe(true);
-  server.stop();
 });
 
 it("fetch() with a protocol-relative redirect that returns a buffered gzip response works (one chunk)", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
 
     async fetch(req, server) {
@@ -82,12 +80,10 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
   expect(
     new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
   ).toBe(true);
-
-  server.stop();
 });
 
 it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
-  var server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
 
     fetch(req) {
@@ -118,7 +114,6 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
   expect(
     new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
   ).toBe(true);
-  server.stop();
 });
 
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {

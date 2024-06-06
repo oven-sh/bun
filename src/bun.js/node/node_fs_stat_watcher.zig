@@ -41,7 +41,7 @@ pub const StatWatcherScheduler = struct {
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
     pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
-        const this = allocator.create(StatWatcherScheduler) catch @panic("out of memory");
+        const this = allocator.create(StatWatcherScheduler) catch bun.outOfMemory();
         this.* = .{};
         return this;
     }
@@ -321,7 +321,7 @@ pub const StatWatcher = struct {
         pub fn createAndSchedule(
             watcher: *StatWatcher,
         ) void {
-            var task = bun.default_allocator.create(InitialStatTask) catch @panic("out of memory");
+            var task = bun.default_allocator.create(InitialStatTask) catch bun.outOfMemory();
             task.* = .{ .watcher = watcher };
             JSC.WorkPool.schedule(&task.task);
         }
@@ -385,7 +385,7 @@ pub const StatWatcher = struct {
 
         const vm = this.globalThis.bunVM();
         if (result.isAnyError()) {
-            vm.onUnhandledError(this.globalThis, result);
+            _ = vm.uncaughtException(this.globalThis, result, false);
         }
 
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
@@ -421,7 +421,7 @@ pub const StatWatcher = struct {
         );
         if (result.isAnyError()) {
             const vm = this.globalThis.bunVM();
-            vm.onUnhandledError(this.globalThis, result);
+            _ = vm.uncaughtException(this.globalThis, result, false);
         }
     }
 
@@ -432,7 +432,7 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];

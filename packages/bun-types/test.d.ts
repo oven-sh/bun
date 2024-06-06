@@ -94,6 +94,7 @@ declare module "bun:test" {
     clearAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
+    setTimeout(milliseconds: number): void;
   }
   export const jest: Jest;
   export namespace jest {
@@ -293,6 +294,13 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  /**
+   * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
+   * override this value. The default timeout is 5000ms (5 seconds).
+   *
+   * @param milliseconds the number of milliseconds for the default timeout
+   */
+  export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.
@@ -482,7 +490,12 @@ declare module "bun:test" {
 
   export interface Expect extends AsymmetricMatchers {
     // the `expect()` callable signature
-    <T = unknown>(actual?: T): Matchers<T>;
+    /**
+     * @param actual the actual value
+     * @param customFailMessage an optional custom message to display if the test fails.
+     * */
+
+    <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
 
     /**
      * Access to negated asymmetric matchers.
@@ -1444,6 +1457,22 @@ declare module "bun:test" {
      * @param expected the string to end with
      */
     toEndWith(expected: string): void;
+    /**
+     * Ensures that a mock function has returned successfully at least once.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturned(): void;
+
+    /**
+     * Ensures that a mock function has returned successfully at `times` times.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturnedTimes(times: number): void;
+
     /**
      * Ensures that a mock function is called.
      */

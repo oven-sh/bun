@@ -140,6 +140,7 @@ const ErrorCode = enum(i32) {
     unsupported_control_frame,
     unexpected_opcode,
     invalid_utf8,
+    tls_handshake_failed,
 };
 
 pub export fn Bun__defaultRejectUnauthorized(global: *JSC.JSGlobalObject) callconv(.C) bool {
@@ -232,6 +233,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         websocket_protocol: u64 = 0,
         hostname: [:0]const u8 = "",
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
+        state: State = .initializing,
+
+        const State = enum { initializing, reading, failed };
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
@@ -258,6 +262,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             );
         }
 
+        /// On error, this returns null.
+        /// Returning null signals to the parent function that the connection failed.
         pub fn connect(
             global: *JSC.JSGlobalObject,
             socket_ctx: *anyopaque,
@@ -270,11 +276,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_values: ?[*]const JSC.ZigString,
             header_count: usize,
         ) callconv(.C) ?*HTTPClient {
-            bun.assert(global.bunVM().event_loop_handle != null);
+            const vm = global.bunVM();
+
+            bun.assert(vm.event_loop_handle != null);
 
             var client_protocol_hash: u64 = 0;
             const body = buildRequestBody(
-                global.bunVM(),
+                vm,
                 pathname,
                 ssl,
                 host,
@@ -283,13 +291,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 &client_protocol_hash,
                 NonUTF8Headers.init(header_names, header_values, header_count),
             ) catch return null;
-            const vm = global.bunVM();
 
             var client = HTTPClient.new(.{
-                .tcp = undefined,
+                .tcp = null,
                 .outgoing_websocket = websocket,
                 .input_body_buf = body,
                 .websocket_protocol = client_protocol_hash,
+                .state = .initializing,
             });
 
             var host_ = host.toSlice(bun.default_allocator);
@@ -310,6 +318,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 client,
                 "tcp",
             )) |out| {
+                // I don't think this case gets reached.
+                if (out.state == .failed) {
+                    client.clearData();
+                    client.destroy();
+                    return null;
+                }
                 bun.Analytics.Features.WebSocket += 1;
 
                 if (comptime ssl) {
@@ -319,9 +333,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
 
                 out.tcp.?.timeout(120);
+                out.state = .reading;
                 return out;
             } else |_| {
-                // TODO: handle error better than just returning null
                 client.clearData();
                 client.destroy();
             }
@@ -345,12 +359,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var tcp = this.tcp orelse return;
             this.tcp = null;
 
-            if (!tcp.isEstablished()) {
-                _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), tcp.socket);
-            } else {
-                tcp.shutdown();
-                tcp.close(0, null);
-            }
+            tcp.close(.failure);
         }
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
@@ -394,7 +403,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 reject_unauthorized = ws.rejectUnauthorized();
             }
             if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
-                this.fail(ErrorCode.failed_to_connect);
+                this.fail(ErrorCode.tls_handshake_failed);
                 return;
             }
 
@@ -404,7 +413,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
-                            this.fail(ErrorCode.failed_to_connect);
+                            this.fail(ErrorCode.tls_handshake_failed);
                         }
                     }
                 }
@@ -413,14 +422,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
             log("onOpen", .{});
-            bun.assert(socket.socket == this.tcp.?.socket);
+            this.tcp = socket;
 
             bun.assert(this.input_body_buf.len > 0);
             bun.assert(this.to_send.len == 0);
 
             if (comptime ssl) {
                 if (this.hostname.len > 0) {
-                    socket.getNativeHandle().configureHTTPClient(this.hostname);
+                    socket.getNativeHandle().?.configureHTTPClient(this.hostname);
                     bun.default_allocator.free(this.hostname);
                     this.hostname = "";
                 }
@@ -443,14 +452,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            bun.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket.eq(this.tcp.?.socket));
 
             if (comptime Environment.allow_assert)
                 bun.assert(!socket.isShutdown());
 
             var body = data;
             if (this.body.items.len > 0) {
-                this.body.appendSlice(bun.default_allocator, data) catch @panic("out of memory");
+                this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
                 body = this.body.items;
             }
 
@@ -472,7 +481,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     },
                     error.ShortRead => {
                         if (this.body.items.len == 0) {
-                            this.body.appendSlice(bun.default_allocator, data) catch @panic("out of memory");
+                            this.body.appendSlice(bun.default_allocator, data) catch bun.outOfMemory();
                         }
                         return;
                     },
@@ -485,7 +494,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
             log("onEnd", .{});
 
-            bun.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket.eq(this.tcp.?.socket));
             this.terminate(ErrorCode.ended);
         }
 
@@ -604,14 +613,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.tcp.?.timeout(0);
             log("onDidConnect", .{});
 
-            this.outgoing_websocket.?.didConnect(this.tcp.?.socket, overflow.ptr, overflow.len);
+            this.outgoing_websocket.?.didConnect(this.tcp.?.socket.get().?, overflow.ptr, overflow.len);
         }
 
         pub fn handleWritable(
             this: *HTTPClient,
             socket: Socket,
         ) void {
-            bun.assert(socket.socket == this.tcp.?.socket);
+            bun.assert(socket.socket.eq(this.tcp.?.socket));
 
             if (this.to_send.len == 0)
                 return;
@@ -630,10 +639,20 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         ) void {
             this.terminate(ErrorCode.timeout);
         }
+
+        // In theory, this could be called immediately
+        // In that case, we set `state` to `failed` and return, expecting the parent to call `destroy`.
         pub fn handleConnectError(this: *HTTPClient, _: Socket, _: c_int) void {
             this.tcp = null;
-            this.terminate(ErrorCode.failed_to_connect);
-            this.destroy();
+
+            // the socket is freed by usockets when the connection fails
+
+            if (this.state == .reading) {
+                this.terminate(ErrorCode.failed_to_connect);
+                this.destroy();
+            } else {
+                this.state = .failed;
+            }
         }
 
         pub const Export = shim.exportFunctions(.{
@@ -1007,11 +1026,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed() or this.tcp.isShutdown())
                 return;
 
-            if (!this.tcp.isEstablished()) {
-                _ = uws.us_socket_close_connecting(comptime @as(c_int, @intFromBool(ssl)), this.tcp.socket);
-            } else {
-                this.tcp.close(0, null);
-            }
+            this.tcp.close(.failure);
         }
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {
@@ -1646,7 +1661,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleEnd(this: *WebSocket, socket: Socket) void {
-            bun.assert(socket.socket == this.tcp.socket);
+            bun.assert(socket.socket.eq(this.tcp.socket));
             this.terminate(ErrorCode.ended);
         }
 
@@ -1655,7 +1670,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             socket: Socket,
         ) void {
             if (this.close_received) return;
-            bun.assert(socket.socket == this.tcp.socket);
+            bun.assert(socket.socket.eq(this.tcp.socket));
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0)
                 return;
@@ -1875,7 +1890,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed())
                 return;
 
-            this.tcp.close(0, null);
+            this.tcp.close(.normal);
         }
 
         pub const Export = shim.exportFunctions(.{

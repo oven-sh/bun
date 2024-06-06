@@ -297,7 +297,6 @@ pub const uv_tcp_accept_s = struct_uv_tcp_accept_s;
 pub const uv_tcp_s = struct_uv_tcp_s;
 pub const uv_udp_s = struct_uv_udp_s;
 pub const uv_pipe_accept_s = struct_uv_pipe_accept_s;
-pub const uv_timer_s = struct_uv_timer_s;
 pub const uv_write_s = struct_uv_write_s;
 pub const uv_tty_s = struct_uv_tty_s;
 pub const uv_poll_s = struct_uv_poll_s;
@@ -680,16 +679,6 @@ pub const Loop = extern struct {
 
     pub fn wakeup(this: *Loop) void {
         this.wq_async.send();
-    }
-
-    pub fn refConcurrently(this: *Loop) void {
-        log("refConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Add, 1, .Monotonic);
-    }
-
-    pub fn unrefConcurrently(this: *Loop) void {
-        log("unrefConcurrently", .{});
-        _ = @atomicRmw(c_uint, &this.active_handles, std.builtin.AtomicRmwOp.Sub, 1, .Monotonic);
     }
 
     pub fn unrefCount(this: *Loop, count: i32) void {
@@ -1166,8 +1155,8 @@ const union_unnamed_411 = extern union {
     fd: c_int,
     reserved: [4]?*anyopaque,
 };
-pub const uv_timer_cb = ?*const fn (*uv_timer_t) callconv(.C) void;
-pub const struct_uv_timer_s = extern struct {
+pub const uv_timer_cb = ?*const fn (*Timer) callconv(.C) void;
+pub const Timer = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
     type: uv_handle_type,
@@ -1182,8 +1171,33 @@ pub const struct_uv_timer_s = extern struct {
     repeat: u64,
     start_id: u64,
     timer_cb: uv_timer_cb,
+
+    pub fn init(this: *@This(), loop: *Loop) void {
+        if (uv_timer_init(loop, this) != 0) {
+            @panic("internal error: uv_timer_init failed");
+        }
+    }
+
+    pub fn start(this: *@This(), timeout: u64, repeat: u64, callback: uv_timer_cb) void {
+        if (uv_timer_start(this, callback, timeout, repeat) != 0) {
+            @panic("internal error: uv_timer_start failed");
+        }
+    }
+
+    pub fn stop(this: *@This()) void {
+        if (uv_timer_stop(this) != 0) {
+            @panic("internal error: uv_timer_stop failed");
+        }
+    }
+
+    pub fn unref(this: *@This()) void {
+        uv_unref(@alignCast(@ptrCast(this)));
+    }
+
+    pub fn ref(this: *@This()) void {
+        uv_ref(@alignCast(@ptrCast(this)));
+    }
 };
-pub const uv_timer_t = struct_uv_timer_s;
 const struct_unnamed_413 = extern struct {
     overlapped: OVERLAPPED,
     queued_bytes: usize,
@@ -1246,7 +1260,7 @@ const union_unnamed_415 = extern union {
     dummy: u64,
 };
 const struct_unnamed_410 = extern struct {
-    eof_timer: [*c]uv_timer_t,
+    eof_timer: [*c]Timer,
     dummy: uv_write_t,
     ipc_remote_pid: DWORD,
     ipc_data_frame: union_unnamed_415,
@@ -1522,7 +1536,7 @@ pub const struct_uv_fs_event_req_s = extern struct {
     next_req: [*c]struct_uv_req_s,
 };
 pub const uv_fs_event_t = struct_uv_fs_event_s;
-pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, c_int) callconv(.C) void;
+pub const uv_fs_event_cb = ?*const fn (*uv_fs_event_t, [*c]const u8, c_int, ReturnCode) callconv(.C) void;
 pub const struct_uv_fs_event_s = extern struct {
     data: ?*anyopaque,
     loop: *uv_loop_t,
@@ -1546,7 +1560,7 @@ pub const struct_uv_fs_event_s = extern struct {
         return this.dirw != null;
     }
 
-    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: c_int) u64 {
+    pub fn hash(this: *const uv_fs_event_t, filename: []const u8, events: c_int, status: ReturnCode) u64 {
         var hasher = std.hash.Wyhash.init(0);
         if (this.path) |path| {
             hasher.update(bun.sliceTo(path, 0));
@@ -2185,13 +2199,13 @@ pub extern fn uv_idle_start(idle: [*c]uv_idle_t, cb: uv_idle_cb) c_int;
 pub extern fn uv_idle_stop(idle: [*c]uv_idle_t) c_int;
 pub extern fn uv_async_init(*uv_loop_t, @"async": *uv_async_t, async_cb: uv_async_cb) c_int;
 pub extern fn uv_async_send(@"async": *uv_async_t) c_int;
-pub extern fn uv_timer_init(*uv_loop_t, handle: *uv_timer_t) c_int;
-pub extern fn uv_timer_start(handle: *uv_timer_t, cb: uv_timer_cb, timeout: u64, repeat: u64) c_int;
-pub extern fn uv_timer_stop(handle: *uv_timer_t) c_int;
-pub extern fn uv_timer_again(handle: *uv_timer_t) c_int;
-pub extern fn uv_timer_set_repeat(handle: *uv_timer_t, repeat: u64) void;
-pub extern fn uv_timer_get_repeat(handle: *const uv_timer_t) u64;
-pub extern fn uv_timer_get_due_in(handle: *const uv_timer_t) u64;
+pub extern fn uv_timer_init(*uv_loop_t, handle: *Timer) c_int;
+pub extern fn uv_timer_start(handle: *Timer, cb: uv_timer_cb, timeout: u64, repeat: u64) c_int;
+pub extern fn uv_timer_stop(handle: *Timer) c_int;
+pub extern fn uv_timer_again(handle: *Timer) c_int;
+pub extern fn uv_timer_set_repeat(handle: *Timer, repeat: u64) void;
+pub extern fn uv_timer_get_repeat(handle: *const Timer) u64;
+pub extern fn uv_timer_get_due_in(handle: *const Timer) u64;
 pub extern fn uv_getaddrinfo(loop: *uv_loop_t, req: *uv_getaddrinfo_t, getaddrinfo_cb: uv_getaddrinfo_cb, node: [*:0]const u8, service: [*:0]const u8, hints: ?*const anyopaque) ReturnCode;
 pub extern fn uv_freeaddrinfo(ai: *anyopaque) void;
 pub extern fn uv_getnameinfo(loop: *uv_loop_t, req: [*c]uv_getnameinfo_t, getnameinfo_cb: uv_getnameinfo_cb, addr: [*c]const sockaddr, flags: c_int) c_int;
@@ -2437,10 +2451,11 @@ pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
 pub const UV_FS_EVENT_STAT: c_int = 2;
 pub const UV_FS_EVENT_RECURSIVE: c_int = 4;
 pub const enum_uv_fs_event_flags = c_uint;
-pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*]const u8, flags: c_uint) c_int;
+pub extern fn uv_fs_event_init(loop: *uv_loop_t, handle: *uv_fs_event_t) ReturnCode;
+pub extern fn uv_fs_event_start(handle: *uv_fs_event_t, cb: uv_fs_event_cb, path: [*:0]const u8, flags: c_uint) ReturnCode;
+/// always returns zero
 pub extern fn uv_fs_event_stop(handle: *uv_fs_event_t) c_int;
-pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: [*c]usize) c_int;
+pub extern fn uv_fs_event_getpath(handle: *uv_fs_event_t, buffer: [*]u8, size: *usize) ReturnCode;
 pub extern fn uv_ip4_addr(ip: [*]const u8, port: c_int, addr: [*c]sockaddr_in) c_int;
 pub extern fn uv_ip6_addr(ip: [*]const u8, port: c_int, addr: ?*sockaddr_in6) c_int;
 pub extern fn uv_ip4_name(src: [*c]const sockaddr_in, dst: [*]u8, size: usize) c_int;
@@ -2530,7 +2545,7 @@ pub const union_uv_any_handle = extern union {
     process: uv_process_t,
     stream: uv_stream_t,
     tcp: uv_tcp_t,
-    timer: uv_timer_t,
+    timer: Timer,
     tty: uv_tty_t,
     udp: uv_udp_t,
     signal: uv_signal_t,

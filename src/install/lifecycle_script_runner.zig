@@ -196,6 +196,7 @@ pub const LifecycleScriptSubprocess = struct {
             if (spawned.stdout) |stdout| {
                 if (!spawned.memfds[1]) {
                     this.stdout.setParent(this);
+                    _ = bun.sys.setNonblocking(stdout);
                     this.remaining_fds += 1;
                     try this.stdout.start(stdout, true).unwrap();
                 } else {
@@ -206,6 +207,7 @@ pub const LifecycleScriptSubprocess = struct {
             if (spawned.stderr) |stderr| {
                 if (!spawned.memfds[2]) {
                     this.stderr.setParent(this);
+                    _ = bun.sys.setNonblocking(stderr);
                     this.remaining_fds += 1;
                     try this.stderr.start(stderr, true).unwrap();
                 } else {
@@ -240,7 +242,13 @@ pub const LifecycleScriptSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
-        try process.watch(event_loop).unwrap();
+        switch (process.watchOrReap()) {
+            .err => |err| {
+                if (!process.hasExited())
+                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+            },
+            .result => {},
+        }
     }
 
     pub fn printOutput(this: *LifecycleScriptSubprocess) void {

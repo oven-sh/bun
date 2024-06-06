@@ -37,7 +37,7 @@ const VirtualMachine = JSC.VirtualMachine;
 const Task = JSC.Task;
 const JSPrinter = bun.js_printer;
 const picohttp = bun.picohttp;
-const StringJoiner = @import("../../string_joiner.zig");
+const StringJoiner = bun.StringJoiner;
 const uws = bun.uws;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
@@ -142,21 +142,37 @@ pub const ReadableStream = struct {
     }
 
     pub fn done(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
+        JSC.markBinding(@src());
+        // done is called when we are done consuming the stream
+        // cancel actually mark the stream source as done
+        // this will resolve any pending promises to done: true
+        switch (this.ptr) {
+            .Blob => |source| {
+                source.parent().cancel();
+            },
+            .File => |source| {
+                source.parent().cancel();
+            },
+            .Bytes => |source| {
+                source.parent().cancel();
+            },
+            else => {},
+        }
         this.detachIfPossible(globalThis);
     }
 
     pub fn cancel(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-
+        // cancel the stream
         ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        // mark the stream source as done
+        this.done(globalThis);
     }
 
     pub fn abort(this: *const ReadableStream, globalThis: *JSGlobalObject) void {
         JSC.markBinding(@src());
-
-        ReadableStream__cancel(this.value, globalThis);
-        this.detachIfPossible(globalThis);
+        // for now we are just calling cancel should be fine
+        this.cancel(globalThis);
     }
 
     pub fn forceDetach(this: *const ReadableStream, globalObject: *JSGlobalObject) void {
@@ -328,6 +344,38 @@ pub const ReadableStream = struct {
                 store.ref();
 
                 return reader.toReadableStream(globalThis);
+            },
+        }
+    }
+
+    pub fn fromFileBlobWithOffset(
+        globalThis: *JSGlobalObject,
+        blob: *const Blob,
+        offset: usize,
+    ) JSC.JSValue {
+        JSC.markBinding(@src());
+        var store = blob.store orelse {
+            return ReadableStream.empty(globalThis);
+        };
+        switch (store.data) {
+            .file => {
+                var reader = FileReader.Source.new(.{
+                    .globalThis = globalThis,
+                    .context = .{
+                        .event_loop = JSC.EventLoopHandle.init(globalThis.bunVM().eventLoop()),
+                        .start_offset = offset,
+                        .lazy = .{
+                            .blob = store,
+                        },
+                    },
+                });
+                store.ref();
+
+                return reader.toReadableStream(globalThis);
+            },
+            else => {
+                globalThis.throw("Expected FileBlob", .{});
+                return .zero;
             },
         }
     }
@@ -621,6 +669,14 @@ pub const StreamResult = union(Tag) {
     into_array: IntoArray,
     into_array_and_done: IntoArray,
 
+    pub fn deinit(this: *StreamResult) void {
+        switch (this.*) {
+            .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            else => {},
+        }
+    }
+
     pub const Err = enum {
         Error,
         JSValue,
@@ -873,7 +929,8 @@ pub const StreamResult = union(Tag) {
     }
 
     pub fn fulfillPromise(result: *StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
-        const loop = globalThis.bunVM().eventLoop();
+        const vm = globalThis.bunVM();
+        const loop = vm.eventLoop();
         const promise_value = promise.asValue(globalThis);
         defer promise_value.unprotect();
 
@@ -906,6 +963,12 @@ pub const StreamResult = union(Tag) {
     }
 
     pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
+        if (JSC.VirtualMachine.get().isShuttingDown()) {
+            var that = this.*;
+            that.deinit();
+            return .zero;
+        }
+
         switch (this.*) {
             .owned => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
@@ -3399,6 +3462,7 @@ pub const FileReader = struct {
     pending_value: JSC.Strong = .{},
     pending_view: []u8 = &.{},
     fd: bun.FileDescriptor = bun.invalid_fd,
+    start_offset: ?usize = null,
     started: bool = false,
     waiting_for_onReaderDone: bool = false,
     event_loop: JSC.EventLoopHandle,
@@ -3433,7 +3497,7 @@ pub const FileReader = struct {
 
         pub fn openFileBlob(file: *Blob.FileStore) JSC.Maybe(OpenedFileBlob) {
             var this = OpenedFileBlob{ .fd = bun.invalid_fd };
-            var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            var file_buf: bun.PathBuffer = undefined;
             var is_nonblocking_tty = false;
 
             const fd = if (file.pathlike == .fd)
@@ -3590,11 +3654,20 @@ pub const FileReader = struct {
         if (was_lazy) {
             _ = this.parent().incrementCount();
             this.waiting_for_onReaderDone = true;
-            switch (this.reader.start(this.fd, pollable)) {
-                .result => {},
-                .err => |e| {
-                    return .{ .err = e };
-                },
+            if (this.start_offset) |offset| {
+                switch (this.reader.startFileOffset(this.fd, pollable, offset)) {
+                    .result => {},
+                    .err => |e| {
+                        return .{ .err = e };
+                    },
+                }
+            } else {
+                switch (this.reader.start(this.fd, pollable)) {
+                    .result => {},
+                    .err => |e| {
+                        return .{ .err = e };
+                    },
+                }
             }
         } else if (comptime Environment.isPosix) {
             if (this.reader.flags.pollable and !this.reader.isDone()) {
@@ -4111,7 +4184,7 @@ pub const ByteBlobLoader = struct {
         temporary = temporary[this.offset..];
         temporary = temporary[0..@min(16384, @min(temporary.len, this.remain))];
 
-        const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch @panic("Out of memory");
+        const cloned = bun.ByteList.init(temporary).listManaged(bun.default_allocator).clone() catch bun.outOfMemory();
         this.offset +|= @as(Blob.SizeType, @truncate(cloned.items.len));
         this.remain -|= @as(Blob.SizeType, @truncate(cloned.items.len));
 

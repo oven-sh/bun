@@ -16,6 +16,17 @@ import wt, {
   Worker,
 } from "worker_threads";
 
+test("support eval in worker", async () => {
+  const worker = new Worker(`postMessage(1 + 1)`, {
+    eval: true,
+  });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+  });
+  expect(result).toBe(2);
+  await worker.terminate();
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -175,4 +186,14 @@ test("receiveMessageOnPort works as FIFO", () => {
       receiveMessageOnPort(value);
     }).toThrow();
   }
+});
+
+test("you can override globalThis.postMessage", async () => {
+  const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url).href);
+  const message = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.postMessage("Hello from worker!");
+  });
+  expect(message).toBe("Hello from worker!");
+  await worker.terminate();
 });

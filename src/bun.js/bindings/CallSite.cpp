@@ -58,8 +58,8 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
-        m_lineNumber = sourcePositions->line.oneBasedInt();
-        m_columnNumber = sourcePositions->startColumn.oneBasedInt();
+        m_lineNumber = sourcePositions->line;
+        m_columnNumber = sourcePositions->column;
     }
 
     if (stackFrame.isEval()) {
@@ -83,14 +83,30 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisCallSite->m_functionName);
     visitor.append(thisCallSite->m_sourceURL);
 }
+JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callFrame->argument(0));
+
+    return JSValue::encode(
+        JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
+}
+
+JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+
+    return JSC::JSFunction::create(vm, globalObject, 1, "nativeFrameForTesting"_s, nativeFrameForTesting, ImplementationVisibility::Public);
+}
 
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
     JSString* myFunctionName = functionName().toString(globalObject);
     JSString* mySourceURL = sourceURL().toString(globalObject);
 
-    JSString* myColumnNumber = columnNumber() >= 0 ? JSValue(columnNumber()).toString(globalObject) : jsEmptyString(vm);
-    JSString* myLineNumber = lineNumber() >= 0 ? JSValue(lineNumber()).toString(globalObject) : jsEmptyString(vm);
+    JSString* myColumnNumber = columnNumber().zeroBasedInt() >= 0 ? JSValue(columnNumber().oneBasedInt()).toString(globalObject) : jsEmptyString(vm);
+    JSString* myLineNumber = lineNumber().zeroBasedInt() >= 0 ? JSValue(lineNumber().oneBasedInt()).toString(globalObject) : jsEmptyString(vm);
 
     bool myIsConstructor = isConstructor();
 

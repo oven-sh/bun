@@ -16,6 +16,17 @@ import wt, {
   Worker,
 } from "worker_threads";
 
+test("support eval in worker", async () => {
+  const worker = new Worker(`postMessage(1 + 1)`, {
+    eval: true,
+  });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+  });
+  expect(result).toBe(2);
+  await worker.terminate();
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

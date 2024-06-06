@@ -1812,7 +1812,17 @@ pub const VirtualMachine = struct {
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        const path = Fs.Path.init(specifier_clone.slice());
+        var path = Fs.Path.init(specifier_clone.slice());
+
+        // For blobs.
+        var blob_source: ?JSC.WebCore.Blob = null;
+        var virtual_source_to_use: ?logger.Source = null;
+        defer {
+            if (blob_source) |*blob| {
+                blob.deinit();
+            }
+        }
+
         const loader, const virtual_source = brk: {
             if (jsc_vm.module_loader.eval_source) |eval_source| {
                 if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
@@ -1823,14 +1833,68 @@ pub const VirtualMachine = struct {
                 }
             }
 
+            var ext_for_loader = path.name.ext;
+
+            // Support errors within blob: URLs
+            // Be careful to handle Bun.file(), in addition to regular Blob/File objects
+            // Bun.file() should be treated the same as a file path.
+            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+                if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+                    blob_source = blob;
+
+                    if (blob.getFileName()) |filename| {
+                        const current_path = Fs.Path.init(filename);
+                        if (blob.needsToReadFile()) {
+                            path = current_path;
+                        }
+
+                        ext_for_loader = current_path.name.ext;
+                    } else if (blob.getMimeTypeOrContentType()) |mime_type| {
+                        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
+                            ext_for_loader = ".jsx";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
+                            ext_for_loader = ".tsx";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
+                            ext_for_loader = ".js";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
+                            ext_for_loader = ".ts";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
+                            ext_for_loader = ".json";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
+                            ext_for_loader = ".jsonc";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
+                            ext_for_loader = ".jsonc";
+                        } else if (mime_type.category == .text) {
+                            ext_for_loader = ".txt";
+                        } else {
+                            // Be maximally permissive.
+                            ext_for_loader = ".tsx";
+                        }
+                    } else {
+                        // Be maximally permissive.
+                        ext_for_loader = ".tsx";
+                    }
+
+                    if (!blob.needsToReadFile()) {
+                        virtual_source_to_use = logger.Source{
+                            .path = path,
+                            .key_path = path,
+                            .contents = blob.sharedView(),
+                        };
+                    }
+                } else {
+                    return error.ModuleNotFound;
+                }
+            }
+
             break :brk .{
-                jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk2: {
+                jsc_vm.bundler.options.loaders.get(ext_for_loader) orelse brk2: {
                     if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                         break :brk2 options.Loader.js;
                     }
                     break :brk2 options.Loader.file;
                 },
-                null,
+                if (virtual_source_to_use) |*src| src else null,
             };
         };
 
@@ -1914,6 +1978,14 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
+        } else if (strings.hasPrefixComptime(specifier, "blob:")) {
+            ret.result = null;
+            if (JSC.WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])) {
+                ret.path = specifier;
+                return;
+            } else {
+                return error.ModuleNotFound;
+            }
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);

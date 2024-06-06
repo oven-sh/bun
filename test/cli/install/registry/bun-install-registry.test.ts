@@ -364,6 +364,61 @@ test("basic 1", async () => {
   expect(await exited).toBe(0);
 });
 
+test("manifest cache will invalidate when registry changes", async () => {
+  const cacheDir = join(packageDir, ".bun-cache");
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = "${cacheDir}"
+registry = "http://localhost:${port}"
+      `,
+    ),
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          // is-number exists in our custom registry and in npm. Switching the registry should invalidate
+          // the manifest cache, the package could be a completely different package.
+          "is-number": "2.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  // first install this package from verdaccio
+  await runBunInstall(env, packageDir);
+  const lockfile = await parseLockfile(packageDir);
+  for (const pkg of Object.values(lockfile.packages) as any) {
+    if (pkg.tag === "npm") {
+      expect(pkg.resolution.resolved).toContain("http://localhost:4873");
+    }
+  }
+
+  // now use default registry
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { force: true, recursive: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = "${cacheDir}"
+`,
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  const npmLockfile = await parseLockfile(packageDir);
+  for (const pkg of Object.values(npmLockfile.packages) as any) {
+    if (pkg.tag === "npm") {
+      expect(pkg.resolution.resolved).not.toContain("http://localhost:4873");
+    }
+  }
+});
+
 test("dependency from root satisfies range from dependency", async () => {
   await writeFile(
     join(packageDir, "package.json"),

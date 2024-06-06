@@ -1,5 +1,24 @@
 import { test, expect } from "bun:test";
 
+test("blob: imports have sourcemapped stacktraces", async () => {
+  const blob = new Blob(
+    [
+      `
+    export function uhOh(very: any): boolean {
+      return Bun.inspect(new Error());  
+    }
+  `,
+    ],
+    { type: "application/typescript" },
+  );
+
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const { uhOh } = await import(url);
+  expect(uhOh()).toContain(`uhOh(very: any): boolean`);
+  URL.revokeObjectURL(url);
+});
+
 test("Blob.slice", async () => {
   const blob = new Blob(["Bun", "Foo"]);
   const b1 = blob.slice(0, 3, "Text/HTML");
@@ -63,4 +82,49 @@ test("new Blob", () => {
   blob = new Blob(["Bun", "Foo"], { type: "\u1234" });
   expect(blob.size).toBe(6);
   expect(blob.type).toBe("");
+});
+
+test("blob: can be fetched", async () => {
+  const blob = new Blob(["Bun", "Foo"]);
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  expect(await fetch(url).then(r => r.text())).toBe("BunFoo");
+  URL.revokeObjectURL(url);
+  expect(async () => {
+    await fetch(url);
+  }).toThrow();
+});
+
+test("blob: URL has Content-Type", async () => {
+  const blob = new File(["Bun", "Foo"], "file.txt", { type: "text/javascript;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const resp = await fetch(url);
+  expect(resp.headers.get("Content-Type")).toBe("text/javascript;charset=utf-8");
+  URL.revokeObjectURL(url);
+  expect(async () => {
+    await fetch(url);
+  }).toThrow();
+});
+
+test("blob: can be imported", async () => {
+  const blob = new Blob(
+    [
+      `
+    export function supportsTypescript(): boolean {
+      return true;
+    }
+  `,
+    ],
+    { type: "application/typescript" },
+  );
+
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const { supportsTypescript } = await import(url);
+  expect(supportsTypescript()).toBe(true);
+  URL.revokeObjectURL(url);
+  expect(async () => {
+    await import(url);
+  }).toThrow();
 });

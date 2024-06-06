@@ -4786,23 +4786,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSValue::encode({});
-    }
-
-    return JSValue::encode(
-        value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
+    ASSERT(value.isCell());
+    return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
 }
 
 JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    return JSValue::encode(
-        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+    ASSERT(value.isCell());
+    return JSValue::encode( value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)

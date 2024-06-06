@@ -18,8 +18,8 @@ export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {
-  // parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
-  // apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
+  parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
+  apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
 };
 
 export const shellInternals = {

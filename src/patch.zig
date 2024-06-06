@@ -654,6 +654,7 @@ pub const PatchFilePartKind = enum {
 };
 
 const ParseErr = error{
+    empty_patchfile,
     unrecognized_pragma,
     no_newline_at_eof_pragma_encountered_without_context,
     hunk_lines_encountered_before_hunk_header,
@@ -874,6 +875,7 @@ const PatchLinesParser = struct {
         file_: []const u8,
         opts: struct { support_legacy_diffs: bool = false },
     ) ParseErr!void {
+        if (file_.len == 0) return ParseErr.empty_patchfile;
         const end = brk: {
             var iter = std.mem.splitBackwardsScalar(u8, file_, '\n');
             var prev: usize = file_.len;

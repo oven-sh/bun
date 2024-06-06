@@ -530,7 +530,7 @@ steps:
           - "powershell -command \".\\scripts\\buildkite-link-bun.ps1 -Fast $$True\""
       - key: "bun-windows-x64-test"
         label: ":windows: x64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-windows-x64"
         agents:
@@ -617,7 +617,7 @@ steps:
           - "powershell -command \".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True\""
       - key: "bun-windows-x64-baseline-test"
         label: ":windows: x64-baseline - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         depends_on:
           - "bun-windows-x64-baseline"
         agents:

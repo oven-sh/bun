@@ -2063,7 +2063,7 @@ pub const Command = struct {
 
         /// Used by crash reports.
         ///
-        /// This must be kept in sync with
+        /// This must be kept in sync with https://github.com/oven-sh/bun.report/blob/62601d8aafb9c0d29554dfc3f8854044ec04d367/backend/remap.ts#L10
         pub fn char(this: Tag) u8 {
             return switch (this) {
                 .AddCommand => 'I',

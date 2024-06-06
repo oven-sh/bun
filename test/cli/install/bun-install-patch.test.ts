@@ -91,11 +91,16 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
  };
 `;
 
-  const filepathEscape: (x:string) => string = process.platform === "win32" ? (s: string) => {
-    const charsToEscape = new Set(['/', ':',])
-    return s.split('').map(c => charsToEscape.has(c) ? '_' : c).join('')
-
-  } : (x: string) => x;
+  const filepathEscape: (x: string) => string =
+    process.platform === "win32"
+      ? (s: string) => {
+          const charsToEscape = new Set(["/", ":"]);
+          return s
+            .split("")
+            .map(c => (charsToEscape.has(c) ? "_" : c))
+            .join("");
+        }
+      : (x: string) => x;
 
   const versions: [version: string, patchVersion?: string][] = [
     ["1.0.0"],
@@ -104,7 +109,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       "git@github.com:i-voted-for-trump/is-even.git",
       "git+ssh://git@github.com:i-voted-for-trump/is-even.git#585f8002bb16f7bec723a47349b67df451f1b25d",
     ],
-  ]
+  ];
 
   describe("should patch a dependency when its dependencies are not hoisted", async () => {
     // is-even depends on is-odd ^0.1.2 and we add is-odd 3.0.1, which should be hoisted

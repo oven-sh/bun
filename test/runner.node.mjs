@@ -958,7 +958,7 @@ function getBuildLabel() {
   if (isBuildKite) {
     return process.env["BUILDKITE_GROUP_LABEL"] || process.env["BUILDKITE_LABEL"];
   }
-  return `${getOsEmoji()} ${getArchEmoji()}`;
+  return `${getOsEmoji()} ${getArchText()}`;
 }
 
 /**

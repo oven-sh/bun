@@ -289,7 +289,7 @@ pub const PatchTask = struct {
         // TODO: can the patch file be anything other than utf-8?
 
         const patchfile_txt = switch (bun.sys.File.readFrom(
-            bun.toFD(std.fs.cwd().fd),
+            bun.FD.cwd(),
             absolute_patchfile_path,
             this.manager.allocator,
         )) {

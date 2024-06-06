@@ -10386,7 +10386,7 @@ pub const PackageManager = struct {
         if (bun.sys.renameat2(
             bun.toFD(tmpdir.fd),
             tempfile_name,
-            bun.toFD(std.fs.cwd().fd),
+            bun.FD.cwd(),
             path_in_patches_dir,
             .{ .exclude = true },
         ).asErr()) |e| {

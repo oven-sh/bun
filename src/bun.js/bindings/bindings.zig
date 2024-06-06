@@ -5594,7 +5594,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
     extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
 
-    /// Returned memory is read-only memory of the s_info assigned to a JSCell
+    /// For native C++ classes extending JSCell, this retrieves s_info's name
     pub fn getClassInfoName(this: JSValue) ?bun.String {
         if (!this.isObject()) return null;
         var out: bun.String = bun.String.empty;

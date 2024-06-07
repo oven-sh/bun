@@ -75,6 +75,7 @@ pub const Tag = enum(u8) {
     copy_file_range,
     copyfile,
     fchmod,
+    fchmodat,
     fchown,
     fcntl,
     fdatasync,
@@ -147,6 +148,7 @@ pub const Tag = enum(u8) {
     uv_spawn,
     uv_pipe,
     uv_tty_set_mode,
+    uv_open_osfhandle,
 
     // Below this line are Windows API calls only.
 
@@ -359,6 +361,13 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
         Maybe(void).success;
 }
 
+pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("Use fchmod instead");
+
+    return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
+        Maybe(void).success;
+}
+
 pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     assertIsValidWindowsPath(bun.OSPathChar, destination);
 
@@ -461,7 +470,14 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
-    if (Environment.isWindows) return sys_uv.fstat(fd);
+    if (Environment.isWindows) {
+        const dec = bun.FDImpl.decode(fd);
+        if (dec.kind == .system) {
+            const uvfd = bun.toLibUVOwnedFD(fd) catch return .{ .err = Error.fromCode(.MFILE, .uv_open_osfhandle) };
+            defer _ = bun.sys.close(uvfd);
+            return sys_uv.fstat(fd);
+        } else return sys_uv.fstat(fd);
+    }
 
     var stat_ = mem.zeroes(bun.Stat);
 
@@ -511,7 +527,7 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
 }
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
-    if (Environment.isWindows) @compileError("TODO");
+    if (Environment.isWindows) @compileError("Use fstat on Windows");
     var stat_ = mem.zeroes(bun.Stat);
     if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
@@ -2868,6 +2884,28 @@ pub const File = struct {
             return self.bytes.items;
         }
     };
+    pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
+        var read_amount: usize = 0;
+        while (read_amount < buf.len) {
+            switch (if (comptime Environment.isPosix)
+                bun.sys.pread(this.handle, buf[read_amount..], @intCast(read_amount))
+            else
+                bun.sys.read(this.handle, buf[read_amount..])) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                .result => |bytes_read| {
+                    if (bytes_read == 0) {
+                        break;
+                    }
+
+                    read_amount += bytes_read;
+                },
+            }
+        }
+
+        return .{ .result = buf[0..read_amount] };
+    }
     pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
         const size = switch (this.getEndPos()) {
             .err => |err| {

@@ -1392,6 +1392,8 @@ pub const Fetch = struct {
         pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
             const this = bun.cast(*FetchTasklet, ctx);
             this.readable_stream = JSC.Weak(FetchTasklet).create(readable.value, this.global_this, .FetchResponseStream, this);
+            // we need to check if we have a underlining source with pending resolution
+            // TODO: add a native ref here to check the native source
         }
 
         pub fn onStartStreamingRequestBodyCallback(ctx: *anyopaque) JSC.WebCore.DrainResult {
@@ -1526,23 +1528,32 @@ pub const Fetch = struct {
                 // Four scenarios:
                 //
                 // 1. We are already done.
-                // 2. We were buffering, in which case
-                //    2a. if we have no promise, we should ignore the body.
-                //    2b. if we have a promise, we should keep loading the body.
-                // 3. We never started buffering, in which case we should ignore the body.
+                // 2. We are streaming, in which case
+                //    2a. if we have no promise pending we should ignore the body.
+                //    2b. if we have a promise pending we should keep loading the body.
+                // 3. We were buffering, in which case
+                //    3a. if we have no promise, we should ignore the body.
+                //    3b. if we have a promise, we should keep loading the body.
+                // 4. We never started buffering, in which case we should ignore the body.
                 //
                 if (body.value != .Locked) {
                     // Scenario 1
                     return;
                 }
 
+                // if(this.native_readable_stream) |readable_stream| {
+                //     TODO: check for pending stream reads to solve and if none we should cancel the reader here
+                //     Scenario 2
+                //     return;
+                // }
+
                 if (body.value.Locked.promise) |promise| {
                     if (promise.isEmptyOrUndefinedOrNull()) {
-                        // Scenario 2a.
+                        // Scenario 3a.
                         this.ignoreRemainingResponseBody();
                     }
                 } else {
-                    // Scenario 3.
+                    // Scenario 4.
                     this.ignoreRemainingResponseBody();
                 }
             }
@@ -1565,6 +1576,11 @@ pub const Fetch = struct {
                     // Scenario 1 or 2.
                     return;
                 }
+
+                // if(this.native_readable_stream) |readable_stream| {
+                //     TODO: check for pending stream reads to solve and if none we should cancel the reader here
+                //     return;
+                // }
 
                 if (body.value.Locked.promise) |promise| {
                     if (promise.isEmptyOrUndefinedOrNull()) {

@@ -31,7 +31,7 @@ on:
 
 env:
   # Must specify exact version of LLVM for Windows
-  LLVM_VERSION: 16.0.6
+  LLVM_VERSION: 17.0.6
   BUN_VERSION: ${{ inputs.bun-version }}
   BUN_GARBAGE_COLLECTOR_LEVEL: 1
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: 1

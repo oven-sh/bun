@@ -2804,6 +2804,17 @@ pub const JSGlobalObject = extern struct {
         this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    pub fn throwInvalidArgumentTypeValue(
+        this: *JSGlobalObject,
+        field: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) JSValue {
+        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
+        defer ty_str.deinit();
+        return this.throwValueRet(this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }));
+    }
+
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2919,6 +2930,12 @@ pub const JSGlobalObject = extern struct {
         } else {
             return ZigString.static(fmt).toTypeErrorInstance(this);
         }
+    }
+
+    pub fn createTypeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
+        var err = this.createTypeErrorInstance(fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        return err;
     }
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
@@ -3051,6 +3068,15 @@ pub const JSGlobalObject = extern struct {
         value: JSC.JSValue,
     ) void {
         this.vm().throwError(this, value);
+    }
+
+    // eventually merge this with throwValue, but that's a big diff
+    pub fn throwValueRet(
+        this: *JSGlobalObject,
+        value: JSC.JSValue,
+    ) JSValue {
+        this.vm().throwError(this, value);
+        return .zero;
     }
 
     pub fn throwError(

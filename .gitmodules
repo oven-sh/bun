@@ -90,3 +90,6 @@ branch = bun
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/raylib"]
+	path = src/deps/raylib
+	url = https://github.com/raysan5/raylib.git

@@ -127,7 +127,11 @@
     "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
+    "*.embeddedhtml": "html",
     "*.idl": "cpp",
+    "__locale": "cpp",
+    "*.inc": "cpp",
+    "istream": "cpp"
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

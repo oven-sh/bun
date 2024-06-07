@@ -298,6 +298,7 @@ option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
+option(USE_CUSTOM_RAYLIB "Use Bun's recommended version of raylib" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
 option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd" ON)
 option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
@@ -1274,6 +1275,35 @@ else()
     find_package(LibArchive REQUIRED)
     target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
 endif()
+
+if(USE_CUSTOM_RAYLIB)
+    include_directories(${BUN_DEPS_DIR}/raylib/src)
+
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/raylib.lib")
+    else()
+        # target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libraylib.a")
+        # Link against macOS frameworks and libraries
+        find_library(APPKIT_FRAMEWORK AppKit)
+        find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
+        find_library(IOKIT_FRAMEWORK IOKit)
+        find_library(FOUNDATION_FRAMEWORK Foundation)
+        find_library(OBJC_LIBRARY objc)
+
+        target_link_libraries(${bun} PRIVATE
+            ${BUN_DEPS_OUT_DIR}/libraylib.a
+            ${APPKIT_FRAMEWORK}
+            ${COREFOUNDATION_FRAMEWORK}
+            ${IOKIT_FRAMEWORK}
+            ${FOUNDATION_FRAMEWORK}
+            ${OBJC_LIBRARY}
+)
+    endif()
+else()
+    find_package(raylib REQUIRED)
+    target_link_libraries(${bun} PRIVATE raylib::raylib)
+endif()
+
 
 if(USE_CUSTOM_MIMALLOC)
     include_directories(${BUN_DEPS_DIR}/mimalloc/include)

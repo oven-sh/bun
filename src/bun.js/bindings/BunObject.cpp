@@ -31,6 +31,8 @@
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
 #include "PathInlines.h"
+// #include "raylib/build/raylib/include/raylib.h"
+#include "raylib.h"
 
 namespace Bun {
 
@@ -466,6 +468,33 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+// functionBunWelcome
+JSC_DEFINE_HOST_FUNCTION(functionBunWelcome, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    // auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    // auto& vm = global->vm();
+    // auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // auto welcome = makeString("Welcome to Zig Shell!");
+    // RETURN_IF_EXCEPTION(scope, {});
+
+    // return JSValue::encode(JSC::jsString(vm, welcome));
+
+    InitWindow(800, 450, "raylib [core] example - basic window");
+
+    while (!WindowShouldClose())
+    {
+        BeginDrawing();
+            ClearBackground(RAYWHITE);
+            DrawText("Congrats! You created your first window!", 190, 200, 20, LIGHTGRAY);
+        EndDrawing();
+    }
+
+    CloseWindow();
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -571,6 +600,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     main                                           BunObject_getter_wrap_main                                          DontDelete|PropertyCallback
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
+    welcome                                        functionBunWelcome                                                  DontDelete|Function 0
     openInEditor                                   BunObject_callback_openInEditor                                     DontDelete|Function 1
     origin                                         BunObject_getter_wrap_origin                                        DontDelete|PropertyCallback
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback

@@ -443,6 +443,7 @@ endif
 
 MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-larchive \
+	-lraylib \
 	-lz \
 	$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 	$(_MIMALLOC_LINK) \
@@ -454,6 +455,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
+		-lraylib \
 		-ltcc \
 		-lusockets \
 		-lcares \
@@ -635,6 +637,22 @@ libarchive:
 	CFLAGS="$(CFLAGS)" $(CCACHE_CC_FLAG) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
+
+.PHONY: raylib
+raylib:
+	mkdir -p $(BUN_DEPS_DIR)/raylib/build
+	cd $(BUN_DEPS_DIR)/raylib/build && \
+	cmake .. \
+		-DCMAKE_C_COMPILER="/usr/local/opt/llvm@16/bin/clang" \
+		-DCMAKE_CXX_COMPILER="/usr/local/opt/llvm@16/bin/clang++" \
+		-DCMAKE_C_FLAGS="$(CFLAGS)" \
+		-DCMAKE_CXX_FLAGS="$(CXXFLAGS)" \
+		-DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+		-DBUILD_SHARED_LIBS=OFF && \
+	make -j${CPUS}
+	cp $(BUN_DEPS_DIR)/raylib/build/raylib/libraylib.a $(BUN_DEPS_OUT_DIR)/libraylib.a
+
+
 
 .PHONY: tgz
 tgz:
@@ -1993,7 +2011,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd base64
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd base64 raylib
 
 
 .PHONY: vendor-without-check

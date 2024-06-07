@@ -51,6 +51,7 @@
     macro(udpSocket) \
     macro(mmap) \
     macro(nanoseconds) \
+    macro(welcome) \
     macro(openInEditor) \
     macro(registerMacro) \
     macro(resolve) \

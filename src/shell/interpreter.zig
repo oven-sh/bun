@@ -6863,16 +6863,22 @@ pub const Interpreter = struct {
             pub fn start(this: *Echo) Maybe(void) {
                 const args = this.bltn.argsSlice();
 
+                var has_leading_newline: bool = false;
                 const args_len = args.len;
                 for (args, 0..) |arg, i| {
-                    const len = std.mem.len(arg);
-                    this.output.appendSlice(arg[0..len]) catch bun.outOfMemory();
+                    const thearg = std.mem.span(arg);
                     if (i < args_len - 1) {
+                        this.output.appendSlice(thearg) catch bun.outOfMemory();
                         this.output.append(' ') catch bun.outOfMemory();
+                    } else {
+                        if (thearg.len > 0 and thearg[thearg.len - 1] == '\n') {
+                            has_leading_newline = true;
+                        }
+                        this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch bun.outOfMemory();
                     }
                 }
 
-                this.output.append('\n') catch bun.outOfMemory();
+                if (!has_leading_newline) this.output.append('\n') catch bun.outOfMemory();
 
                 if (!this.bltn.stdout.needsIO()) {
                     _ = this.bltn.writeNoIO(.stdout, this.output.items[0..]);

@@ -340,6 +340,10 @@ if(NOT CANARY)
     set(CANARY 0)
 endif()
 
+if (NOT ENABLE_LOGS)
+    set(ENABLE_LOGS false)
+endif()
+
 if(NOT ZIG_OPTIMIZE)
     set(ZIG_OPTIMIZE ${DEFAULT_ZIG_OPTIMIZE})
 endif()
@@ -874,6 +878,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
+        "-Denable_logs=${ENABLE_LOGS}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"

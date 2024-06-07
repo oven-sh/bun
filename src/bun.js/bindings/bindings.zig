@@ -1616,6 +1616,10 @@ pub const SystemError = extern struct {
         return @enumFromInt(this.errno * -1);
     }
 
+    pub fn toAnyhowError(this: SystemError) bun.anyhow.Error {
+        return bun.anyhow.Error.newSys(this);
+    }
+
     pub fn deref(this: *const SystemError) void {
         this.path.deref();
         this.code.deref();

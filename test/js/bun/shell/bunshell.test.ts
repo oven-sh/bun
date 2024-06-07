@@ -801,7 +801,7 @@ ${temp_dir}`
     TestBuilder.command`echo ${"|"}`.stdout("|\n").runAsTest("pipe");
     TestBuilder.command`echo ${"="}`.stdout("=\n").runAsTest("equals");
     TestBuilder.command`echo ${";"}`.stdout(";\n").runAsTest("semicolon");
-    TestBuilder.command`echo ${"\n"}`.stdout("\n\n").runAsTest("newline");
+    TestBuilder.command`echo ${"\n"}`.stdout("\n").runAsTest("newline");
     TestBuilder.command`echo ${"{"}`.stdout("{\n").runAsTest("left_brace");
     TestBuilder.command`echo ${"}"}`.stdout("}\n").runAsTest("right_brace");
     TestBuilder.command`echo ${","}`.stdout(",\n").runAsTest("comma");

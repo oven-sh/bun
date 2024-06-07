@@ -1,5 +1,10 @@
 Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-platform bash-like shell with seamless JavaScript interop.
 
+
+:::warning  
+Only available from bun v1.0.7 onwards.
+:::
+
 Quickstart:
 
 ```js

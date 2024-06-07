@@ -63,18 +63,20 @@ pub const BrotliEncoder = struct {
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
-                const idx = params.getIndex(globalThis, f.value);
-                if (!idx.isNumber()) {
-                    var typestring = idx.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
-                    defer typestring.deinit();
-                    globalThis.vm().throwError(globalThis, globalThis.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"options.params[key]\" property must be of type number. Received type {s}", .{typestring.slice()}));
-                    return .zero;
-                }
-                const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
-                if (!was_set) {
-                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
-                    this.deinit();
-                    return .zero;
+                if (params.hasOwnProperty(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).*)) {
+                    const idx = params.getIndex(globalThis, f.value);
+                    if (!idx.isNumber()) {
+                        var typestring = idx.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
+                        defer typestring.deinit();
+                        globalThis.vm().throwError(globalThis, globalThis.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"options.params[key]\" property must be of type number. Received type {s}", .{typestring.slice()}));
+                        return .zero;
+                    }
+                    const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
+                    if (!was_set) {
+                        globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                        this.deinit();
+                        return .zero;
+                    }
                 }
             }
         }

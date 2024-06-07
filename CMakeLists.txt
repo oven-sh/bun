@@ -1072,7 +1072,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "/LTCG")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL)
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG})
         target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG:FULL)
     endif()
 endif()

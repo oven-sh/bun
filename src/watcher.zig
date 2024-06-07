@@ -281,6 +281,7 @@ const WindowsWatcher = struct {
                     .syscall = .watch,
                 } };
             }
+            log("read directory changes!", .{});
             return .{ .result = {} };
         }
     };
@@ -367,7 +368,10 @@ const WindowsWatcher = struct {
     // wait until new events are available
     pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterator) {
         switch (this.watcher.prepare()) {
-            .err => |err| return .{ .err = err },
+            .err => |err| {
+                log("prepare() returned error", .{});
+                return .{ .err = err };
+            },
             .result => {},
         }
 
@@ -378,7 +382,7 @@ const WindowsWatcher = struct {
             const rc = w.kernel32.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, @intFromEnum(timeout));
             if (rc == 0) {
                 const err = w.kernel32.GetLastError();
-                if (err == .TIMEOUT) {
+                if (err == .TIMEOUT or err == .WAIT_TIMEOUT) {
                     return .{ .result = null };
                 } else {
                     log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
@@ -397,6 +401,7 @@ const WindowsWatcher = struct {
                 if (nbytes == 0) {
                     // shutdown notification
                     // TODO close handles?
+                    log("shutdown notification in WindowsWatcher.next", .{});
                     return .{ .err = .{
                         .errno = @intFromEnum(bun.C.SystemErrno.ESHUTDOWN),
                         .syscall = .watch,
@@ -822,6 +827,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
+                log("_watchLoop", .{});
                 var buf: bun.PathBuffer = undefined;
                 const root = this.fs.top_level_dir;
                 @memcpy(buf[0..root.len], root);

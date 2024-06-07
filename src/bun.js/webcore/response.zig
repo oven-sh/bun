@@ -2492,7 +2492,7 @@ pub const Fetch = struct {
                     }
 
                     var cwd_buf: bun.PathBuffer = undefined;
-                    const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                    const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
                         globalThis.throwError(err, "Failed to resolve file url");
                         return .zero;
                     }) else globalThis.bunVM().bundler.fs.top_level_dir;

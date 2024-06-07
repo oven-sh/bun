@@ -2196,8 +2196,8 @@ pub const win32 = struct {
     pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
-        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
+        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();
@@ -2473,8 +2473,6 @@ pub const LazyBoolValue = enum {
 /// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
 /// Parent must be a type which contains the field we are getting.
 pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
-    _ = Getter; // autofix
-    _ = field; // autofix
     return struct {
         value: LazyBoolValue = .unknown,
 

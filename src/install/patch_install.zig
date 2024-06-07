@@ -8,6 +8,7 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
+const Progress = bun.Progress;
 
 const logger = bun.logger;
 
@@ -22,7 +23,6 @@ pub const PatchedDep = Lockfile.PatchedDep;
 const ThreadPool = bun.ThreadPool;
 
 pub const Resolution = @import("./resolution.zig").Resolution;
-const Progress = std.Progress;
 
 pub const PackageInstall = bun.install.PackageInstall;
 pub const PreparePatchPackageInstall = bun.install.PreparePatchPackageInstall;
@@ -121,7 +121,7 @@ pub const PatchTask = struct {
     }
 
     pub fn runFromThreadPool(task: *ThreadPool.Task) void {
-        var patch_task: *PatchTask = @fieldParentPtr(PatchTask, "task", task);
+        var patch_task: *PatchTask = @fieldParentPtr("task", task);
         patch_task.runFromThreadPoolImpl();
     }
 
@@ -383,7 +383,12 @@ pub const PatchTask = struct {
         @memcpy(buntagbuf[0..bun_tag_prefix.len], bun_tag_prefix);
         const hashlen = (std.fmt.bufPrint(buntagbuf[bun_tag_prefix.len..], "{x}", .{this.callback.apply.patch_hash}) catch unreachable).len;
         buntagbuf[bun_tag_prefix.len + hashlen] = 0;
-        const buntagfd = switch (bun.sys.openat(bun.toFD(patch_pkg_dir.fd), buntagbuf[0 .. bun_tag_prefix.len + hashlen :0], std.os.O.RDWR | std.os.O.CREAT, 0o666)) {
+        const buntagfd = switch (bun.sys.openat(
+            bun.toFD(patch_pkg_dir.fd),
+            buntagbuf[0 .. bun_tag_prefix.len + hashlen :0],
+            bun.O.RDWR | bun.O.CREAT,
+            0o666,
+        )) {
             .result => |fd| fd,
             .err => |e| {
                 return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
@@ -466,7 +471,7 @@ pub const PatchTask = struct {
         };
         const size: u64 = @intCast(stat.size);
 
-        const fd = switch (bun.sys.open(absolute_patchfile_path, std.os.O.RDONLY, 0)) {
+        const fd = switch (bun.sys.open(absolute_patchfile_path, bun.O.RDONLY, 0)) {
             .err => |e| return .{ .err = errDupePath(e) },
             .result => |fd| fd,
         };

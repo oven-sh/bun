@@ -53,11 +53,8 @@ const BunBuildOptions = struct {
     windows_shim: ?WindowsShim = null,
 
     pub fn isBaseline(this: *const BunBuildOptions) bool {
-        // return this.arch.isX86() and (this.target.result.cpu.model == .baseline or
-        //     !std.Target.x86.featureSetHas(this.target.result.getCpuFeatures(), .avx2));
-        // TODO:
-        _ = this;
-        return false;
+        return this.arch.isX86() and
+            !Target.x86.featureSetHas(this.target.result.cpu.features, .avx2);
     }
 
     pub fn buildOptionsModule(this: *BunBuildOptions, b: *Build) *Module {
@@ -72,6 +69,7 @@ const BunBuildOptions = struct {
         opts.addOption(Version, "version", this.version);
         opts.addOption([:0]const u8, "sha", b.allocator.dupeZ(u8, this.sha) catch @panic("OOM"));
         opts.addOption(bool, "baseline", this.isBaseline());
+        opts.addOption(bool, "enable_logs", this.enable_logs);
 
         const mod = opts.createModule();
         this.cached_options_module = mod;

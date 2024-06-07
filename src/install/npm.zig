@@ -31,7 +31,6 @@ const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
 const DotEnv = @import("../env_loader.zig");
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 const Npm = @This();
 
@@ -338,7 +337,7 @@ pub const OperatingSystem = enum(u16) {
         return (@intFromEnum(this) & other) != 0;
     }
 
-    pub const NameMap = ComptimeStringMap(u16, .{
+    pub const NameMap = bun.ComptimeStringMap(u16, .{
         .{ "aix", aix },
         .{ "darwin", darwin },
         .{ "freebsd", freebsd },
@@ -375,7 +374,7 @@ pub const Libc = enum(u8) {
     pub const glibc: u8 = 1 << 1;
     pub const musl: u8 = 1 << 2;
 
-    pub const NameMap = ComptimeStringMap(u8, .{
+    pub const NameMap = bun.ComptimeStringMap(u8, .{
         .{ "glibc", glibc },
         .{ "musl", musl },
     });
@@ -424,7 +423,7 @@ pub const Architecture = enum(u16) {
 
     pub const all_value: u16 = arm | arm64 | ia32 | mips | mipsel | ppc | ppc64 | s390 | s390x | x32 | x64;
 
-    pub const NameMap = ComptimeStringMap(u16, .{
+    pub const NameMap = bun.ComptimeStringMap(u16, .{
         .{ "arm", arm },
         .{ "arm64", arm64 },
         .{ "ia32", ia32 },

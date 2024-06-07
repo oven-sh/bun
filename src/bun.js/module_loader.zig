@@ -200,7 +200,10 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
         };
         var parent = try dir.makeOpenPath(dir_path[root_len..], .{});
         defer parent.close();
-        parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
+        parent.writeFile(.{
+            .sub_path = std.fs.path.basename(specifier),
+            .data = written,
+        }) catch |e| {
             Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
@@ -237,7 +240,10 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             try bufw.flush();
         }
     } else {
-        dir.writeFile(std.fs.path.basename(specifier), written) catch return;
+        dir.writeFile(.{
+            .sub_path = std.fs.path.basename(specifier),
+            .data = written,
+        }) catch return;
     }
 }
 

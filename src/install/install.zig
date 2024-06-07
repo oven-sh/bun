@@ -925,12 +925,13 @@ pub const PackageInstall = struct {
         symlink,
 
         const BackendSupport = std.EnumArray(Method, bool);
-        pub const map = std.ComptimeStringMap(Method, .{
-            .{ "clonefile", Method.clonefile },
-            .{ "clonefile_each_dir", Method.clonefile_each_dir },
-            .{ "hardlink", Method.hardlink },
-            .{ "copyfile", Method.copyfile },
-            .{ "symlink", Method.symlink },
+
+        pub const map = bun.ComptimeStringMap(Method, .{
+            .{ "clonefile", .clonefile },
+            .{ "clonefile_each_dir", .clonefile_each_dir },
+            .{ "hardlink", .hardlink },
+            .{ "copyfile", .copyfile },
+            .{ "symlink", .symlink },
         });
 
         pub const macOS = BackendSupport.initDefault(false, .{
@@ -2313,7 +2314,7 @@ pub const PackageInstall = struct {
 };
 
 pub const Resolution = @import("./resolution.zig").Resolution;
-const Progress = std.Progress;
+const Progress = bun.Progress;
 const TaggedPointer = @import("../tagged_pointer.zig");
 
 const DependencyInstallContext = struct {
@@ -2443,7 +2444,7 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
 
     // progress bar stuff when not stack allocated
-    root_progress_node: *std.Progress.Node = undefined,
+    root_progress_node: *Progress.Node = undefined,
 
     to_update: bool = false,
 
@@ -9342,7 +9343,7 @@ pub const PackageManager = struct {
     pub const PackageInstaller = struct {
         manager: *PackageManager,
         lockfile: *Lockfile,
-        progress: *std.Progress,
+        progress: *Progress,
 
         // relative paths from `nextNodeModulesFolder` will be copied into this list.
         node_modules: NodeModulesFolder,

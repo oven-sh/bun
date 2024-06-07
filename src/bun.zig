@@ -39,7 +39,6 @@ pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
-pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
 pub const resolver = @import("./resolver/resolver.zig");
@@ -47,6 +46,16 @@ pub const DirIterator = @import("./bun.js/node/dir_iterator.zig");
 pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
+
+/// Copied from Zig std.trait
+pub const trait = @import("./trait.zig");
+/// Copied from Zig std.Progress before 0.13 rewrite
+pub const Progress = @import("./Progress.zig");
+/// Modified version of Zig's ComptimeStringMap
+pub const comptime_string_map = @import("./comptime_string_map.zig");
+pub const ComptimeStringMap = comptime_string_map.ComptimeStringMap;
+pub const ComptimeStringMap16 = comptime_string_map.ComptimeStringMap16;
+pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWithKeyType;
 
 pub const glob = @import("./glob.zig");
 
@@ -180,23 +189,23 @@ else
     std.posix.iovec_const;
 
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
-    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
         if (input.len > @as(usize, std.math.maxInt(u32))) {
             Output.debugWarn("call to bun.PlatformIOVec.init with length larger than u32, this will overflow on windows", .{});
         }
     }
-    return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+    // TODO: remove this constCast by making the input mutable
+    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
-    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
         if (input.len > @as(usize, std.math.maxInt(u32))) {
             Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
         }
     }
-    return .{ .iov_len = @intCast(input.len), .iov_base = input.ptr };
+    // TODO: remove this constCast by adding uv_buf_t_const
+    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
@@ -292,28 +301,6 @@ fn Span(comptime T: type) type {
         else => @compileError("invalid type given to std.mem.Span: " ++ @typeName(T)),
     }
 }
-// fn Span(comptime T: type) type {
-//     switch (@typeInfo(T)) {
-//         .Optional => |optional_info| {
-//             return ?Span(optional_info.child);
-//         },
-//         .Pointer => |ptr_info| {
-//             var new_ptr_info = ptr_info;
-//             switch (ptr_info.size) {
-//                 .C => {
-//                     new_ptr_info.sentinel = &@as(ptr_info.child, 0);
-//                     new_ptr_info.is_allowzero = false;
-//                 },
-//                 .Many => if (ptr_info.sentinel == null) @compileError("invalid type given to bun.span: " ++ @typeName(T)),
-//                 else => {},
-//             }
-//             new_ptr_info.size = .Slice;
-//             return @Type(.{ .Pointer = new_ptr_info });
-//         },
-//         else => {},
-//     }
-//     @compileError("invalid type given to bun.span: " ++ @typeName(T));
-// }
 
 pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
     if (@typeInfo(@TypeOf(ptr)) == .Optional) {
@@ -2070,9 +2057,6 @@ pub const HOST_NAME_MAX = if (Environment.isWindows)
 else
     std.posix.HOST_NAME_MAX;
 
-// TODO: remove this
-pub const enums = std.enums;
-
 const WindowsStat = extern struct {
     dev: u32,
     ino: u32,
@@ -3110,9 +3094,6 @@ pub fn errnoToZigErr(err: anytype) anyerror {
 }
 
 pub const S = if (Environment.isWindows) C.S else std.posix.S;
-
-/// Deprecated!
-pub const trait = @import("./trait.zig");
 
 pub const brotli = @import("./brotli.zig");
 

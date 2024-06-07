@@ -5686,16 +5686,16 @@ const FileWriterInternal = struct {
 
                     var vecs = [_]std.posix.iovec_const{
                         .{
-                            .iov_base = first.ptr,
-                            .iov_len = first.len,
+                            .base = first.ptr,
+                            .len = first.len,
                         },
                         .{
-                            .iov_base = second.ptr,
-                            .iov_len = second.len,
+                            .base = second.ptr,
+                            .len = second.len,
                         },
                         .{
-                            .iov_base = third.ptr,
-                            .iov_len = third.len,
+                            .base = third.ptr,
+                            .len = third.len,
                         },
                     };
 

@@ -540,7 +540,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isMac) {
             if (target.os == .mac) {
-                var signer = std.ChildProcess.init(
+                var signer = std.process.Child.init(
                     &.{
                         "codesign",
                         "--remove-signature",

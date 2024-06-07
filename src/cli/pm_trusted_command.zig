@@ -1,5 +1,5 @@
 const std = @import("std");
-const Progress = std.Progress;
+const Progress = bun.Progress;
 const bun = @import("root").bun;
 const logger = bun.logger;
 const Environment = bun.Environment;

@@ -818,7 +818,7 @@ pub const SystemErrno = enum(u16) {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = bun.enums.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.enums.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
 

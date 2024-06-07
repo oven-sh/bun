@@ -447,7 +447,7 @@ pub const InitCommand = struct {
         Output.flush();
 
         if (exists("package.json")) {
-            var process = std.ChildProcess.init(
+            var process = std.process.Child.init(
                 &.{
                     try bun.selfExePath(),
                     "install",

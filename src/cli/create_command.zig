@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const Progress = bun.Progress;
 
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -43,7 +44,6 @@ const Headers = bun.http.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
 const Futex = @import("../futex.zig");
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
@@ -270,7 +270,7 @@ pub const CreateCommand = struct {
 
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
-        var progress = std.Progress{};
+        var progress = Progress{};
         var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
 
@@ -482,8 +482,8 @@ pub const CreateCommand = struct {
                     pub fn copy(
                         destination_dir_: std.fs.Dir,
                         walker: *Walker,
-                        node_: *std.Progress.Node,
-                        progress_: *std.Progress,
+                        node_: *Progress.Node,
+                        progress_: *Progress,
                     ) !void {
                         while (try walker.next()) |entry| {
                             if (entry.kind != .file) continue;
@@ -1566,7 +1566,7 @@ pub const CreateCommand = struct {
         if (create_options.open) {
             if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
                 var argv = [_]string{bun.asByteSlice(bin)};
-                var child = std.ChildProcess.init(&argv, ctx.allocator);
+                var child = std.process.Child.init(&argv, ctx.allocator);
                 child.cwd = destination;
                 child.stdin_behavior = .Inherit;
                 child.stdout_behavior = .Inherit;
@@ -1740,7 +1740,7 @@ pub const Example = struct {
         }
     }
 
-    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*std.Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
+    pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
         const remote_examples = try Example.fetchAll(ctx, env_loader, node);
         if (node) |node_| node_.end();
 
@@ -1819,8 +1819,8 @@ pub const Example = struct {
         ctx: Command.Context,
         env_loader: *DotEnv.Loader,
         name: string,
-        refresher: *std.Progress,
-        progress: *std.Progress.Node,
+        refresher: *Progress,
+        progress: *Progress.Node,
     ) !MutableString {
         const owner_i = std.mem.indexOfScalar(u8, name, '/').?;
         const owner = name[0..owner_i];
@@ -1940,7 +1940,7 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetch(ctx: Command.Context, env_loader: *DotEnv.Loader, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
+    pub fn fetch(ctx: Command.Context, env_loader: *DotEnv.Loader, name: string, refresher: *Progress, progress: *Progress.Node) !MutableString {
         progress.name = "Fetching package.json";
         refresher.refresh();
 
@@ -2078,7 +2078,7 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
+    pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*Progress.Node) ![]Example {
         url = URL.parse(examples_url);
 
         const http_proxy: ?URL = env_loader.getHttpProxy(url);
@@ -2186,7 +2186,7 @@ pub const CreateListExamplesCommand = struct {
 
         env_loader.loadProcess();
 
-        var progress = std.Progress{};
+        var progress = Progress{};
         const node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         progress.refresh();
@@ -2307,7 +2307,7 @@ const GitHandler = struct {
 
             inline for (comptime std.meta.fieldNames(@TypeOf(Commands))) |command_field| {
                 const command: []const string = @field(git_commands, command_field);
-                var process = std.ChildProcess.init(command, default_allocator);
+                var process = std.process.Child.init(command, default_allocator);
                 process.cwd = destination;
                 process.stdin_behavior = .Inherit;
                 process.stdout_behavior = .Inherit;

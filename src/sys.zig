@@ -1331,7 +1331,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
 fn veclen(buffers: anytype) usize {
     var len: usize = 0;
     for (buffers) |buffer| {
-        len += buffer.iov_len;
+        len += buffer.len;
     }
     return len;
 }
@@ -2701,8 +2701,8 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
     if (Environment.isLinux) {
         while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
             const iovec = [1]std.posix.iovec{.{
-                .iov_base = buf.ptr,
-                .iov_len = buf.len,
+                .base = buf.ptr,
+                .len = buf.len,
             }};
             var debug_timer = bun.Output.DebugTimer.start();
 
@@ -2745,8 +2745,8 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
     if (Environment.isLinux) {
         while (bun.C.linux.RWFFlagSupport.isMaybeSupported()) {
             const iovec = [1]std.posix.iovec_const{.{
-                .iov_base = buf.ptr,
-                .iov_len = buf.len,
+                .base = buf.ptr,
+                .len = buf.len,
             }};
 
             var debug_timer = bun.Output.DebugTimer.start();

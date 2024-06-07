@@ -101,7 +101,7 @@ pub const Shebang = struct {
         run_with_powershell,
     };
 
-    const BunExtensions = std.ComptimeStringMap(ExtensionType, .{
+    const BunExtensions = std.StaticStringMap(ExtensionType).initComptime(.{
         .{ wU8(".js"), .run_with_bun },
         .{ wU8(".mjs"), .run_with_bun },
         .{ wU8(".cjs"), .run_with_bun },

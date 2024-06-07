@@ -227,13 +227,8 @@ pub const RuntimeTranspilerCache = struct {
                 if (bun.Environment.allow_assert) {
                     var total: usize = 0;
                     for (vecs) |v| {
-                        if (comptime bun.Environment.isWindows) {
-                            bun.assert(v.len > 0);
-                            total += v.len;
-                        } else {
-                            bun.assert(v.iov_len > 0);
-                            total += v.iov_len;
-                        }
+                        bun.assert(v.len > 0);
+                        total += v.len;
                     }
                     bun.assert(end_position == total);
                 }

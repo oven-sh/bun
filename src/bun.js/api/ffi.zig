@@ -71,7 +71,6 @@ const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
-const ComptimeStringMap = @import("../../comptime_string_map.zig").ComptimeStringMap;
 
 const TCC = @import("../../tcc.zig");
 
@@ -1416,7 +1415,7 @@ pub const FFI = struct {
             .{ "callback", ABIType.function },
             .{ "fn", ABIType.function },
         };
-        pub const label = ComptimeStringMap(ABIType, map);
+        pub const label = bun.ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
             name: []const u8,
             entry: ABIType,

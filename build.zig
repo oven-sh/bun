@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.12.0";
+const recommended_zig_version = "0.13.0-dev.386+3964b2a31";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -172,7 +172,7 @@ pub fn build(b: *Build) !void {
             const sha = b.option([]const u8, "sha", "Force the git sha") orelse
                 b.graph.env_map.get("GITHUB_SHA") orelse
                 b.graph.env_map.get("GIT_SHA") orelse fetch_sha: {
-                const result = std.ChildProcess.run(.{
+                const result = std.process.Child.run(.{
                     .allocator = b.allocator,
                     .argv = &.{
                         "git",
@@ -291,11 +291,9 @@ pub fn build(b: *Build) !void {
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     const obj = b.addObject(.{
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
-        .root_source_file = .{
-            .path = switch (opts.os) {
-                .wasm => "root_wasm.zig",
-                else => "root.zig",
-            },
+        .root_source_file = switch (opts.os) {
+            .wasm => b.path("root_wasm.zig"),
+            else => b.path("root.zig"),
         },
         .target = opts.target,
         .optimize = opts.optimize,

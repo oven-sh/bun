@@ -30,6 +30,7 @@ const SOCK = posix.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
+const Progress = bun.Progress;
 
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
@@ -1485,7 +1486,7 @@ allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
 timeout: usize = 0,
-progress_node: ?*std.Progress.Node = null,
+progress_node: ?*Progress.Node = null,
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
 disable_decompression: bool = false,

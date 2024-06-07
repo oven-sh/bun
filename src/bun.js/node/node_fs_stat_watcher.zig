@@ -85,7 +85,6 @@ pub const StatWatcherScheduler = struct {
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn setTimer(this: *StatWatcherScheduler, interval: i32) void {
-        // only the main thread can set the timer
 
         // if the timer is active we need to remove it
         if (this.event_loop_timer.state == .ACTIVE) {
@@ -104,7 +103,6 @@ pub const StatWatcherScheduler = struct {
 
     /// Schedule a task to set the timer in the main thread
     fn sheduleTimerUpdate(this: *StatWatcherScheduler) void {
-        // schedule a task to set the timer in the main thread
         const Holder = struct {
             scheduler: *StatWatcherScheduler,
             task: JSC.AnyTask,

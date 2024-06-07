@@ -601,6 +601,11 @@ it("catches exceptions with process.on('uncaughtException', fn)", async () => {
   expect(await proc.exited).toBe(42);
 });
 
+it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
 it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
   const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
   expect(await proc.exited).toBe(42);

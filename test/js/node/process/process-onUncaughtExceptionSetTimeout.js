@@ -1,7 +1,6 @@
 import { expect } from "bun:test";
 
 let monitorCalled = false;
-/Users/dave / code / bun / test / js / node / process / process - onUncaughtExceptionSetTimeout.js
 setTimeout(() => {
   // uncaughtExceptionMonitor should be called
   if (!monitorCalled) {

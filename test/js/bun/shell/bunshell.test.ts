@@ -113,6 +113,10 @@ describe("bunshell", () => {
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
+    escapeTest("✔", "✔");
+    escapeTest("lmao=✔", '"lmao=✔"');
+    escapeTest("元気かい、兄弟", "元気かい、兄弟");
+    escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
 
     describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";
@@ -391,6 +395,12 @@ describe("bunshell", () => {
     const haha = "noice";
     const { stdout } = await $`echo $(echo noice)`;
     expect(stdout.toString()).toEqual(`noice\n`);
+  });
+
+  describe("empty_expansion", () => {
+    TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
+    TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
+    TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
   });
 
   describe("tilde_expansion", () => {
@@ -791,7 +801,7 @@ ${temp_dir}`
     TestBuilder.command`echo ${"|"}`.stdout("|\n").runAsTest("pipe");
     TestBuilder.command`echo ${"="}`.stdout("=\n").runAsTest("equals");
     TestBuilder.command`echo ${";"}`.stdout(";\n").runAsTest("semicolon");
-    TestBuilder.command`echo ${"\n"}`.stdout("\n\n").runAsTest("newline");
+    TestBuilder.command`echo ${"\n"}`.stdout("\n").runAsTest("newline");
     TestBuilder.command`echo ${"{"}`.stdout("{\n").runAsTest("left_brace");
     TestBuilder.command`echo ${"}"}`.stdout("}\n").runAsTest("right_brace");
     TestBuilder.command`echo ${","}`.stdout(",\n").runAsTest("comma");

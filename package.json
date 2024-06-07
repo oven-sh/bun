@@ -34,6 +34,7 @@
     "build:tidy": "BUN_SILENT=1 cmake --log-level=WARNING . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy >> ${GITHUB_STEP_SUMMARY:-/dev/stdout} && BUN_SILENT=1 ninja -Cbuild-tidy >> ${GITHUB_STEP_SUMMARY:-/dev/stdout}",
     "build:tidy-extra": "cmake . -DZIG_OPTIMIZE=Debug -DUSE_DEBUG_JSC=ON -DBUN_TIDY_ONLY_EXTRA=ON -DCMAKE_BUILD_TYPE=Debug -GNinja -Bbuild-tidy && ninja -Cbuild-tidy",
     "build:release": "cmake . -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-release && ninja -Cbuild-release",
+    "build:release:with_logs": "cmake . -DCMAKE_BUILD_TYPE=Release -DENABLE_LOGS=true -GNinja -Bbuild-release && ninja -Cbuild-release",
     "build:debug-zig-release": "cmake . -DCMAKE_BUILD_TYPE=Release -DZIG_OPTIMIZE=Debug -GNinja -Bbuild-debug-zig-release && ninja -Cbuild-debug-zig-release",
     "build:safe": "cmake . -DZIG_OPTIMIZE=ReleaseSafe -DUSE_DEBUG_JSC=ON -DCMAKE_BUILD_TYPE=Release -GNinja -Bbuild-safe && ninja -Cbuild-safe",
     "build:windows": "cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug && ninja -Cbuild",

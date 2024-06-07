@@ -157,7 +157,11 @@ pub const LifecycleScriptSubprocess = struct {
             this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
         }
         const spawn_options = bun.spawn.SpawnOptions{
-            .stdin = .ignore,
+            .stdin = if (this.foreground)
+                .inherit
+            else
+                .ignore,
+
             .stdout = if (this.manager.options.log_level == .silent)
                 .ignore
             else if (this.manager.options.log_level.isVerbose() or this.foreground)

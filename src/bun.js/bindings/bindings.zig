@@ -1616,6 +1616,10 @@ pub const SystemError = extern struct {
         return @enumFromInt(this.errno * -1);
     }
 
+    pub fn toAnyhowError(this: SystemError) bun.anyhow.Error {
+        return bun.anyhow.Error.newSys(this);
+    }
+
     pub fn deref(this: *const SystemError) void {
         this.path.deref();
         this.code.deref();
@@ -2800,6 +2804,17 @@ pub const JSGlobalObject = extern struct {
         this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    pub fn throwInvalidArgumentTypeValue(
+        this: *JSGlobalObject,
+        field: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) JSValue {
+        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
+        defer ty_str.deinit();
+        return this.throwValueRet(this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }));
+    }
+
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2915,6 +2930,12 @@ pub const JSGlobalObject = extern struct {
         } else {
             return ZigString.static(fmt).toTypeErrorInstance(this);
         }
+    }
+
+    pub fn createTypeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
+        var err = this.createTypeErrorInstance(fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        return err;
     }
 
     pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
@@ -3047,6 +3068,15 @@ pub const JSGlobalObject = extern struct {
         value: JSC.JSValue,
     ) void {
         this.vm().throwError(this, value);
+    }
+
+    // eventually merge this with throwValue, but that's a big diff
+    pub fn throwValueRet(
+        this: *JSGlobalObject,
+        value: JSC.JSValue,
+    ) JSValue {
+        this.vm().throwError(this, value);
+        return .zero;
     }
 
     pub fn throwError(
@@ -4776,8 +4806,11 @@ pub const JSValue = enum(JSValueReprInt) {
         };
     }
 
-    // intended to be more lightweight than ZigString
+    // `this` must be known to be an object
+    // intended to be more lightweight than ZigString.
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
+        if (bun.Environment.allow_assert)
+            bun.assert(this.isObject());
         const result = fastGet_(this, global, @intFromEnum(builtin_name));
         if (result == .zero or
             // JS APIs treat {}.a as mostly the same as though it was not defined
@@ -4871,9 +4904,12 @@ pub const JSValue = enum(JSValueReprInt) {
         return if (@intFromEnum(value) != 0) value else return null;
     }
 
+    /// safe to use on any JSValue
     pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
-        bun.assert(this.isCell());
-        const function = this.fastGet(global, BuiltinName.toString) orelse return false;
+        if (!this.isObject())
+            return false;
+        const function = this.fastGet(global, BuiltinName.toString) orelse
+            return false;
         return function.isCell() and function.isCallable(global.vm());
     }
 
@@ -5594,16 +5630,12 @@ pub const JSValue = enum(JSValueReprInt) {
 
     extern fn JSC__JSValue__getClassInfoName(value: JSValue, out: *bun.String) bool;
 
-    /// Returned memory is read-only memory of the s_info assigned to a JSCell
-    pub fn getClassInfoName(this: JSValue) ?[]const u8 {
-        var out: bun.String = undefined;
+    /// For native C++ classes extending JSCell, this retrieves s_info's name
+    pub fn getClassInfoName(this: JSValue) ?bun.String {
+        if (!this.isObject()) return null;
+        var out: bun.String = bun.String.empty;
         if (!JSC__JSValue__getClassInfoName(this, &out)) return null;
-        // we assume the class name is ASCII text
-        const data = out.latin1();
-        if (bun.Environment.allow_assert) {
-            bun.assert(bun.strings.isAllASCII(data));
-        }
-        return data;
+        return out;
     }
 };
 

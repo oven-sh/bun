@@ -1190,6 +1190,15 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                             }
                         }
 
+                        // Try to get the right value from the left. We don't need to check if they're equal
+                        // because the above loop has already iterated each property in the left. If we've
+                        // seen this property before, it was already `deepEquals`ed. If it doesn't exist,
+                        // the objects are not equal.
+                        if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
+                            result = false;
+                            return false;
+                        }
+
                         if (remain == 0) {
                             result = false;
                             return false;
@@ -4786,23 +4795,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
 JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSValue::encode({});
-    }
-
-    return JSValue::encode(
-        value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
+    ASSERT(value.isCell());
+    return JSValue::encode(value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
 }
 
 JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (!value.isCell()) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
-    return JSValue::encode(
-        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
+    ASSERT(value.isCell());
+    return JSValue::encode(value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }
 
 bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject)

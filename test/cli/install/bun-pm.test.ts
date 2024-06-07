@@ -248,8 +248,8 @@ it("should list aliased dependencies", async () => {
   });
   expect(await new Response(stderr).text()).toBe("");
   expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules
+├── bar-1@0.0.2
 └── moo-1@moo
-    └── bar-1@0.0.2
 `);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);

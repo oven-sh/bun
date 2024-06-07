@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.12")
+set(Bun_VERSION "1.1.13")
 set(WEBKIT_TAG cb7336ca75f6152adb75cd823a1e10da27739c29)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -338,6 +338,10 @@ endif()
 
 if(NOT CANARY)
     set(CANARY 0)
+endif()
+
+if (NOT ENABLE_LOGS)
+    set(ENABLE_LOGS false)
 endif()
 
 if(NOT ZIG_OPTIMIZE)
@@ -876,6 +880,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
+        "-Denable_logs=${ENABLE_LOGS}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"

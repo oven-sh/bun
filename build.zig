@@ -44,6 +44,7 @@ const BunBuildOptions = struct {
     version: Version,
     canary_revision: ?u32,
     sha: []const u8,
+    enable_logs: bool = false,
     tracy_callstack_depth: u16,
 
     generated_code_dir: []const u8,
@@ -204,6 +205,7 @@ pub fn build(b: *Build) !void {
         },
 
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
+        .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
     };
 
     // zig build obj

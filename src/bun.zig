@@ -58,6 +58,7 @@ pub const ComptimeStringMap16 = comptime_string_map.ComptimeStringMap16;
 pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWithKeyType;
 
 pub const glob = @import("./glob.zig");
+pub const patch = @import("./patch.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -148,6 +149,23 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn cwd() FileDescriptor {
         return toFD(std.fs.cwd().fd);
+    }
+
+    pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
+        if (Environment.isPosix) return this.int() == that.int();
+
+        const this_ = FDImpl.decode(this);
+        const that_ = FDImpl.decode(that);
+        return switch (this_.kind) {
+            .system => switch (that_.kind) {
+                .system => this_.value.as_system == that_.value.as_system,
+                .uv => false,
+            },
+            .uv => switch (that_.kind) {
+                .system => false,
+                .uv => this_.value.as_uv == that_.value.as_uv,
+            },
+        };
     }
 
     pub fn isStdio(fd: FileDescriptor) bool {
@@ -2129,7 +2147,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        var out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        const out_argv = try allocator.alloc([:0]u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2139,11 +2157,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         try string_builder.allocate(allocator);
 
-        for (argvu16, 0..) |argraw, i| {
+        for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
-            // Command line is expected to be valid UTF-16le so this never
-            // fails and it's okay to unwrap pointer
-            out_argv[i] = string_builder.append16(arg).?;
+
+            // Command line is expected to be valid UTF-16le
+            // ...but sometimes, it's not valid. https://github.com/oven-sh/bun/issues/11610
+            out.* = string_builder.append16(arg, default_allocator) orelse @panic("Failed to allocate memory for argv");
         }
 
         argv = out_argv;
@@ -2454,6 +2473,8 @@ pub const LazyBoolValue = enum {
 /// Getter must be a function that takes a pointer to the parent struct and returns a boolean.
 /// Parent must be a type which contains the field we are getting.
 pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
+    _ = Getter; // autofix
+    _ = field; // autofix
     return struct {
         value: LazyBoolValue = .unknown,
 
@@ -3450,6 +3471,8 @@ pub const timespec = extern struct {
         return now().addMs(interval);
     }
 };
+
+pub const UUID = @import("./bun.js/uuid.zig");
 
 /// An abstract number of element in a sequence. The sequence has a first element.
 /// This type should be used instead of integer because 2 contradicting traditions can

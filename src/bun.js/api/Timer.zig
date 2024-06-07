@@ -779,7 +779,7 @@ pub const EventLoopTimer = struct {
                     return container.fire(now, vm);
                 }
                 if (comptime t.Type() == StatWatcherScheduler) {
-                    return container.fire();
+                    return container.timerCallback();
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

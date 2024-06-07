@@ -34,8 +34,6 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
 
 /// This is a singleton struct that contains the timer used to schedule restat calls.
 pub const StatWatcherScheduler = struct {
-    // timer: ?*uws.Timer = null,
-
     current_interval: std.atomic.Value(i32) = .{ .raw = 0 },
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     main_thread: std.Thread.Id,
@@ -55,10 +53,37 @@ pub const StatWatcherScheduler = struct {
         return this;
     }
 
+    pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
+        log("append new watcher {s}", .{watcher.path});
+        bun.assert(watcher.closed == false);
+        bun.assert(watcher.next == null);
+
+        this.watchers.push(watcher);
+        const current = this.getInterval();
+        if (current == 0 or current > watcher.interval) {
+            // we are not running or the new watcher has a smaller interval
+            this.setInterval(watcher.interval);
+        }
+    }
+
     fn getInterval(this: *StatWatcherScheduler) i32 {
         return this.current_interval.load(.Monotonic);
     }
 
+    /// Update the current interval and set the timer (this function is thread safe)
+    fn setInterval(this: *StatWatcherScheduler, interval: i32) void {
+        this.current_interval.store(interval, .Monotonic);
+
+        if (this.main_thread == std.Thread.getCurrentId()) {
+            // we are in the main thread we can set the timer
+            this.setTimer(interval);
+            return;
+        }
+        // we are not in the main thread we need to schedule a task to set the timer
+        this.sheduleTimerUpdate();
+    }
+
+    /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn setTimer(this: *StatWatcherScheduler, interval: i32) void {
         // only the main thread can set the timer
 
@@ -77,22 +102,7 @@ pub const StatWatcherScheduler = struct {
         this.vm.timer.insert(&this.event_loop_timer);
     }
 
-    fn setInterval(this: *StatWatcherScheduler, interval: i32) void {
-        this.current_interval.store(interval, .Monotonic);
-
-        if (this.main_thread == std.Thread.getCurrentId()) {
-            // we are in the main thread we can set the timer
-            this.setTimer(interval);
-            return;
-        }
-        // we are not in the main thread we need to schedule a task to set the timer
-        this.sheduleTimerUpdate();
-    }
-
-    fn isRunning(this: *StatWatcherScheduler) bool {
-        return this.getInterval() != 0;
-    }
-
+    /// Schedule a task to set the timer in the main thread
     fn sheduleTimerUpdate(this: *StatWatcherScheduler) void {
         // schedule a task to set the timer in the main thread
         const Holder = struct {
@@ -101,7 +111,6 @@ pub const StatWatcherScheduler = struct {
 
             pub fn updateTimer(self: *@This()) void {
                 defer bun.default_allocator.destroy(self);
-                // we are still running, we need to update the timer
                 self.scheduler.setTimer(self.scheduler.getInterval());
             }
         };
@@ -113,20 +122,7 @@ pub const StatWatcherScheduler = struct {
         this.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(&holder.task)));
     }
 
-    pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
-        log("append new watcher {s}", .{watcher.path});
-        bun.assert(watcher.closed == false);
-        bun.assert(watcher.next == null);
-
-        this.watchers.push(watcher);
-        const current = this.getInterval();
-        if (current == 0 or current > watcher.interval) {
-            // we are not running or the new watcher has a smaller interval
-            this.setInterval(watcher.interval);
-        }
-    }
-
-    pub fn fire(this: *StatWatcherScheduler) EventLoopTimer.Arm {
+    pub fn timerCallback(this: *StatWatcherScheduler) EventLoopTimer.Arm {
         const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
         this.event_loop_timer.state = .FIRED;

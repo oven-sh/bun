@@ -68,6 +68,8 @@ steps:
       - key: "bun-darwin-aarch64-test"
         label: ":darwin: aarch64 - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-darwin-aarch64"
         agents:
@@ -145,6 +147,8 @@ steps:
       - key: "bun-darwin-x64-test"
         label: ":darwin: x64 - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-darwin-x64"
         agents:
@@ -222,6 +226,8 @@ steps:
       - key: "bun-darwin-x64-baseline-test"
         label: ":darwin: x64-baseline - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-darwin-x64-baseline"
         agents:
@@ -299,6 +305,8 @@ steps:
       - key: "bun-linux-aarch64-test"
         label: ":linux: aarch64 - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-linux-aarch64"
         agents:
@@ -376,6 +384,8 @@ steps:
       - key: "bun-linux-x64-test"
         label: ":linux: x64 - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-linux-x64"
         agents:
@@ -453,6 +463,8 @@ steps:
       - key: "bun-linux-x64-baseline-test"
         label: ":linux: x64-baseline - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-linux-x64-baseline"
         agents:
@@ -538,6 +550,8 @@ steps:
       - key: "bun-windows-x64-test"
         label: ":windows: x64 - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-windows-x64"
         agents:
@@ -626,6 +640,8 @@ steps:
       - key: "bun-windows-x64-baseline-test"
         label: ":windows: x64-baseline - bun-test-%n"
         parallelism: 10
+        soft_fail:
+          - exit_status: 1
         depends_on:
           - "bun-windows-x64-baseline"
         agents:

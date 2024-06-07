@@ -139,6 +139,8 @@ async function runTests(target) {
     const markdown = formatTestToMarkdown(failedTests);
     reportOutputToGitHubAction("failing_tests", markdown);
   }
+
+  return results;
 }
 
 /**
@@ -1289,5 +1291,5 @@ if (!target) {
 }
 
 runTask("Environment", printInfo);
-await runTests(target);
-process.exit(0);
+const results = await runTests(target);
+process.exit(results.every(({ ok }) => ok) ? 0 : 1);

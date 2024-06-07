@@ -1,3 +1,5 @@
+import { expect } from "bun:test";
+
 let monitorCalled = false;
 
 setTimeout(() => {
@@ -29,6 +31,20 @@ process.on("uncaughtException", err => {
   if (!err) {
     process.exit(1);
   }
+
+  expect(Bun.inspect(err)).toBe(`46 |   //
+47 |   //
+48 | });
+49 |\x20
+50 | setTimeout(() => {
+51 |   throw new Error(\"Error\");
+                 ^
+error: Error
+      at /Users/dave/code/bun/test/js/node/process/process-onUncaughtExceptionSetTimeout.js:51:13
+`);
+  //
+  //
+  //
 });
 
 setTimeout(() => {

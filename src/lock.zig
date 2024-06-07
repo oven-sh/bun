@@ -122,6 +122,12 @@ pub const Lock = struct {
             @panic(message);
         }
     }
+
+    pub inline fn assertLocked(this: *Lock, comptime message: []const u8) void {
+        if (this.mutex.state.load(.Monotonic) == 0) {
+            @panic(message);
+        }
+    }
 };
 
 pub fn spinCycle() void {}

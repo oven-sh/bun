@@ -204,6 +204,8 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
+        vm.source_mappings.lock();
+        defer vm.source_mappings.unlock();
         if (vm.source_mappings.get(specifier)) |mappings| {
             const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
             defer bun.default_allocator.free(map_path);
@@ -287,6 +289,8 @@ pub const RuntimeTranspilerStore = struct {
         // immediately after this is called, the microtasks will be drained again.
     }
 
+    const WeakPromise = JSC.Weak(TranspilerJob);
+
     pub fn transpile(
         this: *RuntimeTranspilerStore,
         vm: *JSC.VirtualMachine,
@@ -304,7 +308,7 @@ pub const RuntimeTranspilerStore = struct {
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
             .loader = vm.bundler.options.loader(owned_path.name.ext),
-            .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
+            .promise = WeakPromise.create(promise.asValue(), globalObject, .TranspilerJob, job),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
@@ -320,7 +324,7 @@ pub const RuntimeTranspilerStore = struct {
         path: Fs.Path,
         referrer: []const u8,
         loader: options.Loader,
-        promise: JSC.Strong = .{},
+        promise: WeakPromise = .{},
         vm: *JSC.VirtualMachine,
         globalThis: *JSC.JSGlobalObject,
         fetcher: Fetcher,
@@ -331,6 +335,7 @@ pub const RuntimeTranspilerStore = struct {
         resolved_source: ResolvedSource = ResolvedSource{},
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
+        cancelled: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
 
@@ -366,11 +371,38 @@ pub const RuntimeTranspilerStore = struct {
             this.vm.eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&this.vm.transpiler_store));
         }
 
+        export fn Bun__TranspilerJob_finalize(this: *TranspilerJob) callconv(.C) void {
+            debug("TranspilerJob finalize", .{});
+            this.cancelled.store(true, .Release);
+            this.promise.deinit();
+        }
+
+        comptime {
+            _ = &Bun__TranspilerJob_finalize;
+        }
+
         pub fn runFromJSThread(this: *TranspilerJob) void {
             var vm = this.vm;
             const promise = this.promise.swap();
             const globalThis = this.globalThis;
             this.poll_ref.unref(vm);
+
+            if (promise == .zero) {
+                debug("Promise already freed", .{});
+                this.resolved_source.source_code_needs_deref = false;
+                this.resolved_source.source_code.deref();
+
+                this.resolved_source.source_url.deref();
+                this.resolved_source.source_url = bun.String.empty;
+                this.resolved_source.specifier.deref();
+                this.resolved_source.specifier = bun.String.empty;
+
+                this.promise.deinit();
+                this.deinit();
+                _ = vm.transpiler_store.store.hive.put(this);
+                return;
+            }
+            bun.debugAssert(!this.cancelled.load(.Acquire));
 
             const referrer = bun.String.createUTF8(this.referrer);
             var log = this.log;
@@ -426,10 +458,14 @@ pub const RuntimeTranspilerStore = struct {
             var arena = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
             const allocator = arena.allocator();
-
             defer this.dispatchToMainThread();
             if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
                 this.parse_error = error.TranspilerJobGenerationMismatch;
+                return;
+            }
+
+            if (this.cancelled.load(.Acquire)) {
+                debug("TranspilerJob cancelled", .{});
                 return;
             }
 
@@ -666,6 +702,11 @@ pub const RuntimeTranspilerStore = struct {
                         import_record.tag = .bun_test;
                     }
                 }
+            }
+
+            if (this.cancelled.load(.Acquire)) {
+                debug("TranspilerJob cancelled (after parse)", .{});
+                return;
             }
 
             if (source_code_printer == null) {

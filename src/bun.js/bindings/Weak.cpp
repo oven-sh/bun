@@ -10,12 +10,18 @@ namespace Bun {
 enum class WeakRefType : uint32_t {
     None = 0,
     FetchResponse = 1,
+
+    TranspilerJob = 5,
 };
 
 typedef void (*WeakRefFinalizeFn)(void* context);
 
+// clang-format off
 #define FOR_EACH_WEAK_REF_TYPE(macro) \
-    macro(FetchResponse)
+    macro(FetchResponse)              \
+    macro(TranspilerJob)
+
+// clang-format on
 
 #define DECLARE_WEAK_REF_OWNER(X) \
     extern "C" void Bun__##X##_finalize(void* context);
@@ -31,6 +37,9 @@ public:
             switch (T) {
             case WeakRefType::FetchResponse:
                 Bun__FetchResponse_finalize(context);
+                break;
+            case WeakRefType::TranspilerJob:
+                Bun__TranspilerJob_finalize(context);
                 break;
             default:
                 break;
@@ -51,6 +60,9 @@ static JSC::WeakHandleOwner* getWeakRefOwner(WeakRefType type)
     switch (type) {
     case WeakRefType::FetchResponse: {
         return getWeakRefOwner<WeakRefType::FetchResponse>();
+    }
+    case WeakRefType::TranspilerJob: {
+        return getWeakRefOwner<WeakRefType::TranspilerJob>();
     }
     default: {
         RELEASE_ASSERT_NOT_REACHED();
@@ -74,9 +86,7 @@ public:
         this->m_cell = JSC::Weak<JSC::JSObject>(object, getWeakRefOwner(kind), ctx);
     }
 
-    WeakRef()
-    {
-    }
+    WeakRef() = default;
 
     JSC::Weak<JSC::JSObject> m_cell;
 };

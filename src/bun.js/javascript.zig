@@ -283,11 +283,16 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
-    pub fn getWithContent(
+    /// The mutex must be locked while this function is called.
+    /// The SourceMapping pointer must not be freed on another thread while it is in use.
+    fn getWithContent(
         this: *SavedSourceMap,
         path: string,
         hint: SourceMap.ParseUrlResultHint,
     ) SourceMap.ParseUrl {
+        if (comptime Environment.allow_assert)
+            this.mutex.assertLocked("SavedSourceMap.getWithContent must be called with the mutex locked");
+
         const hash = bun.hash(path);
         const mapping = this.map.getEntry(hash) orelse return .{};
         switch (Value.from(mapping.value_ptr.*).tag()) {
@@ -330,6 +335,14 @@ pub const SavedSourceMap = struct {
                 return .{};
             },
         }
+    }
+
+    pub fn lock(this: *SavedSourceMap) void {
+        this.mutex.lock();
+    }
+
+    pub fn unlock(this: *SavedSourceMap) void {
+        this.mutex.unlock();
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {

@@ -277,8 +277,6 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
 
   // only add the timer to the event loop once
   if (internal_cb->has_added_timer_to_event_loop) {
-    // update the repeat time
-    uv_timer_set_repeat(uv_timer, repeat_ms);
     return;
   }
   internal_cb->has_added_timer_to_event_loop = 1;

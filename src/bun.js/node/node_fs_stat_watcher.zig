@@ -36,46 +36,102 @@ pub const StatWatcherScheduler = struct {
     timer: ?*uws.Timer = null,
 
     head: std.atomic.Value(?*StatWatcher) = .{ .raw = null },
-    is_running: std.atomic.Value(bool) = .{ .raw = false },
-
+    last_interval: std.atomic.Value(i32) = .{ .raw = 0 },
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
+    main_thread: std.Thread.Id,
+    vm: *bun.JSC.VirtualMachine,
 
-    pub fn init(allocator: std.mem.Allocator, _: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
+    pub fn init(allocator: std.mem.Allocator, vm: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
         const this = allocator.create(StatWatcherScheduler) catch bun.outOfMemory();
-        this.* = .{};
+        this.* = .{ .main_thread = std.Thread.getCurrentId(), .vm = vm };
         return this;
+    }
+
+    fn getInterval(this: *StatWatcherScheduler) i32 {
+        return this.last_interval.load(.Monotonic);
+    }
+
+    fn setTimer(this: *StatWatcherScheduler, interval: i32) void {
+        // only the main thread can set the timer
+
+        // uws.Timer cannot we reseted, we need to deinit it and create a new one
+        if (this.timer) |timer| {
+            timer.deinit(false);
+            // if the interval is 0 means that we stop the timer
+            if (interval == 0) {
+                this.timer = null;
+                return;
+            }
+        }
+        const timer = uws.Timer.create(
+            this.vm.uwsLoop(),
+            this,
+        );
+        this.timer = timer;
+        timer.set(this, timerCallback, interval, 0);
+    }
+
+    fn setInterval(this: *StatWatcherScheduler, interval: i32) void {
+        if (this.last_interval.cmpxchgStrong(this.getInterval(), interval, .Monotonic, .Monotonic)) |_| {
+            // did not change just skip no need to update the timer
+            return;
+        }
+        if (this.main_thread == std.Thread.getCurrentId()) {
+            // we are in the main thread we can set the timer
+            this.setTimer(interval);
+            return;
+        }
+        // we are not in the main thread we need to schedule a task to set the timer
+        this.sheduleTimerUpdate();
+    }
+
+    fn isRunning(this: *StatWatcherScheduler) bool {
+        return this.getInterval() != 0;
+    }
+
+    fn sheduleTimerUpdate(this: *StatWatcherScheduler) void {
+        // schedule a task to set the timer in the main thread
+        const Holder = struct {
+            scheduler: *StatWatcherScheduler,
+            task: JSC.AnyTask,
+
+            pub fn updateTimer(self: *@This()) void {
+                defer bun.default_allocator.destroy(self);
+                // we are still running, we need to update the timer
+                self.scheduler.setTimer(self.scheduler.getInterval());
+            }
+        };
+        const holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
+        holder.* = .{
+            .scheduler = this,
+            .task = JSC.AnyTask.New(Holder, Holder.updateTimer).init(holder),
+        };
+        this.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(&holder.task)));
     }
 
     pub fn append(this: *StatWatcherScheduler, watcher: *StatWatcher) void {
         log("append new watcher {s}", .{watcher.path});
         bun.assert(watcher.closed == false);
         bun.assert(watcher.next == null);
-        // TODO: if we are running and the new watcher has a smaller interval this can cause problems
 
         if (this.head.swap(watcher, .Monotonic)) |head| {
             watcher.next = head;
-            if (!this.is_running.load(.Monotonic)) {
-                this.timer.?.set(this, timerCallback, 1, 0);
+            const current = this.getInterval();
+            if (current == 0 or current > watcher.interval) {
+                // we are not running or the new watcher has a smaller interval
+                this.setInterval(watcher.interval);
             }
         } else {
-            if (!this.is_running.load(.Monotonic)) {
+            if (!this.isRunning()) {
                 watcher.last_check = std.time.Instant.now() catch unreachable;
-
-                const vm = watcher.globalThis.bunVM();
-                this.timer = uws.Timer.create(
-                    vm.uwsLoop(),
-                    this,
-                );
-
-                this.timer.?.set(this, timerCallback, watcher.interval, 0);
-                log("I will wait {d} milli initially", .{watcher.interval});
             }
+            // we have no watchers yet, we set the timer to match the first watcher
+            this.setInterval(watcher.interval);
         }
     }
 
     pub fn timerCallback(timer: *uws.Timer) callconv(.C) void {
         var this = timer.ext(StatWatcherScheduler).?;
-        this.is_running.store(true, .Monotonic);
         JSC.WorkPool.schedule(&this.task);
     }
 
@@ -98,9 +154,8 @@ pub const StatWatcherScheduler = struct {
                 prev = next;
             } else {
                 if (this.head.load(.Monotonic) == null) {
-                    this.timer.?.deinit(false);
-                    this.timer = null;
                     // The scheduler is not deinit here, but it will get reused.
+                    this.setInterval(0);
                 }
                 return;
             }
@@ -111,6 +166,7 @@ pub const StatWatcherScheduler = struct {
             prev.restat();
         }
         var min_interval = prev.interval;
+        var closest_next_check: u64 = @intCast(min_interval);
 
         var curr: ?*StatWatcher = prev.next;
         while (curr) |c| : (curr = c.next) {
@@ -121,9 +177,14 @@ pub const StatWatcherScheduler = struct {
                 c.used_by_scheduler_thread.store(false, .Release);
                 continue;
             }
-            if (now.since(c.last_check) > (@as(u64, @intCast(c.interval)) * 1_000_000 -| 500)) {
+            const time_since = now.since(c.last_check);
+            const interval = @as(u64, @intCast(c.interval)) * 1_000_000;
+
+            if (time_since >= interval -| 500) {
                 c.last_check = now;
                 c.restat();
+            } else {
+                closest_next_check = @min(interval - @as(u64, time_since), closest_next_check);
             }
             min_interval = @min(min_interval, c.interval);
             prev = c;
@@ -131,10 +192,8 @@ pub const StatWatcherScheduler = struct {
         }
 
         prev.next = this.head.swap(head, .Monotonic);
-
-        log("I will wait {d} milli", .{min_interval});
-
-        this.timer.?.set(this, timerCallback, min_interval, 0);
+        // choose the smallest interval or the closest time to the next check
+        this.setInterval(@min(min_interval, @as(i32, @intCast(closest_next_check))));
     }
 };
 

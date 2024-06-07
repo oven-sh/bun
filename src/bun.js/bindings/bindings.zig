@@ -2815,6 +2815,17 @@ pub const JSGlobalObject = extern struct {
         return this.throwValueRet(this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }));
     }
 
+    pub fn throwInvalidPropertyTypeValue(
+        this: *JSGlobalObject,
+        field: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) JSValue {
+        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
+        defer ty_str.deinit();
+        return this.throwValueRet(this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }));
+    }
+
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -3244,7 +3255,7 @@ pub const JSGlobalObject = extern struct {
         // "throwError",
     };
 
-    pub fn checkRangesOrGetDefault(this: *JSGlobalObject, obj: JSValue, field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
+    pub fn checkRangesOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
         if (obj.get(this, field_name)) |level_val| {
             if (level_val.isInt32()) {
                 const level_i32 = level_val.toInt32();
@@ -3253,6 +3264,10 @@ pub const JSGlobalObject = extern struct {
                     return null;
                 }
                 return @intCast(level_i32);
+            } else {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
+            }
             }
         }
         return default;

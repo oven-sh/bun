@@ -9,6 +9,7 @@ const uws = @import("../../deps/uws.zig");
 
 const PathWatcher = @import("./path_watcher.zig");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
+const EventLoopTimer = @import("../api/Timer.zig").EventLoopTimer;
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
@@ -33,13 +34,18 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
 
 /// This is a singleton struct that contains the timer used to schedule restat calls.
 pub const StatWatcherScheduler = struct {
-    timer: ?*uws.Timer = null,
+    // timer: ?*uws.Timer = null,
 
-    last_interval: std.atomic.Value(i32) = .{ .raw = 0 },
+    current_interval: std.atomic.Value(i32) = .{ .raw = 0 },
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     main_thread: std.Thread.Id,
     vm: *bun.JSC.VirtualMachine,
     watchers: WatcherQueue = WatcherQueue{},
+
+    event_loop_timer: EventLoopTimer = .{
+        .next = .{},
+        .tag = .StatWatcherScheduler,
+    },
 
     const WatcherQueue = UnboundedQueue(StatWatcher, .next);
 
@@ -50,34 +56,30 @@ pub const StatWatcherScheduler = struct {
     }
 
     fn getInterval(this: *StatWatcherScheduler) i32 {
-        return this.last_interval.load(.Monotonic);
+        return this.current_interval.load(.Monotonic);
     }
 
     fn setTimer(this: *StatWatcherScheduler, interval: i32) void {
         // only the main thread can set the timer
 
-        // uws.Timer cannot we reseted, we need to deinit it and create a new one
-        if (this.timer) |timer| {
-            timer.deinit(false);
-            // if the interval is 0 means that we stop the timer
-            if (interval == 0) {
-                this.timer = null;
-                return;
-            }
+        // if the timer is active we need to remove it
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.vm.timer.remove(&this.event_loop_timer);
         }
-        const timer = uws.Timer.create(
-            this.vm.uwsLoop(),
-            this,
-        );
-        this.timer = timer;
-        timer.set(this, timerCallback, interval, 0);
+
+        // if the interval is 0 means that we stop the timer
+        if (interval == 0) {
+            return;
+        }
+
+        // reschedule the timer
+        this.event_loop_timer.next = bun.timespec.msFromNow(interval);
+        this.vm.timer.insert(&this.event_loop_timer);
     }
 
     fn setInterval(this: *StatWatcherScheduler, interval: i32) void {
-        if (this.last_interval.cmpxchgStrong(this.getInterval(), interval, .Monotonic, .Monotonic)) |_| {
-            // did not change just skip no need to update the timer
-            return;
-        }
+        this.current_interval.store(interval, .Monotonic);
+
         if (this.main_thread == std.Thread.getCurrentId()) {
             // we are in the main thread we can set the timer
             this.setTimer(interval);
@@ -124,9 +126,19 @@ pub const StatWatcherScheduler = struct {
         }
     }
 
-    pub fn timerCallback(timer: *uws.Timer) callconv(.C) void {
-        var this = timer.ext(StatWatcherScheduler).?;
+    pub fn fire(this: *StatWatcherScheduler) EventLoopTimer.Arm {
+        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+
+        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.heap = .{};
+
+        if (has_been_cleared) {
+            return .disarm;
+        }
+
         JSC.WorkPool.schedule(&this.task);
+
+        return .disarm;
     }
 
     pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {

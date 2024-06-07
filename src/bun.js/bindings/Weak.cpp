@@ -10,12 +10,14 @@ namespace Bun {
 enum class WeakRefType : uint32_t {
     None = 0,
     FetchResponse = 1,
+    FetchResponseStream = 2,
 };
 
 typedef void (*WeakRefFinalizeFn)(void* context);
 
 #define FOR_EACH_WEAK_REF_TYPE(macro) \
-    macro(FetchResponse)
+    macro(FetchResponse)              \
+        macro(FetchResponseStream)
 
 #define DECLARE_WEAK_REF_OWNER(X) \
     extern "C" void Bun__##X##_finalize(void* context);
@@ -31,6 +33,9 @@ public:
             switch (T) {
             case WeakRefType::FetchResponse:
                 Bun__FetchResponse_finalize(context);
+                break;
+            case WeakRefType::FetchResponseStream:
+                Bun__FetchResponseStream_finalize(context);
                 break;
             default:
                 break;

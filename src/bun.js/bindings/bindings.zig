@@ -3268,7 +3268,22 @@ pub const JSGlobalObject = extern struct {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
                 return null;
             }
+        }
+        return default;
+    }
+
+    pub fn checkMinOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, default: T) ?T {
+        if (obj.get(this, field_name)) |level_val| {
+            if (!level_val.isInt32()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
             }
+            const level_i32 = level_val.toInt32();
+            if (level_i32 < min) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_i32 }));
+                return null;
+            }
+            return @intCast(level_i32);
         }
         return default;
     }

@@ -52,6 +52,7 @@ pub const DeflateEncoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
         const level = globalThis.checkRangesOrGetDefault(opts, "level", u8, 0, 9, 6) orelse return .zero;
         const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
         const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return .zero;
@@ -338,8 +339,10 @@ pub const DeflateDecoder = struct {
             return .zero;
         }
 
-        // const opts = arguments[0];
+        const opts = arguments[0];
         const callback = arguments[2];
+
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
 
         var this: *DeflateDecoder = DeflateDecoder.new(.{
             .globalThis = globalThis,

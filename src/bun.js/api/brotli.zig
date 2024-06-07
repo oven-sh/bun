@@ -51,6 +51,8 @@ pub const BrotliEncoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
             .stream = brotli.BrotliCompressionStream.init() catch {
@@ -368,6 +370,8 @@ pub const BrotliDecoder = struct {
 
         const opts = arguments[0];
         const callback = arguments[2];
+
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,

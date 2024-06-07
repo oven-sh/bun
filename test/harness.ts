@@ -416,7 +416,7 @@ export async function toMatchNodeModulesAt(lockfile: any, root: string) {
             return {
               pass: false,
               message: () => `
-Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}       
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}
 Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             };
           }

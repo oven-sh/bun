@@ -964,7 +964,7 @@ pub const VirtualMachine = struct {
         }
         this.is_handling_uncaught_exception = true;
         defer this.is_handling_uncaught_exception = false;
-        const handled = Bun__handleUncaughtException(globalObject, err, if (is_rejection) 1 else 0) > 0;
+        const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
         if (!handled) {
             // TODO maybe we want a separate code path for uncaught exceptions
             this.unhandled_error_counter += 1;

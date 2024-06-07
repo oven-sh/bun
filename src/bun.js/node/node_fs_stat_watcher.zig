@@ -8,7 +8,7 @@ const Mutex = @import("../../lock.zig").Lock;
 const uws = @import("../../deps/uws.zig");
 
 const PathWatcher = @import("./path_watcher.zig");
-
+const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const VirtualMachine = JSC.VirtualMachine;
 const EventLoop = JSC.EventLoop;
 const PathLike = JSC.Node.PathLike;
@@ -35,11 +35,13 @@ fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool)
 pub const StatWatcherScheduler = struct {
     timer: ?*uws.Timer = null,
 
-    head: std.atomic.Value(?*StatWatcher) = .{ .raw = null },
     last_interval: std.atomic.Value(i32) = .{ .raw = 0 },
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
     main_thread: std.Thread.Id,
     vm: *bun.JSC.VirtualMachine,
+    watchers: WatcherQueue = WatcherQueue{},
+
+    const WatcherQueue = UnboundedQueue(StatWatcher, .next);
 
     pub fn init(allocator: std.mem.Allocator, vm: *bun.JSC.VirtualMachine) *StatWatcherScheduler {
         const this = allocator.create(StatWatcherScheduler) catch bun.outOfMemory();
@@ -114,18 +116,10 @@ pub const StatWatcherScheduler = struct {
         bun.assert(watcher.closed == false);
         bun.assert(watcher.next == null);
 
-        if (this.head.swap(watcher, .Monotonic)) |head| {
-            watcher.next = head;
-            const current = this.getInterval();
-            if (current == 0 or current > watcher.interval) {
-                // we are not running or the new watcher has a smaller interval
-                this.setInterval(watcher.interval);
-            }
-        } else {
-            if (!this.isRunning()) {
-                watcher.last_check = std.time.Instant.now() catch unreachable;
-            }
-            // we have no watchers yet, we set the timer to match the first watcher
+        this.watchers.push(watcher);
+        const current = this.getInterval();
+        if (current == 0 or current > watcher.interval) {
+            // we are not running or the new watcher has a smaller interval
             this.setInterval(watcher.interval);
         }
     }
@@ -140,60 +134,38 @@ pub const StatWatcherScheduler = struct {
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
-        const head: *StatWatcher = this.head.swap(null, .Monotonic).?;
-
-        var prev = head;
-        while (prev.closed) {
-            var c = prev;
-            defer {
-                c.used_by_scheduler_thread.store(false, .Release);
-            }
-
-            log("[1] removing closed watcher for '{s}'", .{prev.path});
-            if (prev.next) |next| {
-                prev = next;
-            } else {
-                if (this.head.load(.Monotonic) == null) {
-                    // The scheduler is not deinit here, but it will get reused.
-                    this.setInterval(0);
-                }
-                return;
-            }
-        }
-
-        if (now.since(prev.last_check) > (@as(u64, @intCast(prev.interval)) * 1_000_000 -| 500)) {
-            prev.last_check = now;
-            prev.restat();
-        }
-        var min_interval = prev.interval;
+        var batch = this.watchers.popBatch();
+        var iter = batch.iterator();
+        var min_interval: i32 = std.math.maxInt(i32);
         var closest_next_check: u64 = @intCast(min_interval);
-
-        var curr: ?*StatWatcher = prev.next;
-        while (curr) |c| : (curr = c.next) {
-            if (c.closed) {
-                log("[2] removing closed watcher for '{s}'", .{c.path});
-                prev.next = c.next;
-                curr = c.next;
-                c.used_by_scheduler_thread.store(false, .Release);
+        var contain_watchers = false;
+        while (iter.next()) |watcher| {
+            if (watcher.closed) {
+                watcher.used_by_scheduler_thread.store(false, .Release);
                 continue;
             }
-            const time_since = now.since(c.last_check);
-            const interval = @as(u64, @intCast(c.interval)) * 1_000_000;
+            contain_watchers = true;
+
+            const time_since = now.since(watcher.last_check);
+            const interval = @as(u64, @intCast(watcher.interval)) * 1_000_000;
 
             if (time_since >= interval -| 500) {
-                c.last_check = now;
-                c.restat();
+                watcher.last_check = now;
+                watcher.restat();
             } else {
                 closest_next_check = @min(interval - @as(u64, time_since), closest_next_check);
             }
-            min_interval = @min(min_interval, c.interval);
-            prev = c;
-            curr = c.next;
+            min_interval = @min(min_interval, watcher.interval);
+            this.watchers.push(watcher);
         }
 
-        prev.next = this.head.swap(head, .Monotonic);
-        // choose the smallest interval or the closest time to the next check
-        this.setInterval(@min(min_interval, @as(i32, @intCast(closest_next_check))));
+        if (contain_watchers) {
+            // choose the smallest interval or the closest time to the next check
+            this.setInterval(@min(min_interval, @as(i32, @intCast(closest_next_check))));
+        } else {
+            // we do not have watchers, we can stop the timer
+            this.setInterval(0);
+        }
     }
 };
 

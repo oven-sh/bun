@@ -476,6 +476,30 @@ describe("expect()", () => {
     }
   });
 
+  test("deepEquals bugfix #11370", () => {
+    // Two objects with equal number of properties, but left object has
+    // undefined keys and right object has keys that don't exist
+    // in left object.
+
+    expect({ b: undefined }).not.toEqual({ a: 1 });
+    expect({ b: 1 }).not.toEqual({ a: undefined });
+    // @ts-expect-error
+    expect({ b: undefined }).toEqual({ a: undefined });
+    expect({ b: undefined }).not.toStrictEqual({ a: 1 });
+    expect({ b: 1 }).not.toStrictEqual({ a: undefined });
+    expect({ b: undefined }).not.toStrictEqual({ a: undefined });
+    // @ts-expect-error
+    expect({ c: undefined, a: 1, b: undefined }).toEqual({ a: 1 });
+    // @ts-expect-error
+    expect({ a: 1 }).toEqual({ c: undefined, a: 1, b: undefined });
+    expect({ c: undefined, a: 1, b: undefined }).not.toStrictEqual({ a: 1 });
+    // @ts-expect-error
+    expect({ a: 1, b: undefined }).toEqual({ a: 1, c: undefined });
+    // @ts-expect-error
+    expect({ a: 1, c: undefined }).toEqual({ a: 1, b: undefined });
+    expect({ a: 1, b: undefined }).not.toStrictEqual({ a: 1, c: undefined });
+  });
+
   // Doesn't work on jest because of https://github.com/jestjs/jest/issues/10788
   if (isBun) {
     test("deepEquals works with proxies", () => {

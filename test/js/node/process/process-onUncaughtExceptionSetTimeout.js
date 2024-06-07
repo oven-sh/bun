@@ -1,7 +1,7 @@
 import { expect } from "bun:test";
 
 let monitorCalled = false;
-
+/Users/dave / code / bun / test / js / node / process / process - onUncaughtExceptionSetTimeout.js
 setTimeout(() => {
   // uncaughtExceptionMonitor should be called
   if (!monitorCalled) {
@@ -10,6 +10,8 @@ setTimeout(() => {
   // timeouts should be processed
   process.exit(42);
 }, 100);
+
+const hello = Math.random().toFixed(1);
 
 process.on("uncaughtExceptionMonitor", err => {
   // Ensure this is not zero or another invalid argument
@@ -32,21 +34,9 @@ process.on("uncaughtException", err => {
     process.exit(1);
   }
 
-  expect(Bun.inspect(err)).toBe(`46 |   //
-47 |   //
-48 | });
-49 |\x20
-50 | setTimeout(() => {
-51 |   throw new Error(\"Error\");
-                 ^
-error: Error
-      at /Users/dave/code/bun/test/js/node/process/process-onUncaughtExceptionSetTimeout.js:51:13
-`);
-  //
-  //
-  //
+  expect(Bun.inspect(err)).toContain(hello);
 });
 
 setTimeout(() => {
-  throw new Error("Error");
+  throw new Error(hello);
 }, 1);

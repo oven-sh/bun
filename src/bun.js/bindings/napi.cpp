@@ -147,7 +147,7 @@ void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
 void NapiRef::ref()
 {
     ++refCount;
-    if (refCount == 1 && !weakValueRef.isSet()) {
+    if (refCount == 1 && !weakValueRef.isClear()) {
         auto& vm = globalObject.get()->vm();
         if (weakValueRef.isString()) {
             strongRef.set(vm, JSC::JSValue(weakValueRef.string()));

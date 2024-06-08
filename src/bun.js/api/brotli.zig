@@ -10,6 +10,7 @@ pub const BrotliEncoder = struct {
     pub usingnamespace JSC.Codegen.JSBrotliEncoder;
 
     stream: brotli.BrotliCompressionStream,
+    maxOutputLength: usize,
 
     freelist: Queue = Queue.init(bun.default_allocator),
     freelist_write_lock: bun.Lock = bun.Lock.init(),
@@ -52,6 +53,7 @@ pub const BrotliEncoder = struct {
         const callback = arguments[2];
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
@@ -59,6 +61,7 @@ pub const BrotliEncoder = struct {
                 globalThis.throw("Failed to create BrotliEncoder", .{});
                 return .zero;
             },
+            .maxOutputLength = maxOutputLength,
         });
 
         if (opts.get(globalThis, "params")) |params| {
@@ -195,6 +198,12 @@ pub const BrotliEncoder = struct {
                             this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                             break :outer;
                         };
+                        if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
+                            any = true;
+                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                            this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
+                            break :outer;
+                        }
                     }
 
                     any = any or pending.len > 0;
@@ -219,6 +228,12 @@ pub const BrotliEncoder = struct {
                         this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                         break :outer;
                     };
+                    if (output.items.len > this.encoder.maxOutputLength) {
+                        any = true;
+                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
+                        break :outer;
+                    }
                 }
             }
 
@@ -335,6 +350,7 @@ pub const BrotliDecoder = struct {
 
     globalThis: *JSC.JSGlobalObject,
     stream: brotli.BrotliReaderArrayList,
+    maxOutputLength: usize,
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     ref_count: u32 = 1,
@@ -383,10 +399,12 @@ pub const BrotliDecoder = struct {
         const callback = arguments[2];
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,
             .stream = undefined, // &this.output needs to be a stable pointer
+            .maxOutputLength = maxOutputLength,
         });
         this.stream = brotli.BrotliReaderArrayList.initWithOptions("", &this.output, bun.default_allocator, .{}) catch {
             globalThis.throw("Failed to create BrotliDecoder", .{});
@@ -603,6 +621,12 @@ pub const BrotliDecoder = struct {
                             this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                             break;
                         };
+                        if (this.decoder.output.items.len > this.decoder.maxOutputLength) {
+                            any = true;
+                            _ = this.decoder.pending_decode_job_count.fetchSub(1, .Monotonic);
+                            this.decoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.decoder.maxOutputLength});
+                            break;
+                        }
                     }
 
                     any = any or pending.len > 0;

@@ -16,6 +16,7 @@ pub const DeflateEncoder = struct {
 
     globalThis: *JSC.JSGlobalObject,
     stream: bun.zlib.ZlibCompressorStreaming = .{},
+    maxOutputLength: usize,
 
     freelist: Queue = Queue.init(bun.default_allocator),
     freelist_write_lock: bun.Lock = bun.Lock.init(),
@@ -57,9 +58,11 @@ pub const DeflateEncoder = struct {
         const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
         const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return .zero;
         const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return .zero;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
 
         var this: *DeflateEncoder = DeflateEncoder.new(.{
             .globalThis = globalThis,
+            .maxOutputLength = maxOutputLength,
         });
         this.stream.init(level, windowBits, memLevel, strategy) catch {
             globalThis.throw("Failed to create DeflateEncoder", .{});
@@ -268,6 +271,12 @@ pub const DeflateEncoder = struct {
                             this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                             break :outer;
                         };
+                        if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
+                            any = true;
+                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                            this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
+                            break :outer;
+                        }
                     }
 
                     any = any or pending.len > 0;
@@ -286,6 +295,11 @@ pub const DeflateEncoder = struct {
                         this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                         return;
                     };
+                    if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
+                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
+                        return;
+                    }
                 }
             }
 
@@ -312,6 +326,7 @@ pub const DeflateDecoder = struct {
 
     globalThis: *JSC.JSGlobalObject,
     stream: bun.zlib.ZlibDecompressorStreaming = .{},
+    maxOutputLength: usize,
 
     freelist: Queue = Queue.init(bun.default_allocator),
     freelist_write_lock: bun.Lock = bun.Lock.init(),
@@ -350,9 +365,11 @@ pub const DeflateDecoder = struct {
         const callback = arguments[2];
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
 
         var this: *DeflateDecoder = DeflateDecoder.new(.{
             .globalThis = globalThis,
+            .maxOutputLength = maxOutputLength,
         });
         this.stream.init() catch {
             globalThis.throw("Failed to create DeflateDecoder", .{});
@@ -580,6 +597,12 @@ pub const DeflateDecoder = struct {
                         this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                         break :outer;
                     };
+                    if (output.items.len > this.decoder.maxOutputLength) {
+                        any = true;
+                        _ = this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic);
+                        this.decoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.decoder.maxOutputLength});
+                        break :outer;
+                    }
                 }
             }
 

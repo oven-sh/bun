@@ -379,15 +379,57 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         pub fn init(this: *@This()) !void {
             if (comptime ssl) {
-                const opts: uws.us_bun_socket_context_options_t = .{
+                var opts: uws.us_bun_socket_context_options_t = .{
                     // we request the cert so we load root certs and can verify it
                     .request_cert = 1,
                     // we manually abort the connection if the hostname doesn't match
                     .reject_unauthorized = 0,
                 };
+
+                var extra_cas: ?std.ArrayList([*c]const u8) = null;
+
+                blk: {
+                    if (std.process.getEnvVarOwned(default_allocator, "NODE_EXTRA_CA_CERTS")) |extra_ca_certs_path| {
+                        const file = bun.openFile(extra_ca_certs_path, .{ .mode = .read_only }) catch |err| {
+                            Output.warn("Skipping loading of extra ca file at {s}: {}", .{ extra_ca_certs_path, err });
+                            Output.flush();
+                            break :blk;
+                        };
+
+                        defer file.close();
+                        defer default_allocator.free(extra_ca_certs_path);
+
+                        const file_size = file.getEndPos() catch |err| {
+                            Output.warn("Skipping loading of extra ca file {s}: {}", .{ extra_ca_certs_path, err });
+                            Output.flush();
+                            break :blk;
+                        };
+
+                        const contents = file.reader().readAllAlloc(default_allocator, file_size) catch |err| {
+                            Output.warn("Skipping loading of extra ca file {s}: {}", .{ extra_ca_certs_path, err });
+                            Output.flush();
+                            break :blk;
+                        };
+
+                        var cas = std.ArrayList([*c]const u8).init(default_allocator);
+                        try cas.append(@ptrCast(contents));
+
+                        opts.ca = @ptrCast(try cas.toOwnedSlice());
+                        opts.ca_count = 1;
+                        Output.debug("Loading extra ca cert from {s}", .{extra_ca_certs_path});
+                        extra_cas = cas;
+                    } else |err| {
+                        log("WARN: Failed to read NODE_EXTRA_CA_CERTS {}", .{err});
+                    }
+                }
+
                 this.us_socket_context = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;
 
                 this.sslCtx().setup();
+
+                if (extra_cas) |ca_list| {
+                    ca_list.deinit();
+                }
             } else {
                 const opts: uws.us_socket_context_options_t = .{};
                 this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts).?;

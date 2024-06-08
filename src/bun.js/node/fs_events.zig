@@ -380,7 +380,7 @@ pub const FSEventsLoop = struct {
                         
                         if(path.len == 0) {
                             // Since we're using fsevents to watch the file itself handle_path == path, and we now need to get the basename of the file back
-                            const basename = bun.strings.lastIndexOfChar(handle_path, '/') orelse (handle_path.len - 1);
+                            const basename = bun.strings.lastIndexOfChar(handle_path, '/') orelse handle_path.len;
                             path = handle_path[basename..];
                             // Created and Removed seem to be always set, but don't make sense
                             flags &= ~kFSEventsRenamed;

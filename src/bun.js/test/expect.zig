@@ -1284,7 +1284,7 @@ pub const Expect = struct {
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
             const received_fmt = value.toFmt(globalObject, &formatter);
-            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const expected_line = "Expected to not contain any of the following values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainAnyValues", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
             return .zero;

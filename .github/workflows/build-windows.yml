@@ -144,6 +144,8 @@ jobs:
     needs: codegen
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false

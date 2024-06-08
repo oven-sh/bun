@@ -3223,7 +3223,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var content_slice = content.toSlice(this.allocator);
                         defer content_slice.deinit();
 
-                        break :brk MimeType.init(content_slice.slice(), this.allocator, &content_type_needs_free);
+                        break :brk MimeType.init(content_slice.slice(), content_slice.allocator, &content_type_needs_free);
                     }
                 }
 

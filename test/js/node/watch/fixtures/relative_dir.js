@@ -1,10 +1,10 @@
 import fs from "fs";
 try {
-  const watcher = fs.watch("relative.txt", { signal: AbortSignal.timeout(2000) });
+  const watcher = fs.watch("./myrelativedir/", { signal: AbortSignal.timeout(2000) });
 
   watcher.on("change", function (event, filename) {
-    if (filename !== "relative.txt" || event !== "change") {
-      console.error("fail");
+    if (filename !== "relative.txt") {
+      console.error("fail", filename, event);
       clearInterval(interval);
       watcher.close();
       process.exit(1);
@@ -20,7 +20,7 @@ try {
   });
 
   const interval = setInterval(() => {
-    fs.writeFileSync("relative.txt", "world");
+    fs.writeFileSync("./myrelativedir/relative.txt", "world");
   }, 10);
 } catch (err) {
   console.error(err.message);

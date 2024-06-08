@@ -1,6 +1,7 @@
 // Hardcoded module "node:zlib"
 
 const stream = require("node:stream");
+const BufferModule = require("node:buffer");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -9,7 +10,7 @@ const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder")
 const createDeflateEncoder = $zig("node_zlib_binding.zig", "createDeflateEncoder");
 const createDeflateDecoder = $zig("node_zlib_binding.zig", "createDeflateDecoder");
 
-const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength;
+const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {
@@ -313,7 +314,6 @@ function ZlibBase_reset() {
 // It should really be fixed. It will show up in benchmarking. It also loads
 // slowly. We need to fix it!
 const assert = require("node:assert");
-const BufferModule = require("node:buffer");
 const StreamModule = require("node:stream");
 const Util = require("node:util");
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");

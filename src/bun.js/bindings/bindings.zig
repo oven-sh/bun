@@ -925,6 +925,15 @@ pub const ZigString = extern struct {
         return shim.cppFn("toRangeErrorInstance", .{ this, global });
     }
 
+    pub fn fromFmt(comptime fmt: []const u8, args: anytype) ZigString {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var buf = bun.MutableString.init2048(bun.default_allocator) catch unreachable;
+            buf.writer().print(fmt, args) catch return ZigString.static(fmt).*;
+            return ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+        }
+        return ZigString.static(fmt).*;
+    }
+
     pub const Extern = [_][]const u8{
         "toAtomicValue",
         "toValue",
@@ -6480,3 +6489,32 @@ comptime {
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");
 }
+
+// Error's cannot be created off of the main thread. So we use this to store the
+// information until its ready to be materialized later.
+pub const DeferredError = struct {
+    kind: Kind,
+    code: JSC.Node.ErrorCode,
+    msg: ZigString,
+
+    pub const Kind = enum { plainerror, typeerror, rangeerror };
+
+    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: []const u8, args: anytype) DeferredError {
+        return .{
+            .kind = kind,
+            .code = code,
+            .msg = ZigString.fromFmt(fmt, args),
+        };
+    }
+
+    pub fn toError(this: *const DeferredError, globalThis: *JSGlobalObject) JSValue {
+        defer this.msg.deinitGlobal();
+        const err = switch (this.kind) {
+            .plainerror => this.msg.toErrorInstance(globalThis),
+            .typeerror => this.msg.toTypeErrorInstance(globalThis),
+            .rangeerror => this.msg.toRangeErrorInstance(globalThis),
+        };
+        err.put(globalThis, ZigString.static("code"), ZigString.init(@tagName(this.code)).toValue(globalThis));
+        return err;
+    }
+};

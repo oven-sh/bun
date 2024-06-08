@@ -32,7 +32,7 @@ pub const DeflateEncoder = struct {
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_encode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     ref_count: u32 = 1,
-    write_failed: bool = false,
+    write_failure: ?JSC.DeferredError = null,
     poll_ref: bun.Async.KeepAlive = .{},
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*@This() {
@@ -121,7 +121,14 @@ pub const DeflateEncoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
+        if (!is_last) {
+            return .undefined;
+        }
+        if (this.write_failure != null) {
+            globalThis.vm().throwError(globalThis, this.write_failure.?.toError(globalThis));
+            return .zero;
+        }
+        return this.collectOutputValue();
     }
 
     pub fn encode(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -172,14 +179,13 @@ pub const DeflateEncoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .Monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(this.globalThis, &.{
-            if (this.write_failed)
-                // TODO: propagate error from zlib
-                this.globalThis.createErrorInstance("DeflateError", .{})
+        const result = this.callback_value.get().?.call(
+            this.globalThis,
+            if (this.write_failure != null)
+                &.{ this.write_failure.?.toError(this.globalThis), .null }
             else
-                JSC.JSValue.null,
-            this.collectOutputValue(),
-        });
+                &.{ .null, this.collectOutputValue() },
+        );
 
         if (result.toError()) |err| {
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
@@ -230,7 +236,7 @@ pub const DeflateEncoder = struct {
 
             if (this.encoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) {
                 const is_last = this.encoder.has_called_end;
-                while (true) {
+                outer: while (true) {
                     this.encoder.input_lock.lock();
                     defer this.encoder.input_lock.unlock();
                     const readable = this.encoder.input.readableSlice(0);
@@ -257,9 +263,10 @@ pub const DeflateEncoder = struct {
                     for (pending) |input| {
                         var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
                         writer.writeAll(input.slice()) catch {
+                            any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
-                            this.encoder.write_failed = true;
-                            return;
+                            this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                            break :outer;
                         };
                     }
 
@@ -276,7 +283,7 @@ pub const DeflateEncoder = struct {
 
                     this.encoder.stream.end(output) catch {
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
-                        this.encoder.write_failed = true;
+                        this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
                         return;
                     };
                 }
@@ -321,7 +328,7 @@ pub const DeflateDecoder = struct {
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_encode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     ref_count: u32 = 1,
-    write_failed: bool = false,
+    write_failure: ?JSC.DeferredError = null,
     poll_ref: bun.Async.KeepAlive = .{},
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*@This() {
@@ -407,7 +414,14 @@ pub const DeflateDecoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
+        if (!is_last) {
+            return .undefined;
+        }
+        if (this.write_failure != null) {
+            globalThis.vm().throwError(globalThis, this.write_failure.?.toError(globalThis));
+            return .zero;
+        }
+        return this.collectOutputValue();
     }
 
     pub fn decode(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -458,14 +472,13 @@ pub const DeflateDecoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .Monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(this.globalThis, &.{
-            if (this.write_failed)
-                // TODO: propagate error from zlib
-                this.globalThis.createErrorInstance("DeflateError", .{})
+        const result = this.callback_value.get().?.call(
+            this.globalThis,
+            if (this.write_failure != null)
+                &.{ this.write_failure.?.toError(this.globalThis), .null }
             else
-                JSC.JSValue.null,
-            this.collectOutputValue(),
-        });
+                &.{ .null, this.collectOutputValue() },
+        );
 
         if (result.toError()) |err| {
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
@@ -514,7 +527,7 @@ pub const DeflateDecoder = struct {
 
             var any = false;
 
-            if (this.decoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) {
+            if (this.decoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) outer: {
                 const is_last = this.decoder.has_called_end;
                 while (true) {
                     this.decoder.input_lock.lock();
@@ -543,9 +556,10 @@ pub const DeflateDecoder = struct {
                     for (pending) |input| {
                         var writer = this.decoder.stream.writer(Writer{ .decoder = this.decoder });
                         writer.writeAll(input.slice()) catch {
+                            any = true;
                             _ = this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic);
-                            this.decoder.write_failed = true;
-                            return;
+                            this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                            break :outer;
                         };
                     }
 
@@ -561,9 +575,10 @@ pub const DeflateDecoder = struct {
                     defer this.decoder.output_lock.unlock();
 
                     this.decoder.stream.end(output) catch {
+                        any = true;
                         _ = this.decoder.pending_encode_job_count.fetchSub(1, .Monotonic);
-                        this.decoder.write_failed = true;
-                        return;
+                        this.decoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "DeflateError", .{}); // TODO propogate better error
+                        break :outer;
                     };
                 }
             }

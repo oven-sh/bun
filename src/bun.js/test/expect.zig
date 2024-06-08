@@ -1290,7 +1290,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const expected_line = "Expected to contain any of the following values: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toContainAnyValues", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
         globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });

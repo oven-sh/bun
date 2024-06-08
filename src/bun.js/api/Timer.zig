@@ -8,6 +8,7 @@ const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const Async = @import("async");
 const uv = bun.windows.libuv;
+const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
@@ -712,12 +713,14 @@ pub const EventLoopTimer = struct {
         TimerCallback,
         TimerObject,
         TestRunner,
+        StatWatcherScheduler,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
                 .TimerObject => TimerObject,
                 .TestRunner => JSC.Jest.TestRunner,
+                .StatWatcherScheduler => StatWatcherScheduler,
             };
         }
     };
@@ -774,6 +777,9 @@ pub const EventLoopTimer = struct {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "event_loop_timer", this);
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
+                }
+                if (comptime t.Type() == StatWatcherScheduler) {
+                    return container.timerCallback();
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

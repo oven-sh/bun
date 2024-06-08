@@ -16,53 +16,52 @@ fn exists(path: []const u8) bool {
 }
 
 fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: []const u8, target: anytype) !void {
-    const os_tag = target.result.os.tag;
     const io: *Module = brk: {
-        if (os_tag == .macos or os_tag == .ios or os_tag == .watchos or os_tag == .tvos) {
+        if (target.isDarwin()) {
             break :brk b.createModule(.{
-                .root_source_file = LazyPath.relative("src/io/io_darwin.zig"),
+                .source_file = FileSource.relative("src/io/io_darwin.zig"),
             });
-        } else if (os_tag == .linux) {
+        } else if (target.isLinux()) {
             break :brk b.createModule(.{
-                .root_source_file = LazyPath.relative("src/io/io_linux.zig"),
+                .source_file = FileSource.relative("src/io/io_linux.zig"),
             });
-        } else if (os_tag == .windows) {
+        } else if (target.isWindows()) {
             break :brk b.createModule(.{
-                .root_source_file = LazyPath.relative("src/io/io_windows.zig"),
+                .source_file = FileSource.relative("src/io/io_windows.zig"),
             });
         }
 
         break :brk b.createModule(.{
-            .root_source_file = LazyPath.relative("src/io/io_stub.zig"),
+            .source_file = FileSource.relative("src/io/io_stub.zig"),
         });
     };
 
-    step.root_module.addImport("async_io", io);
+    step.addModule("async_io", io);
 
-    step.root_module.addImport("zlib-internal", brk: {
-        if (os_tag == .windows) {
-            break :brk b.createModule(.{ .root_source_file = LazyPath.relative("src/deps/zlib.win32.zig") });
+    step.addModule("zlib-internal", brk: {
+        if (target.isWindows()) {
+            break :brk b.createModule(.{ .source_file = FileSource.relative("src/deps/zlib.win32.zig") });
         }
 
-        break :brk b.createModule(.{ .root_source_file = LazyPath.relative("src/deps/zlib.posix.zig") });
+        break :brk b.createModule(.{ .source_file = FileSource.relative("src/deps/zlib.posix.zig") });
     });
 
     const async_: *Module = brk: {
-        if (os_tag == .macos or os_tag == .watchos or os_tag == .tvos or os_tag == .ios or os_tag == .linux or os_tag == .freebsd) {
+        if (target.isDarwin() or target.isLinux() or target.isFreeBSD()) {
             break :brk b.createModule(.{
-                .root_source_file = LazyPath.relative("src/async/posix_event_loop.zig"),
+                .source_file = FileSource.relative("src/async/posix_event_loop.zig"),
             });
-        } else if (os_tag == .windows) {
+        } else if (target.isWindows()) {
             break :brk b.createModule(.{
-                .root_source_file = LazyPath.relative("src/async/windows_event_loop.zig"),
+                .source_file = FileSource.relative("src/async/windows_event_loop.zig"),
             });
         }
 
         break :brk b.createModule(.{
-            .root_source_file = LazyPath.relative("src/async/stub_event_loop.zig"),
+            .source_file = FileSource.relative("src/async/stub_event_loop.zig"),
         });
     };
-    step.root_module.addImport("async", async_);
+    step.addModule("async", async_);
 }
 
 const BunBuildOptions = struct {
@@ -111,7 +110,7 @@ const BunBuildOptions = struct {
         }
     }
 
-    pub fn step(this: BunBuildOptions, b: anytype) *std.Build.Step.Options {
+    pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
         opts.addOption(@TypeOf(this.enable_logs), "enable_logs", this.enable_logs);
         opts.addOption(@TypeOf(this.is_canary), "is_canary", this.is_canary);
@@ -141,9 +140,9 @@ var optimize: std.builtin.OptimizeMode = .Debug;
 const Build = std.Build;
 const CrossTarget = std.zig.CrossTarget;
 const OptimizeMode = std.builtin.OptimizeMode;
-const CompileStep = std.Build.Step.Compile;
-const LazyPath = std.Build.LazyPath;
-const Module = std.Build.Module;
+const CompileStep = std.build.CompileStep;
+const FileSource = std.build.FileSource;
+const Module = std.build.Module;
 const fs = std.fs;
 
 pub fn build(b: *Build) !void {
@@ -197,17 +196,17 @@ pub fn build_(b: *Build) !void {
 
     var triplet_buf: [64]u8 = undefined;
 
-    const arch: std.Target.Cpu.Arch = target.result.cpu.arch;
+    const arch: std.Target.Cpu.Arch = target.getCpuArch();
 
-    var os_tagname = @tagName(target.result.os.tag);
+    var os_tagname = @tagName(target.getOs().tag);
 
-    switch (target.result.os.tag) {
+    switch (target.getOs().tag) {
         .macos => {
             os_tagname = "darwin";
-            target.query.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
+            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
         },
         .windows => {
-            target.query.os_version_min = std.zig.CrossTarget.OsVersion{
+            target.os_version_min = std.zig.CrossTarget.OsVersion{
                 // Windows 1809
                 // Minimum version for a syscall related to bun.sys.renameat
                 // if you update this please update install.ps1
@@ -215,7 +214,7 @@ pub fn build_(b: *Build) !void {
             };
         },
         .linux => {
-            target.query.setGnuLibCVersion(2, 27, 0);
+            target.setGnuLibCVersion(2, 27, 0);
         },
         else => {},
     }
@@ -224,15 +223,15 @@ pub fn build_(b: *Build) !void {
     const osname = triplet_buf[0..os_tagname.len];
     triplet_buf[osname.len] = '-';
 
-    @memcpy(triplet_buf[osname.len + 1 ..].ptr, @tagName(target.result.cpu.arch));
-    var cpu_arch_name = triplet_buf[osname.len + 1 ..][0..@tagName(target.result.cpu.arch).len];
-    std.mem.replaceScalar(u8, cpu_arch_name, '_', '-');
-    if (std.mem.eql(u8, cpu_arch_name, "x86-64")) {
-        @memcpy(cpu_arch_name.ptr, "x64");
-        cpu_arch_name = cpu_arch_name[0..3];
+    @memcpy(triplet_buf[osname.len + 1 ..].ptr, @tagName(target.getCpuArch()));
+    var cpuArchName = triplet_buf[osname.len + 1 ..][0..@tagName(target.getCpuArch()).len];
+    std.mem.replaceScalar(u8, cpuArchName, '_', '-');
+    if (std.mem.eql(u8, cpuArchName, "x86-64")) {
+        @memcpy(cpuArchName.ptr, "x64");
+        cpuArchName = cpuArchName[0..3];
     }
 
-    const triplet = triplet_buf[0 .. osname.len + cpu_arch_name.len + 1];
+    const triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
     const outfile_maybe = b.option([]const u8, "output-file", "target to install to");
 
@@ -245,24 +244,56 @@ pub fn build_(b: *Build) !void {
 
     is_debug_build = optimize == OptimizeMode.Debug;
     const bun_executable_name = if (outfile_maybe) |outfile| std.fs.path.basename(outfile[0 .. outfile.len - std.fs.path.extension(outfile).len]) else if (is_debug_build) "bun-debug" else "bun";
-    const root_src = if (target.result.os.tag == std.Target.Os.Tag.freestanding)
+    const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "root_wasm.zig"
     else
         "root.zig";
 
-    const min_version: std.SemanticVersion = if (!(target.result.os.tag == .windows or target.result.os.tag == .freestanding))
-        target.result.os.getVersionRange().semver.min
+    const min_version: std.SemanticVersion = if (!(target.isWindows() or target.getOsTag() == .freestanding))
+        target.getOsVersionMin().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
 
-    const max_version: std.SemanticVersion = if (!(target.result.os.tag == .windows or target.result.os.tag == .freestanding))
-        target.result.os.getVersionRange().semver.max
+    const max_version: std.SemanticVersion = if (!(target.isWindows() or target.getOsTag() == .freestanding))
+        target.getOsVersionMax().semver
     else
         .{ .major = 0, .minor = 0, .patch = 0 };
+
+    var obj_step = b.step("obj", "Build bun as a .o file");
+    var obj = b.addObject(.{
+        .name = bun_executable_name,
+        .root_source_file = FileSource.relative(root_src),
+        .target = target,
+        .optimize = optimize,
+        .main_mod_path = .{ .cwd_relative = b.pathFromRoot(".") },
+    });
+
+    if (!exists(b.pathFromRoot(try std.fs.path.join(b.allocator, &.{
+        "src",
+        "js_lexer",
+        "id_continue_bitset.blob",
+    })))) {
+        const identifier_data = b.pathFromRoot(try std.fs.path.join(b.allocator, &.{ "src", "js_lexer", "identifier_data.zig" }));
+        var run_step = b.addSystemCommand(&.{
+            b.zig_exe,
+            "run",
+            identifier_data,
+        });
+        run_step.has_side_effects = true;
+        obj.step.dependOn(&run_step.step);
+    }
+
+    b.reference_trace = if (b.option(u32, "reference-trace", "Set the reference trace")) |trace|
+        if (trace == 0)
+            null
+        else
+            trace
+    else
+        16;
 
     var default_build_options: BunBuildOptions = brk: {
-        const is_baseline = arch.isX86() and (target.query.cpu_model == .baseline or
-            !std.Target.x86.featureSetHas(target.result.cpu.features, .avx2));
+        const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
+            !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
 
         var git_sha: [:0]const u8 = "";
         if (b.env_map.get("GITHUB_SHA") orelse b.env_map.get("GIT_SHA")) |sha| {
@@ -306,49 +337,6 @@ pub fn build_(b: *Build) !void {
         };
     };
 
-    if (default_build_options.baseline) {
-        target.query.cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 };
-    } else if (arch.isX86()) {
-        target.query.cpu_model = .{ .explicit = &std.Target.x86.cpu.haswell };
-    } else if (arch.isAARCH64()) {
-        if (target.result.os.tag == .macos or target.result.os.tag == .watchos or target.result.os.tag == .ios or target.result.os.tag == .tvos) {
-            target.query.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
-        } else {
-            target.query.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
-        }
-    }
-
-    var obj_step = b.step("obj", "Build bun as a .o file");
-    var obj = b.addObject(.{
-        .name = bun_executable_name,
-        .root_source_file = LazyPath.relative(root_src),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    if (!exists(b.pathFromRoot(try std.fs.path.join(b.allocator, &.{
-        "src",
-        "js_lexer",
-        "id_continue_bitset.blob",
-    })))) {
-        const identifier_data = b.pathFromRoot(try std.fs.path.join(b.allocator, &.{ "src", "js_lexer", "identifier_data.zig" }));
-        var run_step = b.addSystemCommand(&.{
-            b.zig_exe,
-            "run",
-            identifier_data,
-        });
-        run_step.has_side_effects = true;
-        obj.step.dependOn(&run_step.step);
-    }
-
-    b.reference_trace = if (b.option(u32, "reference-trace", "Set the reference trace")) |trace|
-        if (trace == 0)
-            null
-        else
-            trace
-    else
-        16;
-
     {
         try addInternalPackages(
             b,
@@ -358,6 +346,18 @@ pub fn build_(b: *Build) !void {
             target,
         );
 
+        if (default_build_options.baseline) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 };
+        } else if (arch.isX86()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.haswell };
+        } else if (arch.isAARCH64()) {
+            if (target.isDarwin()) {
+                obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
+            } else {
+                obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
+            }
+        }
+
         try default_build_options.updateRuntime();
 
         // we have to dump to stderr because stdout is read by zls
@@ -365,7 +365,7 @@ pub fn build_(b: *Build) !void {
             triplet,
             min_version,
             max_version,
-            target.result.cpu.model.name,
+            obj.target.getCpuModel().name,
         }) catch {};
         std.io.getStdErr().writer().print("Zig v{s}\n", .{builtin.zig_version_string}) catch {};
 
@@ -385,32 +385,32 @@ pub fn build_(b: *Build) !void {
         }
 
         actual_build_options.project = "bun";
-        obj.root_module.addOptions("build_options", actual_build_options.step(b));
+        obj.addOptions("build_options", actual_build_options.step(b));
 
         // Generated Code
         // TODO: exit with a better error early if these files do not exist. it is an indication someone ran `zig build` directly without the code generators.
-        obj.root_module.addImport("ZigGeneratedClasses", b.createModule(.{
-            .root_source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ZigGeneratedClasses.zig" }) },
+        obj.addModule("ZigGeneratedClasses", b.createModule(.{
+            .source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ZigGeneratedClasses.zig" }) },
         }));
-        obj.root_module.addImport("ResolvedSourceTag", b.createModule(.{
-            .root_source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ResolvedSourceTag.zig" }) },
+        obj.addModule("ResolvedSourceTag", b.createModule(.{
+            .source_file = .{ .path = b.pathJoin(&.{ generated_code_directory, "ResolvedSourceTag.zig" }) },
         }));
 
         obj.linkLibC();
-        if (target.result.os.tag == .windows) obj.dll_export_fns = true;
-        obj.root_module.strip = false;
-        obj.root_module.omit_frame_pointer = false;
+        obj.dll_export_fns = true;
+        obj.strip = false;
+        obj.omit_frame_pointer = false;
         obj.subsystem = .Console;
 
         // Disable stack probing on x86 so we don't need to include compiler_rt
-        if (target.result.cpu.arch.isX86() or target.result.os.tag == .windows) obj.root_module.stack_check = false;
+        if (target.getCpuArch().isX86() or target.isWindows()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
             // obj.emit_bin = .no_emit;
             obj.generated_bin = null;
         }
 
-        if (target.result.os.tag == .linux) {
+        if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
             obj.link_emit_relocs = true;
             obj.link_eh_frame_hdr = true;
@@ -422,15 +422,16 @@ pub fn build_(b: *Build) !void {
         const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
         var headers_obj = b.addObject(.{
             .name = "headers",
-            .root_source_file = LazyPath.relative("src/bindgen.zig"),
+            .root_source_file = FileSource.relative("src/bindgen.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
         var headers_build_options = default_build_options;
         headers_build_options.bindgen = true;
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
         headers_obj.linkLibCpp();
     }
 
@@ -438,109 +439,117 @@ pub fn build_(b: *Build) !void {
         const wasm_step = b.step("bun-wasm", "Build WASM");
         var wasm = b.addStaticLibrary(.{
             .name = "bun-wasm",
-            .root_source_file = LazyPath.relative("root_wasm.zig"),
+            .root_source_file = FileSource.relative("root_wasm.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer wasm_step.dependOn(&wasm.step);
-        wasm.root_module.strip = false;
+        wasm.strip = false;
         // wasm_step.link_function_sections = true;
         // wasm_step.link_emit_relocs = true;
         // wasm_step.single_threaded = true;
         try configureObjectStep(b, wasm, wasm_step, @TypeOf(target), target);
         var build_opts = default_build_options;
-        wasm.root_module.addOptions("build_options", build_opts.step(b));
+        wasm.addOptions("build_options", build_opts.step(b));
     }
 
     {
         const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
         var headers_obj = b.addObject(.{
             .name = "httpbench",
-            .root_source_file = LazyPath.relative("misctools/http_bench.zig"),
+            .root_source_file = FileSource.relative("misctools/http_bench.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
         const headers_step = b.step("machbench-obj", "Build Machbench tool (object files)");
         var headers_obj = b.addObject(.{
             .name = "machbench",
-            .root_source_file = LazyPath.relative("misctools/machbench.zig"),
+            .root_source_file = FileSource.relative("misctools/machbench.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
         const headers_step = b.step("fetch-obj", "Build fetch (object files)");
         var headers_obj = b.addObject(.{
             .name = "fetch",
-            .root_source_file = LazyPath.relative("misctools/fetch.zig"),
+            .root_source_file = FileSource.relative("misctools/fetch.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
         const headers_step = b.step("string-bench", "Build string bench");
         var headers_obj = b.addExecutable(.{
             .name = "string-bench",
-            .root_source_file = LazyPath.relative("src/bench/string-handling.zig"),
+            .root_source_file = FileSource.relative("src/bench/string-handling.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
         const headers_step = b.step("sha-bench-obj", "Build sha bench");
         var headers_obj = b.addObject(.{
             .name = "sha",
-            .root_source_file = LazyPath.relative("src/sha.zig"),
+            .root_source_file = FileSource.relative("src/sha.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
         const headers_step = b.step("vlq-bench", "Build vlq bench");
         var headers_obj: *CompileStep = b.addExecutable(.{
             .name = "vlq-bench",
-            .root_source_file = LazyPath.relative("src/sourcemap/vlq_bench.zig"),
+            .root_source_file = FileSource.relative("src/sourcemap/vlq_bench.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
         const headers_step = b.step("tgz-obj", "Build tgz (object files)");
         var headers_obj: *CompileStep = b.addObject(.{
             .name = "tgz",
-            .root_source_file = LazyPath.relative("misctools/tgz.zig"),
+            .root_source_file = FileSource.relative("misctools/tgz.zig"),
             .target = target,
             .optimize = optimize,
+            .main_mod_path = obj.main_mod_path,
         });
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     {
@@ -551,8 +560,9 @@ pub fn build_(b: *Build) !void {
         const test_filter = b.option([]const u8, "test-filter", "Filter for test");
 
         var headers_obj: *CompileStep = b.addTest(.{
-            .root_source_file = LazyPath.relative(test_file orelse "src/main.zig"),
+            .root_source_file = FileSource.relative(test_file orelse "src/main.zig"),
             .target = target,
+            .main_mod_path = obj.main_mod_path,
         });
         headers_obj.filter = test_filter;
         if (test_bin_) |test_bin| {
@@ -571,7 +581,7 @@ pub fn build_(b: *Build) !void {
         try configureObjectStep(b, headers_obj, headers_step, @TypeOf(target), target);
 
         headers_step.dependOn(&headers_obj.step);
-        headers_obj.root_module.addOptions("build_options", default_build_options.step(b));
+        headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
     // Running `zig build` with no arguments is almost always a mistake.
@@ -592,11 +602,11 @@ pub fn build_(b: *Build) !void {
 
 pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
 
-pub fn configureObjectStep(b: *std.Build, obj: *CompileStep, obj_step: *std.Build.Step, comptime Target: type, target: Target) !void {
+pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, obj_step: *std.build.Step, comptime Target: type, target: Target) !void {
     // obj.setTarget(target);
     try addInternalPackages(b, obj, std.heap.page_allocator, b.zig_exe, target);
 
-    obj.root_module.strip = false;
+    obj.strip = false;
 
     // obj.setBuildMode(optimize);
     obj.bundle_compiler_rt = false;
@@ -610,14 +620,14 @@ pub fn configureObjectStep(b: *std.Build, obj: *CompileStep, obj_step: *std.Buil
         install.step.dependOn(&obj.step);
         obj_step.dependOn(&install.step);
     }
-    if (target.result.os.tag != .freestanding) obj.linkLibC();
-    if (target.result.os.tag != .freestanding) obj.bundle_compiler_rt = false;
+    if (target.getOsTag() != .freestanding) obj.linkLibC();
+    if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
 
     // Disable stack probing on x86 so we don't need to include compiler_rt
     // Needs to be disabled here too so headers object will build without the `__zig_probe_stack` symbol
-    if (target.result.cpu.arch.isX86()) obj.root_module.stack_check = false;
+    if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
-    if (target.result.os.tag == .linux) {
+    if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;
         obj.link_emit_relocs = true;
         obj.link_eh_frame_hdr = true;

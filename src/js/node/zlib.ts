@@ -9,12 +9,16 @@ const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder")
 const createDeflateEncoder = $zig("node_zlib_binding.zig", "createDeflateEncoder");
 const createDeflateDecoder = $zig("node_zlib_binding.zig", "createDeflateDecoder");
 
+const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength;
+
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {
     callback = opts;
     opts = {};
   }
+  if (opts == null) opts = {};
   if (typeof callback !== "function") throw new TypeError("BrotliEncoder callback is not callable");
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const encoder = createBrotliEncoder(opts, {}, callback);
   encoder.encode(buffer, undefined, true);
 }
@@ -24,17 +28,23 @@ function brotliDecompress(buffer, opts, callback) {
     callback = opts;
     opts = {};
   }
+  if (opts == null) opts = {};
   if (typeof callback !== "function") throw new TypeError("BrotliDecoder callback is not callable");
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createBrotliDecoder(opts, {}, callback);
   decoder.decode(buffer, undefined, true);
 }
 
 function brotliCompressSync(buffer, opts) {
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const encoder = createBrotliEncoder(opts, {}, null);
   return encoder.encodeSync(buffer, undefined, true);
 }
 
 function brotliDecompressSync(buffer, opts) {
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createBrotliDecoder(opts, {}, null);
   return decoder.decodeSync(buffer, undefined, true);
 }
@@ -49,6 +59,8 @@ const kHandle = Symbol("kHandle");
 
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createBrotliEncoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
@@ -70,6 +82,8 @@ function createBrotliDecompress(opts) {
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createBrotliDecoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
@@ -92,12 +106,16 @@ function deflate(buffer, options, callback) {
     callback = options;
     options = {};
   }
+  if (options == null) options = {};
   if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
   const encoder = createDeflateEncoder(options, {}, callback);
   encoder.encode(buffer, undefined, true);
 }
 
 function deflateSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
   const encoder = createDeflateEncoder(options, {}, null);
   return encoder.encodeSync(buffer, undefined, true);
 }
@@ -107,12 +125,16 @@ function inflate(buffer, options, callback) {
     callback = options;
     options = {};
   }
+  if (options == null) options = {};
   if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createDeflateDecoder(options, {}, callback);
   decoder.decode(buffer, undefined, true);
 }
 
 function inflateSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createDeflateDecoder(options, {}, null);
   return decoder.decodeSync(buffer, undefined, true);
 }
@@ -125,6 +147,8 @@ function createDeflate(opts) {
 
 function Deflate(opts) {
   if (!(this instanceof Deflate)) return new Deflate(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createDeflateEncoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
@@ -146,6 +170,8 @@ function createInflate(opts) {
 
 function Inflate(opts) {
   if (!(this instanceof Inflate)) return new Inflate(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createDeflateDecoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
@@ -168,13 +194,17 @@ function deflateRaw(buffer, options, callback) {
     callback = options;
     options = {};
   }
+  if (options == null) options = {};
   if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
   if (options && options.windowBits === 8) options.windowBits = 9;
   const encoder = createDeflateEncoder(options, {}, callback);
   encoder.encode(buffer, undefined, true);
 }
 
 function deflateRawSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
   if (options && options.windowBits === 8) options.windowBits = 9;
   const encoder = createDeflateEncoder(options, {}, null);
   return encoder.encodeSync(buffer, undefined, true);
@@ -185,12 +215,16 @@ function inflateRaw(buffer, options, callback) {
     callback = options;
     options = {};
   }
+  if (options == null) options = {};
   if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createDeflateDecoder(options, {}, callback);
   decoder.decode(buffer, undefined, true);
 }
 
 function inflateRawSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createDeflateDecoder(options, {}, null);
   return decoder.decodeSync(buffer, undefined, true);
 }
@@ -203,6 +237,8 @@ function createDeflateRaw(opts) {
 
 function DeflateRaw(opts) {
   if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   if (opts && opts.windowBits === 8) opts.windowBits = 9;
   this[kHandle] = createDeflateEncoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
@@ -225,6 +261,8 @@ function createInflateRaw(opts) {
 
 function InflateRaw(opts) {
   if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createDeflateDecoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
@@ -4273,7 +4311,7 @@ var require_lib = __commonJS({
     var Transform = StreamModule.Transform;
     var binding = require_binding();
     var util = Util;
-    var kMaxLength = BufferModule.kMaxLength;
+    var kMaxLength = maxOutputLengthDefault;
     var kRangeErrorMessage =
       "Cannot create final Buffer. It would be larger than 0x" + kMaxLength.toString(16) + " bytes";
     binding.Z_MIN_WINDOWBITS = 8;

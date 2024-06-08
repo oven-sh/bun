@@ -1,3 +1,4 @@
+import type { ServerWebSocket, Server } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
@@ -471,4 +472,34 @@ test("Bun does not crash when given invalid config", async () => {
       Bun.serve(options as any);
     }).toThrow();
   }
+});
+
+test("should be able to async upgrade using custom protocol", async () => {
+  const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
+  using server = Bun.serve<unknown>({
+    async fetch(req: Request, server: Server) {
+      await Bun.sleep(1);
+
+      if (server.upgrade(req)) return;
+    },
+    websocket: {
+      close(ws: ServerWebSocket<unknown>, code: number, reason: string): void | Promise<void> {
+        resolve({ code, reason });
+      },
+      message(ws: ServerWebSocket<unknown>, data: string): void | Promise<void> {
+        ws.send("world");
+      },
+    },
+  });
+
+  const ws = new WebSocket(server.url.href, "ocpp1.6");
+  ws.onopen = () => {
+    ws.send("hello");
+  };
+  ws.onmessage = e => {
+    console.log(e.data);
+    resolve(true);
+  };
+
+  expect(await promise).toBe(true);
 });

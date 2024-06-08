@@ -61,7 +61,7 @@ pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: bun.String = bun.String.empty,
-    // PS: renamed to _headers to avoid direct manipulation, use getFetchHeaders, setFetchHeaders, ensureFetchHeaders, hasHeaders instead
+    // NOTE(@cirospaciari): renamed to _headers to avoid direct manipulation, use getFetchHeaders, setFetchHeaders, ensureFetchHeaders and hasFetchHeaders instead
     _headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
     body: *BodyValueRef,
@@ -738,7 +738,7 @@ pub const Request = struct {
     }
 
     // Returns if the request has headers already cached/set.
-    pub fn hasHeaders(this: *Request) bool {
+    pub fn hasFetchHeaders(this: *Request) bool {
         return this._headers != null;
     }
 

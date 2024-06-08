@@ -2523,7 +2523,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             // we have to clone the request headers here since they will soon belong to a different request
-            if (!request_object.hasHeaders()) {
+            if (!request_object.hasFetchHeaders()) {
                 request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(ctx.server.globalThis, req));
             }
 
@@ -5269,8 +5269,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var sec_websocket_key_str = ZigString.Empty;
 
+            var sec_websocket_protocol = ZigString.Empty;
+
+            var sec_websocket_extensions = ZigString.Empty;
+
             if (request.getFetchHeaders()) |head| {
                 sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
+                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse ZigString.Empty;
+                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
             }
 
             if (sec_websocket_key_str.len == 0) {
@@ -5281,12 +5287,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSC.jsBoolean(false);
             }
 
-            var sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
-            var sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
+            if (sec_websocket_protocol.len == 0) {
+                sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
+            }
+
+            if (sec_websocket_extensions.len == 0) {
+                sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
+            }
 
             if (sec_websocket_protocol.len > 0) {
                 sec_websocket_protocol.markUTF8();
             }
+
             if (sec_websocket_extensions.len > 0) {
                 sec_websocket_extensions.markUTF8();
             }

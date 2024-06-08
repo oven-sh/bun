@@ -391,10 +391,8 @@ pub const FSEventsLoop = struct {
 
                     var is_rename = true;
 
-                    if ((flags & kFSEventsRenamed) == 0) {
-                        if ((flags & kFSEventsModified) != 0 or is_file) {
-                            is_rename = false;
-                        }
+                    if ((flags & kFSEventsModified) != 0 or is_file) {
+                        is_rename = false;
                     }
 
                     const event_type: EventType = if (is_rename) .rename else .change;

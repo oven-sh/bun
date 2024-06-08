@@ -3217,7 +3217,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (response.init.headers) |headers_| {
                     if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
-                        break :brk MimeType.byName(content.slice());
+
+                        var content_slice = content.toSlice(this.allocator);
+                        defer content_slice.deinit();
+
+                        break :brk MimeType.byName(content_slice.slice());
                     }
                 }
 

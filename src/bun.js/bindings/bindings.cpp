@@ -2986,7 +2986,7 @@ JSC__JSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC__JSGlobal
 static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject,
     JSC::CallFrame* callFrame)
 {
-    return JSC::JSValue::encode(doLink(globalObject, callFrame->argument(0)));
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC__JSInternalPromise*

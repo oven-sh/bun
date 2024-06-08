@@ -14,18 +14,20 @@ $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 
 if ($env:VSINSTALLDIR -eq $null) {
   Write-Host "Loading Visual Studio environment, this may take a second..."
-  $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-  if (!(Test-Path $vswhere)) {
-      throw "Visual Studio installer directory not found."
-  }
-  $vsDir = (& $vswhere -version '17.9.7' -property installationPath)
-  if ($vsDir -eq $null) {
-      throw "Visual Studio directory not found."
-  } 
-  Push-Location $vsDir
+  # $vswhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+  # if (!(Test-Path $vswhere)) {
+  #     throw "Visual Studio installer directory not found."
+  # }
+  # $vsDir = (& $vswhere -version -property installationPath)
+  # if ($vsDir -eq $null) {
+  #     throw "Visual Studio directory not found."
+  # } 
+  # Push-Location $vsDir
   try {
-    $launchps = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
-    . $launchps -Arch amd64 -HostArch amd64
+    Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+    Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools' -DevCmdArguments '-arch=x64 -host_arch=x64'
+    # $launchps = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
+    # . $launchps -Arch amd64 -HostArch amd64
   } finally { Pop-Location }
 }
 

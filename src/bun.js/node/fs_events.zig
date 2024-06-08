@@ -361,7 +361,7 @@ pub const FSEventsLoop = struct {
                 const handle_path = handle.path;
 
                 for (paths, 0..) |path_ptr, i| {
-                    var flags = event_flags[i];
+                    const flags = event_flags[i];
                     var path = path_ptr[0..bun.len(path_ptr)];
                     // Filter out paths that are outside handle's request
                     if (path.len < handle_path.len or !bun.strings.startsWith(path, handle_path)) {
@@ -377,20 +377,8 @@ pub const FSEventsLoop = struct {
                         if (path.len <= 1 and is_file) {
                             continue;
                         }
-                        if (path.len == 0) {
-                            // Since we're using fsevents to watch the file itself, path == handle_path, and we now need to get the basename of the file back
-                            while (path.len > 0) {
-                                if (bun.strings.startsWithChar(path, '/')) {
-                                    path = path[1..];
-                                    break;
-                                } else {
-                                    path = path[1..];
-                                }
-                            }
 
-                            // Created and Removed seem to be always set, but don't make sense
-                            flags &= ~kFSEventsRenamed;
-                        } else {
+                        if (bun.strings.startsWithChar(path, '/')) {
                             // Skip forward slash
                             path = path[1..];
                         }

@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 
+$ZigVersion="0.12.0-dev.1828+225fe6ddb"
 $ZigVersionShort="0.12.0-dev.1828"
 $Target="windows"
 $Arch="x86_64"

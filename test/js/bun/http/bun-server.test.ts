@@ -472,3 +472,22 @@ test("Bun does not crash when given invalid config", async () => {
     }).toThrow();
   }
 });
+
+test("Bun should be able to handle utf16 inside Content-Type header #11316", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const fileSuffix = "测试.html".match(/\.([a-z0-9]*)$/i)?.[1];
+
+      return new Response("Hello World!\n", {
+        headers: {
+          "Content-Type": `text/${fileSuffix}`,
+        },
+      });
+    },
+  });
+
+  const result = await fetch(server.url);
+  expect(result.status).toBe(200);
+  expect(result.headers.get("Content-Type")).toBe("text/html");
+});

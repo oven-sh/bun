@@ -826,15 +826,29 @@ pub const Expect = struct {
         const expected = arguments[0];
         expected.ensureStillAlive();
         const value: JSValue = this.getValue(globalThis, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
 
         const not = this.flags.not;
+        if (!value.isObject()) {
+            const err = globalThis.createTypeErrorInstance("Expected value must be an object\nReceived: {}", .{value.toFmt(
+                globalThis,
+                &formatter,
+            )});
+            globalThis.throwValue(err);
+            return .zero;
+        }
+
         var pass = value.hasOwnPropertyValue(globalThis, expected);
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+
         const value_fmt = value.toFmt(globalThis, &formatter);
         const expected_fmt = expected.toFmt(globalThis, &formatter);
         if (not) {
@@ -898,6 +912,10 @@ pub const Expect = struct {
 
             break :brk true;
         };
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
@@ -1029,6 +1047,10 @@ pub const Expect = struct {
                 pass = true;
                 break;
             }
+        }
+
+        if (globalThis.hasException()) {
+            return .zero;
         }
 
         if (not) pass = !pass;

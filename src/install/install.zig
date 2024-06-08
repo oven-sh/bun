@@ -10038,10 +10038,13 @@ pub const PackageManager = struct {
         const @"pkg + maybe version to patch" = manager.options.positionals[1];
         const name: []const u8, const version: ?[]const u8 = brk: {
             if (std.mem.indexOfScalar(u8, @"pkg + maybe version to patch", '@')) |version_delimiter| {
-                break :brk .{
-                    @"pkg + maybe version to patch"[0..version_delimiter],
-                    @"pkg + maybe version to patch"[version_delimiter + 1 ..],
-                };
+                if (version_delimiter != 0) {
+                    // if it's zero it's a scoped package, e.g. "@sentry/cli"
+                    break :brk .{
+                        @"pkg + maybe version to patch"[0..version_delimiter],
+                        @"pkg + maybe version to patch"[version_delimiter + 1 ..],
+                    };
+                }
             }
             break :brk .{
                 @"pkg + maybe version to patch",

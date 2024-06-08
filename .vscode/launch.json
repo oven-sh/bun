@@ -20,12 +20,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -42,12 +36,6 @@
         "BUN_DEBUG_jest": "1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -68,12 +56,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -88,12 +70,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -108,12 +84,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -128,12 +98,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -149,12 +113,6 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -175,12 +133,6 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -202,12 +154,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -222,12 +168,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -242,12 +182,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -262,12 +196,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -282,12 +210,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -303,12 +225,6 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -329,12 +245,6 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -355,12 +265,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -375,12 +279,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -395,12 +293,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -415,12 +307,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -435,12 +321,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -456,12 +336,6 @@
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -482,12 +356,6 @@
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -508,12 +376,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     // bun test [*]
     {
@@ -529,12 +391,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -549,12 +405,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -570,12 +420,6 @@
         "BUN_INSPECT": "ws://localhost:0/",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
       "serverReadyAction": {
         "pattern": "https://debug.bun.sh/#localhost:([0-9]+)/",
         "uriFormat": "https://debug.bun.sh/#ws://localhost:%s/",
@@ -595,12 +439,6 @@
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     {
       "type": "lldb",
@@ -610,12 +448,6 @@
       "args": ["src/runner.node.mjs"],
       "cwd": "${workspaceFolder}/packages/bun-internal-test",
       "console": "internalConsole",
-      "sourceMap": {
-        "/build/bun": "${workspaceFolder}",
-        "${workspaceFolder}": "${workspaceFolder}",
-        "/webkit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-        "/Users/runner/work/WebKit/WebKit/Source": "${workspaceFolder}/src/bun.js/WebKit/Source",
-      },
     },
     // Windows: bun test [file]
     {

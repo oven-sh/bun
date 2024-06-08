@@ -381,6 +381,24 @@ pub const RuntimeTranspilerStore = struct {
             _ = &Bun__TranspilerJob_finalize;
         }
 
+        fn didCancel(this: *TranspilerJob, vm: *VirtualMachine) void {
+            this.resolved_source.source_code_needs_deref = false;
+            this.resolved_source.source_code.deref();
+
+            this.resolved_source.source_url.deref();
+            this.resolved_source.source_url = bun.String.empty;
+            this.resolved_source.specifier.deref();
+            this.resolved_source.specifier = bun.String.empty;
+
+            this.promise.deinit();
+            this.deinit();
+            _ = vm.transpiler_store.store.hive.put(this);
+        }
+
+        pub fn isCancelled(this: *TranspilerJob) bool {
+            return this.cancelled.load(.Acquire);
+        }
+
         pub fn runFromJSThread(this: *TranspilerJob) void {
             var vm = this.vm;
             const promise = this.promise.swap();
@@ -389,20 +407,10 @@ pub const RuntimeTranspilerStore = struct {
 
             if (promise == .zero) {
                 debug("Promise already freed", .{});
-                this.resolved_source.source_code_needs_deref = false;
-                this.resolved_source.source_code.deref();
-
-                this.resolved_source.source_url.deref();
-                this.resolved_source.source_url = bun.String.empty;
-                this.resolved_source.specifier.deref();
-                this.resolved_source.specifier = bun.String.empty;
-
-                this.promise.deinit();
-                this.deinit();
-                _ = vm.transpiler_store.store.hive.put(this);
+                this.didCancel(vm);
                 return;
             }
-            bun.debugAssert(!this.cancelled.load(.Acquire));
+            bun.debugAssert(!this.isCancelled());
 
             const referrer = bun.String.createUTF8(this.referrer);
             var log = this.log;
@@ -464,7 +472,7 @@ pub const RuntimeTranspilerStore = struct {
                 return;
             }
 
-            if (this.cancelled.load(.Acquire)) {
+            if (this.isCancelled()) {
                 debug("TranspilerJob cancelled", .{});
                 return;
             }
@@ -704,7 +712,7 @@ pub const RuntimeTranspilerStore = struct {
                 }
             }
 
-            if (this.cancelled.load(.Acquire)) {
+            if (this.isCancelled()) {
                 debug("TranspilerJob cancelled (after parse)", .{});
                 return;
             }

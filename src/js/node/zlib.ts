@@ -4324,7 +4324,7 @@ var require_lib = __commonJS({
       value: Object.freeze(codes),
       writable: false,
     });
-    exports.constants = require_constants();
+    exports.constants = Object.freeze(require_constants());
     exports.Gzip = Gzip;
     exports.Gunzip = Gunzip;
     exports.Unzip = Unzip;

@@ -3266,25 +3266,32 @@ pub const JSGlobalObject = extern struct {
 
     pub fn checkRangesOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
         if (obj.get(this, field_name)) |level_val| {
-            if (level_val.isInt32()) {
-                const level_i32 = level_val.toInt32();
-                if (level_i32 < min or level_i32 > max) {
-                    this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
-                    return null;
-                }
-                return @intCast(level_i32);
-            } else {
+            if (!level_val.isNumber()) {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
                 return null;
             }
+            if (!level_val.isInt32()) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be a finite number. Received {s}", .{ field_name, level_val.toString(this).getZigString(this).slice() }));
+                return null;
+            }
+            const level_i32 = level_val.toInt32();
+            if (level_i32 < min or level_i32 > max) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
+                return null;
+            }
+            return @intCast(level_i32);
         }
         return default;
     }
 
     pub fn checkMinOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, default: T) ?T {
         if (obj.get(this, field_name)) |level_val| {
-            if (!level_val.isInt32()) {
+            if (!level_val.isNumber()) {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
+            }
+            if (!level_val.isInt32()) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be a finite number. Received {s}", .{ field_name, level_val.toString(this).getZigString(this).slice() }));
                 return null;
             }
             const level_i32 = level_val.toInt32();

@@ -60,7 +60,7 @@ Visual Studio can be installed graphically using the wizard or through WinGet:
 
 After Visual Studio, you need the following:
 
-- LLVM 17
+- LLVM 16
 - Go
 - Rust
 - NASM
@@ -85,7 +85,7 @@ After Visual Studio, you need the following:
 > irm https://get.scoop.sh | iex
 > scoop install nodejs-lts go rust nasm ruby perl
 # scoop seems to be buggy if you install llvm and the rest at the same time
-> scoop install llvm@17.0.6
+> scoop install llvm@16.0.6
 ```
 
 {% /codetabs %}

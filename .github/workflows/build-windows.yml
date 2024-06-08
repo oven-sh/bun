@@ -31,7 +31,7 @@ on:
 
 env:
   # Must specify exact version of LLVM for Windows
-  LLVM_VERSION: 17.0.6
+  LLVM_VERSION: 16.0.6
   BUN_VERSION: ${{ inputs.bun-version }}
   BUN_GARBAGE_COLLECTOR_LEVEL: 1
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: 1
@@ -42,6 +42,12 @@ jobs:
     name: Build Submodules
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: "17.9.7"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false

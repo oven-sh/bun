@@ -6,7 +6,7 @@ const Wyhash11 = @import("./src/wyhash.zig").Wyhash11;
 const zig_version = builtin.zig_version;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.12.0-dev.1828";
+const recommended_zig_version = "0.12.0-dev.1828+225fe6ddb";
 
 var is_debug_build = false;
 

@@ -952,7 +952,7 @@ pub const Expect = struct {
 
         const count = expected.getLength(globalObject);
 
-        var iter_value = value.getKeys(globalObject, value);
+        var iter_value = value.keys(globalObject);
         if (iter_value.getLength(globalObject) == count) {
             var itr = iter_value.arrayIterator(globalObject);
             outer: {
@@ -972,10 +972,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.getKeys(globalObject, value).toFmt(globalObject, &formatter);
+        const value_fmt = value.keys(globalObject).toFmt(globalObject, &formatter);
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
-            const received_fmt = value.getKeys(globalObject, value).toFmt(globalObject, &formatter);
+            const received_fmt = value.keys(globalObject).toFmt(globalObject, &formatter);
             const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = comptime getSignature("toContainAllKeys", "<green>expected<r>", true) ++ "\n\n" ++ expected_line;
             globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
@@ -1077,7 +1077,7 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        var values = value.values(globalObject, value);
+        var values = value.values(globalObject);
         var itr = values.arrayIterator(globalObject);
         while (itr.next()) |item| {
             if (item.jestDeepEquals(expected, globalObject)) {
@@ -1126,13 +1126,17 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainValues", "expected", "array");
+            return .zero;
+        }
         expected.ensureStillAlive();
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainValues", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
         var pass = true;
 
-        var values = value.values(globalObject, value);
+        var values = value.values(globalObject);
         var itr = expected.arrayIterator(globalObject);
         const count = values.getLength(globalObject);
 
@@ -1187,13 +1191,17 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAllValues", "expected", "array");
+            return .zero;
+        }
         expected.ensureStillAlive();
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllValues", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
         var pass = false;
 
-        var values = value.values(globalObject, value);
+        var values = value.values(globalObject);
         var itr = expected.arrayIterator(globalObject);
         const count = values.getLength(globalObject);
         const expectedLength = expected.getLength(globalObject);
@@ -1254,13 +1262,17 @@ pub const Expect = struct {
         incrementExpectCallCounter();
 
         const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAnyValues", "expected", "array");
+            return .zero;
+        }
         expected.ensureStillAlive();
         const value: JSValue = this.getValue(globalObject, thisValue, "toContainAnyValues", "<green>expected<r>") orelse return .zero;
 
         const not = this.flags.not;
         var pass = false;
 
-        var values = value.values(globalObject, value);
+        var values = value.values(globalObject);
         var itr = expected.arrayIterator(globalObject);
         const count = values.getLength(globalObject);
 

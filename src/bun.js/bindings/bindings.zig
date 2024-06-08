@@ -4317,22 +4317,18 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
-    pub fn keys(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+    pub fn keys(value: JSValue, globalThis: *JSGlobalObject) JSValue {
         return cppFn("keys", .{
             globalThis,
             value,
         });
     }
 
-    pub fn values(_: JSValue, globalThis: *JSGlobalObject, value: JSValue) JSValue {
+    pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSValue {
         return cppFn("values", .{
             globalThis,
             value,
         });
-    }
-
-    pub fn getKeys(_: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) JSValue {
-        return keys(globalThis, value);
     }
 
     pub fn hasOwnPropertyValue(this: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) bool {
@@ -4587,7 +4583,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return false;
         }
 
-        return this.jsType().isObject() and keys(globalObject, this).getLength(globalObject) == 0;
+        return this.jsType().isObject() and keys(this, globalObject).getLength(globalObject) == 0;
     }
 
     pub fn isClass(this: JSValue, global: *JSGlobalObject) bool {

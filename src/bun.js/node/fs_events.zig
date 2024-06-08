@@ -361,7 +361,7 @@ pub const FSEventsLoop = struct {
                 const handle_path = handle.path;
 
                 for (paths, 0..) |path_ptr, i| {
-                    const flags = event_flags[i];
+                    var flags = event_flags[i];
                     var path = path_ptr[0..bun.len(path_ptr)];
                     // Filter out paths that are outside handle's request
                     if (path.len < handle_path.len or !bun.strings.startsWith(path, handle_path)) {
@@ -374,10 +374,18 @@ pub const FSEventsLoop = struct {
                         path = path[handle_path.len..];
 
                         // Ignore events with path equal to directory itself
-                        if (path.len <= 1 and is_file) {
+                        if (path.len <= 1 and !is_file) {
                             continue;
                         }
-
+                        
+                        if(path.len == 0) {
+                            // Since we're using fsevents to watch the file itself handle_path == path, and we now need to get the basename of the file back
+                            const basename = bun.strings.lastIndexOfChar(handle_path, '/') orelse (handle_path.len - 1);
+                            path = handle_path[basename..];
+                            // Created and Removed seem to be always set, but don't make sense
+                            flags &= ~kFSEventsRenamed;
+                        } 
+                        
                         if (bun.strings.startsWithChar(path, '/')) {
                             // Skip forward slash
                             path = path[1..];
@@ -391,8 +399,10 @@ pub const FSEventsLoop = struct {
 
                     var is_rename = true;
 
-                    if ((flags & kFSEventsModified) != 0 or is_file) {
-                        is_rename = false;
+                    if ((flags & kFSEventsRenamed) == 0) {
+                        if ((flags & kFSEventsModified) != 0 or is_file) {
+                            is_rename = false;
+                        }
                     }
 
                     const event_type: EventType = if (is_rename) .rename else .change;

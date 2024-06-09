@@ -560,7 +560,7 @@ pub const Response = struct {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
                 if (response_init.asDirect(Request)) |req| {
-                    if (req.headers) |headers| {
+                    if (req.getFetchHeaders()) |headers| {
                         if (!headers.isEmpty()) {
                             result.headers = headers.cloneThis(ctx);
                         }
@@ -2023,7 +2023,7 @@ pub const Fetch = struct {
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
                                 headers__.deref();
-                            } else if (request.headers) |head| {
+                            } else if (request.getFetchHeaders()) |head| {
                                 if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                                     if (hostname) |host| {
                                         allocator.free(host);
@@ -2032,7 +2032,7 @@ pub const Fetch = struct {
                                 }
                                 headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
                             }
-                        } else if (request.headers) |head| {
+                        } else if (request.getFetchHeaders()) |head| {
                             headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
                         }
 
@@ -2173,7 +2173,7 @@ pub const Fetch = struct {
 
                     if (get_fetch_headers: {
                         if (can_use_fast_getters)
-                            break :get_fetch_headers request.headers;
+                            break :get_fetch_headers request.getFetchHeaders();
 
                         if (first_arg.fastGet(globalThis, .headers)) |headers_value| {
                             // Faster path: existing FetchHeaders object:

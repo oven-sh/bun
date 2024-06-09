@@ -12043,6 +12043,12 @@ var DEFAULT_ENCODING = "buffer",
         }
       : void 0,
   generatePrimeSync = function (size, options) {
+    if (options && options.rem && typeof options.rem === "bigint") {
+      options.rem = bigintToBuffer(options.rem);
+    }
+    if (options && options.add && typeof options.add === "bigint") {
+      options.add = bigintToBuffer(options.add);
+    }
     return _generatePrime(size, options);
   },
   generatePrime = function (size, opts, cb) {

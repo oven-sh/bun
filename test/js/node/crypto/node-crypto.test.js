@@ -82,8 +82,8 @@ describe.each([
   });
 
   describe.each([
-    ["Buffer", v => v],
-    ["ArrayBuffer", v => v.buffer],
+    ["Buffer", v => Buffer.from([v])],
+    ["ArrayBuffer", v => Buffer.from([v]).buffer],
     ["BigInt", v => BigInt(v)],
   ])(
     "when `add` and `rem` are %ss",
@@ -93,8 +93,8 @@ describe.each([
         [12, 11],
         [34, 33],
       ])("Must respect `add` and `rem` for %i and %i", async (add, rem) => {
-        const add_buf = k(Buffer.from([add]));
-        const rem_buf = k(Buffer.from([rem]));
+        const add_buf = k(add);
+        const rem_buf = k(rem);
         const prime = await fn(32, { add: add_buf, rem: rem_buf });
         const prime_buf = Buffer.from(prime);
         expect(prime_buf.readUInt32BE() % add).toBe(rem);

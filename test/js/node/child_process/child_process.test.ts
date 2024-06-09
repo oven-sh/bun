@@ -382,7 +382,7 @@ it("it accepts stdio passthrough", async () => {
   const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
   try {
     // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
-    expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort()]).toEqual([
+    expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
       "$ run-p echo-hello echo-world",
       "$ echo hello",
       "$ echo world",

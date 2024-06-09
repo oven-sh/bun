@@ -1087,7 +1087,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             return strings.eqlLong(repo.resolved.slice(buf), bun_tag_file, true);
         }
 
-        // TODO: patched dependencies
         pub fn verify(
             this: *@This(),
             resolution: *const Resolution,
@@ -2716,6 +2715,8 @@ pub const PackageManager = struct {
     //
     // dependency name -> original version information
     updating_packages: bun.StringArrayHashMapUnmanaged(PackageUpdateInfo) = .{},
+
+    patched_dependencies_to_remove: std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, void, ArrayIdentityContext.U64, false) = .{},
 
     pub const PackageUpdateInfo = struct {
         original_version_literal: string,
@@ -5569,7 +5570,6 @@ pub const PackageManager = struct {
         manager.network_resolve_batch = .{};
         manager.patch_apply_batch = .{};
         manager.patch_calc_hash_batch = .{};
-        // TODO probably have to put patch tasks here
         return count;
     }
 
@@ -7195,10 +7195,10 @@ pub const PackageManager = struct {
 
                 if (subcommand == .patch) {
                     // TODO args
-                } else if (subcommand == .patch_commit) {
+                } else if (subcommand == .@"patch-commit") {
                     this.patch_features = .{
                         .commit = .{
-                            .patches_dir = cli.patch_commit.patches_dir,
+                            .patches_dir = cli.@"patch-commit".patches_dir,
                         },
                     };
                 }
@@ -8145,7 +8145,7 @@ pub const PackageManager = struct {
         link,
         unlink,
         patch,
-        patch_commit,
+        @"patch-commit",
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -8634,7 +8634,7 @@ pub const PackageManager = struct {
     }
 
     pub inline fn patchCommit(ctx: Command.Context) !void {
-        try updatePackageJSONAndInstallCatchError(ctx, .patch_commit);
+        try updatePackageJSONAndInstallCatchError(ctx, .@"patch-commit");
     }
 
     pub inline fn update(ctx: Command.Context) !void {
@@ -9068,7 +9068,7 @@ pub const PackageManager = struct {
         concurrent_scripts: ?usize = null,
 
         patch: PatchOpts = .{},
-        patch_commit: PatchCommitOpts = .{},
+        @"patch-commit": PatchCommitOpts = .{},
 
         const PatchOpts = struct {
             edit_dir: ?[]const u8 = null,
@@ -9163,7 +9163,7 @@ pub const PackageManager = struct {
                     // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
-                Subcommand.patch_commit => {
+                Subcommand.@"patch-commit" => {
                     const intro_text =
                         \\<b>Usage: bun patch-commit <r><cyan>\<directory\><r>
                         \\
@@ -9300,7 +9300,7 @@ pub const PackageManager = struct {
                 .link => link_params,
                 .unlink => unlink_params,
                 .patch => patch_params,
-                .patch_commit => patch_commit_params,
+                .@"patch-commit" => patch_commit_params,
             };
 
             var diag = clap.Diagnostic{};
@@ -9338,7 +9338,6 @@ pub const PackageManager = struct {
 
             // link and unlink default to not saving, all others default to
             // saving.
-            // TODO: I think `bun patch` command goes here
             if (comptime subcommand == .link or subcommand == .unlink) {
                 cli.no_save = !args.flag("--save");
             } else {
@@ -9349,8 +9348,8 @@ pub const PackageManager = struct {
                 cli.patch = .{};
             }
 
-            if (comptime subcommand == .patch_commit) {
-                cli.patch_commit = .{
+            if (comptime subcommand == .@"patch-commit") {
+                cli.@"patch-commit" = .{
                     .patches_dir = args.option("--patches-dir") orelse "patches",
                 };
             }
@@ -9430,7 +9429,7 @@ pub const PackageManager = struct {
                 Global.crash();
             }
 
-            if (subcommand == .patch_commit and cli.positionals.len < 2) {
+            if (subcommand == .@"patch-commit" and cli.positionals.len < 2) {
                 Output.errGeneric("Missing pkg folder to patch\n", .{});
                 Global.crash();
             }
@@ -9802,7 +9801,7 @@ pub const PackageManager = struct {
                     }
                 }
             },
-            .patch_commit => {
+            .@"patch-commit" => {
                 _ = manager.lockfile.loadFromDisk(
                     manager,
                     manager.allocator,
@@ -10037,10 +10036,10 @@ pub const PackageManager = struct {
     fn preparePatch(manager: *PackageManager) !void {
         const @"pkg + maybe version to patch" = manager.options.positionals[1];
         const name: []const u8, const version: ?[]const u8 = brk: {
-            if (std.mem.indexOfScalar(u8, @"pkg + maybe version to patch", '@')) |version_delimiter| {
+            if (std.mem.indexOfScalar(u8, @"pkg + maybe version to patch"[1..], '@')) |version_delimiter| {
                 break :brk .{
                     @"pkg + maybe version to patch"[0..version_delimiter],
-                    @"pkg + maybe version to patch"[version_delimiter + 1 ..],
+                    @"pkg + maybe version to patch"[1..][version_delimiter + 1 ..],
                 };
             }
             break :brk .{
@@ -11056,14 +11055,29 @@ pub const PackageManager = struct {
                 break :brk "";
             } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
-            const patch_patch, const patch_contents_hash, const patch_name_and_version_hash = brk: {
-                if (this.manager.lockfile.patched_dependencies.entries.len == 0) break :brk .{ null, null, null };
+            if (std.mem.eql(u8, "is-even", name)) {
+                std.debug.print("HELLO!\n", .{});
+            }
+
+            const patch_patch, const patch_contents_hash, const patch_name_and_version_hash, const remove_patch = brk: {
+                if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len) break :brk .{ null, null, null, false };
                 var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, package_version }) catch unreachable;
                 defer sfb.get().free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
 
-                const patchdep = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk .{ null, null, null };
+                const patchdep = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse {
+                    const to_remove = this.manager.patched_dependencies_to_remove.contains(name_and_version_hash);
+                    if (to_remove) {
+                        break :brk .{
+                            null,
+                            null,
+                            name_and_version_hash,
+                            true,
+                        };
+                    }
+                    break :brk .{ null, null, null, false };
+                };
                 bun.assert(!patchdep.patchfile_hash_is_null);
                 // if (!patchdep.patchfile_hash_is_null) {
                 //     this.manager.enqueuePatchTask(PatchTask.newCalcPatchHash(this, package_id, name_and_version_hash, dependency_id, url: string))
@@ -11072,6 +11086,7 @@ pub const PackageManager = struct {
                     patchdep.path.slice(this.lockfile.buffers.string_bytes.items),
                     patchdep.patchfileHash().?,
                     name_and_version_hash,
+                    false,
                 };
             };
 
@@ -11200,7 +11215,7 @@ pub const PackageManager = struct {
                 },
             }
 
-            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or !installer.verify(
+            const needs_install = this.force_install or this.skip_verify_installed_version_number or !needs_verify or remove_patch or !installer.verify(
                 resolution,
                 buf,
                 this.root_node_modules_folder,
@@ -11208,7 +11223,7 @@ pub const PackageManager = struct {
             this.summary.skipped += @intFromBool(!needs_install);
 
             if (needs_install) {
-                if (resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id)) {
+                if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id)) {
                     if (comptime Environment.allow_assert) {
                         bun.assert(resolution.canEnqueueInstallTask());
                     }
@@ -11292,7 +11307,7 @@ pub const PackageManager = struct {
                 // above checks if unpatched package is in cache, if not null apply patch in temp directory, copy
                 // into cache, then install into node_modules
                 if (!installer.patch.isNull()) {
-                    if (installer.patchedPackageMissingFromCache(this.manager, package_id, installer.patch.patch_contents_hash)) {
+                    if (installer.patchedPackageMissingFromCache(this.manager, package_id)) {
                         const task = PatchTask.newApplyPatchHash(
                             this.manager,
                             package_id,
@@ -11337,7 +11352,7 @@ pub const PackageManager = struct {
 
                 const install_result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
-                    else => installer.install(this.skip_delete, destination_dir),
+                    else => installer.install(this.skip_delete and (!remove_patch), destination_dir),
                 };
 
                 switch (install_result) {
@@ -12568,7 +12583,6 @@ pub const PackageManager = struct {
                         // Update patched dependencies
                         {
                             var iter = lockfile.patched_dependencies.iterator();
-                            // TODO: if one key is present in manager.lockfile and not present in lockfile we should get rid of it
                             while (iter.next()) |entry| {
                                 const pkg_name_and_version_hash = entry.key_ptr.*;
                                 bun.debugAssert(entry.value_ptr.patchfile_hash_is_null);
@@ -12585,6 +12599,26 @@ pub const PackageManager = struct {
                                 )) {
                                     gop.value_ptr.path = builder.append(String, entry.value_ptr.*.path.slice(lockfile.buffers.string_bytes.items));
                                     gop.value_ptr.setPatchfileHash(null);
+                                }
+                            }
+
+                            var count: usize = 0;
+                            iter = manager.lockfile.patched_dependencies.iterator();
+                            while (iter.next()) |entry| {
+                                if (!lockfile.patched_dependencies.contains(entry.key_ptr.*)) {
+                                    count += 1;
+                                }
+                            }
+                            if (count > 0) {
+                                try manager.patched_dependencies_to_remove.ensureTotalCapacity(manager.allocator, count);
+                                iter = manager.lockfile.patched_dependencies.iterator();
+                                while (iter.next()) |entry| {
+                                    if (!lockfile.patched_dependencies.contains(entry.key_ptr.*)) {
+                                        try manager.patched_dependencies_to_remove.put(manager.allocator, entry.key_ptr.*, {});
+                                    }
+                                }
+                                for (manager.patched_dependencies_to_remove.keys()) |hash| {
+                                    _ = manager.lockfile.patched_dependencies.orderedRemove(hash);
                                 }
                             }
                         }

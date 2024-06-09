@@ -3775,6 +3775,10 @@ pub const Package = extern struct {
                         )) break :patched_dependencies_changed true;
                     } else break :patched_dependencies_changed true;
                 }
+                iter = from_lockfile.patched_dependencies.iterator();
+                while (iter.next()) |entry| {
+                    if (!to_lockfile.patched_dependencies.contains(entry.key_ptr.*)) break :patched_dependencies_changed true;
+                }
                 break :patched_dependencies_changed false;
             };
 

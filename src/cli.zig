@@ -1005,6 +1005,8 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>patch <d>\<pkg\><r>                Prepare a package for patching
+        \\  <b><blue>patch-commit <d>\<folder\><r>                Install a modified package
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
@@ -2292,6 +2294,12 @@ pub const Command = struct {
                 Command.Tag.InstallCompletionsCommand => {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
                     Output.flush();
+                },
+                Command.Tag.PatchCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.patch);
+                },
+                Command.Tag.PatchCommitCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.@"patch-commit");
                 },
                 Command.Tag.ExecCommand => {
                     Output.pretty(

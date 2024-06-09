@@ -103,7 +103,7 @@ describe.each([
 
   it("should respect `bigint` option", async () => {
     const primeAsBigInt = await fn(32, { bigint: true });
-    expect(primeAsBigInt).toBeInstanceOf(BigInt);
+    expect(primeAsBigInt).toBeTypeOf("bigint");
 
     const primeAsArrayBuffer = await fn(32, { bigint: false });
     expect(primeAsArrayBuffer).toBeInstanceOf(ArrayBuffer);

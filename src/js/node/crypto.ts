@@ -29,10 +29,19 @@ function bigintToBuffer(bigint) {
   return Buffer.from(paddedHexString, "hex");
 }
 
-function _generatePrime(bits, options){
+function arrayBufferToBigInt(buffer) {
+  const view = new DataView(buffer);
+  let result = 0n;
+  for (let i = 0; i < view.byteLength; i++) {
+    result = (result << 8n) + BigInt(view.getUint8(i));
+  }
+  return result;
+}
+
+function _generatePrime(bits, options) {
   if (options && options.bigint === true) {
     const prime = __generatePrime(bits, options);
-    return BigInt(prime.toString());
+    return arrayBufferToBigInt(prime);
   }
 
   return __generatePrime(bits, options);

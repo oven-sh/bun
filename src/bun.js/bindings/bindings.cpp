@@ -2560,8 +2560,10 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
 
 JSC__JSValue JSC__JSValue__values(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
 {
+    JSC::VM& vm = globalObject->vm();
     JSValue value = JSValue::decode(objectValue);
-    return JSC::objectValues(globalObject, value);
+
+    return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,

@@ -56,7 +56,7 @@ describe.each([
   );
 
   it("should return an ArrayBuffer", async () => {
-    const result = await util.promisify(crypto.generatePrime)(1024);
+    const result = await fn(1024);
     expect(result).toBeInstanceOf(ArrayBuffer);
   });
 });

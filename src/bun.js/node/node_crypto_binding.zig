@@ -56,8 +56,7 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 
                 if (options_value.get(globalThis, "safe")) |v| {
                     if (!v.isBoolean()) {
-                        globalThis.throwInvalidArgumentTypeValue("safe", "boolean", v);
-                        return .zero;
+                        return globalThis.throwInvalidArgumentTypeValue("safe", "boolean", v);
                     }
                     safe = v.toBoolean();
                 }

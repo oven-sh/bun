@@ -48,6 +48,22 @@ describe.each([
     await expect(() => fn(-1)).toThrow(Error); // TODO: should this be `RangeError`?
   });
 
+  it("throws when invalid arguments are passed for the `options`", async () => {
+    await expect(() => fn(1, "")).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, false)).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, [])).toThrow(Error); // TODO: convert to `TypeError`
+
+    await expect(() => fn(1, { safe: "foo" })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { safe: {} })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { safe: [] })).toThrow(Error); // TODO: convert to `TypeError`
+
+    await expect(() => fn(1, { bigint: "baz" })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { bigint: {} })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { bigint: [] })).toThrow(Error); // TODO: convert to `TypeError`
+
+    // TODO: add test cases for `add` and `rem`
+  });
+
   it.each([-1, 0, 2 ** 31, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32])(
     `throws when out of range arguments are supplied`,
     async size => {
@@ -59,6 +75,24 @@ describe.each([
     const result = await fn(1024);
     expect(result).toBeInstanceOf(ArrayBuffer);
   });
+
+  // it.each([
+  //   [12, 11],
+  //   [12, 1],
+  // ])("must respect `add` and `rem`", async ([add, rem]) => {
+  //   const add_buf = Buffer.from([add]);
+  //   const rem_buf = Buffer.from([rem]);
+  //   const prime = await util.promisify(crypto.generatePrime)(32, { add: add_buf, rem: rem_buf });
+  //   expect(prime.readUInt32BE() % add).toBe(rem);
+  // });
+
+  // it("should respect `bigint` option", async () => {
+  //   const primeAsBigInt = await fn(32, { bigint: true });
+  //   expect(primeAsBigInt).toBeInstanceOf(BigInt);
+
+  //   const primeAsArrayBuffer = await fn(32, { bigint: false });
+  //   expect(primeAsArrayBuffer).toBeInstanceOf(ArrayBuffer);
+  // });
 });
 
 // https://github.com/oven-sh/bun/issues/1839

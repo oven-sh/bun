@@ -1,3 +1,4 @@
+const BoringSSL = bun.BoringSSL;
 const std = @import("std");
 const bun = @import("root").bun;
 const Environment = bun.Environment;
@@ -24,4 +25,83 @@ pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         }
     };
     return JSC.JSFunction.create(global, "randomInt", S.cb, 2, .{});
+}
+
+pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const S = struct {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const arguments = callframe.arguments(2).slice();
+            if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("bits", "unsigned integer", arguments[0]);
+
+            var bits: c_int = 0;
+            {
+                const bits_i64 = arguments[0].to(i64);
+                if (bits_i64 < 1) {
+                    globalThis.throwValue(globalThis.createInvalidArgs("bits must be a positive integer", .{}));
+                    return .zero;
+                }
+                bits = @as(c_int, @intCast(bits_i64));
+            }
+
+            var safe: bool = false;
+            var big_int: bool = false;
+
+            const options_value = arguments[1];
+            if (!options_value.isEmptyOrUndefinedOrNull()) {
+                if (!options_value.isObject()) {
+                    globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
+                    return .zero;
+                }
+
+                if (options_value.get(globalThis, "safe")) |v| {
+                    if (!v.isBoolean()) {
+                        globalThis.throwValue(globalThis.createInvalidArgs("safe must be a boolean", .{}));
+                        return .zero;
+                    }
+                    safe = v.toBoolean();
+                }
+                if (options_value.get(globalThis, "bigint")) |v| {
+                    if (!v.isBoolean()) {
+                        globalThis.throwValue(globalThis.createInvalidArgs("bigint must be a boolean", .{}));
+                        return .zero;
+                    }
+                    big_int = v.toBoolean();
+                }
+
+                // TODO: `add`
+                // TODO: `rem`
+            }
+
+            BoringSSL.load();
+
+            const ret: *BoringSSL.BIGNUM = BoringSSL.BN_new();
+
+            if (BoringSSL.BN_generate_prime_ex(ret, bits, @intFromBool(safe), null, null, null) != 1) {
+                // something went wrong.
+                std.debug.print("Failed to generate prime number\n", .{});
+                const err = BoringSSL.ERR_get_error();
+
+                const errStr = BoringSSL.ERR_error_string(err, null);
+                std.debug.print("Error: {s}\n", .{errStr});
+                globalThis.throwOutOfMemory();
+                return .zero;
+            }
+
+            const num_bytes = BoringSSL.BN_num_bytes(ret);
+
+            var bytes: []u8 = undefined;
+            bytes = bun.default_allocator.alloc(u8, num_bytes) catch {
+                // bun.outOfMemory();
+                // return .zero;
+                unreachable;
+            };
+
+            _ = BoringSSL.BN_bn2bin_padded(bytes.ptr, num_bytes, ret);
+            // TODO: add some sort of assertion here
+            // if (ret != num_bytes) { ect.
+
+            return JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
+        }
+    };
+    return JSC.JSFunction.create(global, "generatePrime", S.cb, 1, .{});
 }

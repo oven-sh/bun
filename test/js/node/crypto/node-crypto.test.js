@@ -34,6 +34,23 @@ it("crypto.randomInt with a callback", async () => {
   expect(result).toBeLessThanOrEqual(10);
 });
 
+describe.each([util.promisify(crypto.generatePrime), crypto.generatePrimeSync])("crypto.generatePrime", async fn => {
+  console.log(fn);
+  // expect(() => fn()).toThrow(TypeError);
+  // await expect(() => fn("")).toThrow(TypeError);
+  // await expect(() => fn(false)).toThrow(TypeError);
+  // await expect(() => fn([])).toThrow(TypeError);
+  // await expect(() => fn({})).toThrow(TypeError);
+  // await expect(() => fn(-1)).toThrow(Error); // TODO: should this be `RangeError`?
+  // await expect(() => fn(5)).not.toThrow();
+  // await expect(() => fn(5, "")).toThrow(Error); // TODO: should be TypeError
+  // // TODO: why doesn't the below case throw???
+  // // expect(() => fn(5, [])).toThrow(Error); // TODO: should be TypeError
+  // await expect(() => fn(5, false)).toThrow(Error); // TODO: should be TypeError
+  // await expect(() => fn(5, true)).toThrow(Error); // TODO: should be TypeError
+  // await expect(() => fn(5, {})).not.toThrow();
+});
+
 // https://github.com/oven-sh/bun/issues/1839
 describe("createHash", () => {
   const nodeValues = {

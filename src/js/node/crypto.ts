@@ -21,6 +21,7 @@ const {
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
 const _randomInt = $zig("node_crypto_binding.zig", "randomInt");
+const _generatePrime = $zig("node_crypto_binding.zig", "generatePrime");
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -11980,6 +11981,19 @@ var require_crypto_browserify2 = __commonJS({
 // crypto.js
 var crypto_exports = require_crypto_browserify2();
 
+const validateInt32 = (value, name, min = -2147483648, max = 2147483647) => {
+  // The defaults for min and max correspond to the limits of 32-bit integers.
+  if (typeof value !== "number") {
+    throw new TypeError(`The "${name}" argument must be of type number. Received type ${typeof value}`);
+  }
+  if (!Number.isInteger(value)) {
+    throw new TypeError(`The "${name}" argument must be an integer. Received type ${typeof value}`);
+  }
+  if (value < min || value > max) {
+    throw new RangeError(`The "${name}" argument must be between ${min} and ${max}. Received ${value}`);
+  }
+};
+
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
@@ -12021,7 +12035,22 @@ var DEFAULT_ENCODING = "buffer",
             throw err2;
           }
         }
-      : void 0;
+      : void 0,
+  generatePrimeSync = function (size, options) {
+    return _generatePrime(size, options);
+  },
+  generatePrime = function (size, options, cb) {
+    let callback = cb;
+    if (typeof options === "function") {
+      callback = options;
+    }
+    try {
+      process.nextTick(() => callback(null, _generatePrime(size, options)));
+    } catch (e) {
+      cb(e);
+    }
+  };
+
 timingSafeEqual &&
   (Object.defineProperty(timingSafeEqual, "name", {
     value: "::bunternal::",
@@ -12405,6 +12434,8 @@ __export(crypto_exports, {
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,
+  generatePrimeSync: () => generatePrimeSync,
+  generatePrime: () => generatePrime,
   webcrypto: () => webcrypto,
   subtle: () => _subtle,
 });

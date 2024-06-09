@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 
 #include <JavaScriptCore/JSString.h>
-#include <ZigGlobalObject.h>
+#include "ZigGlobalObject.h"
 
 namespace Bun {
 using namespace JSC;

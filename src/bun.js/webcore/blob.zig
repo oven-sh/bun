@@ -3210,6 +3210,18 @@ pub const Blob = struct {
         return null;
     }
 
+    pub fn getMimeTypeOrContentType(this: *const Blob) ?bun.http.MimeType {
+        if (this.content_type_was_set) {
+            return bun.http.MimeType.init(this.content_type, null, null);
+        }
+
+        if (this.store) |store| {
+            return store.mime_type;
+        }
+
+        return null;
+    }
+
     pub fn getType(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -3621,7 +3633,7 @@ pub const Blob = struct {
                 duped.content_type_was_set = duped.content_type.len > 0;
             }
         } else if (duped.content_type_allocated and duped.allocator != null and include_content_type) {
-            duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch @panic("Out of memory");
+            duped.content_type = bun.default_allocator.dupe(u8, this.content_type) catch bun.outOfMemory();
         }
 
         duped.allocator = null;

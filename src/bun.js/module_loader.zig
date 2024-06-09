@@ -154,11 +154,17 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
 ///
 /// This can technically fail if concurrent access across processes happens, or permission issues.
 /// Errors here should always be ignored.
-fn dumpSource(specifier: string, printer: anytype) void {
-    dumpSourceString(specifier, printer.ctx.getWritten());
+fn dumpSource(vm: *VirtualMachine, specifier: string, printer: anytype) void {
+    dumpSourceString(vm, specifier, printer.ctx.getWritten());
 }
 
-fn dumpSourceString(specifier: string, written: []const u8) void {
+fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8) void {
+    dumpSourceStringFailiable(vm, specifier, written) catch |e| {
+        Output.debugWarn("Failed to dump source string: {}", .{e});
+    };
+}
+
+fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
 
     const BunDebugHolder = struct {
@@ -182,10 +188,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
                 break :brk win_temp_buffer[0 .. temp.len + suffix.len :0];
             },
         };
-        const dir = std.fs.cwd().makeOpenPath(base_name, .{}) catch |e| {
-            Output.debug("Failed to dump source string: {}", .{e});
-            return;
-        };
+        const dir = try std.fs.cwd().makeOpenPath(base_name, .{});
         BunDebugHolder.dir = dir;
         break :dir dir;
     };
@@ -195,15 +198,44 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             else => "/".len,
             .windows => bun.path.windowsFilesystemRoot(dir_path).len,
         };
-        var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
-            Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
-            return;
-        };
+        var parent = try dir.makeOpenPath(dir_path[root_len..], .{});
         defer parent.close();
         parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
-            Output.debug("Failed to dump source string: writeFile {}", .{e});
+            Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
+        if (vm.source_mappings.get(specifier)) |mappings| {
+            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(map_path);
+            const file = try parent.createFile(map_path, .{});
+            defer file.close();
+
+            const source_file = parent.readFileAlloc(
+                bun.default_allocator,
+                specifier,
+                std.math.maxInt(u64),
+            ) catch "";
+
+            var bufw = std.io.bufferedWriter(file.writer());
+            const w = bufw.writer();
+            try w.print(
+                \\{{
+                \\  "version": 3,
+                \\  "file": {},
+                \\  "sourceRoot": "",
+                \\  "sources": [{}],
+                \\  "sourcesContent": [{}],
+                \\  "names": [],
+                \\  "mappings": "{}"
+                \\}}
+            , .{
+                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                js_printer.formatJSONStringUTF8(specifier),
+                js_printer.formatJSONStringUTF8(source_file),
+                mappings.formatVLQs(),
+            });
+            try bufw.flush();
+        }
     } else {
         dir.writeFile(std.fs.path.basename(specifier), written) catch return;
     }
@@ -402,7 +434,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch @panic("out of memory!");
+                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -562,7 +594,7 @@ pub const RuntimeTranspilerStore = struct {
                 }) catch {};
 
                 if (comptime Environment.dump_source) {
-                    dumpSourceString(specifier, entry.output_code.byteSlice());
+                    dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
                 this.resolved_source = ResolvedSource{
@@ -662,7 +694,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer);
+                dumpSource(this.vm, specifier, &printer);
             }
 
             const duped = String.createUTF8(specifier);
@@ -857,7 +889,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
+                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
                 concurrent_task.* = .{
                     .task = JSC.Task.init(this),
                     .auto_delete = true,
@@ -1037,7 +1069,9 @@ pub const ModuleLoader = struct {
                         const package = pm.lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
-                        switch (pm.determinePreinstallState(package, pm.lockfile)) {
+                        var name_and_version_hash: ?u64 = null;
+                        var patchfile_hash: ?u64 = null;
+                        switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
                             .done => {
                                 // we are only truly done if all the dependencies are done.
                                 const current_tasks = pm.total_tasks;
@@ -1433,7 +1467,7 @@ pub const ModuleLoader = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer);
+                dumpSource(jsc_vm, specifier, &printer);
             }
 
             const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1809,7 +1843,7 @@ pub const ModuleLoader = struct {
                     }) catch {};
 
                     if (comptime Environment.allow_assert) {
-                        dumpSourceString(specifier, entry.output_code.byteSlice());
+                        dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                     }
 
                     return ResolvedSource{
@@ -1911,7 +1945,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (comptime Environment.dump_source) {
-                    dumpSource(specifier, &printer);
+                    dumpSource(jsc_vm, specifier, &printer);
                 }
 
                 const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -2245,9 +2279,16 @@ pub const ModuleLoader = struct {
             _specifier.slice(),
             &display_specifier,
         );
-        const path = Fs.Path.init(specifier);
+        var path = Fs.Path.init(specifier);
 
         var virtual_source: ?*logger.Source = null;
+        var virtual_source_to_use: ?logger.Source = null;
+        var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        defer {
+            if (blob_to_deinit != null) {
+                blob_to_deinit.?.deinit();
+            }
+        }
 
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
@@ -2264,6 +2305,39 @@ pub const ModuleLoader = struct {
             }
         }
 
+        if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+            if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+                blob_to_deinit = blob;
+
+                // "file:" loader makes no sense for blobs
+                // so let's default to tsx.
+                if (blob.getFileName()) |filename| {
+                    const current_path = Fs.Path.init(filename);
+
+                    // Only treat it as a file if is a Bun.file()
+                    if (blob.needsToReadFile()) {
+                        path = current_path;
+                    }
+
+                    loader = jsc_vm.bundler.options.loaders.get(current_path.name.ext) orelse .tsx;
+                } else {
+                    loader = .tsx;
+                }
+
+                if (!blob.needsToReadFile()) {
+                    virtual_source_to_use = logger.Source{
+                        .path = path,
+                        .contents = blob.sharedView(),
+                        .key_path = path,
+                    };
+                    virtual_source = &virtual_source_to_use.?;
+                }
+            } else {
+                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.createErrorInstanceWithCode(.MODULE_NOT_FOUND, "Blob not found", .{}).asVoid());
+                return null;
+            }
+        }
+
         if (type_attribute) |attribute| {
             if (attribute.eqlComptime("sqlite")) {
                 loader = .sqlite;
@@ -2275,6 +2349,14 @@ pub const ModuleLoader = struct {
                 loader = .toml;
             } else if (attribute.eqlComptime("file")) {
                 loader = .file;
+            } else if (attribute.eqlComptime("js")) {
+                loader = .js;
+            } else if (attribute.eqlComptime("jsx")) {
+                loader = .jsx;
+            } else if (attribute.eqlComptime("ts")) {
+                loader = .ts;
+            } else if (attribute.eqlComptime("tsx")) {
+                loader = .tsx;
             }
         }
 
@@ -2286,7 +2368,7 @@ pub const ModuleLoader = struct {
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
             const concurrent_loader = loader orelse .file;
-            if (allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
+            if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)

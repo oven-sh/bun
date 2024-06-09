@@ -197,12 +197,22 @@ const Handlers = struct {
     // corker: Corker = .{},
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return;
+        }
+
         const promise = this.promise.trySwap() orelse return;
         const anyPromise = promise.asAnyPromise() orelse return;
         anyPromise.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return true;
+        }
+
         const promise = this.promise.trySwap() orelse return false;
         const anyPromise = promise.asAnyPromise() orelse return false;
         anyPromise.reject(this.globalObject, value);
@@ -233,17 +243,24 @@ const Handlers = struct {
     }
 
     pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, err: []const JSValue) bool {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return false;
+        }
+
+        const globalObject = this.globalObject;
         const onError = this.onError;
+
         if (onError == .zero) {
             if (err.len > 0)
-                _ = this.vm.uncaughtException(this.globalObject, err[0], false);
+                _ = vm.uncaughtException(globalObject, err[0], false);
 
             return false;
         }
 
-        const result = onError.callWithThis(this.globalObject, thisValue, err);
+        const result = onError.callWithThis(globalObject, thisValue, err);
         if (result.isAnyError()) {
-            _ = this.vm.uncaughtException(this.globalObject, result, false);
+            _ = vm.uncaughtException(globalObject, result, false);
         }
 
         return true;
@@ -303,6 +320,10 @@ const Handlers = struct {
     }
 
     pub fn unprotect(this: *Handlers) void {
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+
         if (comptime Environment.allow_assert) {
             bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
@@ -763,7 +784,7 @@ pub const Listener = struct {
             }
         }
 
-        var this: *Listener = handlers.vm.allocator.create(Listener) catch @panic("OOM");
+        var this: *Listener = handlers.vm.allocator.create(Listener) catch bun.outOfMemory();
         this.* = socket;
         this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;
 
@@ -798,7 +819,7 @@ pub const Listener = struct {
         const Socket = NewSocket(ssl);
         bun.assert(ssl == listener.ssl);
 
-        var this_socket = listener.handlers.vm.allocator.create(Socket) catch @panic("Out of memory");
+        var this_socket = listener.handlers.vm.allocator.create(Socket) catch bun.outOfMemory();
         this_socket.* = Socket{
             .handlers = &listener.handlers,
             .this_value = .zero,
@@ -882,6 +903,11 @@ pub const Listener = struct {
 
     pub fn finalize(this: *Listener) callconv(.C) void {
         log("Finalize", .{});
+        if (this.listener) |listener| {
+            this.listener = null;
+            listener.close(this.ssl);
+        }
+
         this.deinit();
     }
 
@@ -890,11 +916,17 @@ pub const Listener = struct {
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);
         bun.assert(this.listener == null);
-        bun.assert(this.handlers.active_connections == 0);
         this.handlers.unprotect();
 
-        if (this.socket_context) |ctx| {
-            ctx.deinit(this.ssl);
+        if (this.handlers.active_connections > 0) {
+            if (this.socket_context) |ctx| {
+                ctx.close(this.ssl);
+            }
+            // TODO: fix this leak.
+        } else {
+            if (this.socket_context) |ctx| {
+                ctx.deinit(this.ssl);
+            }
         }
 
         this.connection.deinit();
@@ -1048,7 +1080,7 @@ pub const Listener = struct {
 
         default_data.ensureStillAlive();
 
-        var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+        var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
         handlers_ptr.* = handlers;
         handlers_ptr.is_server = false;
 
@@ -1057,7 +1089,7 @@ pub const Listener = struct {
         handlers_ptr.promise.set(globalObject, promise_value);
 
         if (ssl_enabled) {
-            var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
+            var tls = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
 
             tls.* = .{
                 .handlers = handlers_ptr,
@@ -1078,7 +1110,7 @@ pub const Listener = struct {
 
             return promise_value;
         } else {
-            var tcp = handlers.vm.allocator.create(TCPSocket) catch @panic("OOM");
+            var tcp = handlers.vm.allocator.create(TCPSocket) catch bun.outOfMemory();
 
             tcp.* = .{
                 .handlers = handlers_ptr,
@@ -1144,6 +1176,10 @@ fn NewSocket(comptime ssl: bool) type {
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
         detached: bool = false,
+
+        /// Prevent onClose from calling into JavaScript while we are finalizing
+        finalizing: bool = false,
+
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
@@ -1225,7 +1261,11 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
+
             var vm = handlers.vm;
+            if (vm.isShuttingDown()) {
+                return;
+            }
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
 
@@ -1249,7 +1289,10 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
-            if (callback == .zero) return;
+            if (callback == .zero or this.finalizing) return;
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1275,6 +1318,9 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
+            if (vm.isShuttingDown()) {
+                return;
+            }
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
@@ -1340,17 +1386,16 @@ fn NewSocket(comptime ssl: bool) type {
                 if (!this.detached) {
                     // we have to close the socket before the socket context is closed
                     // otherwise we will get a segfault
-                    // uSockets will defer closing the TCP socket until the next tick
+                    // uSockets will defer freeing the TCP socket until the next tick
                     if (!this.socket.isClosed()) {
                         this.detached = true;
-                        this.socket.close(0, null);
+                        this.socket.close(.normal);
                         // onClose will call markInactive again
                         return;
                     }
                 }
                 this.is_active = false;
                 const vm = this.handlers.vm;
-
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .Release);
@@ -1460,7 +1505,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
 
             const callback = handlers.onEnd;
-            if (callback == .zero) {
+            if (callback == .zero or handlers.vm.isShuttingDown()) {
                 this.poll_ref.unref(handlers.vm);
 
                 // If you don't handle TCP fin, we assume you're done.
@@ -1488,7 +1533,6 @@ fn NewSocket(comptime ssl: bool) type {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
             if (this.detached) return;
-
             const authorized = if (success == 1) true else false;
 
             this.authorized = authorized;
@@ -1496,6 +1540,10 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             var callback = handlers.onHandshake;
             var is_open = false;
+
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             // Use open callback when handshake is not provided
             if (callback == .zero) {
@@ -1519,6 +1567,15 @@ fn NewSocket(comptime ssl: bool) type {
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
                 result = callback.callWithThis(globalObject, this_value, &[_]JSValue{this_value});
+
+                // only call onOpen once for clients
+                if (!handlers.is_server) {
+                    // clean onOpen callback so only called in the first handshake and not in every renegotiation
+                    // on servers this would require a different approach but it's not needed because our servers will not call handshake multiple times
+                    // servers don't support renegotiation
+                    this.handlers.onOpen.unprotect();
+                    this.handlers.onOpen = .zero;
+                }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
                 var authorization_error: JSValue = undefined;
@@ -1554,12 +1611,22 @@ fn NewSocket(comptime ssl: bool) type {
             this.detached = true;
             defer this.markInactive();
 
+            if (this.finalizing) {
+                return;
+            }
+
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
+            const vm = handlers.vm;
+            this.poll_ref.unref(vm);
 
             const callback = handlers.onClose;
+
             if (callback == .zero)
                 return;
+
+            if (vm.isShuttingDown()) {
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1585,7 +1652,10 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onData;
-            if (callback == .zero) return;
+            if (callback == .zero or this.finalizing) return;
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1951,6 +2021,19 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn terminate(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (!this.detached) {
+                this.socket.close(.failure);
+            }
+
+            return JSValue.jsUndefined();
+        }
+
         pub fn shutdown(
             this: *This,
             _: *JSC.JSGlobalObject,
@@ -2012,10 +2095,11 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) callconv(.C) void {
             log("finalize() {d}", .{@intFromPtr(this)});
+            this.finalizing = true;
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {
-                    this.socket.close(0, null);
+                    this.socket.close(.failure);
                 }
             }
 
@@ -2939,8 +3023,8 @@ fn NewSocket(comptime ssl: bool) type {
             const ext_size = @sizeOf(WrappedSocket);
 
             const is_server = this.handlers.is_server;
-            var tls = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
-            var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+            var tls = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
+            var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
@@ -2979,8 +3063,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             tls.socket = new_socket;
 
-            var raw = handlers.vm.allocator.create(TLSSocket) catch @panic("OOM");
-            var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
+            var raw = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
+            var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
                 .vm = globalObject.bunVM(),
                 .globalObject = globalObject,

@@ -43,6 +43,8 @@ for (let key in bunEnv) {
   }
 }
 
+delete bunEnv.NODE_ENV;
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
@@ -414,7 +416,7 @@ export async function toMatchNodeModulesAt(lockfile: any, root: string) {
             return {
               pass: false,
               message: () => `
-Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}       
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}
 Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             };
           }
@@ -572,6 +574,17 @@ declare global {
      * **INTERNAL USE ONLY, NOT An API IN BUN**
      */
     toUnixString(): string;
+  }
+
+  interface String {
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    isLatin1(): boolean;
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    isUTF16(): boolean;
   }
 }
 
@@ -948,4 +961,54 @@ export function disableAggressiveGCScope() {
       Bun.unsafe.gcAggressionLevel(gc);
     },
   };
+}
+
+String.prototype.isLatin1 = function () {
+  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
+};
+
+String.prototype.isUTF16 = function () {
+  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
+};
+
+expect.extend({
+  toBeLatin1String(actual: unknown) {
+    if ((actual as string).isLatin1()) {
+      return {
+        pass: true,
+        message: () => `Expected ${actual} to be a Latin1 string`,
+      };
+    }
+
+    return {
+      pass: false,
+      message: () => `Expected ${actual} to be a Latin1 string`,
+    };
+  },
+  toBeUTF16String(actual: unknown) {
+    if ((actual as string).isUTF16()) {
+      return {
+        pass: true,
+        message: () => `Expected ${actual} to be a UTF16 string`,
+      };
+    }
+
+    return {
+      pass: false,
+      message: () => `Expected ${actual} to be a UTF16 string`,
+    };
+  },
+});
+
+interface BunHarnessTestMatchers {
+  toBeLatin1String(): void;
+  toBeUTF16String(): void;
+  toHaveTestTimedOutAfter(expected: number): void;
+  toBeBinaryType(expected: keyof typeof binaryTypes): void;
+  toRun(optionalStdout?: string): void;
+}
+
+declare module "bun:test" {
+  interface Matchers<T> extends BunHarnessTestMatchers {}
+  interface AsymmetricMatchers extends BunHarnessTestMatchers {}
 }

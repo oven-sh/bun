@@ -8,6 +8,7 @@ const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
 const Async = @import("async");
 const uv = bun.windows.libuv;
+const StatWatcherScheduler = @import("../node/node_fs_stat_watcher.zig").StatWatcherScheduler;
 const Timer = @This();
 
 /// TimeoutMap is map of i32 to nullable Timeout structs
@@ -30,8 +31,8 @@ pub const All = struct {
         .context = {},
     },
     active_timer_count: i32 = 0,
-    uv_timer: if (Environment.isWindows) uv.uv_timer_t else void =
-        if (Environment.isWindows) std.mem.zeroes(uv.uv_timer_t) else {},
+    uv_timer: if (Environment.isWindows) uv.Timer else void =
+        if (Environment.isWindows) std.mem.zeroes(uv.Timer) else {},
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -89,7 +90,7 @@ pub const All = struct {
         }
     }
 
-    pub fn onUVTimer(uv_timer_t: *uv.uv_timer_t) callconv(.C) void {
+    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
         const all = @fieldParentPtr(All, "uv_timer", uv_timer_t);
         const vm = @fieldParentPtr(JSC.VirtualMachine, "timer", all);
         all.drainTimers(vm);
@@ -712,12 +713,14 @@ pub const EventLoopTimer = struct {
         TimerCallback,
         TimerObject,
         TestRunner,
+        StatWatcherScheduler,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
                 .TimerCallback => TimerCallback,
                 .TimerObject => TimerObject,
                 .TestRunner => JSC.Jest.TestRunner,
+                .StatWatcherScheduler => StatWatcherScheduler,
             };
         }
     };
@@ -774,6 +777,9 @@ pub const EventLoopTimer = struct {
                 var container: *t.Type() = @fieldParentPtr(t.Type(), "event_loop_timer", this);
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
+                }
+                if (comptime t.Type() == StatWatcherScheduler) {
+                    return container.timerCallback();
                 }
 
                 if (comptime t.Type() == JSC.Jest.TestRunner) {

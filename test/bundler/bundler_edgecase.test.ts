@@ -1104,6 +1104,73 @@ describe("bundler", () => {
       },
     },
   });
+  // chunk-concat forgets to de-duplicate source indicies
+  // chunk-concat ignores all but the first instance of a chunk
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        const a = new TextEncoder();
+        console.log('hey!')
+        const d = new TextEncoder();
+
+        const b = { hello: 'world' };
+
+        const c = new Set([
+        ]);
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../entry.js"],
+        mappingsExactMatch:
+          "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
+      },
+    },
+  });
+  itBundled("edgecase/NoUselessConstructorTS", {
+    files: {
+      "/entry.ts": `
+        class A {
+          constructor(...args) {
+            console.log(JSON.stringify({ args, self: this }));
+          }
+          field = 1;
+        }
+        class B extends A {}
+        class C extends A { field = 2 }
+        class D extends A { public field = 3 }
+        class E extends A { constructor(public y: number, a) { super(a); }; public field = 4 }
+        new A("arg1", "arg2");
+        new B("arg1", "arg2");
+        new C("arg1", "arg2");
+        new D("arg1", "arg2");
+        new E("arg1", "arg2");
+      `,
+    },
+    run: {
+      stdout: `
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg2"],"self":{"field":1}}
+      `,
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("out.js");
+      const count = content.split("constructor").length - 1;
+      expect(count, "should only emit two constructors: " + content).toBe(2);
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

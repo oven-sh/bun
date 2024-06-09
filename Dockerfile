@@ -26,6 +26,7 @@ ARG CMAKE_BUILD_TYPE=Release
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
 ARG ZIG_VERSION="0.12.0-dev.1828+225fe6ddb"
+ARG ZIG_VERSION_SHORT="0.12.0-dev.1828"
 
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION
@@ -139,10 +140,11 @@ RUN install_packages \
 FROM bun-base as bun-base-with-zig
 
 ARG ZIG_VERSION
+ARG ZIG_VERSION_SHORT
 ARG BUILD_MACHINE_ARCH
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
 ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
-ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
+ARG ZIG_URL=https://github.com/oven-sh/zig/releases/download/${ZIG_VERSION_SHORT}/zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}.tar.xz
 ARG ZIG_LOCAL_CACHE_DIR=/zig-cache
 ENV ZIG_LOCAL_CACHE_DIR=${ZIG_LOCAL_CACHE_DIR}
 
@@ -256,15 +258,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN install_packages autoconf automake libtool pkg-config 
 
-COPY Makefile ${BUN_DIR}/Makefile
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make libarchive \
-  && rm -rf src/deps/libarchive Makefile
+  && bash ./scripts/build-libarchive.sh && rm -rf src/deps/libarchive .scripts
 
 FROM bun-base as tinycc
 

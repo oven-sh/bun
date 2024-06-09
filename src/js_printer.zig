@@ -343,9 +343,21 @@ const JSONFormatter = struct {
     }
 };
 
+const JSONFormatterUTF8 = struct {
+    input: []const u8,
+
+    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+    }
+};
+
 /// Expects latin1
 pub fn formatJSONString(text: []const u8) JSONFormatter {
-    return JSONFormatter{ .input = text };
+    return .{ .input = text };
+}
+
+pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
+    return .{ .input = text };
 }
 
 pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
@@ -371,13 +383,15 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
             } else break :brk strings.latin1ToCodepointAssumeNotASCII(char, i32);
         };
         if (canPrintWithoutEscape(i32, c, false)) {
-            const remain = text[@as(usize, width)..];
+            const remain = text[width..];
             if (encoding != .utf8 and width > 0) {
                 var codepoint_bytes: [4]u8 = undefined;
                 std.mem.writeInt(i32, &codepoint_bytes, c, .little);
                 try writer.writeAll(
                     codepoint_bytes[0..strings.encodeWTF8Rune(codepoint_bytes[0..4], c)],
                 );
+            } else if (encoding == .utf8) {
+                try writer.writeAll(text[0..width]);
             }
 
             if (strings.indexOfNeedsEscape(remain)) |j| {
@@ -523,6 +537,7 @@ pub const Options = struct {
     minify_syntax: bool = false,
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
+    has_run_symbol_renamer: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
@@ -2939,29 +2954,54 @@ fn NewPrinter(
                 },
                 .e_number => |e| {
                     const value = e.value;
+                    p.addSourceMapping(expr.loc);
 
                     const absValue = @abs(value);
 
                     if (std.math.isNan(value)) {
                         p.printSpaceBeforeIdentifier();
-                        p.addSourceMapping(expr.loc);
+
                         p.print("NaN");
-                    } else if (std.math.isPositiveInf(value)) {
-                        p.printSpaceBeforeIdentifier();
-                        p.addSourceMapping(expr.loc);
-                        p.print("Infinity");
-                    } else if (std.math.isNegativeInf(value)) {
-                        if (level.gte(.prefix)) {
-                            p.addSourceMapping(expr.loc);
-                            p.print("(-Infinity)");
+                    } else if (std.math.isPositiveInf(value) or std.math.isNegativeInf(value)) {
+                        const wrap = ((!p.options.has_run_symbol_renamer or p.options.minify_syntax) and level.gte(.multiply)) or
+                            (std.math.isNegativeInf(value) and level.gte(.prefix));
+
+                        if (wrap) {
+                            p.print("(");
+                        }
+
+                        if (std.math.isNegativeInf(value)) {
+                            p.printSpaceBeforeOperator(.un_neg);
+                            p.print("-");
                         } else {
                             p.printSpaceBeforeIdentifier();
-                            p.addSourceMapping(expr.loc);
-                            p.print("(-Infinity)");
+                        }
+
+                        // If we are not running the symbol renamer, we must not print "Infinity".
+                        // Some code may assign `Infinity` to another idenitifier.
+                        //
+                        // We do not want:
+                        //
+                        //   const Infinity = 1 / 0
+                        //
+                        // to be transformed into:
+                        //
+                        //   const Infinity = Infinity
+                        //
+                        if (is_json or (!p.options.minify_syntax and p.options.has_run_symbol_renamer)) {
+                            p.print("Infinity");
+                        } else if (p.options.minify_whitespace) {
+                            p.print("1/0");
+                        } else {
+                            p.print("1 / 0");
+                        }
+
+                        if (wrap) {
+                            p.print(")");
                         }
                     } else if (!std.math.signbit(value)) {
                         p.printSpaceBeforeIdentifier();
-                        p.addSourceMapping(expr.loc);
+
                         p.printNonNegativeFloat(absValue);
 
                         // Remember the end of the latest number
@@ -2972,13 +3012,11 @@ fn NewPrinter(
                         // "!isNaN(value)" because we need this to be true for "-0" and "-0 < 0"
                         // is false.
                         p.print("(-");
-                        p.addSourceMapping(expr.loc);
                         p.printNonNegativeFloat(absValue);
                         p.print(")");
                     } else {
                         p.printSpaceBeforeOperator(Op.Code.un_neg);
                         p.print("-");
-                        p.addSourceMapping(expr.loc);
                         p.printNonNegativeFloat(absValue);
 
                         // Remember the end of the latest number

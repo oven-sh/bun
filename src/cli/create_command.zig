@@ -271,8 +271,8 @@ pub const CreateCommand = struct {
         const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
 
         var progress = std.Progress{};
-        var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+        var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
 
         // alacritty is fast
         if (env_loader.map.get("ALACRITTY_LOG") != null) {
@@ -456,7 +456,8 @@ pub const CreateCommand = struct {
                 node.name = "Copying files";
                 progress.refresh();
 
-                const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{}) catch |err| {
+                const abs_template_path = filesystem.abs(&template_parts);
+                const template_dir = std.fs.openDirAbsolute(abs_template_path, .{ .iterate = true }) catch |err| {
                     node.end();
                     progress.refresh();
 
@@ -473,6 +474,25 @@ pub const CreateCommand = struct {
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
+
+                var destination_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
+                const dst_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows)
+                    strings.withoutTrailingSlash(destination)
+                else {};
+                if (comptime Environment.isWindows) {
+                    strings.copyU8IntoU16(&destination_buf, dst_without_trailing_slash);
+                    destination_buf[dst_without_trailing_slash.len] = std.fs.path.sep;
+                }
+
+                var template_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
+                const src_without_trailing_slash: if (Environment.isWindows) string else void = if (comptime Environment.isWindows)
+                    strings.withoutTrailingSlash(abs_template_path)
+                else {};
+                if (comptime Environment.isWindows) {
+                    strings.copyU8IntoU16(&template_path_buf, src_without_trailing_slash);
+                    template_path_buf[src_without_trailing_slash.len] = std.fs.path.sep;
+                }
+
                 const destination_dir = destination_dir__;
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
@@ -484,48 +504,105 @@ pub const CreateCommand = struct {
                         walker: *Walker,
                         node_: *std.Progress.Node,
                         progress_: *std.Progress,
+                        dst_base_len: if (Environment.isWindows) usize else void,
+                        dst_buf: if (Environment.isWindows) *bun.WPathBuffer else void,
+                        src_base_len: if (Environment.isWindows) usize else void,
+                        src_buf: if (Environment.isWindows) *bun.WPathBuffer else void,
                     ) !void {
                         while (try walker.next()) |entry| {
+                            if (comptime Environment.isWindows) {
+                                if (entry.kind != .file and entry.kind != .directory) continue;
+
+                                @memcpy(dst_buf[dst_base_len..][0..entry.path.len], entry.path);
+                                dst_buf[dst_base_len + entry.path.len] = 0;
+                                const dst = dst_buf[0 .. dst_base_len + entry.path.len :0];
+
+                                @memcpy(src_buf[src_base_len..][0..entry.path.len], entry.path);
+                                src_buf[src_base_len + entry.path.len] = 0;
+                                const src = src_buf[0 .. src_base_len + entry.path.len :0];
+
+                                switch (entry.kind) {
+                                    .directory => {
+                                        if (bun.windows.CreateDirectoryExW(src.ptr, dst.ptr, null) == 0) {
+                                            bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
+                                        }
+                                    },
+                                    .file => {
+                                        defer node_.completeOne();
+                                        if (bun.windows.CopyFileW(src.ptr, dst.ptr, 0) == bun.windows.FALSE) {
+                                            if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                                bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};
+                                                if (bun.windows.CopyFileW(src.ptr, dst.ptr, 0) != bun.windows.FALSE) {
+                                                    continue;
+                                                }
+                                            }
+
+                                            if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
+                                                Output.err(err, "failed to copy file {}", .{
+                                                    bun.fmt.fmtOSPath(entry.path, .{}),
+                                                });
+                                            } else {
+                                                Output.errGeneric("failed to copy file {}", .{
+                                                    bun.fmt.fmtOSPath(entry.path, .{}),
+                                                });
+                                            }
+                                            node_.end();
+                                            progress_.refresh();
+                                            Global.crash();
+                                        }
+                                    },
+                                    else => unreachable,
+                                }
+
+                                continue;
+                            }
                             if (entry.kind != .file) continue;
 
-                            const createFile = if (comptime Environment.isWindows) std.fs.Dir.createFileW else std.fs.Dir.createFile;
-                            var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                            var outfile = destination_dir_.createFile(entry.path, .{}) catch brk: {
                                 if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
                                     bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
                                 }
-                                break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
+                                break :brk destination_dir_.createFile(entry.path, .{}) catch |err| {
                                     node_.end();
-
                                     progress_.refresh();
-
-                                    Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                                    Global.exit(1);
+                                    Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                    Global.crash();
                                 };
                             };
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            const openFile = if (comptime Environment.isWindows) std.fs.Dir.openFileW else std.fs.Dir.openFile;
-                            var infile = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
-                            if (comptime Environment.isPosix) {
-                                // Assumption: you only really care about making sure something that was executable is still executable
-                                const stat = infile.stat() catch continue;
-                                _ = C.fchmod(outfile.handle, @intCast(stat.mode));
-                            } else {
-                                @panic("TODO on Windows");
+                            // Assumption: you only really care about making sure something that was executable is still executable
+                            switch (bun.sys.fstat(bun.toFD(infile.handle))) {
+                                .err => {},
+                                .result => |stat| {
+                                    _ = bun.sys.fchmod(bun.toFD(outfile.handle), @intCast(stat.mode));
+                                },
                             }
 
                             CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
-                                Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                                Global.exit(1);
+                                node_.end();
+                                progress_.refresh();
+                                Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                Global.crash();
                             };
                         }
                     }
                 };
 
-                try FileCopier.copy(destination_dir, &walker_, node, &progress);
+                try FileCopier.copy(
+                    destination_dir,
+                    &walker_,
+                    node,
+                    &progress,
+                    if (comptime Environment.isWindows) dst_without_trailing_slash.len + 1 else {},
+                    if (comptime Environment.isWindows) &destination_buf else {},
+                    if (comptime Environment.isWindows) src_without_trailing_slash.len + 1 else {},
+                    if (comptime Environment.isWindows) &template_path_buf else {},
+                );
 
                 package_json_file = destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null;
 
@@ -1548,18 +1625,34 @@ pub const CreateCommand = struct {
             , .{create_react_app_entry_point_path});
         }
 
-        Output.pretty(
-            \\
-            \\<d>#<r><b> To get started, run:<r>
-            \\
-            \\  <b><cyan>cd {s}<r>
-            \\  <b><cyan>{s}<r>
-            \\
-            \\
-        , .{
-            filesystem.relativeTo(destination),
-            start_command,
-        });
+        const rel_destination = filesystem.relativeTo(destination);
+        const is_empty_destination = rel_destination.len == 0;
+
+        if (is_empty_destination) {
+            Output.pretty(
+                \\
+                \\<d>#<r><b> To get started, run:<r>
+                \\
+                \\  <b><cyan>{s}<r>
+                \\
+                \\
+            , .{
+                start_command,
+            });
+        } else {
+            Output.pretty(
+                \\
+                \\<d>#<r><b> To get started, run:<r>
+                \\
+                \\  <b><cyan>cd {s}<r>
+                \\  <b><cyan>{s}<r>
+                \\
+                \\
+            , .{
+                rel_destination,
+                start_command,
+            });
+        }
 
         Output.flush();
 
@@ -2187,8 +2280,8 @@ pub const CreateListExamplesCommand = struct {
         env_loader.loadProcess();
 
         var progress = std.Progress{};
-        const node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+        const node = progress.start("Fetching manifest", 0);
         progress.refresh();
 
         const examples = try Example.fetchAllLocalAndRemote(ctx, node, &env_loader, filesystem);

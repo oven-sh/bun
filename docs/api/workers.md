@@ -13,8 +13,7 @@ Like in browsers, [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Wo
 ### From the main thread
 
 ```js#Main_thread
-const workerURL = new URL("worker.ts", import.meta.url).href;
-const worker = new Worker(workerURL);
+const worker = new Worker("./worker.ts");
 
 worker.postMessage("hello");
 worker.onmessage = event => {
@@ -50,6 +49,38 @@ const worker = new Worker("/not-found.js");
 ```
 
 The specifier passed to `Worker` is resolved relative to the project root (like typing `bun ./path/to/file.js`).
+
+### `blob:` URLs
+
+As of Bun v1.1.13, you can also pass a `blob:` URL to `Worker`. This is useful for creating workers from strings or other sources.
+
+```js
+const blob = new Blob(
+  [
+    `
+  self.onmessage = (event: MessageEvent) => postMessage(event.data)`,
+  ],
+  {
+    type: "application/typescript",
+  },
+);
+const url = URL.createObjectURL(blob);
+const worker = new Worker(url);
+```
+
+Like the rest of Bun, workers created from `blob:` URLs support TypeScript, JSX, and other file types out of the box. You can communicate it should be loaded via typescript either via `type` or by passing a `filename` to the `File` constructor.
+
+```js
+const file = new File(
+  [
+    `
+  self.onmessage = (event: MessageEvent) => postMessage(event.data)`,
+  ],
+  "worker.ts",
+);
+const url = URL.createObjectURL(file);
+const worker = new Worker(url);
+```
 
 ### `"open"`
 

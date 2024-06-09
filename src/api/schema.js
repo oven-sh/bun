@@ -148,14 +148,9 @@ function encodeStackFrame(message, bb) {
 function decodeStackFramePosition(bb) {
   var result = {};
 
-  result["source_offset"] = bb.readInt32();
   result["line"] = bb.readInt32();
-  result["line_start"] = bb.readInt32();
-  result["line_stop"] = bb.readInt32();
-  result["column_start"] = bb.readInt32();
-  result["column_stop"] = bb.readInt32();
-  result["expression_start"] = bb.readInt32();
-  result["expression_stop"] = bb.readInt32();
+  result["column"] = bb.readInt32();
+
   return result;
 }
 

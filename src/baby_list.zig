@@ -29,6 +29,18 @@ pub fn BabyList(comptime Type: type) type {
             this.* = .{};
         }
 
+        pub fn orderedRemove(this: *@This(), index: usize) Type {
+            var l = this.list();
+            defer this.update(l);
+            return l.orderedRemove(index);
+        }
+
+        pub fn swapRemove(this: *@This(), index: usize) Type {
+            var l = this.list();
+            defer this.update(l);
+            return l.swapRemove(index);
+        }
+
         pub fn contains(this: @This(), item: []const Type) bool {
             return this.len > 0 and @intFromPtr(item.ptr) >= @intFromPtr(this.ptr) and @intFromPtr(item.ptr) < @intFromPtr(this.ptr) + this.len;
         }

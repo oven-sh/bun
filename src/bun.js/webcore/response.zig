@@ -560,7 +560,7 @@ pub const Response = struct {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
                 if (response_init.asDirect(Request)) |req| {
-                    if (req.headers) |headers| {
+                    if (req.getFetchHeaders()) |headers| {
                         if (!headers.isEmpty()) {
                             result.headers = headers.cloneThis(ctx);
                         }
@@ -768,6 +768,22 @@ pub const Fetch = struct {
 
         tracker: JSC.AsyncTaskTracker,
 
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+        pub fn ref(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchAdd(1, .Monotonic);
+            bun.debugAssert(count > 0);
+        }
+
+        pub fn deref(this: *FetchTasklet) void {
+            const count = this.ref_count.fetchSub(1, .Monotonic);
+            bun.debugAssert(count > 0);
+
+            if (count == 1) {
+                this.deinit();
+            }
+        }
+
         pub const HTTPRequestBody = union(enum) {
             AnyBlob: AnyBlob,
             Sendfile: http.Sendfile,
@@ -816,6 +832,11 @@ pub const Fetch = struct {
                 this.hostname = null;
             }
 
+            if (this.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+                this.result.certificate_info = null;
+            }
+
             this.request_headers.entries.deinit(allocator);
             this.request_headers.buf.deinit(allocator);
             this.request_headers = Headers{ .allocator = undefined };
@@ -832,8 +853,9 @@ pub const Fetch = struct {
             this.response_buffer.deinit();
             this.response.deinit();
             if (this.native_response) |response| {
-                response.unref();
                 this.native_response = null;
+
+                response.unref();
             }
 
             this.readable_stream_ref.deinit();
@@ -841,8 +863,10 @@ pub const Fetch = struct {
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
-            if (this.abort_reason != .zero)
+            if (this.abort_reason != .zero) {
                 this.abort_reason.unprotect();
+                this.abort_reason = .zero;
+            }
 
             this.check_server_identity.deinit();
 
@@ -852,8 +876,13 @@ pub const Fetch = struct {
             }
         }
 
-        pub fn deinit(this: *FetchTasklet) void {
+        fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
+
+            bun.assert(this.ref_count.load(.Monotonic) == 0);
+
+            this.clearData();
+
             var reporter = this.memory_reporter;
             const allocator = reporter.allocator();
 
@@ -880,7 +909,6 @@ pub const Fetch = struct {
         }
 
         pub fn onBodyReceived(this: *FetchTasklet) void {
-            this.mutex.lock();
             const success = this.result.isSuccess();
             const globalThis = this.global_this;
             const is_done = !success or !this.result.has_more;
@@ -891,13 +919,11 @@ pub const Fetch = struct {
                     this.scheduled_response_buffer.reset();
                 }
 
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (is_done) {
                     const vm = globalThis.bunVM();
                     this.poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                 }
             }
 
@@ -1030,14 +1056,18 @@ pub const Fetch = struct {
         pub fn onProgressUpdate(this: *FetchTasklet) void {
             JSC.markBinding(@src());
             log("onProgressUpdate", .{});
+            defer this.deref();
+            this.mutex.lock();
+            this.has_schedule_callback.store(false, .Monotonic);
+
             if (this.is_waiting_body) {
-                return this.onBodyReceived();
+                this.onBodyReceived();
+                return;
             }
             // if we abort because of cert error
             // we wait the Http Client because we already have the response
             // we just need to deinit
             const globalThis = this.global_this;
-            this.mutex.lock();
 
             if (this.is_waiting_abort) {
                 // has_more will be false when the request is aborted/finished
@@ -1050,8 +1080,7 @@ pub const Fetch = struct {
                 const vm = globalThis.bunVM();
 
                 poll_ref.unref(vm);
-                this.clearData();
-                this.deinit();
+                this.deref();
                 return;
             }
             const promise_value = this.promise.valueOrEmpty();
@@ -1062,11 +1091,9 @@ pub const Fetch = struct {
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 log("onProgressUpdate: promise_value is null", .{});
                 this.promise.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 poll_ref.unref(vm);
-                this.clearData();
-                this.deinit();
+                this.deref();
                 return;
             }
 
@@ -1089,21 +1116,18 @@ pub const Fetch = struct {
 
                     tracker.didDispatch(globalThis);
                     this.promise.deinit();
-                    this.has_schedule_callback.store(false, .Monotonic);
                     this.mutex.unlock();
                     if (this.is_waiting_abort) {
                         return;
                     }
                     // we are already done we can deinit
                     poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                     return;
                 }
                 // everything ok
                 if (this.metadata == null) {
                     log("onProgressUpdate: metadata is null", .{});
-                    this.has_schedule_callback.store(false, .Monotonic);
                     // cannot continue without metadata
                     this.mutex.unlock();
                     return;
@@ -1116,12 +1140,10 @@ pub const Fetch = struct {
                 log("onProgressUpdate: promise_value is not null", .{});
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
-                this.has_schedule_callback.store(false, .Monotonic);
                 this.mutex.unlock();
                 if (!this.is_waiting_body) {
                     poll_ref.unref(vm);
-                    this.clearData();
-                    this.deinit();
+                    this.deref();
                 }
             }
             const success = this.result.isSuccess();
@@ -1696,19 +1718,38 @@ pub const Fetch = struct {
             return node;
         }
 
-        pub fn callback(task: *FetchTasklet, result: http.HTTPClientResult) void {
+        pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+            task.ref();
+
             task.mutex.lock();
             defer task.mutex.unlock();
+
+            task.http.?.* = async_http.*;
+            task.http.?.response_buffer = async_http.response_buffer;
+
             log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
 
+            const prev_metadata = task.result.metadata;
+            const prev_cert_info = task.result.certificate_info;
             task.result = result;
 
-            // metadata should be provided only once so we preserve it until we consume it
-            if (result.metadata) |metadata| {
-                log("added callback metadata", .{});
-                bun.assert(task.metadata == null);
-                task.metadata = metadata;
+            // Preserve pending certificate info if it was preovided in the previous update.
+            if (task.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    task.result.certificate_info = cert_info;
+                }
             }
+
+            // metadata should be provided only once
+            if (result.metadata orelse prev_metadata) |metadata| {
+                log("added callback metadata", .{});
+                if (task.metadata == null) {
+                    task.metadata = metadata;
+                }
+
+                task.result.metadata = null;
+            }
+
             task.body_size = result.body_size;
 
             const success = result.isSuccess();
@@ -1729,11 +1770,12 @@ pub const Fetch = struct {
                 }
                 if (success and result.has_more) {
                     // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    task.deref();
                     return;
                 }
             } else {
                 if (success) {
-                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch @panic("OOM");
+                    _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch bun.outOfMemory();
                 }
                 // reset for reuse
                 task.response_buffer.reset();
@@ -1741,6 +1783,7 @@ pub const Fetch = struct {
 
             if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
+                    task.deref();
                     return;
                 }
             }
@@ -1799,7 +1842,7 @@ pub const Fetch = struct {
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;
-        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch @panic("out of memory");
+        var memory_reporter = bun.default_allocator.create(JSC.MemoryReportingAllocator) catch bun.outOfMemory();
         // used to clean up dynamically allocated memory on error (a poor man's errdefer)
         var is_error = false;
         var allocator = memory_reporter.wrap(bun.default_allocator);
@@ -1850,7 +1893,12 @@ pub const Fetch = struct {
         var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
         var url_proxy_buffer: []const u8 = "";
-        var is_file_url = false;
+        const URLType = enum {
+            remote,
+            file,
+            blob,
+        };
+        var url_type = URLType.remote;
         var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
 
@@ -1918,9 +1966,13 @@ pub const Fetch = struct {
                     err,
                 );
             };
-            is_file_url = url.isFile();
+            if (url.isFile()) {
+                url_type = URLType.file;
+            } else if (url.isBlob()) {
+                url_type = URLType.blob;
+            }
             url_proxy_buffer = url.href;
-            if (!is_file_url) {
+            if (url_type == URLType.remote) {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
                         if (options.fastGetOrElse(ctx.ptr(), .method, slow_getters)) |method_| {
@@ -1971,7 +2023,7 @@ pub const Fetch = struct {
                                 }
                                 headers = Headers.from(headers__, allocator, .{ .body = &body }) catch unreachable;
                                 headers__.deref();
-                            } else if (request.headers) |head| {
+                            } else if (request.getFetchHeaders()) |head| {
                                 if (head.fastGet(JSC.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
                                     if (hostname) |host| {
                                         allocator.free(host);
@@ -1980,7 +2032,7 @@ pub const Fetch = struct {
                                 }
                                 headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
                             }
-                        } else if (request.headers) |head| {
+                        } else if (request.getFetchHeaders()) |head| {
                             headers = Headers.from(head, allocator, .{ .body = &body }) catch unreachable;
                         }
 
@@ -2063,7 +2115,11 @@ pub const Fetch = struct {
                                     return .zero;
                                 };
                                 url = ZigURL.parse(buffer[0..url.href.len]);
-                                is_file_url = url.isFile();
+                                if (url.isFile()) {
+                                    url_type = URLType.file;
+                                } else if (url.isBlob()) {
+                                    url_type = URLType.blob;
+                                }
 
                                 proxy = ZigURL.parse(buffer[url.href.len..]);
                                 allocator.free(url_proxy_buffer);
@@ -2117,7 +2173,7 @@ pub const Fetch = struct {
 
                     if (get_fetch_headers: {
                         if (can_use_fast_getters)
-                            break :get_fetch_headers request.headers;
+                            break :get_fetch_headers request.getFetchHeaders();
 
                         if (first_arg.fastGet(globalThis, .headers)) |headers_value| {
                             // Faster path: existing FetchHeaders object:
@@ -2205,9 +2261,13 @@ pub const Fetch = struct {
                 return JSPromise.rejectedPromiseValue(globalThis, err);
             };
             url_proxy_buffer = url.href;
-            is_file_url = url.isFile();
+            if (url.isFile()) {
+                url_type = URLType.file;
+            } else if (url.isBlob()) {
+                url_type = URLType.blob;
+            }
 
-            if (!is_file_url) {
+            if (url_type == URLType.remote) {
                 if (args.nextEat()) |options| {
                     if (options.isObject() or options.jsType() == .DOMWrapper) {
                         if (options.fastGet(ctx.ptr(), .method)) |method_| {
@@ -2377,7 +2437,7 @@ pub const Fetch = struct {
         // This is not 100% correct.
         // We don't pass along headers, we ignore method, we ignore status code...
         // But it's better than status quo.
-        if (is_file_url) {
+        if (url_type != .remote) {
             defer allocator.free(url_proxy_buffer);
             defer unix_socket_path.deinit();
             var path_buf: bun.PathBuffer = undefined;
@@ -2387,77 +2447,100 @@ pub const Fetch = struct {
             var url_path_decoded = path_buf2[0 .. PercentEncoding.decode(
                 @TypeOf(&stream.writer()),
                 &stream.writer(),
-                url.path,
+                switch (url_type) {
+                    .file => url.path,
+                    .blob => url.href["blob:".len..],
+                    .remote => unreachable,
+                },
             ) catch |err| {
                 globalThis.throwError(err, "Failed to decode file url");
                 return .zero;
             }];
+            var url_string: bun.String = bun.String.empty;
+            defer url_string.deref();
+            // This can be a blob: url or a file: url.
+            const blob_to_use = blob: {
 
-            const temp_file_path = brk: {
-                if (std.fs.path.isAbsolute(url_path_decoded)) {
-                    if (Environment.isWindows) {
-                        // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
-                        if (url_path_decoded[0] == '/') {
-                            url_path_decoded = url_path_decoded[1..];
+                // Support blob: urls
+                if (url_type == URLType.blob) {
+                    if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(url_path_decoded)) |blob| {
+                        url_string = bun.String.createFormat("blob:{s}", .{url_path_decoded}) catch bun.outOfMemory();
+                        break :blob blob;
+                    } else {
+                        // Consistent with what Node.js does - it rejects, not a 404.
+                        const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "Failed to resolve blob:{s}", .{
+                            url_path_decoded,
+                        }, ctx);
+                        is_error = true;
+                        return JSPromise.rejectedPromiseValue(globalThis, err);
+                    }
+                }
+
+                const temp_file_path = brk: {
+                    if (std.fs.path.isAbsolute(url_path_decoded)) {
+                        if (Environment.isWindows) {
+                            // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
+                            if (url_path_decoded[0] == '/') {
+                                url_path_decoded = url_path_decoded[1..];
+                            }
+                            break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
+                                globalThis.throwError(err, "Failed to resolve file url");
+                                return .zero;
+                            };
                         }
-                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf, url_path_decoded) catch |err| {
+                        break :brk url_path_decoded;
+                    }
+
+                    var cwd_buf: bun.PathBuffer = undefined;
+                    const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                        globalThis.throwError(err, "Failed to resolve file url");
+                        return .zero;
+                    }) else globalThis.bunVM().bundler.fs.top_level_dir;
+
+                    const fullpath = bun.path.joinAbsStringBuf(
+                        cwd,
+                        &path_buf,
+                        &[_]string{
+                            globalThis.bunVM().main,
+                            "../",
+                            url_path_decoded,
+                        },
+                        .auto,
+                    );
+                    if (Environment.isWindows) {
+                        break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
                             globalThis.throwError(err, "Failed to resolve file url");
                             return .zero;
                         };
                     }
-                    break :brk url_path_decoded;
-                }
+                    break :brk fullpath;
+                };
 
-                var cwd_buf: bun.PathBuffer = undefined;
-                const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
-                    globalThis.throwError(err, "Failed to resolve file url");
-                    return .zero;
-                }) else globalThis.bunVM().bundler.fs.top_level_dir;
+                url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
 
-                const fullpath = bun.path.joinAbsStringBuf(
-                    cwd,
-                    &path_buf,
-                    &[_]string{
-                        globalThis.bunVM().main,
-                        "../",
-                        url_path_decoded,
+                var pathlike: JSC.Node.PathOrFileDescriptor = .{
+                    .path = .{
+                        .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        }),
                     },
-                    .auto,
+                };
+
+                break :blob Blob.findOrCreateFileFromPath(
+                    &pathlike,
+                    globalThis,
                 );
-                if (Environment.isWindows) {
-                    break :brk PosixToWinNormalizer.resolveCWDWithExternalBufZ(&path_buf2, fullpath) catch |err| {
-                        globalThis.throwError(err, "Failed to resolve file url");
-                        return .zero;
-                    };
-                }
-                break :brk fullpath;
             };
-
-            var file_url_string = JSC.URL.fileURLFromString(bun.String.fromUTF8(temp_file_path));
-            defer file_url_string.deref();
-
-            var pathlike: JSC.Node.PathOrFileDescriptor = .{
-                .path = .{
-                    .encoded_slice = ZigString.Slice.init(bun.default_allocator, bun.default_allocator.dupe(u8, temp_file_path) catch {
-                        globalThis.throwOutOfMemory();
-                        return .zero;
-                    }),
-                },
-            };
-
-            const bun_file = Blob.findOrCreateFileFromPath(
-                &pathlike,
-                globalThis,
-            );
 
             const response = bun.new(Response, Response{
                 .body = Body{
-                    .value = .{ .Blob = bun_file },
+                    .value = .{ .Blob = blob_to_use },
                 },
                 .init = Response.Init{
                     .status_code = 200,
                 },
-                .url = file_url_string.clone(),
+                .url = url_string.clone(),
             });
 
             return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));

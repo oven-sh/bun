@@ -1403,16 +1403,42 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return JSValue.jsUndefined();
         }
 
+        fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
+            var class_name = value.getClassInfoName() orelse bun.String.empty;
+            defer class_name.deref();
+            const globalThis: *JSC.JSGlobalObject = ctx.server.globalThis;
+
+            Output.enableBuffering();
+            var writer = Output.errorWriter();
+
+            if (class_name.eqlComptime("Response")) {
+                Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
+            } else if (!value.isEmpty() and !globalThis.hasException()) {
+                var formatter = JSC.ConsoleObject.Formatter{
+                    .globalThis = globalThis,
+                    .quote_strings = true,
+                };
+                Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(formatter.globalThis, &formatter)});
+            } else {
+                Output.errGeneric("Expected a Response object", .{});
+            }
+
+            Output.flush();
+            if (!globalThis.hasException()) {
+                JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+            }
+            Output.flush();
+            ctx.renderMissing();
+        }
+
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
             if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
-                ctx.renderMissing();
+                ctx.renderMissingInvalidResponse(value);
                 return;
             }
 
             const response = value.as(JSC.WebCore.Response) orelse {
-                Output.prettyErrorln("Expected a Response object", .{});
-                Output.flush();
-                ctx.renderMissing();
+                ctx.renderMissingInvalidResponse(value);
                 return;
             };
             ctx.response_jsvalue = value;
@@ -2497,8 +2523,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             // we have to clone the request headers here since they will soon belong to a different request
-            if (request_object.headers == null) {
-                request_object.headers = JSC.FetchHeaders.createFromUWS(ctx.server.globalThis, req);
+            if (!request_object.hasFetchHeaders()) {
+                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(ctx.server.globalThis, req));
             }
 
             // This object dies after the stack frame is popped
@@ -2558,7 +2584,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (response_value.isEmptyOrUndefinedOrNull()) {
-                ctx.renderMissing();
+                ctx.renderMissingInvalidResponse(response_value);
                 return;
             }
 
@@ -2611,11 +2637,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         }
 
                         if (fulfilled_value.isEmptyOrUndefinedOrNull()) {
-                            ctx.renderMissing();
+                            ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         }
                         var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
-                            ctx.renderMissing();
+                            ctx.renderMissingInvalidResponse(fulfilled_value);
                             return;
                         };
 
@@ -3187,11 +3213,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 status;
 
             var needs_content_type = true;
+            var content_type_needs_free = false;
+
             const content_type: MimeType = brk: {
                 if (response.init.headers) |headers_| {
                     if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
-                        break :brk MimeType.byName(content.slice());
+
+                        var content_slice = content.toSlice(this.allocator);
+                        defer content_slice.deinit();
+
+                        const content_type_allocator = if (content_slice.allocator.isNull()) null else this.allocator;
+                        break :brk MimeType.init(content_slice.slice(), content_type_allocator, &content_type_needs_free);
                     }
                 }
 
@@ -3206,7 +3239,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 else
                     MimeType.other;
             };
-
+            defer if (content_type_needs_free) content_type.deinit(this.allocator);
             var has_content_disposition = false;
             var has_content_range = false;
             if (response.init.headers) |headers_| {
@@ -3219,7 +3252,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 this.writeStatus(status);
                 this.writeHeaders(headers_);
-
                 response.init.headers = null;
                 headers_.deref();
             } else if (needs_content_range) {
@@ -3639,6 +3671,10 @@ pub const WebSocketServer = struct {
         }
 
         pub fn unprotect(this: Handler) void {
+            if (this.vm.isShuttingDown()) {
+                return;
+            }
+
             this.onOpen.unprotect();
             this.onMessage.unprotect();
             this.onClose.unprotect();
@@ -3905,10 +3941,16 @@ pub const ServerWebSocket = struct {
         const value_to_cache = this.this_value;
 
         var handler = this.handler;
+        const vm = this.handler.vm;
         handler.active_connections +|= 1;
         const globalObject = handler.globalObject;
-
         const onOpenHandler = handler.onOpen;
+        if (vm.isShuttingDown()) {
+            log("onOpen called after script execution", .{});
+            ws.close();
+            return;
+        }
+
         this.this_value = .zero;
         this.flags.opened = false;
         if (value_to_cache != .zero) {
@@ -3919,7 +3961,7 @@ pub const ServerWebSocket = struct {
         if (onOpenHandler.isEmptyOrUndefinedOrNull()) return;
         const this_value = this.getThisValue();
         var args = [_]JSValue{this_value};
-        const vm = this.handler.vm;
+
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
@@ -3974,6 +4016,12 @@ pub const ServerWebSocket = struct {
         var globalObject = this.handler.globalObject;
         // This is the start of a task.
         const vm = this.handler.vm;
+        if (vm.isShuttingDown()) {
+            log("onMessage called after script execution", .{});
+            ws.close();
+            return;
+        }
+
         const loop = vm.eventLoop();
         loop.enter();
         defer loop.exit();
@@ -4027,7 +4075,8 @@ pub const ServerWebSocket = struct {
         log("onDrain", .{});
 
         const handler = this.handler;
-        if (this.isClosed())
+        const vm = handler.vm;
+        if (this.isClosed() or vm.isShuttingDown())
             return;
 
         if (handler.onDrain != .zero) {
@@ -4038,7 +4087,6 @@ pub const ServerWebSocket = struct {
                 .globalObject = globalObject,
                 .callback = handler.onDrain,
             };
-            const vm = JSC.VirtualMachine.get();
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
@@ -4075,10 +4123,9 @@ pub const ServerWebSocket = struct {
 
         const handler = this.handler;
         var cb = handler.onPing;
-        if (cb.isEmptyOrUndefinedOrNull()) return;
+        const vm = handler.vm;
+        if (cb.isEmptyOrUndefinedOrNull() or vm.isShuttingDown()) return;
         const globalThis = handler.globalObject;
-
-        const vm = JSC.VirtualMachine.get();
 
         // This is the start of a task.
         const loop = vm.eventLoop();
@@ -4105,6 +4152,8 @@ pub const ServerWebSocket = struct {
 
         const globalThis = handler.globalObject;
         const vm = handler.vm;
+
+        if (vm.isShuttingDown()) return;
 
         // This is the start of a task.
         const loop = vm.eventLoop();
@@ -4133,10 +4182,12 @@ pub const ServerWebSocket = struct {
             }
         }
 
+        const vm = handler.vm;
+        if (vm.isShuttingDown()) return;
+
         if (!handler.onClose.isEmptyOrUndefinedOrNull()) {
             var str = ZigString.init(message);
             const globalObject = handler.globalObject;
-            const vm = handler.vm;
             const loop = vm.eventLoop();
             loop.enter();
             defer loop.exit();
@@ -5225,8 +5276,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             var sec_websocket_key_str = ZigString.Empty;
 
-            if (request.headers) |head| {
+            var sec_websocket_protocol = ZigString.Empty;
+
+            var sec_websocket_extensions = ZigString.Empty;
+
+            if (request.getFetchHeaders()) |head| {
                 sec_websocket_key_str = head.fastGet(.SecWebSocketKey) orelse ZigString.Empty;
+                sec_websocket_protocol = head.fastGet(.SecWebSocketProtocol) orelse ZigString.Empty;
+                sec_websocket_extensions = head.fastGet(.SecWebSocketExtensions) orelse ZigString.Empty;
             }
 
             if (sec_websocket_key_str.len == 0) {
@@ -5237,12 +5294,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSC.jsBoolean(false);
             }
 
-            var sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
-            var sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
+            if (sec_websocket_protocol.len == 0) {
+                sec_websocket_protocol = ZigString.init(upgrader.req.header("sec-websocket-protocol") orelse "");
+            }
+
+            if (sec_websocket_extensions.len == 0) {
+                sec_websocket_extensions = ZigString.init(upgrader.req.header("sec-websocket-extensions") orelse "");
+            }
 
             if (sec_websocket_protocol.len > 0) {
                 sec_websocket_protocol.markUTF8();
             }
+
             if (sec_websocket_extensions.len > 0) {
                 sec_websocket_extensions.markUTF8();
             }
@@ -5472,12 +5535,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     }
                 }
 
-                existing_request = Request{
-                    .url = bun.String.createUTF8(url.href),
-                    .headers = headers,
-                    .body = JSC.WebCore.InitRequestBodyValue(body) catch unreachable,
-                    .method = method,
-                };
+                existing_request = Request.init(
+                    bun.String.createUTF8(url.href),
+                    headers,
+                    JSC.WebCore.InitRequestBodyValue(body) catch bun.outOfMemory(),
+                    method,
+                );
             } else if (first_arg.as(Request)) |request_| {
                 request_.cloneInto(
                     &existing_request,
@@ -5644,7 +5707,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 },
             };
 
-            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch @panic("Out of memory");
+            const buf = std.fmt.allocPrint(default_allocator, "{any}", .{fmt}) catch bun.outOfMemory();
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
@@ -5788,7 +5851,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
-            var server = bun.default_allocator.create(ThisServer) catch @panic("Out of memory!");
+            var server = bun.default_allocator.create(ThisServer) catch bun.outOfMemory();
             server.* = .{
                 .globalThis = globalThis,
                 .config = config,
@@ -5798,7 +5861,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
 
             if (RequestContext.pool == null) {
-                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
+                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch bun.outOfMemory();
                 RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(server.allocator);
             }
 
@@ -6185,6 +6248,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             request_value.ensureStillAlive();
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
+                if (!ctx.didUpgradeWebSocket()) {}
                 // uWS request will not live longer than this function
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
             }

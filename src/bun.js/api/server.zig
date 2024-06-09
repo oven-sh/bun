@@ -3213,11 +3213,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 status;
 
             var needs_content_type = true;
+            var content_type_needs_free = false;
+
             const content_type: MimeType = brk: {
                 if (response.init.headers) |headers_| {
                     if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
-                        break :brk MimeType.byName(content.slice());
+
+                        var content_slice = content.toSlice(this.allocator);
+                        defer content_slice.deinit();
+
+                        const content_type_allocator = if (content_slice.allocator.isNull()) null else this.allocator;
+                        break :brk MimeType.init(content_slice.slice(), content_type_allocator, &content_type_needs_free);
                     }
                 }
 
@@ -3232,7 +3239,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 else
                     MimeType.other;
             };
-
+            defer if (content_type_needs_free) content_type.deinit(this.allocator);
             var has_content_disposition = false;
             var has_content_range = false;
             if (response.init.headers) |headers_| {

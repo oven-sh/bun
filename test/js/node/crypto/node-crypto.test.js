@@ -48,6 +48,13 @@ describe.each([
     await expect(() => fn(-1)).toThrow(Error); // TODO: should this be `RangeError`?
   });
 
+  it.each([-1, 0, 2 ** 31, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32])(
+    `throws when out of range arguments are supplied`,
+    async size => {
+      await expect(() => fn(size)).toThrow(Error); // TODO: should this be `RangeError`?
+    },
+  );
+
   it("should return an ArrayBuffer", async () => {
     const result = await util.promisify(crypto.generatePrime)(1024);
     expect(result).toBeInstanceOf(ArrayBuffer);

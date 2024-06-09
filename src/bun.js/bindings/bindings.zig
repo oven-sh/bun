@@ -4324,7 +4324,12 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// This is `Object.values`.
+    /// `value` is assumed to be not empty, undefined, or null.
     pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSValue {
+        if (comptime bun.Environment.allow_assert) {
+            bun.assert(!value.isEmptyOrUndefinedOrNull());
+        }
         return cppFn("values", .{
             globalThis,
             value,

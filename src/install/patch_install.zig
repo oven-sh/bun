@@ -399,53 +399,13 @@ pub const PatchTask = struct {
             },
             .auto,
         );
-        // var allocated = false;
-        // const package_name_z = brk: {
-        //     if (this.package_name.len < tmpname_buf.len) {
-        //         @memcpy(tmpname_buf[0..this.package_name.len], this.package_name);
-        //         tmpname_buf[this.package_name.len] = 0;
-        //         break :brk tmpname_buf[0..this.package_name.len :0];
-        //     }
-        //     allocated = true;
-        //     break :brk this.manager.allocator.dupeZ(u8, this.package_name) catch bun.outOfMemory();
-        // };
-        // defer if (allocated) this.manager.allocator.free(package_name_z);
 
-        worked: {
-            if (bun.sys.renameat2(
-                bun.toFD(system_tmpdir.fd),
-                path_in_tmpdir,
-                bun.toFD(this.callback.apply.cache_dir.fd),
-                this.callback.apply.cache_dir_subpath,
-                .{
-                    .exclude = true,
-                },
-            ).asErr()) |e_| {
-                var e = e_;
-
-                if (if (comptime bun.Environment.isWindows) switch (e.getErrno()) {
-                    bun.C.E.NOTEMPTY, bun.C.E.EXIST => true,
-                    else => false,
-                } else switch (e.getErrno()) {
-                    bun.C.E.NOTEMPTY, bun.C.E.EXIST, bun.C.E.OPNOTSUPP => true,
-                    else => false,
-                }) {
-                    switch (bun.sys.renameat2(
-                        bun.toFD(system_tmpdir.fd),
-                        path_in_tmpdir,
-                        bun.toFD(this.callback.apply.cache_dir.fd),
-                        this.callback.apply.cache_dir_subpath,
-                        .{
-                            .exchange = true,
-                        },
-                    )) {
-                        .err => |ee| e = ee,
-                        .result => break :worked,
-                    }
-                }
-                return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
-            }
-        }
+        if (bun.sys.renameatConcurrently(
+            bun.toFD(system_tmpdir.fd),
+            path_in_tmpdir,
+            bun.toFD(this.callback.apply.cache_dir.fd),
+            this.callback.apply.cache_dir_subpath,
+        ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
     }
 
     pub fn calcHash(this: *PatchTask) Maybe(u64) {

@@ -2309,9 +2309,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             };
         }
 
-        fn patchedPackageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID, patchfile_hash: u64) bool {
-            _ = patchfile_hash; // autofix
-
+        fn patchedPackageMissingFromCache(this: *@This(), manager: *PackageManager, package_id: PackageID) bool {
             // const patch_hash_prefix = "_patch_hash=";
             // var patch_hash_part_buf: [patch_hash_prefix.len + max_buntag_hash_buf_len + 1]u8 = undefined;
             // @memcpy(patch_hash_part_buf[0..patch_hash_prefix.len], patch_hash_prefix);
@@ -10424,12 +10422,12 @@ pub const PackageManager = struct {
         }
 
         // rename to patches dir
-        if (bun.sys.renameat2(
+
+        if (bun.sys.renameatConcurrently(
             bun.toFD(tmpdir.fd),
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
-            .{ .exclude = true },
         ).asErr()) |e| {
             Output.prettyError(
                 "<r><red>error<r>: failed to renaming patch file to patches dir {}<r>\n",
@@ -11060,7 +11058,7 @@ pub const PackageManager = struct {
             }
 
             const patch_patch, const patch_contents_hash, const patch_name_and_version_hash, const remove_patch = brk: {
-                if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len) break :brk .{ null, null, null, false };
+                if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, false };
                 var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, package_version }) catch unreachable;
                 defer sfb.get().free(name_and_version);

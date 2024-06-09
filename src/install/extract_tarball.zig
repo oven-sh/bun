@@ -285,7 +285,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
-    var cache_dir = this.cache_dir;
+    const cache_dir = this.cache_dir;
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
@@ -394,52 +394,15 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             }
         }
 
-        var did_atomically_replace = false;
-        if (did_atomically_replace and PackageManager.using_fallback_temp_dir) tmpdir.deleteTree(src) catch {};
-
-        attempt_atomic_rename_and_fallback_to_racy_delete: {
-            {
-                // Happy path: the folder doesn't exist in the cache dir, so we can
-                // just rename it. We don't need to delete anything.
-                var err = switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
-                    .exclude = true,
-                })) {
-                    .err => |err| err,
-                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
-                };
-
-                // Fallback path: the folder exists in the cache dir, it might be in a strange state
-                // let's attempt to atomically replace it with the temporary folder's version
-                if (switch (err.getErrno()) {
-                    .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
-                    else => false,
-                }) {
-                    did_atomically_replace = true;
-                    switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
-                        .exchange = true,
-                    })) {
-                        .err => {},
-                        .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
-                    }
-                    did_atomically_replace = false;
-                }
-            }
-
-            //  sad path: let's try to delete the folder and then rename it
-            cache_dir.deleteTree(src) catch {};
-            switch (bun.sys.renameat(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name)) {
-                .err => |err| {
-                    this.package_manager.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.package_manager.allocator,
-                        "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                        .{ name, err, tmpname, folder_name },
-                    ) catch unreachable;
-                    return error.InstallFailed;
-                },
-                .result => {},
-            }
+        if (bun.sys.renameatConcurrently(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name).asErr()) |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                .{ name, err, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
         }
     }
 

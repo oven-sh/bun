@@ -45,6 +45,9 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             var safe: bool = false;
             var big_int: bool = false;
 
+            const add: [*c]BoringSSL.BIGNUM = null;
+            const rem: [*c]BoringSSL.BIGNUM = null;
+
             const options_value = arguments[1];
             if (!options_value.isEmptyOrUndefinedOrNull()) {
                 if (!options_value.isObject()) {
@@ -67,21 +70,20 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     big_int = v.toBoolean();
                 }
                 if (options_value.get(globalThis, "add")) |v| {
+                    // TODO: `add` read it in ect...
                     _ = v;
                 }
                 if (options_value.get(globalThis, "rem")) |v| {
+                    // TODO: `rem` read it in ect...
                     _ = v;
                 }
-
-                // TODO: `add`
-                // TODO: `rem`
             }
 
             BoringSSL.load();
 
             const ret: *BoringSSL.BIGNUM = BoringSSL.BN_new();
 
-            if (BoringSSL.BN_generate_prime_ex(ret, bits, @intFromBool(safe), null, null, null) != 1) {
+            if (BoringSSL.BN_generate_prime_ex(ret, bits, @intFromBool(safe), add, rem, null) != 1) {
                 // something went wrong.
                 std.debug.print("Failed to generate prime number\n", .{});
                 const err = BoringSSL.ERR_get_error();

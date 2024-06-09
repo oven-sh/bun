@@ -279,9 +279,9 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
     }
     const folder_name = switch (this.resolution.tag) {
-        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version),
-        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved),
-        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice()),
+        .npm => this.package_manager.cachedNPMPackageFolderNamePrint(&folder_name_buf, name, this.resolution.value.npm.version, null),
+        .github => PackageManager.cachedGitHubFolderNamePrint(&folder_name_buf, resolved, null),
+        .local_tarball, .remote_tarball => PackageManager.cachedTarballFolderNamePrint(&folder_name_buf, this.url.slice(), null),
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
@@ -471,6 +471,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         return error.InstallFailed;
     };
 
+    const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
+
     var json_path: []u8 = "";
     var json_buf: []u8 = "";
     if (switch (this.resolution.tag) {
@@ -484,6 +486,14 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             bun.path.joinZ(&[_]string{ folder_name, "package.json" }, .auto),
             bun.default_allocator,
         ).unwrap() catch |err| {
+            if (this.resolution.tag == .github and err == error.ENOENT) {
+                // allow git dependencies without package.json
+                return .{
+                    .url = url,
+                    .resolved = resolved,
+                };
+            }
+
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -525,12 +535,13 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     }
 
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
-    const url = try FileSystem.instance.dirname_store.append(@TypeOf(this.url.slice()), this.url.slice());
 
     return .{
         .url = url,
         .resolved = resolved,
-        .json_path = ret_json_path,
-        .json_buf = json_buf,
+        .json = .{
+            .path = ret_json_path,
+            .buf = json_buf,
+        },
     };
 }

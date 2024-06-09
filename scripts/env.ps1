@@ -24,6 +24,9 @@ if ($env:VSINSTALLDIR -eq $null) {
   } 
   Push-Location $vsDir
   try {
+    Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+    Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools' -DevCmdArguments '-arch=x64 -host_arch=x64'
+  } catch {
     $launchps = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
     . $launchps -Arch amd64 -HostArch amd64
   } finally { Pop-Location }

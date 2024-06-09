@@ -66,6 +66,12 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     }
                     big_int = v.toBoolean();
                 }
+                if (options_value.get(globalThis, "add")) |v| {
+                    _ = v;
+                }
+                if (options_value.get(globalThis, "rem")) |v| {
+                    _ = v;
+                }
 
                 // TODO: `add`
                 // TODO: `rem`

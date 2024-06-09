@@ -2534,7 +2534,9 @@ pub const all = struct {
 pub fn byName(name: []const u8) MimeType {
     return MimeType.init(name, null, null);
 }
-
+pub fn deinit(mimeType: MimeType, allocator: std.mem.Allocator) void {
+    allocator.free(mimeType.value);
+}
 pub const extensions = ComptimeStringMap(MimeType, .{
     .{ "123", all.@"application/vnd.lotus-1-2-3" },
     .{ "1km", all.@"application/vnd.1000minds.decision-model+xml" },

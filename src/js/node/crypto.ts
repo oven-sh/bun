@@ -12039,10 +12039,12 @@ var DEFAULT_ENCODING = "buffer",
   generatePrimeSync = function (size, options) {
     return _generatePrime(size, options);
   },
-  generatePrime = function (size, options, cb) {
+  generatePrime = function (size, opts, cb) {
     let callback = cb;
+    let options = opts;
     if (typeof options === "function") {
       callback = options;
+      options = undefined;
     }
     try {
       process.nextTick(() => callback(null, _generatePrime(size, options)));

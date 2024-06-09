@@ -2,7 +2,7 @@ import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";
 import util from "node:util";
-import { PassThrough, Readable } from "node:stream";
+import { PassThrough } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);
@@ -34,21 +34,25 @@ it("crypto.randomInt with a callback", async () => {
   expect(result).toBeLessThanOrEqual(10);
 });
 
-describe.each([util.promisify(crypto.generatePrime), crypto.generatePrimeSync])("crypto.generatePrime", async fn => {
-  console.log(fn);
-  // expect(() => fn()).toThrow(TypeError);
-  // await expect(() => fn("")).toThrow(TypeError);
-  // await expect(() => fn(false)).toThrow(TypeError);
-  // await expect(() => fn([])).toThrow(TypeError);
-  // await expect(() => fn({})).toThrow(TypeError);
-  // await expect(() => fn(-1)).toThrow(Error); // TODO: should this be `RangeError`?
-  // await expect(() => fn(5)).not.toThrow();
-  // await expect(() => fn(5, "")).toThrow(Error); // TODO: should be TypeError
-  // // TODO: why doesn't the below case throw???
-  // // expect(() => fn(5, [])).toThrow(Error); // TODO: should be TypeError
-  // await expect(() => fn(5, false)).toThrow(Error); // TODO: should be TypeError
-  // await expect(() => fn(5, true)).toThrow(Error); // TODO: should be TypeError
-  // await expect(() => fn(5, {})).not.toThrow();
+describe.only("crypto.generatePrime", () => {
+  it("throws when invalid arguments are passed for the `size`", () => {
+    const cb = () => {
+      expect(false).toBe(true);
+    };
+    expect(() => crypto.generatePrime(undefined, cb)).toThrow(TypeError);
+    expect(() => crypto.generatePrime("", cb)).toThrow(TypeError);
+    expect(() => crypto.generatePrime(false, cb)).toThrow(TypeError);
+    expect(() => crypto.generatePrime([], cb)).toThrow(TypeError);
+    expect(() => crypto.generatePrime({}, cb)).toThrow(TypeError);
+    expect(() => crypto.generatePrime(-1, cb)).toThrow(Error); // TODO: should this be `RangeError`?
+  });
+
+  it("throws when invalid arguments are passed for the `options`", () => {
+    // expect(() => crypto.generatePrime(5, [])).toThrow(Error); // TODO: why doesn't this throw??
+    expect(() => crypto.generatePrime(5, "")).toThrow(Error); // TODO: should be TypeError
+    expect(() => crypto.generatePrime(5, false)).toThrow(Error); // TODO: should be TypeError
+    expect(() => crypto.generatePrime(5, true)).toThrow(Error); // TODO: should be TypeError
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/1839

@@ -45,8 +45,8 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             var safe: bool = false;
             var big_int: bool = false;
 
-            const add: [*c]BoringSSL.BIGNUM = null;
-            const rem: [*c]BoringSSL.BIGNUM = null;
+            var add: [*c]BoringSSL.BIGNUM = null;
+            var rem: [*c]BoringSSL.BIGNUM = null;
 
             const options_value = arguments[1];
             if (!options_value.isEmptyOrUndefinedOrNull()) {
@@ -70,12 +70,30 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     big_int = v.toBoolean();
                 }
                 if (options_value.get(globalThis, "add")) |v| {
-                    // TODO: `add` read it in ect...
-                    _ = v;
+                    if (v.asArrayBuffer(globalThis)) |v2| {
+                        const ll2 = v2.byteSlice();
+
+                        add = BoringSSL.BN_bin2bn(ll2.ptr, ll2.len, null);
+                    } else {
+                        globalThis.throwValue(globalThis.createInvalidArgs("add must be an ArrayBuffer", .{}));
+                        return .zero;
+                    }
                 }
                 if (options_value.get(globalThis, "rem")) |v| {
-                    // TODO: `rem` read it in ect...
-                    _ = v;
+                    if (v.asArrayBuffer(globalThis)) |v2| {
+                        const ll2 = v2.byteSlice();
+
+                        rem = BoringSSL.BN_bin2bn(ll2.ptr, ll2.len, null);
+                    } else {
+                        globalThis.throwValue(globalThis.createInvalidArgs("add must be an ArrayBuffer", .{}));
+                        return .zero;
+                    }
+                }
+
+                // bad things happen if this is not true
+                if (BoringSSL.BN_cmp(add, rem) != 1) {
+                    globalThis.throwValue(globalThis.createInvalidArgs("add must be greater than rem", .{}));
+                    return .zero;
                 }
             }
 

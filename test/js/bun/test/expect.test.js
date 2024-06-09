@@ -2439,6 +2439,7 @@ describe("expect()", () => {
     expect({ 1: "hello", b: "world" }).toContainAllKeys(["1", "b"]);
     expect({ a: "hello", b: "world" }).not.toContainAllKeys(["c"]);
     expect({ a: "hello", b: "world" }).not.toContainAllKeys(["a"]);
+    expect({ "": "hello", b: "world" }).toContainAllKeys(["", "b"]);
   });
 
   test("toContainAnyKeys", () => {

@@ -129,11 +129,11 @@ static JSValue constructArch(VM& vm, JSObject* processObject)
 static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
 #if defined(__APPLE__)
-    return JSC::jsString(vm, makeAtomString("darwin"));
+    return JSC::jsString(vm, makeAtomString("darwin"_s));
 #elif defined(__linux__)
-    return JSC::jsString(vm, makeAtomString("linux"));
+    return JSC::jsString(vm, makeAtomString("linux"_s));
 #elif OS(WINDOWS)
-    return JSC::jsString(vm, makeAtomString("win32"));
+    return JSC::jsString(vm, makeAtomString("win32"_s));
 #else
 #error "Unknown platform"
 #endif

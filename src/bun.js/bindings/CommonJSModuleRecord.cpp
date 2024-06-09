@@ -131,8 +131,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
         // Using same approach as node, `arguments` in the entry point isn't defined
         // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
-        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "exports"_s), moduleObject->exportsObject(), 0);
-        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "require"_s), requireFunction, 0);
+        globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), moduleObject->exportsObject(), 0);
+        globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
         globalObject->putDirect(vm, Identifier::fromLatin1(vm, "module"_s), moduleObject, 0);
         globalObject->putDirect(vm, Identifier::fromLatin1(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromLatin1(vm, "__dirname"_s), dirname, 0);

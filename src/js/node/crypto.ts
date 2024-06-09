@@ -23,6 +23,12 @@ const {
 const _randomInt = $zig("node_crypto_binding.zig", "randomInt");
 const _generatePrime = $zig("node_crypto_binding.zig", "generatePrime");
 
+function bigintToBuffer(bigint) {
+  const hexString = bigint.toString(16);
+  const paddedHexString = hexString.length % 2 === 0 ? hexString : "0" + hexString;
+  return Buffer.from(paddedHexString, "hex");
+}
+
 function randomInt(min, max, callback) {
   if (max == null) {
     max = min;
@@ -12046,6 +12052,14 @@ var DEFAULT_ENCODING = "buffer",
       callback = options;
       options = undefined;
     }
+
+    if (options && options.rem && typeof options.rem === "bigint") {
+      options.rem = bigintToBuffer(options.rem);
+    }
+    if (options && options.add && typeof options.add === "bigint") {
+      options.add = bigintToBuffer(options.add);
+    }
+
     process.nextTick(() => {
       try {
         callback(null, _generatePrime(size, options));

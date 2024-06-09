@@ -81,25 +81,26 @@ describe.each([
     await expect(() => fn(32, { add: 42, rem: 123 })).toThrow(Error);
   });
 
-  // describe.each([
-  //   ["Buffer", v => v],
-  //   ["BigInt", v => BigInt(v)],
-  // ])(
-  //   "when `add` and `rem` are %ss",
-  //   //   "must respect `add` and `rem`",
-  //   ([_, k]) => {
-  //     it.each([
-  //       [12, 11],
-  //       [34, 33],
-  //     ])("Must respect `add` and `rem` for %i and %i", async ([add, rem]) => {
-  //       const add_buf = k(Buffer.from([add]));
-  //       const rem_buf = k(Buffer.from([rem]));
-  //       const prime = await fn(32, { add: add_buf, rem: rem_buf });
-  //       const prime_buf = Buffer.from(prime);
-  //       expect(prime_buf.readUInt32BE() % add).toBe(rem);
-  //     });
-  //   },
-  // );
+  describe.each([
+    ["Buffer", v => v],
+    ["ArrayBuffer", v => v.buffer],
+    ["BigInt", v => BigInt(v)],
+  ])(
+    "when `add` and `rem` are %ss",
+    //   "must respect `add` and `rem`",
+    (_, k) => {
+      it.each([
+        [12, 11],
+        [34, 33],
+      ])("Must respect `add` and `rem` for %i and %i", async (add, rem) => {
+        const add_buf = k(Buffer.from([add]));
+        const rem_buf = k(Buffer.from([rem]));
+        const prime = await fn(32, { add: add_buf, rem: rem_buf });
+        const prime_buf = Buffer.from(prime);
+        expect(prime_buf.readUInt32BE() % add).toBe(rem);
+      });
+    },
+  );
 
   // it("should respect `bigint` option", async () => {
   //   const primeAsBigInt = await fn(32, { bigint: true });

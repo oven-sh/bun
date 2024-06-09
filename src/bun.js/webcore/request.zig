@@ -103,15 +103,15 @@ pub const Request = struct {
         jsRequest: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        if(jsRequest.as(Request)) |request| {
-            if(Request.signalGetCached(jsRequest)) |js_signal| {
+        if (jsRequest.as(Request)) |request| {
+            if (Request.signalGetCached(jsRequest)) |js_signal| {
                 return js_signal;
             }
             const signal = request.getSignal(globalThis);
-            Request.signalSetCached(jsRequest, globalThis, signal);     
-            return signal;  
+            Request.signalSetCached(jsRequest, globalThis, signal);
+            return signal;
         }
-       return .zero;
+        return .zero;
     }
 
     pub fn init(

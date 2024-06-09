@@ -43,7 +43,6 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             const bits: c_int = @as(c_int, @intCast(bits_i64));
 
             var safe: bool = false;
-            var big_int: bool = false;
 
             var add: [*c]BoringSSL.BIGNUM = null;
             var rem: [*c]BoringSSL.BIGNUM = null;
@@ -61,13 +60,6 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                         return .zero;
                     }
                     safe = v.toBoolean();
-                }
-                if (options_value.get(globalThis, "bigint")) |v| {
-                    if (!v.isBoolean()) {
-                        globalThis.throwValue(globalThis.createInvalidArgs("bigint must be a boolean", .{}));
-                        return .zero;
-                    }
-                    big_int = v.toBoolean();
                 }
                 if (options_value.get(globalThis, "add")) |v| {
                     if (v.asArrayBuffer(globalThis)) |v2| {
@@ -90,8 +82,10 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                     }
                 }
 
-                // bad things happen if this is not true
-                if (BoringSSL.BN_cmp(add, rem) != 1) {
+                // prevent BoringSSL from getting into an infinite loop
+                if (rem != null and
+                    BoringSSL.BN_cmp(add, rem) != 1)
+                {
                     globalThis.throwValue(globalThis.createInvalidArgs("add must be greater than rem", .{}));
                     return .zero;
                 }

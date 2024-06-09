@@ -21,12 +21,21 @@ const {
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
 const _randomInt = $zig("node_crypto_binding.zig", "randomInt");
-const _generatePrime = $zig("node_crypto_binding.zig", "generatePrime");
+const __generatePrime = $zig("node_crypto_binding.zig", "generatePrime");
 
 function bigintToBuffer(bigint) {
   const hexString = bigint.toString(16);
   const paddedHexString = hexString.length % 2 === 0 ? hexString : "0" + hexString;
   return Buffer.from(paddedHexString, "hex");
+}
+
+function _generatePrime(bits, options){
+  if (options && options.bigint === true) {
+    const prime = __generatePrime(bits, options);
+    return BigInt(prime.toString());
+  }
+
+  return __generatePrime(bits, options);
 }
 
 function randomInt(min, max, callback) {

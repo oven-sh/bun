@@ -61,7 +61,10 @@ describe.each([
     await expect(() => fn(1, { bigint: {} })).toThrow(Error); // TODO: convert to `TypeError`
     await expect(() => fn(1, { bigint: [] })).toThrow(Error); // TODO: convert to `TypeError`
 
-    // TODO: add test cases for `add` and `rem`
+    await expect(() => fn(1, { add: [], rem: [] })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { add: "", rem: "" })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { add: false, rem: false })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { add: {}, rem: {} })).toThrow(Error); // TODO: convert to `TypeError`
   });
 
   it.each([-1, 0, 2 ** 31, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32])(
@@ -85,30 +88,26 @@ describe.each([
     ["Buffer", v => Buffer.from([v])],
     ["ArrayBuffer", v => Buffer.from([v]).buffer],
     ["BigInt", v => BigInt(v)],
-  ])(
-    "when `add` and `rem` are %ss",
-    //   "must respect `add` and `rem`",
-    (_, k) => {
-      it.each([
-        [12, 11],
-        [34, 33],
-      ])("Must respect `add` and `rem` for %i and %i", async (add, rem) => {
-        const add_buf = k(add);
-        const rem_buf = k(rem);
-        const prime = await fn(32, { add: add_buf, rem: rem_buf });
-        const prime_buf = Buffer.from(prime);
-        expect(prime_buf.readUInt32BE() % add).toBe(rem);
-      });
-    },
-  );
+  ])("when `add` and `rem` are %ss", (_, k) => {
+    it.each([
+      [12, 11],
+      [34, 33],
+    ])("Must respect `add` and `rem` for %i and %i", async (add, rem) => {
+      const add_buf = k(add);
+      const rem_buf = k(rem);
+      const prime = await fn(32, { add: add_buf, rem: rem_buf });
+      const prime_buf = Buffer.from(prime);
+      expect(prime_buf.readUInt32BE() % add).toBe(rem);
+    });
+  });
 
-  // it("should respect `bigint` option", async () => {
-  //   const primeAsBigInt = await fn(32, { bigint: true });
-  //   expect(primeAsBigInt).toBeInstanceOf(BigInt);
+  it("should respect `bigint` option", async () => {
+    const primeAsBigInt = await fn(32, { bigint: true });
+    expect(primeAsBigInt).toBeInstanceOf(BigInt);
 
-  //   const primeAsArrayBuffer = await fn(32, { bigint: false });
-  //   expect(primeAsArrayBuffer).toBeInstanceOf(ArrayBuffer);
-  // });
+    const primeAsArrayBuffer = await fn(32, { bigint: false });
+    expect(primeAsArrayBuffer).toBeInstanceOf(ArrayBuffer);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/1839

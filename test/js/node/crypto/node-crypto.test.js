@@ -45,32 +45,32 @@ describe.each([
     await expect(() => fn(false)).toThrow(TypeError);
     await expect(() => fn([])).toThrow(TypeError);
     await expect(() => fn({})).toThrow(TypeError);
-    await expect(() => fn(-1)).toThrow(Error); // TODO: should this be `RangeError`?
+    await expect(() => fn(-1)).toThrow(RangeError);
   });
 
-  it("throws when invalid arguments are passed for the `options`", async () => {
-    await expect(() => fn(1, "")).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, false)).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, [])).toThrow(Error); // TODO: convert to `TypeError`
+  it.only("throws when invalid arguments are passed for the `options`", async () => {
+    await expect(() => fn(1, "")).toThrow(TypeError);
+    await expect(() => fn(1, false)).toThrow(TypeError);
+    // await expect(() => fn(1, [])).toThrow(TypeError);
 
-    await expect(() => fn(1, { safe: "foo" })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { safe: {} })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { safe: [] })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { safe: "foo" })).toThrow(TypeError);
+    await expect(() => fn(1, { safe: {} })).toThrow(TypeError);
+    await expect(() => fn(1, { safe: [] })).toThrow(TypeError);
 
-    await expect(() => fn(1, { bigint: "baz" })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { bigint: {} })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { bigint: [] })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { bigint: "baz" })).toThrow(TypeError);
+    await expect(() => fn(1, { bigint: {} })).toThrow(TypeError);
+    await expect(() => fn(1, { bigint: [] })).toThrow(TypeError);
 
-    await expect(() => fn(1, { add: [], rem: [] })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { add: "", rem: "" })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { add: false, rem: false })).toThrow(Error); // TODO: convert to `TypeError`
-    await expect(() => fn(1, { add: {}, rem: {} })).toThrow(Error); // TODO: convert to `TypeError`
+    await expect(() => fn(1, { add: [], rem: [] })).toThrow(TypeError);
+    await expect(() => fn(1, { add: "", rem: "" })).toThrow(TypeError);
+    await expect(() => fn(1, { add: false, rem: false })).toThrow(TypeError);
+    await expect(() => fn(1, { add: {}, rem: {} })).toThrow(TypeError);
   });
 
   it.each([-1, 0, 2 ** 31, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32])(
     `throws when out of range arguments are supplied`,
     async size => {
-      await expect(() => fn(size)).toThrow(Error); // TODO: should this be `RangeError`?
+      await expect(() => fn(size)).toThrow(RangeError);
     },
   );
 

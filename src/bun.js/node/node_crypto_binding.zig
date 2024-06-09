@@ -36,7 +36,7 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             const bits_i64 = arguments[0].to(i64);
 
             if (bits_i64 < 1 or bits_i64 > @as(i64, std.math.maxInt(i32))) {
-                globalThis.throwValue(globalThis.createInvalidArgs("bits must be a positive integer", .{}));
+                globalThis.throwValue(globalThis.createRangeErrorInstance("bits must be a positive integer within the range of 1 to 2147483647", .{}));
                 return .zero;
             }
 
@@ -50,13 +50,13 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             const options_value = arguments[1];
             if (!options_value.isEmptyOrUndefinedOrNull()) {
                 if (!options_value.isObject()) {
-                    globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
+                    globalThis.throwValue(JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "options must be an object", .{}, globalThis));
                     return .zero;
                 }
 
                 if (options_value.get(globalThis, "safe")) |v| {
                     if (!v.isBoolean()) {
-                        globalThis.throwValue(globalThis.createInvalidArgs("safe must be a boolean", .{}));
+                        globalThis.throwInvalidArgumentTypeValue("safe", "boolean", v);
                         return .zero;
                     }
                     safe = v.toBoolean();

@@ -1552,8 +1552,8 @@ pub const FetchHeaders = opaque {
 
     pub fn copyTo(
         this: *FetchHeaders,
-        names: [*c]Api.StringPointer,
-        values: [*c]Api.StringPointer,
+        names: ?[*]Api.StringPointer,
+        values: ?[*]Api.StringPointer,
         buf: [*]u8,
     ) void {
         return shim.cppFn("copyTo", .{
@@ -4331,14 +4331,12 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
-    pub fn hasOwnPropertyValue(this: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) bool {
-        // TODO: add a binding for this
-        return hasOwnProperty(this, globalThis, value.getZigString(globalThis));
-    }
-
-    pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
-        return cppFn("hasOwnProperty", .{ this, globalThis, key });
-    }
+    extern "C" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
+    /// Calls `Object.hasOwnProperty(value)`.
+    /// Returns true if the object has the property, false otherwise
+    ///
+    /// If the object is not an object, it will crash. **You must check if the object is an object before calling this function.**
+    pub const hasOwnPropertyValue = JSC__JSValue__hasOwnPropertyValue;
 
     pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSArrayIterator {
         return JSArrayIterator.init(this, global);

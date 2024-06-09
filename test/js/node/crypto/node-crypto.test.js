@@ -1,7 +1,7 @@
 import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";
-import util from "node:util";
+import util, { promisify } from "node:util";
 import { PassThrough } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
@@ -34,24 +34,23 @@ it("crypto.randomInt with a callback", async () => {
   expect(result).toBeLessThanOrEqual(10);
 });
 
-describe.only("crypto.generatePrime", () => {
-  it("throws when invalid arguments are passed for the `size`", () => {
-    const cb = () => {
-      expect(false).toBe(true);
-    };
-    expect(() => crypto.generatePrime(undefined, cb)).toThrow(TypeError);
-    expect(() => crypto.generatePrime("", cb)).toThrow(TypeError);
-    expect(() => crypto.generatePrime(false, cb)).toThrow(TypeError);
-    expect(() => crypto.generatePrime([], cb)).toThrow(TypeError);
-    expect(() => crypto.generatePrime({}, cb)).toThrow(TypeError);
-    expect(() => crypto.generatePrime(-1, cb)).toThrow(Error); // TODO: should this be `RangeError`?
+describe.each([
+  [promisify(crypto.generatePrime), "generatePrime"],
+  [crypto.generatePrimeSync, "generatePrimeSync"],
+])("crypto.%s", (fn, _name) => {
+  it("throws when invalid arguments are passed for the `size`", async () => {
+    await expect(() => fn(undefined)).toThrow(TypeError);
+    await expect(() => fn(undefined)).toThrow(TypeError);
+    await expect(() => fn("")).toThrow(TypeError);
+    await expect(() => fn(false)).toThrow(TypeError);
+    await expect(() => fn([])).toThrow(TypeError);
+    await expect(() => fn({})).toThrow(TypeError);
+    await expect(() => fn(-1)).toThrow(Error); // TODO: should this be `RangeError`?
   });
 
-  it("throws when invalid arguments are passed for the `options`", () => {
-    // expect(() => crypto.generatePrime(5, [])).toThrow(Error); // TODO: why doesn't this throw??
-    expect(() => crypto.generatePrime(5, "")).toThrow(Error); // TODO: should be TypeError
-    expect(() => crypto.generatePrime(5, false)).toThrow(Error); // TODO: should be TypeError
-    expect(() => crypto.generatePrime(5, true)).toThrow(Error); // TODO: should be TypeError
+  it("should return an ArrayBuffer", async () => {
+    const result = await util.promisify(crypto.generatePrime)(1024);
+    expect(result).toBeInstanceOf(ArrayBuffer);
   });
 });
 

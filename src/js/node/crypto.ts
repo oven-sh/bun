@@ -12046,11 +12046,13 @@ var DEFAULT_ENCODING = "buffer",
       callback = options;
       options = undefined;
     }
-    try {
-      process.nextTick(() => callback(null, _generatePrime(size, options)));
-    } catch (e) {
-      cb(e);
-    }
+    process.nextTick(() => {
+      try {
+        callback(null, _generatePrime(size, options));
+      } catch (e) {
+        callback(e);
+      }
+    });
   };
 
 timingSafeEqual &&

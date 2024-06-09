@@ -1,11 +1,11 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it, beforeAll, setDefaultTimeout } from "bun:test";
-import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
-import { writeFile, rm } from "fs/promises";
+import { beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { readdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
-import { readdirSync } from "js/node/fs/export-star-from";
 
 let x_dir: string;
 let current_tmpdir: string;
@@ -46,7 +46,7 @@ beforeEach(async () => {
 });
 
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
-  const semverVersions = [
+  let semverVersions = [
     "7.0.0",
     "7.1.0",
     "7.1.1",
@@ -73,6 +73,11 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
     "7.5.4",
     "7.6.0",
   ].sort();
+  if (isWindows) {
+    // Windows does not support race-free installs.
+    semverVersions = semverVersions.slice(0, 2);
+  }
+
   const processes = semverVersions.map((version, i) => {
     return spawn({
       cmd: [bunExe(), "x", "semver@" + version, "--help"],

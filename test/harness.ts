@@ -964,11 +964,11 @@ export function disableAggressiveGCScope() {
 }
 
 String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").isLatin1String(this);
+  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
 };
 
 String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").isUTF16String(this);
+  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
 expect.extend({

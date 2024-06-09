@@ -572,11 +572,21 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
+        reporters: []const Reporter = &.{ Reporter.console },
+        reports_directory: string = "coverage",
         fractions: bun.sourcemap.CoverageFraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
     };
+    pub const Reporter = enum {
+        console,
+        lcov,
+    };
+    pub const ReporterMap = bun.ComptimeStringMap(Reporter, .{
+        &.{ "console", Reporter.console },
+        &.{ "lcov", Reporter.lcov },
+    });
 
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
@@ -602,6 +612,7 @@ pub const TestCommand = struct {
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         JSC.isBunTest = true;
+
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
@@ -858,8 +869,17 @@ pub const TestCommand = struct {
             Output.prettyError("\n", .{});
 
             if (coverage.enabled) {
-                switch (Output.enable_ansi_colors_stderr) {
-                    inline else => |colors| reporter.printCodeCoverage(vm, &coverage, colors) catch {},
+                for (coverage.reporters) |reporter_opt| {
+                    switch (reporter_opt) {
+                        .console => {
+                            switch (Output.enable_ansi_colors_stderr) {
+                                inline else => |colors| reporter.printCodeCoverage(vm, &coverage, colors) catch {},
+                            }
+                        },
+                        .lcov => {
+                            // TODO: implement
+                        }
+                    }
                 }
             }
 

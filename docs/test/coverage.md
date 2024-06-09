@@ -63,3 +63,21 @@ Internally, Bun transpiles all files by default, so Bun automatically generates 
 [test]
 coverageIgnoreSourcemaps = true   # default false
 ```
+
+### Coverage reporters
+
+By default, coverage reports will be printed to the console.
+
+You can specify the reporters and the directory where the reports will be saved.
+This is needed, especially when you integrate coverages with tools like CodeCov, CodeClimate, Coveralls and so on.
+
+```toml
+coverageReporters  = ["console", "lcov"]  # default ["console"]
+coverageReportsDir = "path/to/somewhere"  # default "coverage"
+```
+
+| Reporter  | Description |
+|-----------|-------------|
+| `console` | Prints a text summary of the coverage to the console. |
+| `lcov`    | Save coverage in [lcov](https://github.com/linux-test-project/lcov) format. |
+

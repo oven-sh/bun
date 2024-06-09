@@ -21,6 +21,7 @@ const Npm = @import("./install/npm.zig");
 const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
@@ -250,6 +251,26 @@ pub const Bunfig = struct {
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageReporters")) |expr| {
+                        try this.expect(expr, .e_array);
+                        const items = expr.data.e_array.items.slice();
+                        const reporters = try this.allocator.alloc(TestCommand.Reporter, items.len);
+                        for (items, 0..) |item, i| {
+                            try this.expectString(item);
+                            if (TestCommand.ReporterMap.get(item.asString(bun.default_allocator) orelse "")) |reporter| {
+                                reporters[i] = reporter;
+                            } else {
+                                try this.addError(item.loc, "Invalid reporter.");
+                            }
+                        }
+                        this.ctx.test_options.coverage.reporters = reporters;
+                    }
+
+                    if (test_.get("coverageReportsDir")) |expr| {
+                        try this.expectString(expr);
+                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {

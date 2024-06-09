@@ -31,17 +31,16 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const S = struct {
         fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(2).slice();
-            if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("bits", "unsigned integer", arguments[0]);
 
-            var bits: c_int = 0;
-            {
-                const bits_i64 = arguments[0].to(i64);
-                if (bits_i64 < 1) {
-                    globalThis.throwValue(globalThis.createInvalidArgs("bits must be a positive integer", .{}));
-                    return .zero;
-                }
-                bits = @as(c_int, @intCast(bits_i64));
+            if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("bits", "unsigned integer", arguments[0]);
+            const bits_i64 = arguments[0].to(i64);
+
+            if (bits_i64 < 1 or bits_i64 > @as(i64, std.math.maxInt(i32))) {
+                globalThis.throwValue(globalThis.createInvalidArgs("bits must be a positive integer", .{}));
+                return .zero;
             }
+
+            const bits: c_int = @as(c_int, @intCast(bits_i64));
 
             var safe: bool = false;
             var big_int: bool = false;

@@ -1509,3 +1509,80 @@ it("should work with dispose keyword", async () => {
   }
   expect(fetch(url)).rejects.toThrow();
 });
+
+it("it should call abort when the request is aborted in the middle of a stream", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const payload = Buffer.from("data: hello\n\n");
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      let keepAlive = true;
+      req.signal.addEventListener("abort", () => {
+        keepAlive = false;
+      });
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            while (!req.signal.aborted) {
+              controller.enqueue(payload);
+              await Bun.sleep(10);
+            }
+            resolve(keepAlive);
+          },
+        }),
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "text/event-stream",
+            Connection: "keep-alive",
+          },
+        },
+      );
+    },
+  });
+
+  const abortController = new AbortController();
+  const response = await fetch(server.url, { signal: abortController.signal });
+  expect(response.status).toBe(200);
+  abortController.abort();
+  expect(await promise).toBe(false);
+});
+
+it("it should call abort when the request is aborted in the middle of a stream using async fetch", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  const payload = Buffer.from("data: hello\n\n");
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      await Bun.sleep(10);
+      let keepAlive = true;
+      req.signal.addEventListener("abort", () => {
+        keepAlive = false;
+      });
+      return new Response(
+        new ReadableStream({
+          async pull(controller) {
+            while (!req.signal.aborted) {
+              controller.enqueue(payload);
+              await Bun.sleep(10);
+            }
+            resolve(keepAlive);
+          },
+        }),
+        {
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "text/event-stream",
+            Connection: "keep-alive",
+          },
+        },
+      );
+    },
+  });
+
+  const abortController = new AbortController();
+  const response = await fetch(server.url, { signal: abortController.signal });
+  expect(response.status).toBe(200);
+  abortController.abort();
+  expect(await promise).toBe(false);
+});

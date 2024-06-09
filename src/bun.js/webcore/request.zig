@@ -98,6 +98,22 @@ pub const Request = struct {
         }
     }
 
+    /// Returns cached signal or generate a new JS signal and cache it.
+    pub fn getSignalFromJS(
+        jsRequest: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        if(jsRequest.as(Request)) |request| {
+            if(Request.signalGetCached(jsRequest)) |js_signal| {
+                return js_signal;
+            }
+            const signal = request.getSignal(globalThis);
+            Request.signalSetCached(jsRequest, globalThis, signal);     
+            return signal;  
+        }
+       return .zero;
+    }
+
     pub fn init(
         url: bun.String,
         headers: ?*FetchHeaders,

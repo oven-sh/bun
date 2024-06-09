@@ -66,8 +66,7 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 
                         add = BoringSSL.BN_bin2bn(ll2.ptr, ll2.len, null);
                     } else {
-                        globalThis.throwValue(globalThis.createInvalidArgs("add must be an ArrayBuffer", .{}));
-                        return .zero;
+                        return globalThis.throwInvalidArgumentTypeValue("add", "must be an ArrayBuffer", v);
                     }
                 }
                 if (options_value.get(globalThis, "rem")) |v| {
@@ -76,8 +75,7 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 
                         rem = BoringSSL.BN_bin2bn(ll2.ptr, ll2.len, null);
                     } else {
-                        globalThis.throwValue(globalThis.createInvalidArgs("add must be an ArrayBuffer", .{}));
-                        return .zero;
+                        return globalThis.throwInvalidArgumentTypeValue("rem", "must be an ArrayBuffer", v);
                     }
                 }
 

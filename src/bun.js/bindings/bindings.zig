@@ -3887,8 +3887,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("createEmptyArray", .{ global, len });
     }
 
-    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
-        return cppFn("putRecord", .{ value, global, key, values, values_len });
+    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void {
+        return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
     fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
@@ -4307,18 +4307,25 @@ pub const JSValue = enum(JSValueReprInt) {
         return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
     }
 
-    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
+    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("fromEntries", .{
             globalThis,
             keys_array,
-            values,
+            values_array,
             strings_count,
             clone,
         });
     }
 
-    pub fn keys(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+    pub fn keys(value: JSValue, globalThis: *JSGlobalObject) JSValue {
         return cppFn("keys", .{
+            globalThis,
+            value,
+        });
+    }
+
+    pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSValue {
+        return cppFn("values", .{
             globalThis,
             value,
         });
@@ -4576,7 +4583,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return false;
         }
 
-        return this.jsType().isObject() and keys(globalObject, this).getLength(globalObject) == 0;
+        return this.jsType().isObject() and keys(this, globalObject).getLength(globalObject) == 0;
     }
 
     pub fn isClass(this: JSValue, global: *JSGlobalObject) bool {
@@ -5536,6 +5543,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "jsUndefined",
         "jsonStringify",
         "keys",
+        "values",
         "kind_",
         "parseJSON",
         "put",

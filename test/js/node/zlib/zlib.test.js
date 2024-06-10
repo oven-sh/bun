@@ -267,3 +267,18 @@ it.each(["BrotliCompress", "BrotliDecompress", "Deflate", "Inflate", "DeflateRaw
     expect(new C()).toBeInstanceOf(C);
   },
 );
+
+describe.each(["Deflate", "DeflateRaw"])("%s", constructor_name => {
+  describe.each(["chunkSize", "level", "windowBits", "memLevel", "strategy", "maxOutputLength"])(
+    "should throw if options.%s is",
+    option_name => {
+      // [], // error: Test "-3.4416124249222144e-103" timed out after 5000ms
+      it.each(["test", Symbol("bun"), 2n, {}, true])("%p", value => {
+        expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(TypeError);
+      });
+      it.each([Infinity, -Infinity, -1])("%p", value => {
+        expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(RangeError);
+      });
+    },
+  );
+});

@@ -56,6 +56,8 @@ export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings
   parseLockfile: (cwd: string) => any;
 };
 
+export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpers");
+
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",
   "createNativeFrameForTesting",

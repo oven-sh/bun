@@ -545,10 +545,10 @@ pub fn getSystemLoadavg() [3]f64 {
 
     const loadavg = loadavg_[0];
     const scale = @as(f64, @floatFromInt(loadavg.fscale));
-    return [3]f64{
-        @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
-        @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
-        @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
+    return .{
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
     };
 }
 

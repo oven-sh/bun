@@ -179,3 +179,5 @@ pub const breaking_changes_1_2 = false;
 // order than via Bun.file.writer() so we turn it off until there's a unified,
 // buffered writer abstraction shared throughout Bun
 pub const nonblocking_stdout_and_stderr_on_posix = false;
+
+pub const is_patch_cmd_enabled = env.is_canary or env.isDebug;

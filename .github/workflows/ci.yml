@@ -34,7 +34,7 @@ jobs:
     uses: ./.github/workflows/run-format.yml
     secrets: inherit
     with:
-      zig-version: 0.13.0-dev.386+3964b2a31
+      zig-version: 0.13.0
     permissions:
       contents: write
   lint:

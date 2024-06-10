@@ -117,8 +117,8 @@ pub const Blob = struct {
     pub const SizeType = u52;
     pub const max_size = std.math.maxInt(SizeType);
 
-    const serialization_version: u8 = 1;
-    const reserved_space_for_serialization: u32 = 128;
+    const serialization_version: u8 = 2;
+    const reserved_space_for_serialization: u32 = 129;
 
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
@@ -319,10 +319,10 @@ pub const Blob = struct {
     ) !void {
         try writer.writeInt(u8, serialization_version, .little);
 
-        try writer.writeInt(u64, @as(u64, @intCast(this.offset)), .little);
+        try writer.writeInt(u64, @intCast(this.offset), .little);
 
-        try writer.writeInt(u32, @as(u32, @truncate(this.content_type.len)), .little);
-        _ = try writer.write(this.content_type);
+        try writer.writeInt(u32, @truncate(this.content_type.len), .little);
+        try writer.writeAll(this.content_type);
         try writer.writeInt(u8, @intFromBool(this.content_type_was_set), .little);
 
         const store_tag: Store.SerializeTag = if (this.store) |store|
@@ -337,8 +337,11 @@ pub const Blob = struct {
             try store.serialize(Writer, writer);
         }
 
+        try writer.writeInt(u8, @intFromBool(this.is_jsdom_file), .little);
+        // try writer.writeInt(f64, this.last_modified, .little);
+
         // reserved space for future use
-        _ = try writer.write(&[_]u8{0} ** reserved_space_for_serialization);
+        try writer.writeAll(&[_]u8{0} ** reserved_space_for_serialization);
     }
 
     pub fn onStructuredCloneSerialize(
@@ -391,7 +394,6 @@ pub const Blob = struct {
         const allocator = bun.default_allocator;
 
         const version = try reader.readInt(u8, .little);
-        _ = version;
 
         const offset = try reader.readInt(u64, .little);
 
@@ -404,16 +406,29 @@ pub const Blob = struct {
         const store_tag = try reader.readEnum(Store.SerializeTag, .little);
 
         const blob: *Blob = switch (store_tag) {
-            .bytes => brk: {
+            .bytes => bytes: {
                 const bytes_len = try reader.readInt(u32, .little);
                 const bytes = try readSlice(reader, bytes_len, allocator);
 
                 const blob = Blob.init(bytes, allocator, globalThis);
-                const blob_ = Blob.new(blob);
 
-                break :brk blob_;
+                versions: {
+                    if (version == 1) break :versions;
+
+                    const name_len = try reader.readInt(u32, .little);
+                    const name = try readSlice(reader, name_len, allocator);
+
+                    if (blob.store) |store| switch (store.data) {
+                        .bytes => |*bytes_store| bytes_store.stored_name = bun.PathString.init(name),
+                        else => {},
+                    };
+
+                    if (version == 2) break :versions;
+                }
+
+                break :bytes Blob.new(blob);
             },
-            .file => brk: {
+            .file => file: {
                 const pathlike_tag = try reader.readEnum(JSC.Node.PathOrFileDescriptor.SerializeTag, .little);
 
                 switch (pathlike_tag) {
@@ -428,7 +443,7 @@ pub const Blob = struct {
                             globalThis,
                         ));
 
-                        break :brk blob;
+                        break :file blob;
                     },
                     .path => {
                         const path_len = try reader.readInt(u32, .little);
@@ -444,16 +459,24 @@ pub const Blob = struct {
                             globalThis,
                         ));
 
-                        break :brk blob;
+                        break :file blob;
                     },
                 }
 
                 return .zero;
             },
-            .empty => brk: {
-                break :brk Blob.new(Blob.initEmpty(globalThis));
-            },
+            .empty => Blob.new(Blob.initEmpty(globalThis)),
         };
+
+        versions: {
+            if (version == 1) break :versions;
+
+            blob.is_jsdom_file = try reader.readInt(u8, .little) != 0;
+            // blob.last_modified = try readFloat(f64, reader);
+
+            if (version == 2) break :versions;
+        }
+
         blob.allocator = allocator;
         blob.offset = @as(u52, @intCast(offset));
         if (content_type.len > 0) {
@@ -1380,6 +1403,8 @@ pub const Blob = struct {
             }
         }
 
+        var set_last_modified = false;
+
         if (args.len > 2) {
             const options = args[2];
             if (options.isObject()) {
@@ -1410,9 +1435,14 @@ pub const Blob = struct {
                 }
 
                 if (options.getTruthy(globalThis, "lastModified")) |last_modified| {
+                    set_last_modified = true;
                     blob.last_modified = last_modified.coerce(f64, globalThis);
                 }
             }
+        }
+
+        if (!set_last_modified) {
+            blob.last_modified = @floatFromInt(std.time.milliTimestamp());
         }
 
         if (blob.content_type.len == 0) {
@@ -1707,14 +1737,17 @@ pub const Blob = struct {
                         .path => |path| {
                             const path_slice = path.slice();
                             try writer.writeInt(u32, @as(u32, @truncate(path_slice.len)), .little);
-                            _ = try writer.write(path_slice);
+                            try writer.writeAll(path_slice);
                         },
                     }
                 },
                 .bytes => |bytes| {
                     const slice = bytes.slice();
-                    try writer.writeInt(u32, @as(u32, @truncate(slice.len)), .little);
-                    _ = try writer.write(slice);
+                    try writer.writeInt(u32, @truncate(slice.len), .little);
+                    try writer.writeAll(slice);
+
+                    try writer.writeInt(u32, @truncate(bytes.stored_name.slice().len), .little);
+                    try writer.writeAll(bytes.stored_name.slice());
                 },
             }
         }

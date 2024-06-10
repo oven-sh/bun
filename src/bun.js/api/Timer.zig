@@ -777,7 +777,7 @@ pub const EventLoopTimer = struct {
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
         switch (this.tag) {
             inline else => |t| {
-                var container: *t.Type() = @fieldParentPtr("event_loop_timer", this);
+                var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
                 if (comptime t.Type() == TimerObject) {
                     return container.fire(now, vm);
                 }

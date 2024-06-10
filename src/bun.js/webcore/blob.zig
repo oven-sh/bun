@@ -117,6 +117,10 @@ pub const Blob = struct {
     pub const SizeType = u52;
     pub const max_size = std.math.maxInt(SizeType);
 
+    /// 1: Initial
+    /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
+    ///    and f64 for `last_modified`. Removed reserved bytes, it's handled by version
+    ///    number.
     const serialization_version: u8 = 2;
 
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {

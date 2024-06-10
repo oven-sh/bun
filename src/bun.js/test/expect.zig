@@ -1099,12 +1099,14 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        const values = value.values(globalObject);
-        var itr = values.arrayIterator(globalObject);
-        while (itr.next()) |item| {
-            if (item.jestDeepEquals(expected, globalObject)) {
-                pass = true;
-                break;
+        if (!value.isUndefinedOrNull()) {
+            const values = value.values(globalObject);
+            var itr = values.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                if (item.jestDeepEquals(expected, globalObject)) {
+                    pass = true;
+                    break;
+                }
             }
         }
 
@@ -1158,18 +1160,20 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = true;
 
-        const values = value.values(globalObject);
-        var itr = expected.arrayIterator(globalObject);
-        const count = values.getLength(globalObject);
+        if (!value.isUndefinedOrNull()) {
+            const values = value.values(globalObject);
+            var itr = expected.arrayIterator(globalObject);
+            const count = values.getLength(globalObject);
 
-        while (itr.next()) |item| {
-            var i: u32 = 0;
-            while (i < count) : (i += 1) {
-                const key = values.getIndex(globalObject, i);
-                if (key.jestDeepEquals(item, globalObject)) break;
-            } else {
-                pass = false;
-                break;
+            while (itr.next()) |item| {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    const key = values.getIndex(globalObject, i);
+                    if (key.jestDeepEquals(item, globalObject)) break;
+                } else {
+                    pass = false;
+                    break;
+                }
             }
         }
 
@@ -1223,23 +1227,25 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        var values = value.values(globalObject);
-        var itr = expected.arrayIterator(globalObject);
-        const count = values.getLength(globalObject);
-        const expectedLength = expected.getLength(globalObject);
+        if (!value.isUndefinedOrNull()) {
+            var values = value.values(globalObject);
+            var itr = expected.arrayIterator(globalObject);
+            const count = values.getLength(globalObject);
+            const expectedLength = expected.getLength(globalObject);
 
-        if (count == expectedLength) {
-            while (itr.next()) |item| {
-                var i: u32 = 0;
-                while (i < count) : (i += 1) {
-                    const key = values.getIndex(globalObject, i);
-                    if (key.jestDeepEquals(item, globalObject)) {
-                        pass = true;
+            if (count == expectedLength) {
+                while (itr.next()) |item| {
+                    var i: u32 = 0;
+                    while (i < count) : (i += 1) {
+                        const key = values.getIndex(globalObject, i);
+                        if (key.jestDeepEquals(item, globalObject)) {
+                            pass = true;
+                            break;
+                        }
+                    } else {
+                        pass = false;
                         break;
                     }
-                } else {
-                    pass = false;
-                    break;
                 }
             }
         }
@@ -1294,17 +1300,19 @@ pub const Expect = struct {
         const not = this.flags.not;
         var pass = false;
 
-        var values = value.values(globalObject);
-        var itr = expected.arrayIterator(globalObject);
-        const count = values.getLength(globalObject);
+        if (!value.isUndefinedOrNull()) {
+            var values = value.values(globalObject);
+            var itr = expected.arrayIterator(globalObject);
+            const count = values.getLength(globalObject);
 
-        outer: while (itr.next()) |item| {
-            var i: u32 = 0;
-            while (i < count) : (i += 1) {
-                const key = values.getIndex(globalObject, i);
-                if (key.jestDeepEquals(item, globalObject)) {
-                    pass = true;
-                    break :outer;
+            outer: while (itr.next()) |item| {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    const key = values.getIndex(globalObject, i);
+                    if (key.jestDeepEquals(item, globalObject)) {
+                        pass = true;
+                        break :outer;
+                    }
                 }
             }
         }

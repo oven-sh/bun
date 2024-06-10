@@ -4922,7 +4922,6 @@ pub const PackageManager = struct {
                 .tag = dependency.version.tag,
                 .value = dependency.version.value,
             };
-            // break :version dependency.version;
         };
         var loaded_manifest: ?Npm.PackageManifest = null;
 
@@ -5138,6 +5137,7 @@ pub const PackageManager = struct {
                             } else {
                                 if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
                                     try this.peer_dependencies.writeItem(id);
+                                    return;
                                 }
                             }
 
@@ -5149,7 +5149,6 @@ pub const PackageManager = struct {
                             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                             try manifest_entry_parse.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
                         }
-                        return;
                     }
                 }
                 return;

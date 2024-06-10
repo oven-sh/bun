@@ -3310,7 +3310,16 @@ pub const JSGlobalObject = extern struct {
                 _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
                 return null;
             }
-            const level_int = level_val.toUInt64NoTruncate();
+            const level_double = level_val.coerceToDouble(this);
+            if (level_double == std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (level_double == -std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                return null;
+            }
+            const level_int = level_val.to(i64);
             if (level_int < min) {
                 this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_int }));
                 return null;

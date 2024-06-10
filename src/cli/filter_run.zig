@@ -568,9 +568,10 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     for (state.handles) |*handle| {
         var iter = handle.config.deps.map.iterator();
         while (iter.next()) |entry| {
-            var alloc = std.heap.stackFallback(256, ctx.allocator);
-            const buf = try alloc.get().alloc(u8, entry.key_ptr.len());
-            defer alloc.get().free(buf);
+            var sfa = std.heap.stackFallback(256, ctx.allocator);
+            const alloc = sfa.get();
+            const buf = try alloc.alloc(u8, entry.key_ptr.len());
+            defer alloc.free(buf);
             const name = entry.key_ptr.slice(buf);
             // is it a workspace dependency?
             if (map.get(name)) |pkgs| {

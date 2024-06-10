@@ -107,14 +107,11 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 
             var bytes: []u8 = undefined;
             bytes = bun.default_allocator.alloc(u8, num_bytes) catch {
-                // bun.outOfMemory();
-                // return .zero;
-                unreachable;
+                bun.outOfMemory();
+                return .zero;
             };
 
             _ = BoringSSL.BN_bn2bin_padded(bytes.ptr, num_bytes, ret);
-            // TODO: add some sort of assertion here
-            // if (ret != num_bytes) { ect.
 
             return JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
         }

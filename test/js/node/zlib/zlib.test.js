@@ -258,3 +258,12 @@ describe("zlib.brotli", () => {
     }
   });
 });
+
+it.each(["BrotliCompress", "BrotliDecompress", "Deflate", "Inflate", "DeflateRaw", "InflateRaw"])(
+  "%s should work with and without `new` keyword",
+  constructor_name => {
+    const C = zlib[constructor_name];
+    expect(C()).toBeInstanceOf(C);
+    expect(new C()).toBeInstanceOf(C);
+  },
+);

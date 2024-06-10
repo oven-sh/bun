@@ -12005,19 +12005,6 @@ var require_crypto_browserify2 = __commonJS({
 // crypto.js
 var crypto_exports = require_crypto_browserify2();
 
-const validateInt32 = (value, name, min = -2147483648, max = 2147483647) => {
-  // The defaults for min and max correspond to the limits of 32-bit integers.
-  if (typeof value !== "number") {
-    throw new TypeError(`The "${name}" argument must be of type number. Received type ${typeof value}`);
-  }
-  if (!Number.isInteger(value)) {
-    throw new TypeError(`The "${name}" argument must be an integer. Received type ${typeof value}`);
-  }
-  if (value < min || value > max) {
-    throw new RangeError(`The "${name}" argument must be between ${min} and ${max}. Received ${value}`);
-  }
-};
-
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),

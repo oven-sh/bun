@@ -118,7 +118,6 @@ pub const Blob = struct {
     pub const max_size = std.math.maxInt(SizeType);
 
     const serialization_version: u8 = 2;
-    const reserved_space_for_serialization: u32 = 129;
 
     pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
         var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
@@ -338,10 +337,7 @@ pub const Blob = struct {
         }
 
         try writer.writeInt(u8, @intFromBool(this.is_jsdom_file), .little);
-        // try writer.writeInt(f64, this.last_modified, .little);
-
-        // reserved space for future use
-        try writer.writeAll(&[_]u8{0} ** reserved_space_for_serialization);
+        try writeFloat(f64, this.last_modified, Writer, writer);
     }
 
     pub fn onStructuredCloneSerialize(
@@ -373,6 +369,25 @@ pub const Blob = struct {
         _ = ctx;
         _ = this;
         _ = globalThis;
+    }
+
+    fn writeFloat(
+        comptime FloatType: type,
+        value: FloatType,
+        comptime Writer: type,
+        writer: Writer,
+    ) !void {
+        const bytes: [@sizeOf(FloatType)]u8 = @bitCast(value);
+        try writer.writeAll(&bytes);
+    }
+
+    fn readFloat(
+        comptime FloatType: type,
+        comptime Reader: type,
+        reader: Reader,
+    ) !FloatType {
+        const bytes = try reader.readBoundedBytes(@sizeOf(FloatType));
+        return @bitCast(bytes.slice()[0..@sizeOf(FloatType)].*);
     }
 
     fn readSlice(
@@ -472,7 +487,7 @@ pub const Blob = struct {
             if (version == 1) break :versions;
 
             blob.is_jsdom_file = try reader.readInt(u8, .little) != 0;
-            // blob.last_modified = try readFloat(f64, reader);
+            blob.last_modified = try readFloat(f64, Reader, reader);
 
             if (version == 2) break :versions;
         }
@@ -497,13 +512,7 @@ pub const Blob = struct {
         var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
         const reader = buffer_stream.reader();
 
-        const blob = _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
-
-        if (Environment.allow_assert) {
-            assert(total_length - reader.context.pos == reserved_space_for_serialization);
-        }
-
-        return blob;
+        return _onStructuredCloneDeserialize(globalThis, @TypeOf(reader), reader) catch return .zero;
     }
 
     const URLSearchParamsConverter = struct {
@@ -1442,6 +1451,8 @@ pub const Blob = struct {
         }
 
         if (!set_last_modified) {
+            // `lastModified` should be the current date in milliseconds if unspecified.
+            // https://developer.mozilla.org/en-US/docs/Web/API/File/lastModified
             blob.last_modified = @floatFromInt(std.time.milliTimestamp());
         }
 

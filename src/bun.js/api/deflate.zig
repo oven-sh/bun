@@ -58,7 +58,7 @@ pub const DeflateEncoder = struct {
         const windowBits = globalThis.checkRangesOrGetDefault(opts, "windowBits", u8, 8, 15, 15) orelse return .zero;
         const memLevel = globalThis.checkRangesOrGetDefault(opts, "memLevel", u8, 1, 9, 8) orelse return .zero;
         const strategy = globalThis.checkRangesOrGetDefault(opts, "strategy", u8, 0, 4, 0) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
 
         var this: *DeflateEncoder = DeflateEncoder.new(.{
             .globalThis = globalThis,
@@ -365,7 +365,7 @@ pub const DeflateDecoder = struct {
         const callback = arguments[2];
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
 
         var this: *DeflateDecoder = DeflateDecoder.new(.{
             .globalThis = globalThis,

@@ -53,7 +53,7 @@ pub const BrotliEncoder = struct {
         const callback = arguments[2];
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
 
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
@@ -399,7 +399,7 @@ pub const BrotliDecoder = struct {
         const callback = arguments[2];
 
         _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
-        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)).?;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
 
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,

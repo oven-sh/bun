@@ -72,6 +72,20 @@ afterEach(() => {
 });
 
 describe("Server", () => {
+  test("subscribe", done => ({
+    open(ws) {
+      expect(() => ws.subscribe("")).toThrow("subscribe requires a non-empty topic name");
+      ws.subscribe("topic");
+      expect(ws.isSubscribed("topic")).toBeTrue();
+      ws.unsubscribe("topic");
+      expect(ws.isSubscribed("topic")).toBeFalse();
+      ws.close();
+    },
+    close(ws, code, reason) {
+      done();
+    },
+  }));
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {

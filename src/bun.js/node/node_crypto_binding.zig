@@ -5,6 +5,12 @@ const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
+const Crypto = JSC.API.Bun.Crypto;
+const BoringSSL = bun.BoringSSL;
+const assert = bun.assert;
+const EVP = Crypto.EVP;
+const PBKDF2 = EVP.PBKDF2;
+const JSValue = JSC.JSValue;
 
 pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const S = struct {
@@ -23,5 +29,63 @@ pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             return JSC.JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
         }
     };
-    return JSC.JSFunction.create(global, "randomInt", S.cb, 2, .{});
+    return JSC.JSFunction.create(global, "randomInt", &S.cb, 2, .{});
+}
+
+pub fn pbkdf2(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments = callframe.arguments(5);
+
+    const data = PBKDF2.fromJS(globalThis, arguments.slice(), true) orelse {
+        assert(globalThis.hasException());
+        return .zero;
+    };
+
+    const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
+    return job.promise.value();
+}
+
+pub fn pbkdf2Sync(
+    globalThis: *JSC.JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) callconv(.C) JSC.JSValue {
+    const arguments = callframe.arguments(5);
+
+    var data = PBKDF2.fromJS(globalThis, arguments.slice(), false) orelse {
+        assert(globalThis.hasException());
+        return .zero;
+    };
+    defer data.deinit();
+    var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
+    if (out_arraybuffer == .zero or globalThis.hasException()) {
+        data.deinit();
+        return .zero;
+    }
+
+    const output = out_arraybuffer.asArrayBuffer(globalThis) orelse {
+        data.deinit();
+        globalThis.throwOutOfMemory();
+        return .zero;
+    };
+
+    if (!data.run(output.slice())) {
+        const err = Crypto.createCryptoError(globalThis, BoringSSL.ERR_get_error());
+        BoringSSL.ERR_clear_error();
+        globalThis.throwValue(err);
+        return .zero;
+    }
+
+    return out_arraybuffer;
+}
+
+pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const crypto = JSC.JSValue.createEmptyObject(global, 3);
+
+    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", &pbkdf2, 5, .{}));
+    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", &pbkdf2Sync, 5, .{}));
+    crypto.put(global, bun.String.init("randomInt"), randomInt(global));
+
+    return crypto;
 }

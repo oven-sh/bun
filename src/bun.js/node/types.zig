@@ -367,6 +367,8 @@ pub const StringOrBuffer = union(enum) {
     encoded_slice: JSC.ZigString.Slice,
     buffer: Buffer,
 
+    pub const empty = StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.empty };
+
     pub fn toThreadSafe(this: *@This()) void {
         switch (this.*) {
             .string => {

@@ -7,7 +7,6 @@ const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const Crypto = JSC.API.Bun.Crypto;
-const BoringSSL = bun.BoringSSL;
 const assert = bun.assert;
 const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;

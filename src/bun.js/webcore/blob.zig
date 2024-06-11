@@ -1457,7 +1457,7 @@ pub const Blob = struct {
         if (!set_last_modified) {
             // `lastModified` should be the current date in milliseconds if unspecified.
             // https://developer.mozilla.org/en-US/docs/Web/API/File/lastModified
-            blob.last_modified = @floatFromInt(bun.timespec.now().ms());
+            blob.last_modified = @floatFromInt(std.time.milliTimestamp());
         }
 
         if (blob.content_type.len == 0) {

@@ -80,16 +80,6 @@ pub fn pbkdf2Sync(
     return out_arraybuffer;
 }
 
-pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    const crypto = JSC.JSValue.createEmptyObject(global, 3);
-
-    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", &pbkdf2, 5, .{}));
-    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", &pbkdf2Sync, 5, .{}));
-    crypto.put(global, bun.String.init("randomInt"), randomInt(global));
-
-    return crypto;
-}
-
 pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const S = struct {
         fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -180,4 +170,15 @@ pub fn generatePrime(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         }
     };
     return JSC.JSFunction.create(global, "generatePrime", S.cb, 1, .{});
+}
+
+pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const crypto = JSC.JSValue.createEmptyObject(global, 3);
+
+    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", &pbkdf2, 5, .{}));
+    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", &pbkdf2Sync, 5, .{}));
+    crypto.put(global, bun.String.init("randomInt"), randomInt(global));
+    crypto.put(global, bun.String.init("generatePrime"), generatePrime(global));
+
+    return crypto;
 }

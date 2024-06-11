@@ -377,7 +377,6 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
         console.log("FILEDIR", filedir);
 
         await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
-        throw new Error("woopsie!");
 
         await $`echo ${JSON.stringify({
           "name": "bun-patch-test",
@@ -393,7 +392,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
           .env(bunEnv)
           .cwd(filedir);
 
-        await $`echo ${is_odd_patch2} > patches/is-odd@0.1.2.patch; ${bunExe()} i`.env(bunEnv).cwd(filedir);
+        await $`echo ${is_odd_patch} > patches/is-odd@0.1.2.patch; ${bunExe()} i`.env(bunEnv).cwd(filedir);
 
         const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
         expect(stderr.toString()).toBe("");

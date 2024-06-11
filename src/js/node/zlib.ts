@@ -4,6 +4,7 @@ const stream = require("node:stream");
 const BufferModule = require("node:buffer");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectDefineProperty = Object.defineProperty;
 
 const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
 const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
@@ -67,6 +68,11 @@ function BrotliCompress(opts) {
 }
 BrotliCompress.prototype = {};
 ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);
+ObjectDefineProperty(BrotliCompress.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
 BrotliCompress.prototype.flush = ZlibBase_flush;
 BrotliCompress.prototype.reset = ZlibBase_reset;
 
@@ -90,6 +96,11 @@ function BrotliDecompress(opts) {
 }
 BrotliDecompress.prototype = {};
 ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);
+ObjectDefineProperty(BrotliDecompress.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
 BrotliDecompress.prototype.flush = ZlibBase_flush;
 BrotliDecompress.prototype.reset = ZlibBase_reset;
 
@@ -155,6 +166,11 @@ function Deflate(opts) {
 }
 Deflate.prototype = {};
 ObjectSetPrototypeOf(Deflate.prototype, stream.Transform.prototype);
+ObjectDefineProperty(Deflate.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
 Deflate.prototype.flush = ZlibBase_flush;
 Deflate.prototype.reset = ZlibBase_reset;
 
@@ -178,6 +194,11 @@ function Inflate(opts) {
 }
 Inflate.prototype = {};
 ObjectSetPrototypeOf(Inflate.prototype, stream.Transform.prototype);
+ObjectDefineProperty(Inflate.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
 Inflate.prototype.flush = ZlibBase_flush;
 Inflate.prototype.reset = ZlibBase_reset;
 
@@ -246,6 +267,11 @@ function DeflateRaw(opts) {
 }
 DeflateRaw.prototype = {};
 ObjectSetPrototypeOf(DeflateRaw.prototype, stream.Transform.prototype);
+ObjectDefineProperty(DeflateRaw.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
 DeflateRaw.prototype.flush = ZlibBase_flush;
 DeflateRaw.prototype.reset = ZlibBase_reset;
 
@@ -269,6 +295,11 @@ function InflateRaw(opts) {
 }
 InflateRaw.prototype = {};
 ObjectSetPrototypeOf(InflateRaw.prototype, stream.Transform.prototype);
+ObjectDefineProperty(InflateRaw.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
 InflateRaw.prototype.flush = ZlibBase_flush;
 InflateRaw.prototype.reset = ZlibBase_reset;
 

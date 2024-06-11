@@ -342,6 +342,11 @@ pub const BrotliEncoder = struct {
         _ = callframe;
         return .undefined;
     }
+
+    pub fn getBytesWritten(this: *@This(), globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.total_in);
+    }
 };
 
 pub const BrotliDecoder = struct {
@@ -650,5 +655,10 @@ pub const BrotliDecoder = struct {
         _ = globalThis;
         _ = callframe;
         return .undefined;
+    }
+
+    pub fn getBytesWritten(this: *@This(), globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.total_in);
     }
 };

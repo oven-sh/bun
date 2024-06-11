@@ -24,6 +24,10 @@ export default [
         fn: "reset",
         length: 0,
       },
+      bytesWritten: {
+        getter: "getBytesWritten",
+        cache: false,
+      },
     },
   }),
   define({
@@ -49,6 +53,9 @@ export default [
       reset: {
         fn: "reset",
         length: 0,
+      },
+      bytesWritten: {
+        getter: "getBytesWritten",
       },
     },
   }),
@@ -76,6 +83,9 @@ export default [
         fn: "reset",
         length: 0,
       },
+      bytesWritten: {
+        getter: "getBytesWritten",
+      },
     },
   }),
   define({
@@ -101,6 +111,9 @@ export default [
       reset: {
         fn: "reset",
         length: 0,
+      },
+      bytesWritten: {
+        getter: "getBytesWritten",
       },
     },
   }),

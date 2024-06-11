@@ -318,6 +318,11 @@ pub const DeflateEncoder = struct {
         _ = bun.zlib.deflateReset(&this.stream.state);
         return .undefined;
     }
+
+    pub fn getBytesWritten(this: *@This(), globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(@as(u64, this.stream.state.total_in));
+    }
 };
 
 pub const DeflateDecoder = struct {
@@ -620,5 +625,10 @@ pub const DeflateDecoder = struct {
         _ = callframe;
         _ = bun.zlib.inflateReset(&this.stream.state);
         return .undefined;
+    }
+
+    pub fn getBytesWritten(this: *@This(), globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(@as(u64, this.stream.state.total_in));
     }
 };

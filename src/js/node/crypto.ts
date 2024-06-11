@@ -1658,11 +1658,6 @@ var require_to_buffer = __commonJS({
 });
 
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
-  if (typeof digest == "function") {
-    callback = digest;
-    digest = void 0;
-  }
-
   const promise = pbkdf2_(password, salt, iterations, keylen, digest);
   if (callback) {
     promise.then(
@@ -10947,7 +10942,6 @@ var require_parse_asn1 = __commonJS({
       aesid = require_aesid(),
       fixProc = require_fixProc(),
       ciphers = require_browser5(),
-      compat = require_browser4(),
       Buffer2 = require_safe_buffer().Buffer;
     module.exports = parseKeys;
     function parseKeys(buffer) {
@@ -11743,7 +11737,8 @@ var require_crypto_browserify2 = __commonJS({
     exports.getHashes = function () {
       return hashes;
     };
-
+    exports.pbkdf2Sync = pbkdf2Sync;
+    exports.pbkdf2 = pbkdf2;
     var aes = require_browser6();
     exports.Cipher = aes.Cipher;
     exports.createCipher = aes.createCipher;

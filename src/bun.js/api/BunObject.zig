@@ -1455,7 +1455,7 @@ pub const Crypto = struct {
         pub const PBKDF2 = struct {
             password: JSC.Node.StringOrBuffer,
             salt: JSC.Node.StringOrBuffer,
-            iteration_count: i32 = 1,
+            iteration_count: u32 = 1,
             length: i32 = 0,
             algorithm: EVP.Algorithm,
 
@@ -1470,13 +1470,13 @@ pub const Crypto = struct {
                 assert(this.length <= @as(i32, @intCast(output.len)));
                 BoringSSL.ERR_clear_error();
                 const rc = BoringSSL.PKCS5_PBKDF2_HMAC(
-                    password.ptr,
+                    if (password.len > 0) password.ptr else null,
                     @intCast(password.len),
                     salt.ptr,
                     @intCast(salt.len),
-                    iteration_count,
+                    @intCast(iteration_count),
                     algorithm.md().?,
-                    @as(i32, length),
+                    @intCast(length),
                     output.ptr,
                 );
 
@@ -1489,7 +1489,7 @@ pub const Crypto = struct {
 
             pub const Job = struct {
                 pbkdf2: PBKDF2,
-                output: [Digest.len]u8 = undefined,
+                output: []u8 = &[_]u8{},
                 task: JSC.WorkPoolTask = .{ .callback = &runTask },
                 promise: JSC.JSPromise.Strong = .{},
                 vm: *JSC.VirtualMachine,
@@ -1501,12 +1501,18 @@ pub const Crypto = struct {
 
                 pub fn runTask(task: *JSC.WorkPoolTask) void {
                     const job = @fieldParentPtr(PBKDF2.Job, "task", task);
-                    if (!job.pbkdf2.run(&job.output)) {
+                    defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+                    job.output = bun.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
+                        job.err = BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED;
+                        return;
+                    };
+                    if (!job.pbkdf2.run(job.output)) {
                         job.err = BoringSSL.ERR_get_error();
                         BoringSSL.ERR_clear_error();
-                    }
 
-                    job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task));
+                        bun.default_allocator.free(job.output);
+                        job.output = &[_]u8{};
+                    }
                 }
 
                 pub fn runFromJS(this: *Job) void {
@@ -1522,15 +1528,23 @@ pub const Crypto = struct {
                         return;
                     }
 
-                    const output_slice = this.output[0..@as(usize, @intCast(this.pbkdf2.length))];
-                    const buffer_value = JSValue.createBuffer(globalThis, output_slice, null);
+                    const output_slice = this.output;
+                    assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
+                    const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+                    if (buffer_value == .zero) {
+                        promise.reject(globalThis, globalThis.createTypeErrorInstance("Failed to create buffer", .{}));
+                        return;
+                    }
+
+                    this.output = &[_]u8{};
                     promise.resolve(globalThis, buffer_value);
                 }
 
                 pub fn deinit(this: *Job) void {
-                    this.poll.deactivate(this.vm.eventLoop());
+                    this.poll.deactivate(this.vm.uwsLoop());
                     this.pbkdf2.deinitAndUnprotect();
                     this.promise.deinit();
+                    bun.default_allocator.free(this.output);
                     this.destroy();
                 }
 
@@ -1543,7 +1557,7 @@ pub const Crypto = struct {
 
                     job.promise = JSC.JSPromise.Strong.init(globalThis);
                     job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
-                    job.poll.activate(vm.eventLoop());
+                    job.poll.ref(vm);
                     JSC.WorkPool.schedule(&job.task);
 
                     return job;
@@ -1566,20 +1580,30 @@ pub const Crypto = struct {
                     return null;
                 }
 
-                const length = arguments[3].coerce(globalThis, i32);
+                if (!arguments[3].isAnyInt()) {
+                    _ = globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
+                    return null;
+                }
 
-                if (!globalThis.hasException() and length < 0) {
-                    globalThis.throwInvalidArguments("length must be >= 0", .{});
+                const length = arguments[3].coerce(i64, globalThis);
+
+                if (!globalThis.hasException() and (length < 0 or length > std.math.maxInt(i32))) {
+                    globalThis.throwInvalidArguments("keylen must be > 0 and < {d}", .{std.math.maxInt(i32)});
                 }
 
                 if (globalThis.hasException()) {
                     return null;
                 }
 
-                const iteration_count = arguments[2].coerce(globalThis, i32);
+                if (!arguments[2].isAnyInt()) {
+                    _ = globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
+                    return null;
+                }
 
-                if (!globalThis.hasException() and iteration_count < 1) {
-                    globalThis.throwInvalidArguments("length must be >= 1", .{});
+                const iteration_count = arguments[2].coerce(i64, globalThis);
+
+                if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(u32))) {
+                    globalThis.throwInvalidArguments("iteration count must be >= 1 and <= maxInt", .{});
                 }
 
                 if (globalThis.hasException()) {
@@ -1588,7 +1612,7 @@ pub const Crypto = struct {
 
                 const algorithm = brk: {
                     if (!arguments[4].isString()) {
-                        globalThis.throwInvalidArgumentType("pbkdf2", "algorithm", "string");
+                        _ = globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
                         return null;
                     }
 
@@ -1597,7 +1621,8 @@ pub const Crypto = struct {
                             const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
                             defer slice.deinit();
                             const name = slice.slice();
-                            globalThis.throwInvalidArguments("Unsupported algorithm '{s}'", .{name});
+                            const err = globalThis.createTypeErrorInstanceWithCode(.ERR_CRYPTO_INVALID_DIGEST, "Unsupported algorithm \"{s}\"", .{name});
+                            globalThis.throwValue(err);
                         }
                         return null;
                     };
@@ -1605,13 +1630,13 @@ pub const Crypto = struct {
 
                 const salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
                     if (!globalThis.hasException()) {
-                        globalThis.throwInvalidArgumentType("pbkdf2", "salt", "string or buffer");
+                        _ = globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                     }
                     return null;
                 };
 
                 if (salt.slice().len > std.math.maxInt(i32)) {
-                    globalThis.throwInvalidArguments("salt is too long");
+                    globalThis.throwInvalidArguments("salt is too long", .{});
                     salt.deinitAndUnprotect();
                     return null;
                 }
@@ -1620,13 +1645,13 @@ pub const Crypto = struct {
                     salt.deinitAndUnprotect();
 
                     if (!globalThis.hasException()) {
-                        globalThis.throwInvalidArgumentType("pbkdf2", "password", "string or buffer");
+                        _ = globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }
                     return null;
                 };
 
                 if (password.slice().len > std.math.maxInt(i32)) {
-                    globalThis.throwInvalidArguments("password is too long");
+                    globalThis.throwInvalidArguments("password is too long", .{});
                     salt.deinitAndUnprotect();
                     password.deinitAndUnprotect();
                     return null;
@@ -1635,8 +1660,8 @@ pub const Crypto = struct {
                 return PBKDF2{
                     .password = password,
                     .salt = salt,
-                    .iteration_count = iteration_count,
-                    .length = length,
+                    .iteration_count = @intCast(iteration_count),
+                    .length = @truncate(length),
                     .algorithm = algorithm,
                 };
             }

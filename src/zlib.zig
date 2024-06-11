@@ -963,11 +963,12 @@ pub const ZlibCompressorStreaming = struct {
         const state = &this.state;
         state.next_in = null;
         state.avail_in = 0;
+        var ret: ReturnCode = .Ok;
         while (true) {
             var out: [CHUNK]u8 = undefined;
             state.avail_out = CHUNK;
             state.next_out = &out;
-            const ret = deflate(state, .Finish);
+            ret = deflate(state, .Finish);
             bun.assert(ret != .StreamError);
             const have = CHUNK - state.avail_out;
             try output.appendSlice(bun.default_allocator, out[0..have]);
@@ -977,6 +978,7 @@ pub const ZlibCompressorStreaming = struct {
         // bun.assert(state.avail_in == 0);
 
         _ = deflateEnd(&this.state);
+        if (ret != .StreamEnd) return error.ZlibError;
     }
 };
 
@@ -1036,11 +1038,12 @@ pub const ZlibDecompressorStreaming = struct {
         const state = &this.state;
         state.next_in = null;
         state.avail_in = 0;
+        var ret: ReturnCode = .Ok;
         while (true) {
             var out: [CHUNK]u8 = undefined;
             state.avail_out = CHUNK;
             state.next_out = &out;
-            const ret = inflate(state, .Finish);
+            ret = inflate(state, .Finish);
             bun.assert(ret != .StreamError);
             if (ret == .NeedDict) return error.ZlibError;
             if (ret == .DataError) return error.ZlibError;
@@ -1053,5 +1056,6 @@ pub const ZlibDecompressorStreaming = struct {
         // bun.assert(state.avail_in == 0);
 
         _ = inflateEnd(&this.state);
+        if (ret != .StreamEnd) return error.ZlibError;
     }
 };

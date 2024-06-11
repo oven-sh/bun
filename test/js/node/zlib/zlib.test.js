@@ -324,3 +324,44 @@ it("premature end handles bytesWritten properly", () => {
     }
   }
 });
+
+const inputString =
+  "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
+  "t. Morbi faucibus, purus at gravida dictum, libero arcu " +
+  "convallis lacus, in commodo libero metus eu nisi. Nullam" +
+  " commodo, neque nec porta placerat, nisi est fermentum a" +
+  "ugue, vitae gravida tellus sapien sit amet tellus. Aenea" +
+  "n non diam orci. Proin quis elit turpis. Suspendisse non" +
+  " diam ipsum. Suspendisse nec ullamcorper odio. Vestibulu" +
+  "m arcu mi, sodales non suscipit id, ultrices ut massa. S" +
+  "ed ac sem sit amet arcu malesuada fermentum. Nunc sed. ";
+
+const errMessage = /unexpected end of file/;
+
+it.each([
+  // ["gzip/gunzip", "gunzip", "gunzipSync"],
+  // ["gzip/unzip", "unzip", "unzipSync"],
+  ["deflate", "inflate", "inflateSync"],
+  ["deflateRaw", "inflateRaw", "inflateRawSync"],
+])("%s should handle truncated input correctly", async (comp, decomp, decompSync) => {
+  const comp_p = util.promisify(zlib[comp]);
+  const decomp_p = util.promisify(zlib[decomp]);
+
+  const compressed = await comp_p(inputString);
+
+  const truncated = compressed.slice(0, compressed.length / 2);
+  const toUTF8 = buffer => buffer.toString("utf-8");
+
+  // sync sanity
+  const decompressed = zlib[decompSync](compressed);
+  expect(toUTF8(decompressed)).toEqual(inputString);
+
+  // async sanity
+  expect(toUTF8(await decomp_p(compressed))).toEqual(inputString);
+
+  // Sync truncated input test
+  expect(() => zlib[decompSync](truncated)).toThrow();
+
+  // Async truncated input test
+  expect(async () => await decomp_p(truncated)).toThrow();
+});

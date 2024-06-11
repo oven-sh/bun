@@ -2265,7 +2265,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                             }
                         }
 
-                        return Result.fail(err, .linking_dependency);
+                        return Result.fail(bun.errnoToZigErr(err.errno), .linking_dependency);
                     },
                     .result => {},
                 }

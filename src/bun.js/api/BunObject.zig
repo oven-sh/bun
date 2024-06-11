@@ -1453,8 +1453,8 @@ pub const Crypto = struct {
         pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
 
         pub const PBKDF2 = struct {
-            password: JSC.Node.StringOrBuffer,
-            salt: JSC.Node.StringOrBuffer,
+            password: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
+            salt: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
             iteration_count: u32 = 1,
             length: i32 = 0,
             algorithm: EVP.Algorithm,
@@ -1628,42 +1628,43 @@ pub const Crypto = struct {
                     };
                 };
 
-                const salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
-                    if (!globalThis.hasException()) {
-                        _ = globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
+                var out = PBKDF2{
+                    .iteration_count = @intCast(iteration_count),
+                    .length = @truncate(length),
+                    .algorithm = algorithm,
+                };
+                defer {
+                    if (globalThis.hasException()) {
+                        if (is_async)
+                            out.deinitAndUnprotect()
+                        else
+                            out.deinit();
                     }
+                }
+
+                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
+                    _ = globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                     return null;
                 };
 
-                if (salt.slice().len > std.math.maxInt(i32)) {
+                if (out.salt.slice().len > std.math.maxInt(i32)) {
                     globalThis.throwInvalidArguments("salt is too long", .{});
-                    salt.deinitAndUnprotect();
                     return null;
                 }
 
-                const password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
-                    salt.deinitAndUnprotect();
-
+                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
                     if (!globalThis.hasException()) {
                         _ = globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                     }
                     return null;
                 };
 
-                if (password.slice().len > std.math.maxInt(i32)) {
+                if (out.password.slice().len > std.math.maxInt(i32)) {
                     globalThis.throwInvalidArguments("password is too long", .{});
-                    salt.deinitAndUnprotect();
-                    password.deinitAndUnprotect();
                     return null;
                 }
 
-                return PBKDF2{
-                    .password = password,
-                    .salt = salt,
-                    .iteration_count = @intCast(iteration_count),
-                    .length = @truncate(length),
-                    .algorithm = algorithm,
-                };
+                return out;
             }
         };
 

@@ -1299,4 +1299,9 @@ if (!target) {
 
 runTask("Environment", printInfo);
 const results = await runTests(target);
-process.exit(results.every(({ ok }) => ok) ? 0 : 1);
+const ok = results.every(({ ok }) => ok);
+if (isBuildKite) {
+  process.exit(ok ? 0 : 2);
+} else {
+  process.exit(ok ? 0 : 1);
+}

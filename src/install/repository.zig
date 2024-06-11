@@ -34,6 +34,48 @@ pub const Repository = extern struct {
         .{ "gitlab", ".com" },
     });
 
+    pub fn createDependencyNameFromVersionLiteral(
+        allocator: std.mem.Allocator,
+        repository: *const Repository,
+        lockfile: *Install.Lockfile,
+        dep_id: Install.DependencyID,
+    ) []u8 {
+        const buf = lockfile.buffers.string_bytes.items;
+        const dep = lockfile.buffers.dependencies.items[dep_id];
+        const version_literal = dep.version.literal.slice(buf);
+        const repo_name = repository.repo;
+        const repo_name_str = lockfile.str(&repo_name);
+        if (repo_name_str.len == 0) {
+            const name_buf = allocator.alloc(u8, bun.sha.EVP.SHA1.digest) catch bun.outOfMemory();
+            var sha1 = bun.sha.SHA1.init();
+            defer sha1.deinit();
+            sha1.update(version_literal);
+            sha1.final(name_buf[0..bun.sha.SHA1.digest]);
+            return name_buf[0..bun.sha.SHA1.digest];
+        }
+
+        var len: usize = 0;
+        var remain = repo_name_str;
+        while (strings.indexOfChar(remain, '@')) |at_index| {
+            len += remain[0..at_index].len;
+            remain = remain[at_index + 1 ..];
+        }
+        len += remain.len;
+
+        const name_buf = allocator.alloc(u8, len) catch bun.outOfMemory();
+        var name = name_buf;
+        len = 0;
+        remain = repo_name_str;
+        while (strings.indexOfChar(remain, '@')) |at_index| {
+            @memcpy(name[0..at_index], remain[0..at_index]);
+            name = name[at_index + 1 ..];
+            remain = remain[at_index + 1 ..];
+        }
+
+        @memcpy(name[0..remain.len], remain);
+        return name_buf[0..name_buf.len];
+    }
+
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
         const owner_order = lhs.owner.order(&rhs.owner, lhs_buf, rhs_buf);
         if (owner_order != .eq) return owner_order;
@@ -267,7 +309,7 @@ pub const Repository = extern struct {
         resolved: string,
     ) !ExtractData {
         bun.Analytics.Features.git_dependencies += 1;
-        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved);
+        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
@@ -320,6 +362,14 @@ pub const Repository = extern struct {
         defer package_dir.close();
 
         const json_file, const json_buf = bun.sys.File.readFileFrom(package_dir, "package.json", allocator).unwrap() catch |err| {
+            if (err == error.ENOENT) {
+                // allow git dependencies without package.json
+                return .{
+                    .url = url,
+                    .resolved = resolved,
+                };
+            }
+
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -348,8 +398,10 @@ pub const Repository = extern struct {
         return .{
             .url = url,
             .resolved = resolved,
-            .json_path = ret_json_path,
-            .json_buf = json_buf,
+            .json = .{
+                .path = ret_json_path,
+                .buf = json_buf,
+            },
         };
     }
 };

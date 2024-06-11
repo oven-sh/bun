@@ -20,6 +20,20 @@ const {
   verify: nativeVerify,
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
+const _randomInt = $zig("node_crypto_binding.zig", "randomInt");
+
+function randomInt(min, max, callback) {
+  if (max == null) {
+    max = min;
+    min = 0;
+  }
+  if (callback != null) {
+    process.nextTick(() => callback(null, _randomInt(min, max)));
+    return;
+  }
+  return _randomInt(min, max);
+}
+
 const MAX_STRING_LENGTH = 536870888;
 var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
@@ -11969,7 +11983,6 @@ var crypto_exports = require_crypto_browserify2();
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
-  randomInt = (...args) => crypto.randomInt(...args),
   timingSafeEqual =
     "timingSafeEqual" in crypto
       ? (a, b) => {

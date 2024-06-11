@@ -17,6 +17,11 @@ export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
+export const patchInternals = {
+  parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
+  apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
+};
+
 export const shellInternals = {
   lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
   parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
@@ -50,6 +55,8 @@ export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings
    */
   parseLockfile: (cwd: string) => any;
 };
+
+export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpers");
 
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",

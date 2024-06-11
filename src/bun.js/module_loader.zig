@@ -1069,7 +1069,9 @@ pub const ModuleLoader = struct {
                         const package = pm.lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
-                        switch (pm.determinePreinstallState(package, pm.lockfile)) {
+                        var name_and_version_hash: ?u64 = null;
+                        var patchfile_hash: ?u64 = null;
+                        switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
                             .done => {
                                 // we are only truly done if all the dependencies are done.
                                 const current_tasks = pm.total_tasks;

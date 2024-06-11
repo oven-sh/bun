@@ -79,6 +79,7 @@ const Origin = Install.Origin;
 const PackageID = Install.PackageID;
 const PackageInstall = Install.PackageInstall;
 const PackageNameHash = Install.PackageNameHash;
+const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 const Resolution = @import("./resolution.zig").Resolution;
 const Crypto = @import("../sha.zig").Hashers;
@@ -90,6 +91,23 @@ const zero_hash = std.mem.zeroes(MetaHash);
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const TrustedDependenciesSet = std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, void, ArrayIdentityContext, false);
 pub const VersionHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, Semver.Version, ArrayIdentityContext.U64, false);
+pub const PatchedDependenciesMap = std.ArrayHashMapUnmanaged(PackageNameAndVersionHash, PatchedDep, ArrayIdentityContext.U64, false);
+pub const PatchedDep = extern struct {
+    /// e.g. "patches/is-even@1.0.0.patch"
+    path: String,
+    _padding: [7]u8 = [_]u8{0} ** 7,
+    patchfile_hash_is_null: bool = true,
+    /// the hash of the patch file contents
+    __patchfile_hash: u64 = 0,
+
+    pub fn setPatchfileHash(this: *PatchedDep, val: ?u64) void {
+        this.patchfile_hash_is_null = val == null;
+        this.__patchfile_hash = if (val) |v| v else 0;
+    }
+    pub fn patchfileHash(this: *const PatchedDep) ?u64 {
+        return if (this.patchfile_hash_is_null) null else this.__patchfile_hash;
+    }
+};
 const File = bun.sys.File;
 const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
 
@@ -130,6 +148,7 @@ workspace_versions: VersionHashMap = .{},
 /// Optional because `trustedDependencies` in package.json might be an
 /// empty list or it might not exist
 trusted_dependencies: ?TrustedDependenciesSet = null,
+patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 
 const Stream = std.io.FixedBufferStream([]u8);
@@ -253,6 +272,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *log
     this.workspace_paths = .{};
     this.workspace_versions = .{};
     this.overrides = .{};
+    this.patched_dependencies = .{};
 
     const load_result = Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -861,6 +881,7 @@ pub fn cleanWithLogger(
     try new.package_index.ensureTotalCapacity(old.package_index.capacity());
     try new.packages.ensureTotalCapacity(old.allocator, old.packages.len);
     try new.buffers.preallocate(old.buffers, old.allocator);
+    try new.patched_dependencies.ensureTotalCapacity(old.allocator, old.patched_dependencies.entries.len);
 
     old.scratch.dependency_list_queue.head = 0;
 
@@ -961,6 +982,18 @@ pub fn cleanWithLogger(
     new.trusted_dependencies = old_trusted_dependencies;
     new.scripts = old_scripts;
     new.meta_hash = old.meta_hash;
+
+    {
+        var builder = new.stringBuilder();
+        for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
+        try builder.allocate();
+        for (old.patched_dependencies.keys(), old.patched_dependencies.values()) |k, v| {
+            bun.assert(!v.patchfile_hash_is_null);
+            var patchdep = v;
+            patchdep.path = builder.append(String, patchdep.path.slice(old.buffers.string_bytes.items));
+            try new.patched_dependencies.put(new.allocator, k, patchdep);
+        }
+    }
 
     // Don't allow invalid memory to happen
     if (updates.len > 0) {
@@ -1890,8 +1923,9 @@ pub const Printer = struct {
                                 }
                                 behavior = dep.behavior;
 
-                                // assert its sorted
-                                if (comptime Environment.allow_assert) assert(dependency_behavior_change_count < 3);
+                                // assert its sorted. debug only because of a bug saving incorrect ordering
+                                // of optional dependencies to lockfiles
+                                if (comptime Environment.isDebug) assert(dependency_behavior_change_count < 3);
                             }
 
                             try writer.writeAll("    ");
@@ -3168,6 +3202,7 @@ pub const Package = extern struct {
         this.resolution.count(old_string_buf, *Lockfile.StringBuilder, builder);
         this.meta.count(old_string_buf, *Lockfile.StringBuilder, builder);
         this.scripts.count(old_string_buf, *Lockfile.StringBuilder, builder);
+        for (old.patched_dependencies.values()) |patched_dep| builder.count(patched_dep.path.slice(old.buffers.string_bytes.items));
         const new_extern_string_count = this.bin.count(old_string_buf, old_extern_string_buf, *Lockfile.StringBuilder, builder);
         const old_dependencies: []const Dependency = this.dependencies.get(old.buffers.dependencies.items);
         const old_resolutions: []const PackageID = this.resolutions.get(old.buffers.resolutions.items);
@@ -3590,6 +3625,8 @@ pub const Package = extern struct {
             added_trusted_dependencies: std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, bool, ArrayIdentityContext, false) = .{},
             removed_trusted_dependencies: TrustedDependenciesSet = .{},
 
+            patched_dependencies_changed: bool = false,
+
             pub inline fn sum(this: *Summary, that: Summary) void {
                 this.add += that.add;
                 this.remove += that.remove;
@@ -3599,7 +3636,8 @@ pub const Package = extern struct {
             pub inline fn hasDiffs(this: Summary) bool {
                 return this.add > 0 or this.remove > 0 or this.update > 0 or this.overrides_changed or
                     this.added_trusted_dependencies.count() > 0 or
-                    this.removed_trusted_dependencies.count() > 0;
+                    this.removed_trusted_dependencies.count() > 0 or
+                    this.patched_dependencies_changed;
             }
         };
 
@@ -3742,6 +3780,21 @@ pub const Package = extern struct {
                     break :trusted_dependencies;
                 }
             }
+
+            summary.patched_dependencies_changed = patched_dependencies_changed: {
+                if (from_lockfile.patched_dependencies.entries.len != to_lockfile.patched_dependencies.entries.len) break :patched_dependencies_changed true;
+                var iter = to_lockfile.patched_dependencies.iterator();
+                while (iter.next()) |entry| {
+                    if (from_lockfile.patched_dependencies.get(entry.key_ptr.*)) |val| {
+                        if (!std.mem.eql(
+                            u8,
+                            val.path.slice(from_lockfile.buffers.string_bytes.items),
+                            entry.value_ptr.path.slice(to_lockfile.buffers.string_bytes.items),
+                        )) break :patched_dependencies_changed true;
+                    } else break :patched_dependencies_changed true;
+                }
+                break :patched_dependencies_changed false;
+            };
 
             for (from_deps, 0..) |*from_dep, i| {
                 found: {
@@ -4564,9 +4617,45 @@ pub const Package = extern struct {
         package.name_hash = 0;
 
         // -- Count the sizes
-        if (json.asProperty("name")) |name_q| {
-            if (name_q.expr.asString(allocator)) |name| {
-                string_builder.count(name);
+        name: {
+            if (json.asProperty("name")) |name_q| {
+                if (name_q.expr.asString(allocator)) |name| {
+                    if (name.len != 0) {
+                        string_builder.count(name);
+                        break :name;
+                    }
+                }
+            }
+
+            // name is not validated by npm, so fallback to creating a new from the version literal
+            if (ResolverContext == *PackageManager.GitResolver) {
+                const resolution: *const Resolution = resolver.resolution;
+                const repo = switch (resolution.tag) {
+                    .git => resolution.value.git,
+                    .github => resolution.value.github,
+
+                    else => break :name,
+                };
+
+                resolver.new_name = Repository.createDependencyNameFromVersionLiteral(
+                    lockfile.allocator,
+                    &repo,
+                    lockfile,
+                    resolver.dep_id,
+                );
+
+                string_builder.count(resolver.new_name);
+            }
+        }
+
+        if (json.asProperty("patchedDependencies")) |patched_deps| {
+            const obj = patched_deps.expr.data.e_object;
+            for (obj.properties.slice()) |prop| {
+                const key = prop.key.?;
+                const value = prop.value.?;
+                if (key.isString() and value.isString()) {
+                    string_builder.count(value.asString(allocator).?);
+                }
             }
         }
 
@@ -4828,12 +4917,27 @@ pub const Package = extern struct {
 
         const package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
 
-        if (json.asProperty("name")) |name_q| {
-            if (name_q.expr.asString(allocator)) |name| {
-                const external_string = string_builder.append(ExternalString, name);
+        name: {
+            if (ResolverContext == *PackageManager.GitResolver) {
+                if (resolver.new_name.len != 0) {
+                    defer lockfile.allocator.free(resolver.new_name);
+                    const external_string = string_builder.append(ExternalString, resolver.new_name);
+                    package.name = external_string.value;
+                    package.name_hash = external_string.hash;
+                    break :name;
+                }
+            }
 
-                package.name = external_string.value;
-                package.name_hash = external_string.hash;
+            if (json.asProperty("name")) |name_q| {
+                if (name_q.expr.asString(allocator)) |name| {
+                    if (name.len != 0) {
+                        const external_string = string_builder.append(ExternalString, name);
+
+                        package.name = external_string.value;
+                        package.name_hash = external_string.hash;
+                        break :name;
+                    }
+                }
             }
         }
 
@@ -4911,6 +5015,21 @@ pub const Package = extern struct {
                         }
                     },
                     else => {},
+                }
+            }
+
+            if (json.asProperty("patchedDependencies")) |patched_deps| {
+                const obj = patched_deps.expr.data.e_object;
+                lockfile.patched_dependencies.ensureTotalCapacity(allocator, obj.properties.len) catch unreachable;
+                for (obj.properties.slice()) |prop| {
+                    const key = prop.key.?;
+                    const value = prop.value.?;
+                    if (key.isString() and value.isString()) {
+                        var sfb = std.heap.stackFallback(1024, allocator);
+                        const keyhash = key.asStringHash(sfb.get(), String.Builder.stringHash) orelse unreachable;
+                        const patch_path = string_builder.append(String, value.asString(allocator).?);
+                        lockfile.patched_dependencies.put(allocator, keyhash, .{ .path = patch_path }) catch unreachable;
+                    }
                 }
             }
 
@@ -5382,6 +5501,7 @@ pub fn deinit(this: *Lockfile) void {
     if (this.trusted_dependencies) |*trusted_dependencies| {
         trusted_dependencies.deinit(this.allocator);
     }
+    this.patched_dependencies.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
     this.workspace_versions.deinit(this.allocator);
     this.overrides.deinit(this.allocator);
@@ -5729,6 +5849,7 @@ pub const Serializer = struct {
     pub const version = "bun-lockfile-format-v0\n";
     const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
+    const has_patched_dependencies_tag: u64 = @bitCast(@as([8]u8, "pAtChEdD".*));
     const has_workspace_package_ids_tag: u64 = @bitCast(@as([8]u8, "wOrKsPaC".*));
     const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
     const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
@@ -5876,6 +5997,30 @@ pub const Serializer = struct {
                 writer,
                 []Dependency.External,
                 external_overrides.items,
+            );
+        }
+
+        if (this.patched_dependencies.entries.len > 0) {
+            for (this.patched_dependencies.values()) |patched_dep| bun.assert(!patched_dep.patchfile_hash_is_null);
+
+            try writer.writeAll(std.mem.asBytes(&has_patched_dependencies_tag));
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []PackageNameAndVersionHash,
+                this.patched_dependencies.keys(),
+            );
+
+            try Lockfile.Buffers.writeArray(
+                StreamType,
+                stream,
+                @TypeOf(writer),
+                writer,
+                []PatchedDep,
+                this.patched_dependencies.values(),
             );
         }
 
@@ -6055,6 +6200,39 @@ pub const Serializer = struct {
                     };
                     for (overrides_name_hashes.items, override_versions_external.items) |name, value| {
                         map.putAssumeCapacity(name, Dependency.toDependency(value, context));
+                    }
+                } else {
+                    stream.pos -= 8;
+                }
+            }
+        }
+
+        {
+            const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+            if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+                const next_num = try reader.readInt(u64, .little);
+                if (next_num == has_patched_dependencies_tag) {
+                    var patched_dependencies_name_and_version_hashes =
+                        try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(PackageNameAndVersionHash),
+                    );
+                    defer patched_dependencies_name_and_version_hashes.deinit(allocator);
+
+                    var map = lockfile.patched_dependencies;
+                    defer lockfile.patched_dependencies = map;
+
+                    try map.ensureTotalCapacity(allocator, patched_dependencies_name_and_version_hashes.items.len);
+                    const patched_dependencies_paths = try Lockfile.Buffers.readArray(
+                        stream,
+                        allocator,
+                        std.ArrayListUnmanaged(PatchedDep),
+                    );
+
+                    for (patched_dependencies_name_and_version_hashes.items, patched_dependencies_paths.items) |name_hash, patch_path| {
+                        map.putAssumeCapacity(name_hash, patch_path);
                     }
                 } else {
                     stream.pos -= 8;

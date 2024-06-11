@@ -1004,6 +1004,10 @@ pub const Log = struct {
         });
     }
 
+    pub fn addErrorFmtNoLoc(log: *Log, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        try log.addErrorFmt(null, Loc.Empty, allocator, text, args);
+    }
+
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;

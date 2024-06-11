@@ -241,7 +241,7 @@ pub const Source = struct {
             Output.Source.init(stdout, stderr)
                 .set();
 
-            if (comptime Environment.isDebug) {
+            if (comptime Environment.isDebug or Environment.allow_logs) {
                 initScopedDebugWriterAtStartup();
             }
         }
@@ -569,7 +569,7 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         else => tag,
     };
 
-    if (comptime !Environment.isDebug) {
+    if (comptime !Environment.isDebug and !Environment.allow_logs) {
         return struct {
             pub fn isVisible() bool {
                 return false;
@@ -617,6 +617,12 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
 
             if (ScopedDebugWriter.disable_inside_log > 0) {
                 return;
+            }
+
+            if (Environment.allow_logs) ScopedDebugWriter.disable_inside_log += 1;
+            defer {
+                if (Environment.allow_logs)
+                    ScopedDebugWriter.disable_inside_log -= 1;
             }
 
             if (!isVisible())
@@ -1000,7 +1006,7 @@ pub fn initScopedDebugWriterAtStartup() void {
     ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
 }
 fn scopedWriter() File.QuietWriter {
-    if (comptime !Environment.isDebug) {
+    if (comptime !Environment.isDebug and !Environment.allow_logs) {
         @compileError("scopedWriter() should only be called in debug mode");
     }
 

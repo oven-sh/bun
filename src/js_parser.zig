@@ -20202,7 +20202,7 @@ fn NewParser_(
 
                     class.properties = class_properties.items;
 
-                    if (instance_members.items.len > 0 or class.extends != null) {
+                    if (instance_members.items.len > 0) {
                         if (constructor_function == null) {
                             var properties = ListManaged(Property).fromOwnedSlice(p.allocator, class.properties);
                             var constructor_stmts = ListManaged(Stmt).init(p.allocator);

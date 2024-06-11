@@ -1689,6 +1689,7 @@ pub const Interpreter = struct {
                 walker: GlobWalker,
             },
         },
+        out_exit_code: ExitCode = 0,
         out: Result,
         out_idx: u32,
 
@@ -2109,7 +2110,6 @@ pub const Interpreter = struct {
         }
 
         fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
-            _ = exit_code;
             if (comptime bun.Environment.allow_assert) {
                 assert(this.state != .done and this.state != .err);
                 assert(this.child_state != .idle);
@@ -2119,6 +2119,21 @@ pub const Interpreter = struct {
             if (child.ptr.is(Script)) {
                 if (comptime bun.Environment.allow_assert) {
                     assert(this.child_state == .cmd_subst);
+                }
+
+                // This branch is true means that we expanded
+                // a single command substitution and it failed.
+                //
+                // This information is propagated to `Cmd` because in the case
+                // that the command substitution would be expanded to the
+                // command name (e.g. `$(lkdfjsldf)`), and it fails, the entire
+                // command should fail with the exit code of the command
+                // substitution.
+                if (exit_code != 0 and
+                    this.node.* == .simple and
+                    this.node.simple == .cmd_subst)
+                {
+                    this.out_exit_code = exit_code;
                 }
 
                 const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout().slice();
@@ -3703,6 +3718,7 @@ pub const Interpreter = struct {
             expanding_args: struct {
                 idx: u32 = 0,
                 expansion: Expansion,
+                last_exit_code: ExitCode = 0,
             },
             waiting_stat,
             stat_complete: struct {
@@ -4544,6 +4560,21 @@ pub const Interpreter = struct {
                     this.writeFailingError("{s}", .{buf});
                     return;
                 }
+                // Handling this case from the shell spec:
+                // "If there is no command name, but the command contained a
+                // command substitution, the command shall complete with the
+                // exit status of the last command substitution performed."
+                //
+                // See the comment where `this.out_exit_code` is assigned for
+                // more info.
+                const e: *Expansion = child.ptr.as(Expansion);
+                if (this.state == .expanding_args and
+                    e.node.* == .simple and
+                    e.node.simple == .cmd_subst and
+                    this.state.expanding_args.idx == 1 and this.node.name_and_args.len == 1)
+                {
+                    this.exit_code = e.out_exit_code;
+                }
                 this.next();
                 return;
             }
@@ -4574,8 +4605,21 @@ pub const Interpreter = struct {
                 }
 
                 const first_arg = this.args.items[0] orelse {
-                    // If no args then this is a bug
-                    @panic("No arguments provided");
+                    // Sometimes the expansion can result in an empty string
+                    //
+                    //  For example:
+                    //
+                    //     await $`echo "" > script.sh`
+                    //     await $`(bash ./script.sh)`
+                    //     await $`$(lkdlksdfjsf)`
+                    //
+                    // In this case, we should just exit.
+                    //
+                    // BUT, if the expansion contained a single command
+                    // substitution (third example above), then we need to
+                    // return the exit code of that command substitution.
+                    this.parent.childDone(this, this.exit_code orelse 0);
+                    return;
                 };
 
                 const first_arg_len = std.mem.len(first_arg);
@@ -6418,7 +6462,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
-                defer bun.default_allocator.destroy(task);
+                defer task.deinit();
                 this.state.exec.tasks_done += 1;
                 var output = task.takeOutput();
                 const err = task.err;
@@ -6499,6 +6543,11 @@ pub const Interpreter = struct {
                 concurrent_task: JSC.EventLoopTask,
 
                 const debug = bun.Output.scoped(.ShellMkdirTask, true);
+
+                pub fn deinit(this: *ShellMkdirTask) void {
+                    this.created_directories.deinit();
+                    bun.default_allocator.destroy(this);
+                }
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;
@@ -6814,16 +6863,22 @@ pub const Interpreter = struct {
             pub fn start(this: *Echo) Maybe(void) {
                 const args = this.bltn.argsSlice();
 
+                var has_leading_newline: bool = false;
                 const args_len = args.len;
                 for (args, 0..) |arg, i| {
-                    const len = std.mem.len(arg);
-                    this.output.appendSlice(arg[0..len]) catch bun.outOfMemory();
+                    const thearg = std.mem.span(arg);
                     if (i < args_len - 1) {
+                        this.output.appendSlice(thearg) catch bun.outOfMemory();
                         this.output.append(' ') catch bun.outOfMemory();
+                    } else {
+                        if (thearg.len > 0 and thearg[thearg.len - 1] == '\n') {
+                            has_leading_newline = true;
+                        }
+                        this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch bun.outOfMemory();
                     }
                 }
 
-                this.output.append('\n') catch bun.outOfMemory();
+                if (!has_leading_newline) this.output.append('\n') catch bun.outOfMemory();
 
                 if (!this.bltn.stdout.needsIO()) {
                     _ = this.bltn.writeNoIO(.stdout, this.output.items[0..]);

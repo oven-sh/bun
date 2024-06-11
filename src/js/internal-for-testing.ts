@@ -20,6 +20,7 @@ export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor")
 export const patchInternals = {
   parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
   apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
+  makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
 };
 
 export const shellInternals = {

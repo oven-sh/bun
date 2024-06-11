@@ -9,6 +9,8 @@ const WHITESPACE: []const u8 = " \t\n\r";
 // TODO: calculate this for different systems
 const PAGE_SIZE = 16384;
 
+const debug = bun.Output.scoped(.patch, false);
+
 /// All strings point to the original patch file text
 pub const PatchFilePart = union(enum) {
     file_patch: *FilePatch,
@@ -534,7 +536,6 @@ pub const PatchFilePartKind = enum {
 };
 
 const ParseErr = error{
-    empty_patchfile,
     unrecognized_pragma,
     no_newline_at_eof_pragma_encountered_without_context,
     hunk_lines_encountered_before_hunk_header,
@@ -755,7 +756,7 @@ const PatchLinesParser = struct {
         file_: []const u8,
         opts: struct { support_legacy_diffs: bool = false },
     ) ParseErr!void {
-        if (file_.len == 0) return ParseErr.empty_patchfile;
+        if (file_.len == 0) return;
         const end = brk: {
             var iter = std.mem.splitBackwardsScalar(u8, file_, '\n');
             var prev: usize = file_.len;
@@ -1088,6 +1089,45 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
+    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+
+        const old_folder_jsval = arguments.nextEat() orelse {
+            globalThis.throw("expected 2 strings", .{});
+            return .undefined;
+        };
+        const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
+        defer old_folder_bunstr.deref();
+
+        const new_folder_jsval = arguments.nextEat() orelse {
+            globalThis.throw("expected 2 strings", .{});
+            return .undefined;
+        };
+        const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
+        defer new_folder_bunstr.deref();
+
+        const old_folder = old_folder_bunstr.toUTF8(bun.default_allocator);
+        defer old_folder.deinit();
+
+        const new_folder = new_folder_bunstr.toUTF8(bun.default_allocator);
+        defer new_folder.deinit();
+
+        return switch (gitDiff(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
+            globalThis.throwError(e, "failed to make diff");
+            return .undefined;
+        }) {
+            .result => |s| {
+                defer s.deinit();
+                return bun.String.fromBytes(s.items).toJS(globalThis);
+            },
+            .err => |e| {
+                defer e.deinit();
+                globalThis.throw("failed to make diff: {s}", .{e.items});
+                return .undefined;
+            },
+        };
+    }
     const ApplyArgs = struct {
         patchfile_txt: JSC.ZigString.Slice,
         patchfile: PatchFile,
@@ -1262,6 +1302,7 @@ pub fn gitDiff(
         return .{ .err = stderr };
     }
 
+    debug("Before postprocess: {s}\n", .{stdout.items});
     try gitDiffPostprocess(&stdout, old_folder, new_folder);
     deinit_stdout = false;
     return .{ .result = stdout };
@@ -1308,8 +1349,11 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
         @memcpy(new_buf[2..][0..new_folder_trimmed.len], new_folder_trimmed);
         new_buf[2 + new_folder_trimmed.len] = '/';
 
-        break :brk .{ old_buf[0 .. 2 + old_folder_trimmed.len + 1], new_buf[0 .. 2 + old_folder_trimmed.len + 1] };
+        break :brk .{ old_buf[0 .. 2 + old_folder_trimmed.len + 1], new_buf[0 .. 2 + new_folder_trimmed.len + 1] };
     };
+
+    // const @"$old_folder/" = @"a/$old_folder/"[2..];
+    // const @"$new_folder/" = @"b/$new_folder/"[2..];
 
     var line_iter = std.mem.splitScalar(u8, stdout.items, '\n');
     while (line_iter.next()) |line| {
@@ -1326,6 +1370,23 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
             const line_start = line_iter.index.? - 1 - line.len;
             try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
             line_iter.index.? -= new_folder_trimmed.len + 1;
+            continue;
+        }
+        if (std.mem.indexOf(u8, line, old_folder)) |idx| {
+            if (idx + old_folder.len < line.len and line[idx + old_folder.len] == '/') {
+                const line_start = line_iter.index.? - 1 - line.len;
+                line_iter.index.? -= 1 + line.len;
+                try stdout.replaceRange(line_start + idx, old_folder.len + 1, "");
+                continue;
+            }
+        }
+        if (std.mem.indexOf(u8, line, new_folder)) |idx| {
+            if (idx + new_folder.len < line.len and line[idx + new_folder.len] == '/') {
+                const line_start = line_iter.index.? - 1 - line.len;
+                line_iter.index.? -= 1 + line.len;
+                try stdout.replaceRange(line_start + idx, new_folder.len + 1, "");
+                continue;
+            }
         }
     }
 }

@@ -1337,7 +1337,7 @@ pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
     const BoringSSL = bun.BoringSSL;
-    const EVP = struct {
+    pub const EVP = struct {
         ctx: BoringSSL.EVP_MD_CTX = undefined,
         md: *const BoringSSL.EVP_MD = undefined,
         algorithm: Algorithm,
@@ -1375,6 +1375,23 @@ pub const Crypto = struct {
             @"sha3-512",
             shake128,
             shake256,
+
+            pub fn md(this: Algorithm) ?*const BoringSSL.EVP_MD {
+                return switch (this) {
+                    .blake2b256 => BoringSSL.EVP_blake2b256(),
+                    .blake2b512 => BoringSSL.EVP_blake2b512(),
+                    .md4 => BoringSSL.EVP_md4(),
+                    .md5 => BoringSSL.EVP_md5(),
+                    .sha1 => BoringSSL.EVP_sha1(),
+                    .sha224 => BoringSSL.EVP_sha224(),
+                    .sha256 => BoringSSL.EVP_sha256(),
+                    .sha384 => BoringSSL.EVP_sha384(),
+                    .sha512 => BoringSSL.EVP_sha512(),
+                    .@"sha512-224" => BoringSSL.EVP_sha512_224(),
+                    .@"sha512-256" => BoringSSL.EVP_sha512_256(),
+                    else => null,
+                };
+            }
 
             pub const names: std.EnumArray(Algorithm, ZigString) = brk: {
                 var all = std.EnumArray(Algorithm, ZigString).initUndefined();
@@ -1434,6 +1451,222 @@ pub const Crypto = struct {
         };
 
         pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
+
+        pub const PBKDF2 = struct {
+            password: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
+            salt: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
+            iteration_count: u32 = 1,
+            length: i32 = 0,
+            algorithm: EVP.Algorithm,
+
+            pub fn run(this: *PBKDF2, output: []u8) bool {
+                const password = this.password.slice();
+                const salt = this.salt.slice();
+                const algorithm = this.algorithm;
+                const iteration_count = this.iteration_count;
+                const length = this.length;
+
+                @memset(output, 0);
+                assert(this.length <= @as(i32, @intCast(output.len)));
+                BoringSSL.ERR_clear_error();
+                const rc = BoringSSL.PKCS5_PBKDF2_HMAC(
+                    if (password.len > 0) password.ptr else null,
+                    @intCast(password.len),
+                    salt.ptr,
+                    @intCast(salt.len),
+                    @intCast(iteration_count),
+                    algorithm.md().?,
+                    @intCast(length),
+                    output.ptr,
+                );
+
+                if (rc <= 0) {
+                    return false;
+                }
+
+                return true;
+            }
+
+            pub const Job = struct {
+                pbkdf2: PBKDF2,
+                output: []u8 = &[_]u8{},
+                task: JSC.WorkPoolTask = .{ .callback = &runTask },
+                promise: JSC.JSPromise.Strong = .{},
+                vm: *JSC.VirtualMachine,
+                err: ?u32 = null,
+                any_task: JSC.AnyTask = undefined,
+                poll: Async.KeepAlive = .{},
+
+                pub usingnamespace bun.New(@This());
+
+                pub fn runTask(task: *JSC.WorkPoolTask) void {
+                    const job = @fieldParentPtr(PBKDF2.Job, "task", task);
+                    defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
+                    job.output = bun.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
+                        job.err = BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED;
+                        return;
+                    };
+                    if (!job.pbkdf2.run(job.output)) {
+                        job.err = BoringSSL.ERR_get_error();
+                        BoringSSL.ERR_clear_error();
+
+                        bun.default_allocator.free(job.output);
+                        job.output = &[_]u8{};
+                    }
+                }
+
+                pub fn runFromJS(this: *Job) void {
+                    defer this.deinit();
+                    if (this.vm.isShuttingDown()) {
+                        return;
+                    }
+
+                    const globalThis = this.promise.strong.globalThis orelse this.vm.global;
+                    const promise = this.promise.swap();
+                    if (this.err) |err| {
+                        promise.reject(globalThis, createCryptoError(globalThis, err));
+                        return;
+                    }
+
+                    const output_slice = this.output;
+                    assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
+                    const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+                    if (buffer_value == .zero) {
+                        promise.reject(globalThis, globalThis.createTypeErrorInstance("Failed to create buffer", .{}));
+                        return;
+                    }
+
+                    this.output = &[_]u8{};
+                    promise.resolve(globalThis, buffer_value);
+                }
+
+                pub fn deinit(this: *Job) void {
+                    this.poll.unref(this.vm);
+                    this.pbkdf2.deinitAndUnprotect();
+                    this.promise.deinit();
+                    bun.default_allocator.free(this.output);
+                    this.destroy();
+                }
+
+                pub fn create(vm: *JSC.VirtualMachine, globalThis: *JSC.JSGlobalObject, data: *const PBKDF2) *Job {
+                    var job = Job.new(.{
+                        .pbkdf2 = data.*,
+                        .vm = vm,
+                        .any_task = undefined,
+                    });
+
+                    job.promise = JSC.JSPromise.Strong.init(globalThis);
+                    job.any_task = JSC.AnyTask.New(@This(), &runFromJS).init(job);
+                    job.poll.ref(vm);
+                    JSC.WorkPool.schedule(&job.task);
+
+                    return job;
+                }
+            };
+
+            pub fn deinitAndUnprotect(this: *PBKDF2) void {
+                this.password.deinitAndUnprotect();
+                this.salt.deinitAndUnprotect();
+            }
+
+            pub fn deinit(this: *PBKDF2) void {
+                this.password.deinit();
+                this.salt.deinit();
+            }
+
+            pub fn fromJS(globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue, is_async: bool) ?PBKDF2 {
+                if (arguments.len < 5) {
+                    globalThis.throwNotEnoughArguments("pbkdf2", 5, arguments.len);
+                    return null;
+                }
+
+                if (!arguments[3].isAnyInt()) {
+                    _ = globalThis.throwInvalidArgumentTypeValue("keylen", "integer", arguments[3]);
+                    return null;
+                }
+
+                const length = arguments[3].coerce(i64, globalThis);
+
+                if (!globalThis.hasException() and (length < 0 or length > std.math.maxInt(i32))) {
+                    globalThis.throwInvalidArguments("keylen must be > 0 and < {d}", .{std.math.maxInt(i32)});
+                }
+
+                if (globalThis.hasException()) {
+                    return null;
+                }
+
+                if (!arguments[2].isAnyInt()) {
+                    _ = globalThis.throwInvalidArgumentTypeValue("iteration count", "integer", arguments[2]);
+                    return null;
+                }
+
+                const iteration_count = arguments[2].coerce(i64, globalThis);
+
+                if (!globalThis.hasException() and (iteration_count < 1 or iteration_count > std.math.maxInt(u32))) {
+                    globalThis.throwInvalidArguments("iteration count must be >= 1 and <= maxInt", .{});
+                }
+
+                if (globalThis.hasException()) {
+                    return null;
+                }
+
+                const algorithm = brk: {
+                    if (!arguments[4].isString()) {
+                        _ = globalThis.throwInvalidArgumentTypeValue("algorithm", "string", arguments[4]);
+                        return null;
+                    }
+
+                    break :brk EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse {
+                        if (!globalThis.hasException()) {
+                            const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
+                            defer slice.deinit();
+                            const name = slice.slice();
+                            const err = globalThis.createTypeErrorInstanceWithCode(.ERR_CRYPTO_INVALID_DIGEST, "Unsupported algorithm \"{s}\"", .{name});
+                            globalThis.throwValue(err);
+                        }
+                        return null;
+                    };
+                };
+
+                var out = PBKDF2{
+                    .iteration_count = @intCast(iteration_count),
+                    .length = @truncate(length),
+                    .algorithm = algorithm,
+                };
+                defer {
+                    if (globalThis.hasException()) {
+                        if (is_async)
+                            out.deinitAndUnprotect()
+                        else
+                            out.deinit();
+                    }
+                }
+
+                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async) orelse {
+                    _ = globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
+                    return null;
+                };
+
+                if (out.salt.slice().len > std.math.maxInt(i32)) {
+                    globalThis.throwInvalidArguments("salt is too long", .{});
+                    return null;
+                }
+
+                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async) orelse {
+                    if (!globalThis.hasException()) {
+                        _ = globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
+                    }
+                    return null;
+                };
+
+                if (out.password.slice().len > std.math.maxInt(i32)) {
+                    globalThis.throwInvalidArguments("password is too long", .{});
+                    return null;
+                }
+
+                return out;
+            }
+        };
 
         pub fn init(algorithm: Algorithm, md: *const BoringSSL.EVP_MD, engine: *BoringSSL.ENGINE) EVP {
             BoringSSL.load();
@@ -1499,22 +1732,12 @@ pub const Crypto = struct {
 
         pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
             if (Algorithm.map.getWithEql(name, strings.eqlCaseInsensitiveASCIIIgnoreLength)) |algorithm| {
-                switch (algorithm) {
-                    .blake2b256 => return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine),
-                    .blake2b512 => return EVP.init(algorithm, BoringSSL.EVP_blake2b512(), engine),
-                    .md4 => return EVP.init(algorithm, BoringSSL.EVP_md4(), engine),
-                    .md5 => return EVP.init(algorithm, BoringSSL.EVP_md5(), engine),
-                    .sha1 => return EVP.init(algorithm, BoringSSL.EVP_sha1(), engine),
-                    .sha224 => return EVP.init(algorithm, BoringSSL.EVP_sha224(), engine),
-                    .sha256 => return EVP.init(algorithm, BoringSSL.EVP_sha256(), engine),
-                    .sha384 => return EVP.init(algorithm, BoringSSL.EVP_sha384(), engine),
-                    .sha512 => return EVP.init(algorithm, BoringSSL.EVP_sha512(), engine),
-                    .@"sha512-224" => return EVP.init(algorithm, BoringSSL.EVP_sha512_224(), engine),
-                    .@"sha512-256" => return EVP.init(algorithm, BoringSSL.EVP_sha512_256(), engine),
-                    else => {
-                        if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md|
-                            return EVP.init(algorithm, md, engine);
-                    },
+                if (algorithm.md()) |md| {
+                    return EVP.init(algorithm, md, engine);
+                }
+
+                if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md| {
+                    return EVP.init(algorithm, md, engine);
                 }
             }
 
@@ -1533,7 +1756,7 @@ pub const Crypto = struct {
         }
     };
 
-    fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
+    pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
         var outbuf: [128 + 1 + "BoringSSL error: ".len]u8 = undefined;
         @memset(&outbuf, 0);
         outbuf[0.."BoringSSL error: ".len].* = "BoringSSL error: ".*;

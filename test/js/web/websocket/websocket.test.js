@@ -1,7 +1,7 @@
-import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, gc, tls } from "harness";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
-import { join, resolve } from "path";
+import { join } from "path";
+import { tls, bunEnv, bunExe, gc } from "harness";
 import process from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
@@ -484,6 +484,63 @@ it("should report failing websocket connection in onerror and onclose for connec
   };
   ws.onclose = () => resolve2();
   await Promise.all([promise, promise2]);
+});
+
+it("instances should be finalized when GC'd", async () => {
+  const { expect } = require("bun:test");
+
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return server.upgrade(req);
+    },
+    websocket: {
+      open() {},
+      data() {},
+      message() {},
+      drain() {},
+    },
+  });
+
+  function openAndCloseWS() {
+    const { promise, resolve } = Promise.withResolvers();
+    const sock = new WebSocket(server.url.href.replace("http", "ws"));
+    sock.addEventListener("open", _ => {
+      sock.addEventListener("close", () => {
+        resolve();
+      });
+      sock.close();
+    });
+
+    return promise;
+  }
+
+  function getWebSocketCount() {
+    Bun.gc(true);
+    const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
+      WebSocket: 0,
+    };
+    return objectTypeCounts.WebSocket || 0;
+  }
+  let current_websocket_count = 0;
+  let initial_websocket_count = 0;
+
+  for (let i = 0; i < 1000; i++) {
+    await openAndCloseWS();
+    if (i % 100 === 0) {
+      current_websocket_count = getWebSocketCount();
+      // if we have more than 10 websockets open, we have a problem
+      expect(current_websocket_count).toBeLessThanOrEqual(10);
+      if (initial_websocket_count === 0) {
+        initial_websocket_count = current_websocket_count;
+      }
+    }
+  }
+  // wait next tick to run the last time
+  await Bun.sleep(1);
+  current_websocket_count = getWebSocketCount();
+  // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
+  expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(5);
 });
 
 describe("websocket in subprocess", () => {

@@ -128,7 +128,9 @@
   },
   "files.associations": {
     "*.idl": "cpp",
-    "*.inc": "c",
+    "future": "cpp",
+    "regex": "cpp",
+    "system_error": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

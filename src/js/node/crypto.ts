@@ -1615,48 +1615,6 @@ var require_algos = __commonJS({
     module.exports = require_algorithms();
   },
 });
-
-// node_modules/pbkdf2/lib/precondition.js
-var require_precondition = __commonJS({
-  "node_modules/pbkdf2/lib/precondition.js"(exports, module) {
-    var MAX_ALLOC = Math.pow(2, 30) - 1;
-    module.exports = function (iterations, keylen) {
-      if (typeof iterations != "number") throw new TypeError("Iterations not a number");
-      if (iterations < 0) throw new TypeError("Bad iterations");
-      if (typeof keylen != "number") throw new TypeError("Key length not a number");
-      if (keylen < 0 || keylen > MAX_ALLOC || keylen !== keylen) throw new TypeError("Bad key length");
-    };
-  },
-});
-
-// node_modules/pbkdf2/lib/default-encoding.js
-var require_default_encoding = __commonJS({
-  "node_modules/pbkdf2/lib/default-encoding.js"(exports, module) {
-    var defaultEncoding;
-    global.process && global.process.browser
-      ? (defaultEncoding = "utf-8")
-      : global.process && global.process.version
-        ? ((pVersionMajor = parseInt(process.version.split(".")[0].slice(1), 10)),
-          (defaultEncoding = pVersionMajor >= 6 ? "utf-8" : "binary"))
-        : (defaultEncoding = "utf-8");
-    var pVersionMajor;
-    module.exports = defaultEncoding;
-  },
-});
-
-// node_modules/pbkdf2/lib/to-buffer.js
-var require_to_buffer = __commonJS({
-  "node_modules/pbkdf2/lib/to-buffer.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer;
-    module.exports = function (thing, encoding, name) {
-      if (Buffer2.isBuffer(thing)) return thing;
-      if (typeof thing == "string") return Buffer2.from(thing, encoding);
-      if (ArrayBuffer.isView(thing)) return Buffer2.from(thing.buffer);
-      throw new TypeError(name + " must be a string, a Buffer, a typed array or a DataView");
-    };
-  },
-});
-
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
   const promise = pbkdf2_(password, salt, iterations, keylen, digest);
   if (callback) {

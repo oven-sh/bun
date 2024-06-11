@@ -29,6 +29,8 @@ const SOCK = os.SOCK;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
 const BoringSSL = bun.BoringSSL;
+const X509 = @import("./bun.js/api/bun/x509.zig");
+const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
 
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 const uws = bun.uws;
@@ -47,6 +49,8 @@ var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
 var async_http_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
+var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
+
 const print_every = 0;
 var print_every_i: usize = 0;
 
@@ -375,6 +379,34 @@ fn NewHTTPContext(comptime ssl: bool) type {
             }
 
             return @as(*BoringSSL.SSL_CTX, @ptrCast(this.us_socket_context.getNativeHandle(true)));
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.us_socket_context.deinit(ssl);
+            uws.us_socket_context_free(@as(c_int, @intFromBool(ssl)), this.us_socket_context);
+            bun.default_allocator.destroy(this);
+        }
+
+        pub fn initWithClientConfig(this: *@This(), client: *HTTPClient) !void {
+            if (!comptime ssl) {
+                unreachable;
+            }
+            var opts = client.tls_props.?.asUSockets();
+            opts.request_cert = 1;
+            opts.reject_unauthorized = 0;
+            const socket = uws.us_create_bun_socket_context(ssl_int, http_thread.loop.loop, @sizeOf(usize), opts);
+            if (socket == null) {
+                return error.FailedToOpenSocket;
+            }
+            this.us_socket_context = socket.?;
+            this.sslCtx().setup();
+
+            HTTPSocket.configure(
+                this.us_socket_context,
+                false,
+                anyopaque,
+                Handler,
+            );
         }
 
         pub fn init(this: *@This()) !void {
@@ -770,6 +802,34 @@ pub const HTTPThread = struct {
             return try this.context(is_ssl).connectSocket(client, client.unix_socket_path.slice());
         }
 
+        if (comptime is_ssl) {
+            const needs_own_context = client.tls_props != null and client.tls_props.?.requires_custom_request_ctx;
+            if (needs_own_context) {
+                var requested_config = client.tls_props.?;
+                for (custom_ssl_context_map.keys()) |other_config| {
+                    if (requested_config.isSame(other_config)) {
+                        // we free the callers config since we have a existing one
+                        requested_config.deinit();
+                        bun.default_allocator.destroy(requested_config);
+                        client.tls_props = other_config;
+                        return try custom_ssl_context_map.get(other_config).?.connect(client, client.url.hostname, client.url.getPortAuto());
+                    }
+                }
+                // we need the config so dont free it
+                var custom_context = try bun.default_allocator.create(NewHTTPContext(is_ssl));
+                custom_context.initWithClientConfig(client) catch |err| {
+                    requested_config.deinit();
+                    client.tls_props = null;
+                    bun.default_allocator.destroy(custom_context);
+                    return err;
+                };
+                try custom_ssl_context_map.put(requested_config, custom_context);
+                // We might deinit the socket context, so we disable keepalive to make sure we don't
+                // free it while in use.
+                client.disable_keepalive = true;
+                return try custom_context.connect(client, client.url.hostname, client.url.getPortAuto());
+            }
+        }
         if (client.http_proxy) |url| {
             return try this.context(is_ssl).connect(client, url.hostname, url.getPortAuto());
         }
@@ -1490,6 +1550,7 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
+tls_props: ?*SSLConfig = null,
 result_callback: HTTPClientResult.Callback = undefined,
 
 /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -1749,6 +1810,7 @@ pub const AsyncHTTP = struct {
         disable_keepalive: ?bool = null,
         disable_decompression: ?bool = null,
         reject_unauthorized: ?bool = null,
+        tls_props: ?*SSLConfig = null,
     };
 
     pub fn init(
@@ -1810,6 +1872,9 @@ pub const AsyncHTTP = struct {
         }
         if (options.reject_unauthorized) |val| {
             this.client.reject_unauthorized = val;
+        }
+        if (options.tls_props) |val| {
+            this.client.tls_props = val;
         }
 
         if (options.http_proxy) |proxy| {

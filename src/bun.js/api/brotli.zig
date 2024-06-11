@@ -164,7 +164,7 @@ pub const BrotliEncoder = struct {
 
             var any = false;
 
-            if (this.encoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) outer: {
+            if (this.encoder.pending_encode_job_count.fetchAdd(1, .Monotonic) >= 0) {
                 const is_last = this.encoder.has_called_end;
                 while (true) {
                     this.encoder.input_lock.lock();
@@ -193,16 +193,14 @@ pub const BrotliEncoder = struct {
                     for (pending) |input| {
                         var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
                         writer.writeAll(input.slice()) catch {
-                            any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
                             this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
-                            break :outer;
+                            return;
                         };
                         if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
-                            any = true;
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
                             this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
-                            break :outer;
+                            return;
                         }
                     }
 
@@ -218,21 +216,18 @@ pub const BrotliEncoder = struct {
                     defer this.encoder.output_lock.unlock();
 
                     output.appendSlice(bun.default_allocator, this.encoder.stream.end() catch {
-                        any = true;
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
                         this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
-                        break :outer;
+                        return;
                     }) catch {
-                        any = true;
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
                         this.encoder.write_failure = JSC.DeferredError.from(.plainerror, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
-                        break :outer;
+                        return;
                     };
                     if (output.items.len > this.encoder.maxOutputLength) {
-                        any = true;
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .Monotonic);
                         this.encoder.write_failure = JSC.DeferredError.from(.rangeerror, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
-                        break :outer;
+                        return;
                     }
                 }
             }
@@ -326,7 +321,7 @@ pub const BrotliEncoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        if (!is_last) {
+        if (!is_last and this.output.items.len == 0) {
             return .undefined;
         }
         if (this.write_failure != null) {

@@ -1081,7 +1081,12 @@ function formatTestToMarkdown(result, concise) {
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
 
-    markdown += "<details><summary>";
+    if (concise) {
+      markdown += "<li>";
+    } else {
+      markdown += "<details><summary>";
+    }
+
     if (testUrl) {
       markdown += `<a href="${testUrl}"><code>${testTitle}</code></a>`;
     } else {
@@ -1090,19 +1095,21 @@ function formatTestToMarkdown(result, concise) {
     if (error) {
       markdown += ` - ${error}`;
     }
-    markdown += ` on ${platform}</summary>\n\n`;
+    markdown += ` on ${platform}`;
 
     if (concise) {
-      // No preview
-    } else if (isBuildKite) {
-      const preview = escapeCodeBlock(stdout);
-      markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
+      markdown += "</li>\n";
     } else {
-      const preview = escapeHtml(stripAnsi(stdout));
-      markdown += `<pre><code>${preview}</code></pre>\n`;
+      markdown += "</summary>\n\n";
+      if (isBuildKite) {
+        const preview = escapeCodeBlock(stdout);
+        markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
+      } else {
+        const preview = escapeHtml(stripAnsi(stdout));
+        markdown += `<pre><code>${preview}</code></pre>\n`;
+      }
+      markdown += "\n\n</details>\n\n";
     }
-
-    markdown += `\n\n</details>\n\n`;
   }
 
   return markdown;

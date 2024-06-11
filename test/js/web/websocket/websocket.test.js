@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { bunExe, bunEnv, gc, tls } from "harness";
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
-import process from "process";
+import process, { nextTick } from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const isWindows = process.platform === "win32";
@@ -536,7 +536,8 @@ it("instances should be finalized when GC'd", async () => {
       }
     }
   }
-
+  // wait next tick to run the last time
+  await Bun.sleep(1);
   current_websocket_count = getWebSocketCount();
   // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(5);

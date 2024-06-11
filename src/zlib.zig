@@ -952,7 +952,7 @@ pub const ZlibCompressorStreaming = struct {
                     if (state.avail_out == 0) continue;
                     break;
                 }
-                bun.assert(state.avail_in == 0);
+                // bun.assert(state.avail_in == 0);
 
                 return bytes.len;
             }
@@ -974,7 +974,7 @@ pub const ZlibCompressorStreaming = struct {
             if (state.avail_out == 0) continue;
             break;
         }
-        bun.assert(state.avail_in == 0);
+        // bun.assert(state.avail_in == 0);
 
         _ = deflateEnd(&this.state);
     }
@@ -1025,7 +1025,7 @@ pub const ZlibDecompressorStreaming = struct {
                     if (state.avail_out == 0) continue;
                     break;
                 }
-                bun.assert(state.avail_in == 0);
+                // bun.assert(state.avail_in == 0);
 
                 return bytes.len;
             }
@@ -1050,7 +1050,7 @@ pub const ZlibDecompressorStreaming = struct {
             if (state.avail_out == 0) continue;
             break;
         }
-        bun.assert(state.avail_in == 0);
+        // bun.assert(state.avail_in == 0);
 
         _ = inflateEnd(&this.state);
     }

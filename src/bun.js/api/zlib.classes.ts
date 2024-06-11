@@ -26,7 +26,6 @@ export default [
       },
       bytesWritten: {
         getter: "getBytesWritten",
-        cache: false,
       },
     },
   }),

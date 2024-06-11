@@ -49,7 +49,7 @@ it("allow renegotiation in https module", async () => {
       path: url.pathname,
       method: "GET",
       keepalive: false,
-      tls: { rejectUnauthorized: false },
+      rejectUnauthorized: false,
     },
     (res: IncomingMessage) => {
       res.setEncoding("utf8");
@@ -79,7 +79,7 @@ it("should fail if renegotiation fails using https", async () => {
       path: url.pathname,
       method: "GET",
       keepalive: false,
-      tls: { rejectUnauthorized: true },
+      rejectUnauthorized: true,
     },
     (res: IncomingMessage) => {
       res.setEncoding("utf8");

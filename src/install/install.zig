@@ -464,7 +464,7 @@ const NetworkTask = struct {
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if (last_modified.len != 0) {
+        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
             this.http.client.force_last_modified = true;
             this.http.client.if_modified_since = last_modified;
         }

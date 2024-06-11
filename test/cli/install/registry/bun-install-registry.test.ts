@@ -2542,7 +2542,7 @@ describe("workspaces", async () => {
   }
 });
 
-test("it should install transitive folder dependencies", async () => {
+test.only("it should install transitive folder dependencies", async () => {
   await writeFile(
     join(packageDir, "package.json"),
     JSON.stringify({
@@ -2561,6 +2561,8 @@ test("it should install transitive folder dependencies", async () => {
         "@scoped/file-dep": "1.0.0",
         // scoped with different names
         "@another-scope/file-dep": "1.0.0",
+        // file dependency on the itself
+        "self-file-dep": "1.0.0",
       },
     }),
   );
@@ -2623,14 +2625,15 @@ test("it should install transitive folder dependencies", async () => {
   expect(err).not.toContain("panic:");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + @another-scope/file-dep@1.0.0",
-    " + @scoped/file-dep@1.0.0",
-    " + aliased-file-dep@1.0.1",
-    " + dep-file-dep@1.0.0",
-    " + file-dep@1.0.0",
-    " + missing-file-dep@1.0.0",
+    "+ @another-scope/file-dep@1.0.0",
+    "+ @scoped/file-dep@1.0.0",
+    "+ aliased-file-dep@1.0.1",
+    "+ dep-file-dep@1.0.0",
+    "+ file-dep@1.0.0",
+    "+ missing-file-dep@1.0.0",
+    "+ self-file-dep@1.0.0",
     "",
-    " 11 packages installed",
+    "13 packages installed",
   ]);
   expect(await exited).toBe(0);
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
@@ -2641,6 +2644,7 @@ test("it should install transitive folder dependencies", async () => {
     "dep-file-dep",
     "file-dep",
     "missing-file-dep",
+    "self-file-dep",
   ]);
 
   await checkFiles();
@@ -2660,7 +2664,7 @@ test("it should install transitive folder dependencies", async () => {
   expect(err).not.toContain("not found");
   expect(err).not.toContain("error:");
   expect(err).not.toContain("panic:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", " 1 package installed"]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
   expect(await exited).toBe(0);
 
   await checkFiles();
@@ -2690,6 +2694,7 @@ test("it should install transitive folder dependencies", async () => {
     "dep-file-dep",
     "file-dep",
     "missing-file-dep",
+    "self-file-dep",
   ]);
   expect(await exited).toBe(0);
 

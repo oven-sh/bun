@@ -9635,7 +9635,10 @@ pub const PackageManager = struct {
             }
         }
 
-        const updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit") &[_]UpdateRequest{} else UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
+        const updates: []UpdateRequest = if (manager.subcommand == .@"patch-commit" or manager.subcommand == .patch)
+            &[_]UpdateRequest{}
+        else
+            UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
         switch (manager.subcommand) {
             inline else => |subcommand| try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
                 ctx,
@@ -10078,14 +10081,13 @@ pub const PackageManager = struct {
     /// - Give that to user
     fn preparePatch(manager: *PackageManager) !void {
         const strbuf = manager.lockfile.buffers.string_bytes.items;
-        _ = strbuf; // autofix
         const pkg_maybe_version_to_patch = manager.options.positionals[1];
 
         const name: []const u8, const version: ?[]const u8 = brk: {
             if (std.mem.indexOfScalar(u8, pkg_maybe_version_to_patch[1..], '@')) |version_delimiter| {
                 break :brk .{
-                    pkg_maybe_version_to_patch[0..version_delimiter],
-                    pkg_maybe_version_to_patch[1..][version_delimiter + 1 ..],
+                    pkg_maybe_version_to_patch[0 .. version_delimiter + 1],
+                    pkg_maybe_version_to_patch[version_delimiter + 2 ..],
                 };
             }
             break :brk .{
@@ -10096,19 +10098,183 @@ pub const PackageManager = struct {
 
         const result = pkg_dep_id_for_name_and_version(manager.lockfile, pkg_maybe_version_to_patch, name, version);
         const pkg_id = result[0];
-        _ = pkg_id; // autofix
         const dependency_id = result[1];
 
         var iterator = Lockfile.Tree.Iterator.init(manager.lockfile);
         const folder = (try nodeModulesFolderForDependencyID(&iterator, dependency_id)) orelse {
-            @panic("TODO zack: bun patch <pkg> node_modules folder not found");
+            Output.prettyError(
+                "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                .{pkg_maybe_version_to_patch},
+            );
+            Output.flush();
+            Global.crash();
         };
 
+        var folder_path_buf: bun.PathBuffer = undefined;
+
+        const pkg = manager.lockfile.packages.get(pkg_id);
+        const pkg_name = pkg.name.slice(strbuf);
+        const cache_result = manager.computeCacheDirAndSubpath(pkg_name, &pkg.resolution, &folder_path_buf, null);
+
+        const cache_dir = cache_result.cache_dir;
+        const cache_dir_subpath = cache_result.cache_dir_subpath;
+
         const module_folder = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
+
+        manager.overwriteNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
+            Output.prettyError(
+                "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
+                .{@errorName(e)},
+            );
+            Output.flush();
+            Global.crash();
+        };
+
         Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ name, module_folder });
         Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch-commit '{s}'<r>\n", .{module_folder});
 
         return;
+    }
+
+    fn overwriteNodeModulesFolder(
+        manager: *PackageManager,
+        cache_dir: std.fs.Dir,
+        cache_dir_subpath: []const u8,
+        node_modules_folder_path: []const u8,
+    ) !void {
+        var node_modules_folder = try std.fs.cwd().openDir(node_modules_folder_path, .{ .iterate = true });
+        defer node_modules_folder.close();
+
+        const IGNORED_PATHS: []const bun.OSPathSlice = &.{
+            "node_modules",
+            ".git",
+            "CMakeFiles",
+        };
+
+        const FileCopier = struct {
+            pub fn copy(
+                destination_dir_: std.fs.Dir,
+                walker: *Walker,
+                to_copy_into1: if (Environment.isWindows) []u16 else void,
+                head1: if (Environment.isWindows) []u16 else void,
+                to_copy_into2: if (Environment.isWindows) []u16 else void,
+                head2: if (Environment.isWindows) []u16 else void,
+            ) !u32 {
+                var real_file_count: u32 = 0;
+
+                var copy_file_state: bun.CopyFileState = .{};
+
+                while (try walker.next()) |entry| {
+                    if (comptime Environment.isWindows) {
+                        switch (entry.kind) {
+                            .directory, .file => {},
+                            else => continue,
+                        }
+
+                        if (entry.path.len > to_copy_into1.len or entry.path.len > to_copy_into2.len) {
+                            return error.NameTooLong;
+                        }
+
+                        @memcpy(to_copy_into1[0..entry.path.len], entry.path);
+                        head1[entry.path.len + (head1.len - to_copy_into1.len)] = 0;
+                        const dest: [:0]u16 = head1[0 .. entry.path.len + head1.len - to_copy_into1.len :0];
+
+                        @memcpy(to_copy_into2[0..entry.path.len], entry.path);
+                        head2[entry.path.len + (head1.len - to_copy_into2.len)] = 0;
+                        const src: [:0]u16 = head2[0 .. entry.path.len + head2.len - to_copy_into2.len :0];
+
+                        switch (entry.kind) {
+                            .directory => {
+                                if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                                    bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
+                                }
+                            },
+                            .file => {
+                                if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) == 0) {
+                                    if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
+                                        bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};
+                                        if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) != 0) {
+                                            continue;
+                                        }
+                                    }
+
+                                    if (bun.windows.Win32Error.get().toSystemErrno()) |err| {
+                                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @tagName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                                    } else {
+                                        Output.prettyError("<r><red>error<r> copying file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});
+                                    }
+
+                                    Global.crash();
+                                }
+                            },
+                            else => unreachable, // handled above
+                        }
+                    } else {
+                        if (entry.kind != .file) continue;
+                        real_file_count += 1;
+                        const openFile = std.fs.Dir.openFile;
+                        const createFile = std.fs.Dir.createFile;
+
+                        var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                        defer in_file.close();
+
+                        if (bun.sys.unlinkat(
+                            bun.toFD(destination_dir_.fd),
+                            entry.basename.ptr[0..entry.basename.len :0],
+                        ).asErr()) |e| {
+                            std.debug.print("unlink problem uh oh {}\n", .{e});
+                            @panic("TODO zack handle");
+                        }
+
+                        const mode = try in_file.mode();
+                        var outfile = try createFile(destination_dir_, entry.basename, .{ .mode = mode });
+                        defer outfile.close();
+
+                        debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
+                        // var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+                        //     if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+                        //         bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
+                        //     }
+                        //     break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
+                        //         if (do_progress) {
+                        //             progress_.root.end();
+                        //             progress_.refresh();
+                        //         }
+
+                        //         Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                        //         Global.crash();
+                        //     };
+                        // };
+                        // defer outfile.close();
+
+                        if (comptime Environment.isPosix) {
+                            const stat = in_file.stat() catch continue;
+                            _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+                        }
+
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                            Global.crash();
+                        };
+                    }
+                }
+
+                return real_file_count;
+            }
+        };
+
+        var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
+        defer pkg_in_cache_dir.close();
+        var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
+        defer walker.deinit();
+        _ = try FileCopier.copy(
+            node_modules_folder,
+            &walker,
+            {},
+            {},
+            {},
+            {},
+        );
     }
 
     const PatchCommitResult = struct {
@@ -10174,6 +10340,19 @@ pub const PackageManager = struct {
             if (bun.strings.hasPrefix(argument, "node_modules/")) break :brk .path;
             if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) break :brk .path;
             break :brk .name_and_version;
+        };
+
+        // Attempt to open the existing node_modules folder
+        const root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
+            .result => |fd| std.fs.Dir{ .fd = fd.cast() },
+            .err => |e| {
+                Output.prettyError(
+                    "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {}<r>\n",
+                    .{e},
+                );
+                Output.flush();
+                Global.crash();
+            },
         };
 
         var iterator = Lockfile.Tree.Iterator.init(manager.lockfile);
@@ -10282,7 +10461,12 @@ pub const PackageManager = struct {
                     &iterator,
                     dependency_id,
                 )) orelse {
-                    @panic("TODO zack node_modules not found");
+                    Output.prettyError(
+                        "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                        .{argument},
+                    );
+                    Output.flush();
+                    Global.crash();
                 };
                 const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
                     node_modules.relative_path,
@@ -10330,6 +10514,57 @@ pub const PackageManager = struct {
                     cache_dir_subpath,
                 }, .posix);
             };
+
+            const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname(name, buf2[0..], bun.fastRandom()) catch |e| {
+                Output.prettyError(
+                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
+                    .{@errorName(e)},
+                );
+                Output.flush();
+                Global.crash();
+            });
+            const has_nested_node_modules = has_nested_node_modules: {
+                var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
+                        .{ new_folder, @errorName(e) },
+                    );
+                    Output.flush();
+                    Global.crash();
+                };
+                defer new_folder_handle.close();
+
+                if (bun.sys.renameatConcurrently(
+                    bun.toFD(new_folder_handle.fd),
+                    "node_modules",
+                    bun.toFD(root_node_modules.fd),
+                    random_tempdir,
+                ).asErr()) |_| break :has_nested_node_modules false;
+
+                break :has_nested_node_modules true;
+            };
+            defer {
+                if (has_nested_node_modules) {
+                    var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
+                        Output.prettyError(
+                            "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
+                            .{ new_folder, @errorName(e) },
+                        );
+                        Output.flush();
+                        Global.crash();
+                    };
+                    defer new_folder_handle.close();
+                    if (bun.sys.renameatConcurrently(
+                        bun.toFD(root_node_modules.fd),
+                        random_tempdir,
+                        bun.toFD(new_folder_handle.fd),
+                        "node_modules",
+                    ).asErr()) |e| {
+                        Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+                    }
+                }
+            }
+
             std.debug.print("OLD FOLDER: {s}\n", .{old_folder});
             std.debug.print("NEW FOLDER: {s}\n", .{new_folder});
             const contents = switch (bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
@@ -11072,9 +11307,9 @@ pub const PackageManager = struct {
                 break :brk "";
             } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
-            if (std.mem.eql(u8, "is-even", name)) {
-                std.debug.print("HELLO!\n", .{});
-            }
+            // if (std.mem.eql(u8, "is-even", name)) {
+            //     std.debug.print("HELLO!\n", .{});
+            // }
 
             const patch_patch, const patch_contents_hash, const patch_name_and_version_hash, const remove_patch = brk: {
                 if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, false };

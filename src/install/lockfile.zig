@@ -840,7 +840,7 @@ pub fn isWorkspaceDependency(this: *Lockfile, id: DependencyID) bool {
     const resolutions = packages.items(.resolution);
     const dependencies_lists = packages.items(.dependencies);
     for (resolutions, dependencies_lists) |resolution, dependencies| {
-        if (resolution.tag != .workspace) continue;
+        if (resolution.tag != .workspace and resolution.tag != .root) continue;
         if (dependencies.contains(id)) return true;
     }
 

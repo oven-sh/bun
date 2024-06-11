@@ -829,6 +829,90 @@ describe("node:http", () => {
     });
   });
 
+  describe("NODE_EXTRA_CA_CERTS", () => {
+    const run = async (done, env, func: (proc: Subprocess<"pipe">) => Promise<void>) => {
+      const server = https.createServer(
+        {
+          key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+          cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+        },
+        (req, res) => {
+          res.write("Hello from https server");
+          res.end();
+        },
+      );
+      server.listen(0, "localhost");
+      const address = server.address();
+
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "node-extra-ca-certs.js", String(address.port)],
+        cwd: path.join(import.meta.dir, "fixtures"),
+        env: { ...bunEnv, ...env },
+        stderr: "pipe",
+      });
+
+      try {
+        await func(proc);
+        server.close();
+        done();
+      } catch (e) {
+        server.close();
+        done(e);
+      }
+    };
+
+    it("should fail without NODE_EXTRA_CA_CERTS", async done => {
+      await run(done, { NODE_EXTRA_CA_CERTS: "" }, async proc => {
+        await proc.exited;
+
+        expect(await new Response(proc.stdout).text()).toContain("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+      });
+    });
+
+    it("should load the ca file from NODE_EXTRA_CA_CERTS", async done => {
+      run(
+        done,
+        { NODE_EXTRA_CA_CERTS: path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem") },
+        async proc => {
+          await proc.exited;
+
+          expect(await new Response(proc.stdout).text()).toContain("Hello from https server");
+        },
+      );
+    });
+
+    it("should excert a warning when loading a bad file", async done => {
+      await run(
+        done,
+        { NODE_EXTRA_CA_CERTS: path.join(import.meta.dir, "fixtures", "not_a_real_file.pem") },
+        async proc => {
+          await proc.exited;
+
+          const resText = await new Response(proc.stdout).text();
+          const warnText = await new Response(proc.stderr).text();
+
+          expect(warnText).toContain("warn: Skipping loading of extra ca");
+          expect(resText).toContain("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+        },
+      );
+    });
+
+    // TODO, would be better if this just gave a warning
+    it("should crash when loading a corrupted ca file", async done => {
+      await run(
+        done,
+        { NODE_EXTRA_CA_CERTS: path.join(import.meta.dir, "fixtures", "node-extra-ca-certs.js") },
+        async proc => {
+          await proc.exited;
+
+          const err = await new Response(proc.stderr).text();
+
+          expect(err).toContain("Failed to init https context");
+        },
+      );
+    });
+  });
+
   describe("signal", () => {
     it("should abort and close the server", done => {
       const server = createServer((req, res) => {

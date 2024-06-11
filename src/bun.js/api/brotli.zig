@@ -383,7 +383,7 @@ pub const BrotliDecoder = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*BrotliDecoder {
-        globalThis.throw("Crypto is not constructable", .{});
+        globalThis.throw("BrotliDecoder is not constructable", .{});
         return null;
     }
 

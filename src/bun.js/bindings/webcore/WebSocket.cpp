@@ -1206,8 +1206,10 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
 
+    // since we are open and closing now we know that we have at least one pending activity
+    // so we just call decPendingActivityCount() after dispatching the event
+
     if (this->hasEventListeners("close"_s)) {
-        this->incPendingActivityCount();
         this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
         this->decPendingActivityCount();
 
@@ -1215,16 +1217,12 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     }
 
     if (auto* context = scriptExecutionContext()) {
-        this->incPendingActivityCount();
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
             protectedThis->decPendingActivityCount();
         });
     }
-
-    // m_pendingActivity = nullptr;
-    // });
 }
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)

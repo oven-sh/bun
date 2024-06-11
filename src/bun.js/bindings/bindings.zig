@@ -511,15 +511,7 @@ pub const ZigString = extern struct {
 
         /// Does nothing if the slice is not allocated
         pub fn deinit(this: *const Slice) void {
-            if (this.allocator.get()) |allocator| {
-                if (bun.String.isWTFAllocator(allocator)) {
-                    // workaround for https://github.com/ziglang/zig/issues/4298
-                    bun.String.StringImplAllocator.free(allocator.ptr, @constCast(this.slice()), 0, 0);
-                    return;
-                }
-
-                allocator.free(this.slice());
-            }
+            this.allocator.free(this.slice());
         }
     };
 
@@ -1561,8 +1553,8 @@ pub const FetchHeaders = opaque {
 
     pub fn copyTo(
         this: *FetchHeaders,
-        names: [*c]Api.StringPointer,
-        values: [*c]Api.StringPointer,
+        names: ?[*]Api.StringPointer,
+        values: ?[*]Api.StringPointer,
         buf: [*]u8,
     ) void {
         return shim.cppFn("copyTo", .{
@@ -3972,8 +3964,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("createEmptyArray", .{ global, len });
     }
 
-    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values: [*]ZigString, values_len: usize) void {
-        return cppFn("putRecord", .{ value, global, key, values, values_len });
+    pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void {
+        return cppFn("putRecord", .{ value, global, key, values_array, values_len });
     }
 
     fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
@@ -4392,31 +4384,41 @@ pub const JSValue = enum(JSValueReprInt) {
         return String.init(buf.toOwnedSliceLeaky()).toJS(globalThis);
     }
 
-    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
+    pub fn fromEntries(globalThis: *JSGlobalObject, keys_array: [*c]ZigString, values_array: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("fromEntries", .{
             globalThis,
             keys_array,
-            values,
+            values_array,
             strings_count,
             clone,
         });
     }
 
-    pub fn keys(globalThis: *JSGlobalObject, value: JSValue) JSValue {
+    pub fn keys(value: JSValue, globalThis: *JSGlobalObject) JSValue {
         return cppFn("keys", .{
             globalThis,
             value,
         });
     }
 
-    pub fn hasOwnPropertyValue(this: JSValue, globalThis: *JSGlobalObject, value: JSC.JSValue) bool {
-        // TODO: add a binding for this
-        return hasOwnProperty(this, globalThis, value.getZigString(globalThis));
+    /// This is `Object.values`.
+    /// `value` is assumed to be not empty, undefined, or null.
+    pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSValue {
+        if (comptime bun.Environment.allow_assert) {
+            bun.assert(!value.isEmptyOrUndefinedOrNull());
+        }
+        return cppFn("values", .{
+            globalThis,
+            value,
+        });
     }
 
-    pub fn hasOwnProperty(this: JSValue, globalThis: *JSGlobalObject, key: ZigString) bool {
-        return cppFn("hasOwnProperty", .{ this, globalThis, key });
-    }
+    extern "C" fn JSC__JSValue__hasOwnPropertyValue(JSValue, *JSGlobalObject, JSValue) bool;
+    /// Calls `Object.hasOwnProperty(value)`.
+    /// Returns true if the object has the property, false otherwise
+    ///
+    /// If the object is not an object, it will crash. **You must check if the object is an object before calling this function.**
+    pub const hasOwnPropertyValue = JSC__JSValue__hasOwnPropertyValue;
 
     pub inline fn arrayIterator(this: JSValue, global: *JSGlobalObject) JSArrayIterator {
         return JSArrayIterator.init(this, global);
@@ -4661,7 +4663,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return false;
         }
 
-        return this.jsType().isObject() and keys(globalObject, this).getLength(globalObject) == 0;
+        return this.jsType().isObject() and keys(this, globalObject).getLength(globalObject) == 0;
     }
 
     pub fn isClass(this: JSValue, global: *JSGlobalObject) bool {
@@ -4796,7 +4798,14 @@ pub const JSValue = enum(JSValueReprInt) {
     ///
     /// To handle exceptions, use `JSValue.toSliceOrNull`.
     pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
-        return getZigString(this, global).toSlice(allocator);
+        const str = bun.String.fromJS(this, global);
+        defer str.deref();
+
+        // This keeps the WTF::StringImpl alive if it was originally a latin1
+        // ASCII-only string.
+        //
+        // Otherwise, it will be cloned using the allocator.
+        return str.toUTF8(allocator);
     }
 
     pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
@@ -5621,6 +5630,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "jsUndefined",
         "jsonStringify",
         "keys",
+        "values",
         "kind_",
         "parseJSON",
         "put",

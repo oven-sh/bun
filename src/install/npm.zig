@@ -1105,8 +1105,10 @@ pub const PackageManifest = struct {
 
         var string_pool = String.Builder.StringPool.init(default_allocator);
         defer string_pool.deinit();
-        var external_string_maps = ExternalStringMapDeduper.initContext(default_allocator, .{});
-        defer external_string_maps.deinit();
+        var all_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        defer all_extern_strings_dedupe_map.deinit();
+        var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        defer version_extern_strings_dedupe_map.deinit();
         var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
@@ -1734,7 +1736,7 @@ pub const PackageManifest = struct {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();
 
-                                    const name_entry = try external_string_maps.getOrPut(name_map_hash);
+                                    const name_entry = try all_extern_strings_dedupe_map.getOrPut(name_map_hash);
                                     if (name_entry.found_existing) {
                                         name_list = name_entry.value_ptr.*;
                                         this_names = name_list.mut(all_extern_strings);
@@ -1743,7 +1745,7 @@ pub const PackageManifest = struct {
                                         dependency_names = dependency_names[count..];
                                     }
 
-                                    const version_entry = try external_string_maps.getOrPut(version_map_hash);
+                                    const version_entry = try version_extern_strings_dedupe_map.getOrPut(version_map_hash);
                                     if (version_entry.found_existing) {
                                         version_list = version_entry.value_ptr.*;
                                         this_versions = version_list.mut(version_extern_strings);

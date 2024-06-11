@@ -66,7 +66,7 @@ pub const BrotliEncoder = struct {
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
-                if (params.hasOwnProperty(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).*)) {
+                if (params.hasOwnPropertyValue(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).toValue(globalThis))) {
                     const idx = params.getIndex(globalThis, f.value);
                     if (!idx.isNumber()) {
                         var typestring = idx.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);

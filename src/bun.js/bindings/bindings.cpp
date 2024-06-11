@@ -173,9 +173,6 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         const auto& name = header.key;
         const auto& value = header.value;
 
-        WTF::CString nameStr;
-        WTF::CString valueStr;
-
         writeResponseHeader<UWSResponse>(res, name, value);
     }
 }
@@ -1475,31 +1472,46 @@ bool WebCore__FetchHeaders__fastHas_(WebCore__FetchHeaders* arg0, unsigned char 
 void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
 {
     auto iter = headers->createIterator();
-    uint32_t i = 0;
-    unsigned count = 0;
+    unsigned int i = 0;
 
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        auto name = pair->key;
-        auto value = pair->value;
-        names[count] = { i, name.length() };
+        const auto name = pair->key;
+        const auto value = pair->value;
 
-        if (name.is8Bit()) {
+        ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
+
+        if (name.is8Bit() && name.containsOnlyASCII()) {
             const auto nameSpan = name.span8();
             memcpy(&buf[i], nameSpan.data(), nameSpan.size());
+            *names = { i, name.length() };
+            i += name.length();
         } else {
-            StringImpl::copyCharacters(&buf[i], name.span16());
+            ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
+            WTF::CString nameCString = name.utf8();
+            memcpy(&buf[i], nameCString.data(), nameCString.length());
+            *names = { i, static_cast<uint32_t>(nameCString.length()) };
+            i += static_cast<uint32_t>(nameCString.length());
         }
 
-        i += name.length();
-        values[count++] = { i, value.length() };
-        if (value.is8Bit()) {
-            const auto nameSpan = value.span8();
-            memcpy(&buf[i], nameSpan.data(), nameSpan.size());
+        if (value.length() > 0) {
+            if (value.is8Bit() && value.containsOnlyASCII()) {
+                const auto valueSpan = value.span8();
+                memcpy(&buf[i], valueSpan.data(), valueSpan.size());
+                *values = { i, value.length() };
+                i += value.length();
+            } else {
+                ASSERT_WITH_MESSAGE(value.containsOnlyASCII(), "Header value must be ASCII. This should already be validated before calling this function.");
+                WTF::CString valueCString = value.utf8();
+                memcpy(&buf[i], valueCString.data(), valueCString.length());
+                *values = { i, static_cast<uint32_t>(valueCString.length()) };
+                i += static_cast<uint32_t>(valueCString.length());
+            }
         } else {
-            StringImpl::copyCharacters(&buf[i], value.span16());
+            *values = { i, 0 };
         }
 
-        i += value.length();
+        names++;
+        values++;
     }
 }
 void WebCore__FetchHeaders__count(WebCore__FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
@@ -1587,7 +1599,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(header.first.data()), header.first.length() });
         LChar* data = nullptr;
         auto value = String::createUninitialized(header.second.length(), data);
-        memcpy(data, header.second.data(), header.second.length());
+        if (header.second.length() > 0)
+            memcpy(data, header.second.data(), header.second.length());
 
         HTTPHeaderName name;
 
@@ -1793,6 +1806,19 @@ JSC__JSObject__create(JSC__JSGlobalObject* globalObject, size_t initialCapacity,
     ArgFn3(arg2, object, globalObject);
 
     return JSC::JSValue::encode(object);
+}
+
+bool JSC__JSValue__hasOwnPropertyValue(JSC__JSValue value, JSC__JSGlobalObject* globalObject, JSC__JSValue ownKey)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* object = JSC::jsCast<JSC::JSObject*>(JSC::JSValue::decode(value));
+    auto propertyKey = JSC::JSValue::decode(ownKey).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    const bool result = JSC::objectPrototypeHasOwnProperty(globalObject, object, propertyKey);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return result;
 }
 
 JSC__JSValue JSC__JSValue__createEmptyObjectWithNullPrototype(JSC__JSGlobalObject* globalObject)
@@ -2441,20 +2467,6 @@ static JSC::Identifier jsValueToModuleKey(JSC::JSGlobalObject* lexicalGlobalObje
     return JSC::asString(value)->toIdentifier(lexicalGlobalObject);
 }
 
-static JSC::JSValue doLink(JSC__JSGlobalObject* globalObject, JSC::JSValue moduleKeyValue)
-{
-    JSC::VM& vm = globalObject->vm();
-    JSC::JSLockHolder lock { vm };
-    if (!(moduleKeyValue.isString() || moduleKeyValue.isSymbol())) {
-        return JSC::jsUndefined();
-    }
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::Identifier moduleKey = jsValueToModuleKey(globalObject, moduleKeyValue);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
-}
-
 JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
@@ -2546,16 +2558,12 @@ JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* globalObject, JSC__JSValue 
     RELEASE_AND_RETURN(scope, JSValue::encode(ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude)));
 }
 
-bool JSC__JSValue__hasOwnProperty(JSC__JSValue jsValue, JSC__JSGlobalObject* globalObject, ZigString key)
+JSC__JSValue JSC__JSValue__values(JSC__JSGlobalObject* globalObject, JSC__JSValue objectValue)
 {
     JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(objectValue);
 
-    JSC::JSValue value = JSC::JSValue::decode(jsValue);
-    JSObject* obj = value.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    RELEASE_AND_RETURN(scope, JSC::objectPrototypeHasOwnProperty(globalObject, obj, JSC::Identifier::fromString(vm, Zig::toString(key))));
+    return JSValue::encode(JSC::objectValues(vm, globalObject, value));
 }
 
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -2888,7 +2896,7 @@ JSC__JSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC__JSGlobal
 static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject,
     JSC::CallFrame* callFrame)
 {
-    return JSC::JSValue::encode(doLink(globalObject, callFrame->argument(0)));
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 JSC__JSInternalPromise*

@@ -61,7 +61,7 @@ describe("File", () => {
     expect(file.name).toBe("bar.txt");
     expect(file.type).toBe("text/plain;charset=utf-8");
     expect(file.size).toBe(3);
-    expect(file.lastModified).toBe(0);
+    expect(file.lastModified).toBeGreaterThan(0);
   });
 
   it("constructor with lastModified", () => {
@@ -77,7 +77,7 @@ describe("File", () => {
     expect(file.name).toBe("undefined");
     expect(file.type).toBe("");
     expect(file.size).toBe(3);
-    expect(file.lastModified).toBe(0);
+    expect(file.lastModified).toBeGreaterThan(0);
   });
 
   it("constructor throws invalid args", () => {
@@ -129,7 +129,7 @@ describe("File", () => {
     expect(foo.name).toBe("bar.txt");
     expect(foo.type).toBe("text/plain;charset=utf-8");
     expect(foo.size).toBe(3);
-    expect(foo.lastModified).toBe(0);
+    expect(foo.lastModified).toBeGreaterThanOrEqual(0);
     expect(await foo.text()).toBe("foo");
   });
 });

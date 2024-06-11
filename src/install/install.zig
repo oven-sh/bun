@@ -3232,7 +3232,7 @@ pub const PackageManager = struct {
         }
     }
 
-    fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
+    pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
         if (this.preinstall_state.items.len >= count) {
             return;
         }

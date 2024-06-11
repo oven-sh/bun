@@ -43,7 +43,7 @@ jobs:
     uses: ./.github/workflows/run-lint.yml
     secrets: inherit
   linux-x64:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build linux-x64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -55,7 +55,7 @@ jobs:
       canary: true
       no-cache: true
   linux-x64-baseline:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build linux-x64-baseline
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -67,7 +67,7 @@ jobs:
       canary: true
       no-cache: true
   linux-aarch64:
-    if: ${{ !inputs.run-id && github.repository_owner == 'oven-sh' }}
+    if: ${{ !inputs.run-id && github.repository_owner == 'oven-sh' && github.event_name != 'pull_request' }}
     name: Build linux-aarch64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -79,7 +79,7 @@ jobs:
       canary: true
       no-cache: true
   darwin-x64:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build darwin-x64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -90,7 +90,7 @@ jobs:
       cpu: haswell
       canary: true
   darwin-x64-baseline:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build darwin-x64-baseline
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -101,7 +101,7 @@ jobs:
       cpu: nehalem
       canary: true
   darwin-aarch64:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build darwin-aarch64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -112,7 +112,7 @@ jobs:
       cpu: native
       canary: true
   windows-x64:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build windows-x64
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -123,7 +123,7 @@ jobs:
       cpu: haswell
       canary: true
   windows-x64-baseline:
-    if: ${{ !inputs.run-id }}
+    if: ${{ !inputs.run-id && github.event_name != 'pull_request' }}
     name: Build windows-x64-baseline
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -134,7 +134,7 @@ jobs:
       cpu: nehalem
       canary: true
   linux-x64-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test linux-x64
     needs: linux-x64
     uses: ./.github/workflows/run-test.yml
@@ -145,7 +145,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
       tag: linux-x64
   linux-x64-baseline-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test linux-x64-baseline
     needs: linux-x64-baseline
     uses: ./.github/workflows/run-test.yml
@@ -156,7 +156,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
       tag: linux-x64-baseline
   linux-aarch64-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' && github.repository_owner == 'oven-sh'}}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' && github.repository_owner == 'oven-sh'}}
     name: Test linux-aarch64
     needs: linux-aarch64
     uses: ./.github/workflows/run-test.yml
@@ -167,7 +167,7 @@ jobs:
       runs-on: namespace-profile-bun-ci-linux-aarch64
       tag: linux-aarch64
   darwin-x64-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test darwin-x64
     needs: darwin-x64
     uses: ./.github/workflows/run-test.yml
@@ -178,7 +178,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64
   darwin-x64-baseline-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test darwin-x64-baseline
     needs: darwin-x64-baseline
     uses: ./.github/workflows/run-test.yml
@@ -189,7 +189,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
       tag: darwin-x64-baseline
   darwin-aarch64-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test darwin-aarch64
     needs: darwin-aarch64
     uses: ./.github/workflows/run-test.yml
@@ -200,7 +200,7 @@ jobs:
       runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
       tag: darwin-aarch64
   windows-x64-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test windows-x64
     needs: windows-x64
     uses: ./.github/workflows/run-test.yml
@@ -211,7 +211,7 @@ jobs:
       runs-on: windows
       tag: windows-x64
   windows-x64-baseline-test:
-    if: ${{ inputs.run-id || github.event_name == 'pull_request' }}
+    if: ${{ inputs.run-id || github.event_name != 'pull_request' }}
     name: Test windows-x64-baseline
     needs: windows-x64-baseline
     uses: ./.github/workflows/run-test.yml

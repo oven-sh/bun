@@ -2542,7 +2542,7 @@ describe("workspaces", async () => {
   }
 });
 
-test.only("it should install transitive folder dependencies", async () => {
+test("it should install transitive folder dependencies", async () => {
   await writeFile(
     join(packageDir, "package.json"),
     JSON.stringify({
@@ -2561,7 +2561,7 @@ test.only("it should install transitive folder dependencies", async () => {
         "@scoped/file-dep": "1.0.0",
         // scoped with different names
         "@another-scope/file-dep": "1.0.0",
-        // file dependency on the itself
+        // file dependency on itself
         "self-file-dep": "1.0.0",
       },
     }),

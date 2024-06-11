@@ -156,6 +156,11 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
 
     // 5. Fire an event named abort at signal.
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
+
+    // 6. For each dependent signal of signal, call signal's signalAbort method with reason.
+    auto dependentSignals = std::exchange(m_dependentSignals, {});
+    for (auto& signal : dependentSignals)
+        signal.signalAbort(reason);
 }
 
 void AbortSignal::cleanNativeBindings(void* ref)

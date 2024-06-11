@@ -1208,6 +1208,8 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
 
     // since we are open and closing now we know that we have at least one pending activity
     // so we just call decPendingActivityCount() after dispatching the event
+    ASSERT(m_pendingActivityCount > 0);
+
 
     if (this->hasEventListeners("close"_s)) {
         this->dispatchEvent(CloseEvent::create(wasClean, code, reason));

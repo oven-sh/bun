@@ -3843,11 +3843,11 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         pkg_name: string,
         resolution: *const Resolution,
+        folder_path_buf: *bun.PathBuffer,
         patch_hash: ?u64,
     ) struct { cache_dir: std.fs.Dir, cache_dir_subpath: stringZ } {
         const name = pkg_name;
         const buf = manager.lockfile.buffers.string_bytes.items;
-        _ = buf; // autofix
         var cache_dir = std.fs.cwd();
         var cache_dir_subpath: stringZ = "";
 
@@ -3868,19 +3868,18 @@ pub const PackageManager = struct {
                 cache_dir = manager.getCacheDirectory();
             },
             .folder => {
-                @panic("TODO @zack fix");
-                // const folder = resolution.value.folder.slice(buf);
-                // // Handle when a package depends on itself via file:
-                // // example:
-                // //   "mineflayer": "file:."
-                // if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
-                //     cache_dir_subpath = ".";
-                // } else {
-                //     @memcpy(manager.folder_path_buf[0..folder.len], folder);
-                //     this.folder_path_buf[folder.len] = 0;
-                //     cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
-                // }
-                // cache_dir = std.fs.cwd();
+                const folder = resolution.value.folder.slice(buf);
+                // Handle when a package depends on itself via file:
+                // example:
+                //   "mineflayer": "file:."
+                if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                    cache_dir_subpath = ".";
+                } else {
+                    @memcpy(folder_path_buf[0..folder.len], folder);
+                    folder_path_buf[folder.len] = 0;
+                    cache_dir_subpath = folder_path_buf[0..folder.len :0];
+                }
+                cache_dir = std.fs.cwd();
             },
             .local_tarball => {
                 cache_dir_subpath = manager.cachedTarballFolderName(resolution.value.local_tarball, patch_hash);
@@ -3891,77 +3890,51 @@ pub const PackageManager = struct {
                 cache_dir = manager.getCacheDirectory();
             },
             .workspace => {
-                @panic("TODO @zack fix");
-                // const folder = resolution.value.workspace.slice(buf);
-                // // Handle when a package depends on itself
-                // if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
-                //     cache_dir_subpath = ".";
-                // } else {
-                //     @memcpy(this.folder_path_buf[0..folder.len], folder);
-                //     this.folder_path_buf[folder.len] = 0;
-                //     cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
-                // }
-                // cache_dir = std.fs.cwd();
+                const folder = resolution.value.workspace.slice(buf);
+                // Handle when a package depends on itself
+                if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                    cache_dir_subpath = ".";
+                } else {
+                    @memcpy(folder_path_buf[0..folder.len], folder);
+                    folder_path_buf[folder.len] = 0;
+                    cache_dir_subpath = folder_path_buf[0..folder.len :0];
+                }
+                cache_dir = std.fs.cwd();
             },
             .symlink => {
-                @panic("TODO @zack fix");
-                // const directory = manager.globalLinkDir() catch |err| {
-                //     if (comptime log_level != .silent) {
-                //         const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
-                //         const args = .{ name, @errorName(err) };
+                const directory = manager.globalLinkDir() catch |err| {
+                    const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
+                    const args = .{ name, @errorName(err) };
 
-                //         if (comptime log_level.showProgress()) {
-                //             switch (Output.enable_ansi_colors) {
-                //                 inline else => |enable_ansi_colors| {
-                //                     this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                //                 },
-                //             }
-                //         } else {
-                //             Output.prettyErrorln(fmt, args);
-                //         }
-                //     }
+                    Output.prettyErrorln(fmt, args);
 
-                //     if (manager.options.enable.fail_early) {
-                //         Global.exit(1);
-                //     }
+                    Global.exit(1);
+                };
 
-                //     Output.flush();
-                //     this.summary.fail += 1;
-                //     this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
-                //     return;
-                // };
+                const folder = resolution.value.symlink.slice(buf);
 
-                // const folder = resolution.value.symlink.slice(buf);
-
-                // if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
-                //     cache_dir_subpath = ".";
-                //     cache_dir = std.fs.cwd();
-                // } else {
-                //     const global_link_dir = manager.globalLinkDirPath() catch unreachable;
-                //     var ptr = &this.folder_path_buf;
-                //     var remain: []u8 = this.folder_path_buf[0..];
-                //     @memcpy(ptr[0..global_link_dir.len], global_link_dir);
-                //     remain = remain[global_link_dir.len..];
-                //     if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
-                //         remain[0] = std.fs.path.sep;
-                //         remain = remain[1..];
-                //     }
-                //     @memcpy(remain[0..folder.len], folder);
-                //     remain = remain[folder.len..];
-                //     remain[0] = 0;
-                //     const len = @intFromPtr(remain.ptr) - @intFromPtr(ptr);
-                //     cache_dir_subpath = this.folder_path_buf[0..len :0];
-                //     cache_dir = directory;
-                // }
+                if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                    cache_dir_subpath = ".";
+                    cache_dir = std.fs.cwd();
+                } else {
+                    const global_link_dir = manager.globalLinkDirPath() catch unreachable;
+                    var ptr = folder_path_buf;
+                    var remain: []u8 = folder_path_buf[0..];
+                    @memcpy(ptr[0..global_link_dir.len], global_link_dir);
+                    remain = remain[global_link_dir.len..];
+                    if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
+                        remain[0] = std.fs.path.sep;
+                        remain = remain[1..];
+                    }
+                    @memcpy(remain[0..folder.len], folder);
+                    remain = remain[folder.len..];
+                    remain[0] = 0;
+                    const len = @intFromPtr(remain.ptr) - @intFromPtr(ptr);
+                    cache_dir_subpath = folder_path_buf[0..len :0];
+                    cache_dir = directory;
+                }
             },
-            else => {
-                @panic("TODO @zack fix");
-                // if (comptime Environment.allow_assert) {
-                //     @panic("Internal assertion failure: unexpected resolution tag");
-                // }
-                // this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
-                // return;
-            },
+            else => {},
         }
 
         return .{
@@ -10153,6 +10126,7 @@ pub const PackageManager = struct {
         pathbuf: *bun.PathBuffer,
         comptime log_level: Options.LogLevel,
     ) !?PatchCommitResult {
+        var folder_path_buf: bun.PathBuffer = undefined;
         var lockfile: *Lockfile = try manager.allocator.create(Lockfile);
         defer lockfile.deinit();
         switch (lockfile.loadFromDisk(manager, manager.allocator, manager.log, manager.options.lockfile_path, true)) {
@@ -10275,7 +10249,12 @@ pub const PackageManager = struct {
                     },
                 };
 
-                const cache_result = manager.computeCacheDirAndSubpath(name, &actual_package.resolution, null);
+                const cache_result = manager.computeCacheDirAndSubpath(
+                    name,
+                    &actual_package.resolution,
+                    &folder_path_buf,
+                    null,
+                );
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
 
@@ -10310,7 +10289,12 @@ pub const PackageManager = struct {
                     name,
                 }, .auto);
                 const pkg = lockfile.packages.get(pkg_id);
-                const cache_result = manager.computeCacheDirAndSubpath(pkg.name.slice(lockfile.buffers.string_bytes.items), &pkg.resolution, null);
+                const cache_result = manager.computeCacheDirAndSubpath(
+                    pkg.name.slice(lockfile.buffers.string_bytes.items),
+                    &pkg.resolution,
+                    &folder_path_buf,
+                    null,
+                );
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
                 break :brk .{ cache_dir, cache_dir_subpath, changes_dir, pkg };
@@ -10475,272 +10459,6 @@ pub const PackageManager = struct {
         const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();
         const patchfile_path = manager.allocator.dupe(u8, path_in_patches_dir) catch bun.outOfMemory();
         _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto));
-
-        return .{
-            .patch_key = patch_key,
-            .patchfile_path = patchfile_path,
-        };
-    }
-
-    /// - Arg is the tempdir containing the package with changes
-    /// - Get the patch file contents by running git diff on the temp dir and the original package dir
-    /// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
-    /// - Update "patchedDependencies" in package.json
-    /// - Run install to install newly patched pkg
-    fn doPatchCommitOld(
-        manager: *PackageManager,
-        pathbuf: *bun.PathBuffer,
-        comptime log_level: Options.LogLevel,
-    ) !PatchCommitResult {
-        var lockfile: *Lockfile = try manager.allocator.create(Lockfile);
-        defer lockfile.deinit();
-        switch (lockfile.loadFromDisk(manager, manager.allocator, manager.log, manager.options.lockfile_path, true)) {
-            .not_found => {
-                Output.panic("Lockfile not found", .{});
-            },
-            .err => |cause| {
-                if (log_level != .silent) {
-                    switch (cause.step) {
-                        .open_file => Output.prettyError("<r><red>error<r> opening lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
-                        }),
-                        .parse_file => Output.prettyError("<r><red>error<r> parsing lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
-                        }),
-                        .read_file => Output.prettyError("<r><red>error<r> reading lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
-                        }),
-                        .migrating => Output.prettyError("<r><red>error<r> migrating lockfile:<r> {s}\n<r>", .{
-                            @errorName(cause.value),
-                        }),
-                    }
-
-                    if (manager.options.enable.fail_early) {
-                        Output.prettyError("<b><red>failed to load lockfile<r>\n", .{});
-                    } else {
-                        Output.prettyError("<b><red>ignoring lockfile<r>\n", .{});
-                    }
-
-                    Output.flush();
-                }
-                Global.crash();
-            },
-            .ok => {},
-        }
-
-        const patched_pkg_folder = manager.options.positionals[1];
-        if (patched_pkg_folder.len >= bun.MAX_PATH_BYTES) {
-            Output.prettyError("<r><red>error<r>: argument provided is too long<r>\n", .{});
-            Output.flush();
-            Global.crash();
-        }
-        @memcpy(pathbuf[0..patched_pkg_folder.len], patched_pkg_folder);
-        pathbuf[patched_pkg_folder.len] = 0;
-
-        var versionbuf: [1024]u8 = undefined;
-        const version = switch (patchCommitGetVersion(
-            &versionbuf,
-            bun.path.joinZ(&[_][]const u8{ patched_pkg_folder, ".bun-patch-tag" }, .auto),
-        )) {
-            .result => |v| v,
-            .err => |e| {
-                Output.prettyError("<r><red>error<r>: failed to get bun patch tag: {}<r>\n", .{e.toSystemError()});
-                Output.flush();
-                Global.crash();
-            },
-        };
-
-        const package_json_source: logger.Source = brk: {
-            const patched_pkg_folderZ = pathbuf[0..patched_pkg_folder.len :0];
-            const pkgjsonpath = bun.path.joinZ(&[_][]const u8{
-                patched_pkg_folderZ,
-                "package.json",
-            }, .auto);
-
-            switch (bun.sys.File.toSource(pkgjsonpath, manager.allocator)) {
-                .result => |s| break :brk s,
-                .err => |e| {
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to read package.json: {}<r>\n",
-                        .{e.withPath(pkgjsonpath).toSystemError()},
-                    );
-                    Output.flush();
-                    Global.crash();
-                },
-            }
-        };
-        defer manager.allocator.free(package_json_source.contents);
-
-        var package = Lockfile.Package{};
-        try package.parse(lockfile, manager.allocator, manager.log, package_json_source, void, {}, Features.folder);
-        const name = lockfile.str(&package.name);
-        var resolution_buf: [1024]u8 = undefined;
-        const actual_package = switch (lockfile.package_index.get(package.name_hash) orelse {
-            Output.prettyError(
-                "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                .{},
-            );
-            Output.flush();
-            Global.crash();
-        }) {
-            .PackageID => |id| lockfile.packages.get(id),
-            .PackageIDMultiple => |ids| brk: {
-                for (ids.items) |id| {
-                    const pkg = lockfile.packages.get(id);
-                    const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
-                    if (std.mem.eql(u8, resolution_label, version)) {
-                        break :brk pkg;
-                    }
-                }
-                Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
-                    package.name.slice(lockfile.buffers.string_bytes.items),
-                });
-                Output.flush();
-                Global.crash();
-            },
-        };
-        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ name, actual_package.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
-        const stuff = manager.computeCacheDirAndSubpath(name, &actual_package.resolution, null);
-
-        const patchfile_contents = brk: {
-            const new_folder = patched_pkg_folder;
-            var buf2: bun.PathBuffer = undefined;
-            const old_folder = old_folder: {
-                const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(stuff.cache_dir.fd), &buf2)) {
-                    .result => |s| s,
-                    .err => |e| {
-                        Output.prettyError(
-                            "<r><red>error<r>: failed to read from cache {}<r>\n",
-                            .{e.toSystemError()},
-                        );
-                        Output.flush();
-                        Global.crash();
-                    },
-                };
-                break :old_folder bun.path.join(&[_][]const u8{
-                    cache_dir_path,
-                    stuff.cache_dir_subpath,
-                }, .posix);
-            };
-            break :brk switch (bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {s}<r>\n",
-                    .{@errorName(e)},
-                );
-                Output.flush();
-                Global.crash();
-            }) {
-                .result => |stdout| stdout,
-                .err => |stderr| {
-                    defer stderr.deinit();
-                    const Truncate = struct {
-                        stderr: std.ArrayList(u8),
-
-                        pub fn format(
-                            this: *const @This(),
-                            comptime _: []const u8,
-                            _: std.fmt.FormatOptions,
-                            writer: anytype,
-                        ) !void {
-                            const truncate_stderr = this.stderr.items.len > 256;
-                            if (truncate_stderr) {
-                                try writer.print("{s}... ({d} more bytes)", .{ this.stderr.items[0..256], this.stderr.items.len - 256 });
-                            } else try writer.print("{s}", .{this.stderr.items[0..]});
-                        }
-                    };
-                    Output.prettyError(
-                        "<r><red>error<r>: failed to make diff {}<r>\n",
-                        .{
-                            Truncate{ .stderr = stderr },
-                        },
-                    );
-                    Output.flush();
-                    Global.crash();
-                },
-            };
-        };
-        defer patchfile_contents.deinit();
-
-        // write the patch contents to temp file then rename
-        var tmpname_buf: [1024]u8 = undefined;
-        const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
-        const tmpdir = try bun.fs.FileSystem.instance.tmpdir();
-        const tmpfd = switch (bun.sys.openat(
-            bun.toFD(tmpdir.fd),
-            tempfile_name,
-            std.os.O.RDWR | std.os.O.CREAT,
-            0o666,
-        )) {
-            .result => |fd| fd,
-            .err => |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: failed to open temp file {}<r>\n",
-                    .{e.toSystemError()},
-                );
-                Output.flush();
-                Global.crash();
-            },
-        };
-        defer _ = bun.sys.close(tmpfd);
-
-        if (bun.sys.File.writeAll(.{ .handle = tmpfd }, patchfile_contents.items).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to write patch to temp file {}<r>\n",
-                .{e.toSystemError()},
-            );
-            Output.flush();
-            Global.crash();
-        }
-
-        @memcpy(resolution_buf[resolution_label.len .. resolution_label.len + ".patch".len], ".patch");
-        var patch_filename: []const u8 = resolution_buf[0 .. resolution_label.len + ".patch".len];
-        var deinit = false;
-        if (escapePatchFilename(manager.allocator, patch_filename)) |escaped| {
-            deinit = true;
-            patch_filename = escaped;
-        }
-        defer if (deinit) manager.allocator.free(patch_filename);
-
-        const path_in_patches_dir = bun.path.joinZ(
-            &[_][]const u8{
-                manager.options.patch_features.commit.patches_dir,
-                patch_filename,
-            },
-            .posix,
-        );
-
-        var nodefs = bun.JSC.Node.NodeFS{};
-        const args = bun.JSC.Node.Arguments.Mkdir{
-            .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
-        };
-        if (nodefs.mkdirRecursive(args, .sync).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to make patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
-            Output.flush();
-            Global.crash();
-        }
-
-        // rename to patches dir
-
-        if (bun.sys.renameatConcurrently(
-            bun.toFD(tmpdir.fd),
-            tempfile_name,
-            bun.FD.cwd(),
-            path_in_patches_dir,
-        ).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed to renaming patch file to patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
-            Output.flush();
-            Global.crash();
-        }
-
-        const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();
-        const patchfile_path = manager.allocator.dupe(u8, path_in_patches_dir) catch bun.outOfMemory();
-        _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ patched_pkg_folder, ".bun-patch-tag" }, .auto));
 
         return .{
             .patch_key = patch_key,

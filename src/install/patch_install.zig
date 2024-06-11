@@ -496,9 +496,11 @@ pub const PatchTask = struct {
         const pkg_name = pkg_manager.lockfile.packages.items(.name)[pkg_id];
         const resolution: *const Resolution = &pkg_manager.lockfile.packages.items(.resolution)[pkg_id];
 
+        var folder_path_buf: bun.PathBuffer = undefined;
         const stuff = pkg_manager.computeCacheDirAndSubpath(
             pkg_name.slice(pkg_manager.lockfile.buffers.string_bytes.items),
             resolution,
+            &folder_path_buf,
             patch_hash,
         );
 

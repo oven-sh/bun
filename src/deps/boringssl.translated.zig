@@ -1392,7 +1392,7 @@ pub extern fn EVP_VerifyFinal(ctx: [*c]EVP_MD_CTX, sig: [*c]const u8, sig_len: u
 pub extern fn EVP_PKEY_print_public(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn EVP_PKEY_print_private(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn EVP_PKEY_print_params(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
-pub extern fn PKCS5_PBKDF2_HMAC(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: [*c]u8) c_int;
+pub extern fn PKCS5_PBKDF2_HMAC(password: ?[*]const u8, password_len: usize, salt: ?[*]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: ?[*]u8) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC_SHA1(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, key_len: usize, out_key: [*c]u8) c_int;
 pub extern fn EVP_PBE_scrypt(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
 pub extern fn EVP_PKEY_CTX_new(pkey: [*c]EVP_PKEY, e: ?*ENGINE) ?*EVP_PKEY_CTX;

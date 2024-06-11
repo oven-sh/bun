@@ -114,6 +114,9 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 pub fn build(b: *Build) !void {
     std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
 
+    _ = b.top_level_steps.swapRemove("install");
+    _ = b.top_level_steps.swapRemove("uninstall");
+
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
@@ -269,8 +272,7 @@ pub fn build(b: *Build) !void {
 
     // Running `zig build` with no arguments is almost always a mistake.
     {
-        const mistake_message = b.addSystemCommand(&.{
-            "echo",
+        const message =
             \\
             \\To build Bun from source, please use `bun run setup` instead of `zig build`"
             \\For more info, see https://bun.sh/docs/project/contributing
@@ -282,9 +284,10 @@ pub fn build(b: *Build) !void {
             \\  'zig build check'
             \\  'zig build check-all' (run linux+mac+windows)
             \\
-        });
-
-        b.default_step.dependOn(&mistake_message.step);
+        ;
+        // TODO: this does not print on Windows
+        const print_message = b.addSystemCommand(&.{ "echo", message });
+        b.default_step.dependOn(&print_message.step);
     }
 }
 

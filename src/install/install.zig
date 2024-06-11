@@ -5149,6 +5149,7 @@ pub const PackageManager = struct {
                             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                             try manifest_entry_parse.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
                         }
+                        return;
                     }
                 }
                 return;

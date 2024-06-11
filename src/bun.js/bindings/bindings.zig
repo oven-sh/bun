@@ -6540,7 +6540,7 @@ pub const DeferredError = struct {
     }
 
     pub fn toError(this: *const DeferredError, globalThis: *JSGlobalObject) JSValue {
-        defer this.msg.deinitGlobal();
+        defer if (bun.Mimalloc.mi_is_in_heap_region(this.msg.slice().ptr)) this.msg.deinitGlobal() else {};
         const err = switch (this.kind) {
             .plainerror => this.msg.toErrorInstance(globalThis),
             .typeerror => this.msg.toTypeErrorInstance(globalThis),

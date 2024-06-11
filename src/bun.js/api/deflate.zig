@@ -185,7 +185,7 @@ pub const DeflateEncoder = struct {
         const result = this.callback_value.get().?.call(
             this.globalThis,
             if (this.write_failure != null)
-                &.{ this.write_failure.?.toError(this.globalThis), .null }
+                &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
         );
@@ -492,7 +492,7 @@ pub const DeflateDecoder = struct {
         const result = this.callback_value.get().?.call(
             this.globalThis,
             if (this.write_failure != null)
-                &.{ this.write_failure.?.toError(this.globalThis), .null }
+                &.{this.write_failure.?.toError(this.globalThis)}
             else
                 &.{ .null, this.collectOutputValue() },
         );

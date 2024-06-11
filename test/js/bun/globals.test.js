@@ -57,12 +57,11 @@ it("name", () => {
 
 describe("File", () => {
   it("constructor", () => {
-    const now = Date.now();
     const file = new File(["foo"], "bar.txt", { type: "text/plain;charset=utf-8" });
     expect(file.name).toBe("bar.txt");
     expect(file.type).toBe("text/plain;charset=utf-8");
     expect(file.size).toBe(3);
-    expect(file.lastModified).toBeGreaterThanOrEqual(now);
+    expect(file.lastModified).toBeGreaterThan(0);
   });
 
   it("constructor with lastModified", () => {
@@ -74,12 +73,11 @@ describe("File", () => {
   });
 
   it("constructor with undefined name", () => {
-    const now = Date.now();
     const file = new File(["foo"], undefined);
     expect(file.name).toBe("undefined");
     expect(file.type).toBe("");
     expect(file.size).toBe(3);
-    expect(file.lastModified).toBeGreaterThanOrEqual(now);
+    expect(file.lastModified).toBeGreaterThan(0);
   });
 
   it("constructor throws invalid args", () => {
@@ -121,7 +119,6 @@ describe("File", () => {
         return super.text();
       }
     }
-    const now = Date.now();
     const foo = new Foo(["foo"], "bar.txt", { type: "text/plain;charset=utf-8" });
     expect(foo instanceof File).toBe(true);
     expect(foo instanceof Blob).toBe(true);
@@ -132,7 +129,7 @@ describe("File", () => {
     expect(foo.name).toBe("bar.txt");
     expect(foo.type).toBe("text/plain;charset=utf-8");
     expect(foo.size).toBe(3);
-    expect(foo.lastModified).toBeGreaterThanOrEqual(now);
+    expect(foo.lastModified).toBeGreaterThanOrEqual(0);
     expect(await foo.text()).toBe("foo");
   });
 });

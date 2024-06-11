@@ -912,6 +912,8 @@ const CHUNK = 1024 * 64;
 
 pub const ZlibCompressorStreaming = struct {
     state: z_stream = std.mem.zeroes(z_stream),
+    flush: FlushValue = .NoFlush,
+    finishFlush: FlushValue = .Finish,
 
     pub fn init(this: *ZlibCompressorStreaming, level: u8, windowBits: c_int, memLevel: c_int, strategy: c_int) !void {
         const ret_code = deflateInit2_(&this.state, level, 8, windowBits, memLevel, strategy, zlibVersion(), @sizeOf(z_stream));
@@ -945,7 +947,7 @@ pub const ZlibCompressorStreaming = struct {
                     state.avail_out = CHUNK;
                     state.next_out = &out;
 
-                    const ret = deflate(state, .NoFlush);
+                    const ret = deflate(state, this.ctx.flush);
                     bun.assert(ret != .StreamError);
                     const have = CHUNK - state.avail_out;
                     try this.out_writer.writeAll(out[0..have]);
@@ -968,7 +970,7 @@ pub const ZlibCompressorStreaming = struct {
             var out: [CHUNK]u8 = undefined;
             state.avail_out = CHUNK;
             state.next_out = &out;
-            ret = deflate(state, .Finish);
+            ret = deflate(state, this.finishFlush);
             bun.assert(ret != .StreamError);
             const have = CHUNK - state.avail_out;
             try output.appendSlice(bun.default_allocator, out[0..have]);
@@ -978,16 +980,18 @@ pub const ZlibCompressorStreaming = struct {
         // bun.assert(state.avail_in == 0);
 
         _ = deflateEnd(&this.state);
-        if (ret != .StreamEnd) return error.ZlibError;
+        if (ret != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError;
     }
 };
 
 pub const ZlibDecompressorStreaming = struct {
     state: z_stream = std.mem.zeroes(z_stream),
+    flush: FlushValue = .NoFlush,
+    finishFlush: FlushValue = .Finish,
 
     pub fn init(this: *ZlibDecompressorStreaming) !void {
         const ret_code = inflateInit_(&this.state, zlibVersion(), @sizeOf(z_stream));
-        if (ret_code != .Ok) return error.Deflate;
+        if (ret_code != .Ok) return error.ZlibError;
         return;
     }
 
@@ -1017,7 +1021,7 @@ pub const ZlibDecompressorStreaming = struct {
                     state.avail_out = CHUNK;
                     state.next_out = &out;
 
-                    const ret = inflate(state, .NoFlush);
+                    const ret = inflate(state, this.ctx.flush);
                     bun.assert(ret != .StreamError);
                     if (ret == .NeedDict) return error.ZlibError;
                     if (ret == .DataError) return error.ZlibError;
@@ -1043,7 +1047,7 @@ pub const ZlibDecompressorStreaming = struct {
             var out: [CHUNK]u8 = undefined;
             state.avail_out = CHUNK;
             state.next_out = &out;
-            ret = inflate(state, .Finish);
+            ret = inflate(state, this.finishFlush);
             bun.assert(ret != .StreamError);
             if (ret == .NeedDict) return error.ZlibError;
             if (ret == .DataError) return error.ZlibError;
@@ -1051,11 +1055,12 @@ pub const ZlibDecompressorStreaming = struct {
             const have = CHUNK - state.avail_out;
             try output.appendSlice(bun.default_allocator, out[0..have]);
             if (state.avail_out == 0) continue;
+            // if (ret == .BufError) return;
             break;
         }
         // bun.assert(state.avail_in == 0);
 
         _ = inflateEnd(&this.state);
-        if (ret != .StreamEnd) return error.ZlibError;
+        if (ret != .StreamEnd and this.finishFlush == .Finish) return error.ZlibError;
     }
 };

@@ -38,7 +38,7 @@ pub const zStream_struct = extern struct {
     total_out: uLong,
 
     /// last error message, NULL if no error
-    err_msg: [*c]const u8,
+    err_msg: ?[*:0]const u8,
     /// not visible by applications
     internal_state: ?*struct_internal_state,
 

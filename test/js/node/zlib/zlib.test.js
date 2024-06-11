@@ -364,4 +364,20 @@ it.each([
 
   // Async truncated input test
   expect(async () => await decomp_p(truncated)).toThrow();
+
+  const syncFlushOpt = { finishFlush: zlib.constants.Z_SYNC_FLUSH };
+
+  // Sync truncated input test, finishFlush = Z_SYNC_FLUSH
+  {
+    const result = toUTF8(zlib[decompSync](truncated, syncFlushOpt));
+    const expected = inputString.slice(0, result.length);
+    expect(result).toBe(expected);
+  }
+
+  // Async truncated input test, finishFlush = Z_SYNC_FLUSH
+  {
+    const result = toUTF8(await decomp_p(truncated, syncFlushOpt));
+    const expected = inputString.slice(0, result.length);
+    expect(result).toBe(expected);
+  }
 });

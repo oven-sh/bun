@@ -1,7 +1,7 @@
-import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, gc, tls } from "harness";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
-import { join, resolve } from "path";
+import { join } from "path";
+import { tls, bunEnv, bunExe, gc } from "harness";
 import process from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";

@@ -4094,7 +4094,7 @@ pub const Blob = struct {
                 => {
                     var sliced = current.toSlice(global, bun.default_allocator);
                     const allocator = sliced.allocator.get();
-                    could_have_non_ascii = could_have_non_ascii or allocator != null;
+                    could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                     joiner.push(sliced.slice(), allocator);
                 },
 
@@ -4120,7 +4120,7 @@ pub const Blob = struct {
                                 => {
                                     var sliced = item.toSlice(global, bun.default_allocator);
                                     const allocator = sliced.allocator.get();
-                                    could_have_non_ascii = could_have_non_ascii or allocator != null;
+                                    could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
                                     joiner.push(sliced.slice(), allocator);
                                     continue;
                                 },
@@ -4200,9 +4200,13 @@ pub const Blob = struct {
 
                 else => {
                     var sliced = current.toSlice(global, bun.default_allocator);
-                    const allocator = sliced.allocator.get();
-                    could_have_non_ascii = could_have_non_ascii or allocator != null;
-                    joiner.push(sliced.slice(), allocator);
+                    if (global.hasException()) {
+                        const end_result = try joiner.done(bun.default_allocator);
+                        bun.default_allocator.free(end_result);
+                        return error.JSError;
+                    }
+                    could_have_non_ascii = could_have_non_ascii or !sliced.allocator.isWTFAllocator();
+                    joiner.push(sliced.slice(), sliced.allocator.get());
                 },
             }
             current = stack.popOrNull() orelse break;

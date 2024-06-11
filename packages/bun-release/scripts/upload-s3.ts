@@ -35,7 +35,7 @@ if (latest.tag_name === release.tag_name) {
 } else if (release.tag_name === "canary") {
   try {
     const build = await getSemver("canary", await getBuild());
-    paths = ["releases/canary", `releases/${build}`, `releases/${full_commit_hash}`];
+    paths = ["releases/canary", `releases/${build}`, `releases/${full_commit_hash}-canary`];
   } catch (error) {
     console.warn(error);
     paths = ["releases/canary"];

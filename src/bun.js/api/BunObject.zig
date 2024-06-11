@@ -1541,7 +1541,7 @@ pub const Crypto = struct {
                 }
 
                 pub fn deinit(this: *Job) void {
-                    this.poll.deactivate(this.vm.uwsLoop());
+                    this.poll.unref(this.vm);
                     this.pbkdf2.deinitAndUnprotect();
                     this.promise.deinit();
                     bun.default_allocator.free(this.output);

@@ -1646,12 +1646,12 @@ pub const SystemError = extern struct {
     }
 
     pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (self.path) {
+        if (!self.path.isEmpty()) {
             // TODO: remove this hardcoding
             switch (bun.Output.enable_ansi_colors_stderr) {
                 inline else => |enable_colors| try writer.print(
                     comptime bun.Output.prettyFmt(
-                        "<r><red>{}<r><d>:<r> <b>{s}<r>:{} <d>({}())<r>",
+                        "<r><red>{}<r><d>:<r> <b>{s}<r>: {} <d>({}())<r>",
                         enable_colors,
                     ),
                     .{

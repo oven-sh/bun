@@ -42,8 +42,11 @@ describe("bun patch <pkg>", async () => {
     const { stderr } = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(tempdir);
     expect(stderr.toString()).not.toContain("error");
 
-    const { stderr: stderr2 } = await $`${bunExe()} patch-commit lskfjdslkfjsldkfjlsdkfj`.env(bunEnv).cwd(tempdir);
-    expect(stderr.toString()).not.toContain("error");
+    const { stderr: stderr2 } = await $`${bunExe()} patch-commit lskfjdslkfjsldkfjlsdkfj`
+      .env(bunEnv)
+      .cwd(tempdir)
+      .throws(false);
+    expect(stderr2.toString()).toContain("error: package lskfjdslkfjsldkfjlsdkfj not found");
   });
 
   function makeTest(
@@ -107,7 +110,7 @@ Once you're done with your changes, run:
     });
   }
 
-  ["is-even@1.0.0"].map(patchArg =>
+  ["is-even@1.0.0", "node_modules/is-even"].map(patchArg =>
     makeTest("should patch a node_modules package", {
       dependencies: { "is-even": "1.0.0" },
       mainScript: /* ts */ `import isEven from 'is-even'; isEven(420)`,
@@ -136,7 +139,7 @@ Once you're done with your changes, run:
     }),
   );
 
-  ["is-odd@0.1.2"].map(patchArg =>
+  ["is-odd@0.1.2", "node_modules/is-even/node_modules/is-odd"].map(patchArg =>
     makeTest("should patch a nested node_modules package", {
       dependencies: { "is-even": "1.0.0", "is-odd": "3.0.1" },
       mainScript: /* ts */ `import isEven from 'is-even'; isEven(420)`,
@@ -177,106 +180,114 @@ Once you're done with your changes, run:
   );
 
   test("should overwrite the node_modules folder of the package", async () => {
-    $.throws(true);
+    const patchArgs = ["is-even@1.0.0", "node_modules/is-even"];
 
-    const filedir = tempDirWithFiles("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
-    });
+    for (const patchArg of patchArgs) {
+      $.throws(true);
 
-    {
-      const { stderr } = await $`${bunExe()} i --backend hardlink`.env(bunEnv).cwd(filedir);
-      expect(stderr.toString()).toContain("Saved lockfile");
+      const filedir = tempDirWithFiles("patch1", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-test",
+          "module": "index.ts",
+          "type": "module",
+          "dependencies": {
+            "is-even": "1.0.0",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
+      });
 
-      const newCode = /* ts */ `
+      {
+        const { stderr } = await $`${bunExe()} i --backend hardlink`.env(bunEnv).cwd(filedir);
+        expect(stderr.toString()).toContain("Saved lockfile");
+
+        const newCode = /* ts */ `
 module.exports = function isEven() {
   return 'LOL'
 }
 `;
 
-      await $`${bunExe()} patch is-even`.env(bunEnv).cwd(filedir);
-      await $`echo ${newCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(filedir);
+        await $`${bunExe()} patch ${patchArg}`.env(bunEnv).cwd(filedir);
+        await $`echo ${newCode} > node_modules/is-even/index.js`.env(bunEnv).cwd(filedir);
+      }
+
+      const tempdir = tempDirWithFiles("unpatched", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-test",
+          "module": "index.ts",
+          "type": "module",
+          "dependencies": {
+            "is-even": "1.0.0",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
+      });
+
+      await $`${bunExe()} run index.ts`
+        .env(bunEnv)
+        .cwd(filedir)
+        .then(o => expect(o.stderr.toString()).toBe(""));
+
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe("true\n");
     }
-
-    const tempdir = tempDirWithFiles("unpatched", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
-    });
-
-    await $`${bunExe()} run index.ts`
-      .env(bunEnv)
-      .cwd(filedir)
-      .then(o => expect(o.stderr.toString()).toBe(""));
-
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toBe("true\n");
   });
 
   test("should overwrite nested node_modules folder of the package", async () => {
-    $.throws(true);
+    const patchArgs = ["is-odd@0.1.2", "node_modules/is-even/node_modules/is-odd"];
 
-    const filedir = tempDirWithFiles("patch1", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
-          "is-even": "1.0.0",
-          "is-odd": "3.0.1",
-        },
-      }),
-      "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
-    });
+    for (const patchArg of patchArgs) {
+      $.throws(true);
 
-    {
-      const { stderr } = await $`${bunExe()} i --backend hardlink`.env(bunEnv).cwd(filedir);
-      expect(stderr.toString()).toContain("Saved lockfile");
+      const filedir = tempDirWithFiles("patch1", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-test",
+          "module": "index.ts",
+          "type": "module",
+          "dependencies": {
+            "is-even": "1.0.0",
+            "is-odd": "3.0.1",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
+      });
 
-      const newCode = /* ts */ `
+      {
+        const { stderr } = await $`${bunExe()} i --backend hardlink`.env(bunEnv).cwd(filedir);
+        expect(stderr.toString()).toContain("Saved lockfile");
+
+        const newCode = /* ts */ `
 module.exports = function isOdd() {
   return 'LOL'
 }
 `;
 
-      await $`ls -d node_modules/is-even/node_modules/is-odd`.cwd(filedir);
-      await $`${bunExe()} patch is-odd@0.1.2`.env(bunEnv).cwd(filedir);
-      await $`echo ${newCode} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(filedir);
+        await $`ls -d node_modules/is-even/node_modules/is-odd`.cwd(filedir);
+        await $`${bunExe()} patch ${patchArg}`.env(bunEnv).cwd(filedir);
+        await $`echo ${newCode} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(filedir);
+      }
+
+      const tempdir = tempDirWithFiles("unpatched", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-test",
+          "module": "index.ts",
+          "type": "module",
+          "dependencies": {
+            "is-even": "1.0.0",
+          },
+        }),
+        "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
+      });
+
+      await $`${bunExe()} run index.ts`
+        .env(bunEnv)
+        .cwd(filedir)
+        .then(o => expect(o.stderr.toString()).toBe(""));
+
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe("true\n");
     }
-
-    const tempdir = tempDirWithFiles("unpatched", {
-      "package.json": JSON.stringify({
-        "name": "bun-patch-test",
-        "module": "index.ts",
-        "type": "module",
-        "dependencies": {
-          "is-even": "1.0.0",
-        },
-      }),
-      "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
-    });
-
-    await $`${bunExe()} run index.ts`
-      .env(bunEnv)
-      .cwd(filedir)
-      .then(o => expect(o.stderr.toString()).toBe(""));
-
-    const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
-    expect(stderr.toString()).toBe("");
-    expect(stdout.toString()).toBe("true\n");
   });
 });

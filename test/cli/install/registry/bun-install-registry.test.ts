@@ -485,6 +485,123 @@ test("dependency from root satisfies range from dependency", async () => {
   expect(await exited).toBe(0);
 });
 
+test("duplicate names and versions in a manifest do not install incorrect packages", async () => {
+  /**
+   * `duplicate-name-and-version` has two versions:
+   *   1.0.1:
+   *   dependencies: {
+   *       "no-deps": "a-dep"
+   *   }
+   *   1.0.2:
+   *   dependencies: {
+   *       "a-dep": "1.0.1"
+   *   }
+   * Note: version for `no-deps` is the same as second dependency name.
+   *
+   * When this manifest is parsed, the strings for dependency names and versions are stored
+   * with different lists offset length pairs, but we were deduping with the same map. Since
+   * the version of the first dependency is the same as the name as the second, it would try to
+   * dedupe them, and doing so would give the wrong name for the deduped dependency.
+   * (`a-dep@1.0.1` would become `no-deps@1.0.1`)
+   */
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "duplicate-name-and-version": "1.0.2",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+  const results = await Promise.all([
+    file(join(packageDir, "node_modules", "duplicate-name-and-version", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+    exists(join(packageDir, "node_modules", "no-deps")),
+  ]);
+
+  expect(results).toMatchObject([
+    { name: "duplicate-name-and-version", version: "1.0.2" },
+    { name: "a-dep", version: "1.0.1" },
+    false,
+  ]);
+});
+
+describe("peerDependency index out of bounds", async () => {
+  // Test for "index of out bounds" errors with peer dependencies when adding/removing a package
+  //
+  // Repro:
+  // - Install `1-peer-dep-a`. It depends on peer dep `no-deps@1.0.0`.
+  // - Replace `1-peer-dep-a` with `1-peer-dep-b` (identical other than name), delete manifest cache and
+  //   node_modules, then reinstall.
+  // - `no-deps` will enqueue a dependency id that goes out of bounds
+
+  const dependencies = ["1-peer-dep-a", "1-peer-dep-b", "2-peer-deps-c"];
+
+  for (const firstDep of dependencies) {
+    for (const secondDep of dependencies) {
+      if (firstDep === secondDep) continue;
+      test(`replacing ${firstDep} with ${secondDep}`, async () => {
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              [firstDep]: "1.0.0",
+            },
+          }),
+        );
+
+        await runBunInstall(env, packageDir);
+        const lockfile = parseLockfile(packageDir);
+        expect(lockfile).toMatchNodeModulesAt(packageDir);
+        const results = await Promise.all([
+          file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+          file(join(packageDir, "node_modules", firstDep, "package.json")).json(),
+          exists(join(packageDir, "node_modules", firstDep, "node_modules", "no-deps")),
+        ]);
+
+        expect(results).toMatchObject([
+          { name: "no-deps", version: "1.0.0" },
+          { name: firstDep, version: "1.0.0" },
+          false,
+        ]);
+
+        await Promise.all([
+          rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                [secondDep]: "1.0.0",
+              },
+            }),
+          ),
+        ]);
+
+        await runBunInstall(env, packageDir);
+        const newLockfile = parseLockfile(packageDir);
+        expect(newLockfile).toMatchNodeModulesAt(packageDir);
+        const newResults = await Promise.all([
+          file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+          file(join(packageDir, "node_modules", secondDep, "package.json")).json(),
+          exists(join(packageDir, "node_modules", secondDep, "node_modules", "no-deps")),
+        ]);
+
+        expect(newResults).toMatchObject([
+          { name: "no-deps", version: "1.0.0" },
+          { name: secondDep, version: "1.0.0" },
+          false,
+        ]);
+      });
+    }
+  }
+});
+
 test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {
   await writeFile(
     join(packageDir, "package.json"),

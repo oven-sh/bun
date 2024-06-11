@@ -173,6 +173,7 @@ ObjectDefineProperty(Deflate.prototype, "bytesWritten", {
 });
 Deflate.prototype.flush = ZlibBase_flush;
 Deflate.prototype.reset = ZlibBase_reset;
+Deflate.prototype.params = Zlib_params;
 
 Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
   callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
@@ -201,6 +202,7 @@ ObjectDefineProperty(Inflate.prototype, "bytesWritten", {
 });
 Inflate.prototype.flush = ZlibBase_flush;
 Inflate.prototype.reset = ZlibBase_reset;
+Inflate.prototype.params = Zlib_params;
 
 Inflate.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
@@ -274,6 +276,7 @@ ObjectDefineProperty(DeflateRaw.prototype, "bytesWritten", {
 });
 DeflateRaw.prototype.flush = ZlibBase_flush;
 DeflateRaw.prototype.reset = ZlibBase_reset;
+DeflateRaw.prototype.params = Zlib_params;
 
 DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
   callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
@@ -302,6 +305,7 @@ ObjectDefineProperty(InflateRaw.prototype, "bytesWritten", {
 });
 InflateRaw.prototype.flush = ZlibBase_flush;
 InflateRaw.prototype.reset = ZlibBase_reset;
+InflateRaw.prototype.params = Zlib_params;
 
 InflateRaw.prototype._transform = function (chunk, encoding, callback) {
   callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
@@ -338,6 +342,10 @@ function ZlibBase_flush(kind, callback) {
 function ZlibBase_reset() {
   assert(this[kHandle], "zlib binding closed");
   return this[kHandle].reset();
+}
+
+function Zlib_params(level, strategy, callback) {
+  // TODO:
 }
 
 // TODO: **use a native binding from Bun for this!!**

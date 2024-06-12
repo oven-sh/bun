@@ -1215,6 +1215,7 @@ pub const Fetch = struct {
                         const globalObject = this.global_this;
                         const js_cert = X509.toJS(x509, globalObject);
                         var hostname: bun.String = bun.String.createUTF8(certificate_info.hostname);
+                        defer hostname.deref();
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();

@@ -112,7 +112,7 @@ pub const Blob = struct {
     /// Blob name will lazy initialize when getName is called, but
     /// we must be able to set the name, and we need to keep the value alive
     /// https://github.com/oven-sh/bun/issues/10178
-    name: JSC.Strong = .{},
+    name: ?bun.String = null,
 
     /// Max int of double precision
     /// 9 petabytes is probably enough for awhile
@@ -3297,13 +3297,12 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.name.get()) |value| return value;
+        if (this.name) |name| return name.toJS(globalThis);
 
         if (this.getFileName()) |path| {
             var str = bun.String.createUTF8(path);
-            const value = str.toJS(globalThis);
-            this.name = JSC.Strong.create(value, globalThis);
-            return value;
+            this.name = str;
+            return str.toJS(globalThis);
         }
 
         return JSValue.undefined;
@@ -3314,9 +3313,24 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         value: JSValue,
     ) callconv(.C) bool {
-        this.name.clear();
-        this.name.set(globalThis, value);
-        return true;
+        // by default we don't have a name so lets allow it to be set undefined
+        if (value.isEmptyOrUndefinedOrNull()) {
+            if (this.name) |name| {
+                name.deref();
+                this.name = null;
+            }
+            return true;
+        }
+        if (value.isString()) {
+            if (this.name) |name| {
+                name.deref();
+            }
+            this.name = bun.String.tryFromJS(value, globalThis) orelse return false;
+            this.name.?.ref();
+
+            return true;
+        }
+        return false;
     }
 
     pub fn getFileName(
@@ -3717,8 +3731,10 @@ pub const Blob = struct {
 
     pub fn deinit(this: *Blob) void {
         this.detach();
-        this.name.deinit();
-        this.name = .{};
+        if (this.name) |name| {
+            name.deref();
+            this.name = null;
+        }
         // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;

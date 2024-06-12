@@ -5784,6 +5784,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
                             var ip = bun.String.createUTF8(slice);
+                            defer ip.deref();
                             return JSSocketAddress__create(
                                 this.globalThis,
                                 ip.toJS(this.globalThis),
@@ -5830,6 +5831,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
+            defer value.deref();
             return value.toJSDOMURL(globalThis);
         }
 

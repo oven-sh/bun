@@ -6287,19 +6287,18 @@ pub const PackageManager = struct {
                                 err,
                                 task.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} downloading tarball <b>{s}@{s}<r>\n";
-                            const args = .{
-                                bun.span(@errorName(err)),
-                                extract.name.slice(),
-                                extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
-                            };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(fmt, args);
-                                Output.flush();
-                            }
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "<r><red>error<r>: {s} downloading tarball <b>{s}@{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    extract.name.slice(),
+                                    extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
+                                },
+                            ) catch unreachable;
                         }
 
                         continue;
@@ -6326,23 +6325,19 @@ pub const PackageManager = struct {
                                 err,
                                 task.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
-                            const args = .{
+                            continue;
+                        }
+
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                            .{
                                 task.http.client.url.href,
                                 response.status_code,
-                            };
-
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
-                        }
+                            },
+                        ) catch unreachable;
 
                         continue;
                     }

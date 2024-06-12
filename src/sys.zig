@@ -31,7 +31,7 @@ const log = bun.Output.scoped(.SYS, false);
 pub const syslog = log;
 
 pub const system = switch (Environment.os) {
-    .linux => std.c,
+    .linux => std.os.linux,
     .mac => bun.AsyncIO.system,
     else => @compileError("not implemented"),
 };
@@ -2618,7 +2618,9 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, flags: i32) Maybe(bun.FileDescriptor
         _ = system.fcntl(@intCast(out), @as(i32, std.posix.F.SETFD), @as(ArgType, @intCast(fd_flags | @as(ArgType, @intCast(flags)))));
     }
 
-    return Maybe(bun.FileDescriptor){ .result = bun.toFD(out) };
+    return Maybe(bun.FileDescriptor){
+        .result = bun.toFD(@as(u32, @intCast(out))),
+    };
 }
 
 pub fn dup(fd: bun.FileDescriptor) Maybe(bun.FileDescriptor) {

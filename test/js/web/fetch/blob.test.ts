@@ -129,7 +129,7 @@ test("blob: can be imported", async () => {
   }).toThrow();
 });
 
-test("blob: can realiable get type from fetch #10072", async () => {
+test("blob: can reliable get type from fetch #10072", async () => {
   using server = Bun.serve({
     fetch() {
       return new Response(

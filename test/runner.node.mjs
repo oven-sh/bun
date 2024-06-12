@@ -324,6 +324,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   if (env) {
     Object.assign(bunEnv, env);
   }
+  // Use Linux namespaces to isolate the child process
+  // https://man7.org/linux/man-pages/man1/unshare.1.html
+  if (isLinux) {
+    args = ["--pid", "--mount", "--fork", "--kill-child", `--wd=${cwd}`, execPath, ...args];
+    execPath = "unshare";
+  }
   try {
     return await spawnSafe({
       command: execPath,

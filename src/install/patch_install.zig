@@ -10,6 +10,7 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 
 const logger = bun.logger;
+const Loc = logger.Loc;
 
 const PackageManager = bun.PackageManager;
 pub const PackageID = bun.install.PackageID;
@@ -53,11 +54,6 @@ pub const PatchTask = struct {
 
     const debug = bun.Output.scoped(.InstallPatch, false);
 
-    fn errDupePath(e: bun.sys.Error) bun.sys.Error {
-        if (e.path.len > 0) return e.withPath(bun.default_allocator.dupe(u8, e.path) catch bun.outOfMemory());
-        return e;
-    }
-
     const Maybe = bun.sys.Maybe;
 
     const CalcPatchHash = struct {
@@ -66,7 +62,9 @@ pub const PatchTask = struct {
 
         state: ?EnqueueAfterState = null,
 
-        result: ?Maybe(u64) = null,
+        result: ?u64 = null,
+
+        logger: logger.Log,
 
         const EnqueueAfterState = struct {
             pkg_id: PackageID,
@@ -106,15 +104,12 @@ pub const PatchTask = struct {
                 this.manager.allocator.free(this.callback.apply.cache_dir_subpath);
                 this.manager.allocator.free(this.callback.apply.pkgname);
                 if (this.callback.apply.install_context) |ictx| ictx.path.deinit();
+                this.callback.apply.logger.deinit();
             },
             .calc_hash => {
                 // TODO: how to deinit `this.callback.calc_hash.network_task`
                 if (this.callback.calc_hash.state) |state| this.manager.allocator.free(state.url);
-                if (this.callback.calc_hash.result) |r| {
-                    if (r.asErr()) |e| {
-                        if (e.path.len > 0) bun.default_allocator.free(e.path);
-                    }
-                }
+                this.callback.calc_hash.logger.deinit();
                 this.manager.allocator.free(this.callback.calc_hash.patchfile_path);
             },
         }
@@ -174,42 +169,23 @@ pub const PatchTask = struct {
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         const calc_hash = &this.callback.calc_hash;
-        const hash = switch (calc_hash.result orelse @panic("Calc hash didn't run, this is a bug in Bun.")) {
-            .result => |h| h,
-            .err => |e| {
-                if (e.getErrno() == bun.C.E.NOENT) {
-                    const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
-                    const args = .{
-                        this.callback.calc_hash.patchfile_path,
-                        manager.lockfile.patched_dependencies.get(calc_hash.name_and_version_hash).?.path.slice(manager.lockfile.buffers.string_bytes.items),
-                    };
-                    if (comptime log_level.showProgress()) {
-                        Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                    } else {
-                        Output.prettyErrorln(
-                            fmt,
-                            args,
-                        );
-                        Output.flush();
-                    }
-                    Global.crash();
-                }
-
-                const fmt = "\n\n<r><red>error<r>: {s}{s} while calculating hash for patchfile: <b>{s}<r>\n";
-                const args = .{ @tagName(e.getErrno()), e.path, this.callback.calc_hash.patchfile_path };
-                if (comptime log_level.showProgress()) {
-                    Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                } else {
-                    Output.prettyErrorln(
-                        fmt,
-                        args,
-                    );
-                    Output.flush();
-                }
-                Global.crash();
-
-                return;
-            },
+        const hash = calc_hash.result orelse {
+            const fmt = "\n\nErrors occured while calculating hash for <b>{s}<r>:\n\n";
+            const args = .{this.callback.calc_hash.patchfile_path};
+            if (comptime log_level.showProgress()) {
+                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
+            } else {
+                Output.prettyErrorln(
+                    fmt,
+                    args,
+                );
+            }
+            if (calc_hash.logger.errors > 0) {
+                Output.prettyErrorln("\n\n", .{});
+                calc_hash.logger.printForLogLevel(Output.writer()) catch {};
+            }
+            Output.flush();
+            Global.crash();
         };
 
         var gop = manager.lockfile.patched_dependencies.getOrPut(manager.allocator, calc_hash.name_and_version_hash) catch bun.outOfMemory();
@@ -412,8 +388,9 @@ pub const PatchTask = struct {
         ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
     }
 
-    pub fn calcHash(this: *PatchTask) Maybe(u64) {
+    pub fn calcHash(this: *PatchTask) ?u64 {
         bun.assert(this.callback == .calc_hash);
+        var log = &this.callback.calc_hash.logger;
 
         const dir = this.project_dir;
         const patchfile_path = this.callback.calc_hash.patchfile_path;
@@ -425,13 +402,50 @@ pub const PatchTask = struct {
         }, .auto);
 
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
-            .err => |e| return .{ .err = errDupePath(e) },
+            .err => |e| {
+                if (e.getErrno() == bun.C.E.NOENT) {
+                    const fmt = "\n\n<r><red>error<r>: could not find patch file <b>{s}<r>\n\nPlease make sure it exists.\n\nTo create a new patch file run:\n\n  <cyan>bun patch {s}<r>\n";
+                    const args = .{
+                        this.callback.calc_hash.patchfile_path,
+                        this.manager.lockfile.patched_dependencies.get(this.callback.calc_hash.name_and_version_hash).?.path.slice(this.manager.lockfile.buffers.string_bytes.items),
+                    };
+                    log.addErrorFmt(null, Loc.Empty, this.manager.allocator, fmt, args) catch bun.outOfMemory();
+                    return null;
+                }
+                log.addWarningFmt(
+                    null,
+                    Loc.Empty,
+                    this.manager.allocator,
+                    "patchfile <b>{s}<r> is empty",
+                    .{absolute_patchfile_path},
+                ) catch bun.outOfMemory();
+                return null;
+            },
             .result => |s| s,
         };
         const size: u64 = @intCast(stat.size);
+        if (size == 0) {
+            log.addErrorFmt(
+                null,
+                Loc.Empty,
+                this.manager.allocator,
+                "patchfile <b>{s}<r> is empty",
+                .{absolute_patchfile_path},
+            ) catch bun.outOfMemory();
+            return null;
+        }
 
         const fd = switch (bun.sys.open(absolute_patchfile_path, std.os.O.RDONLY, 0)) {
-            .err => |e| return .{ .err = errDupePath(e) },
+            .err => |e| {
+                log.addErrorFmt(
+                    null,
+                    Loc.Empty,
+                    this.manager.allocator,
+                    "failed to open patch file: {}",
+                    .{e},
+                ) catch bun.outOfMemory();
+                return null;
+            },
             .result => |fd| fd,
         };
         defer _ = bun.sys.close(fd);
@@ -448,14 +462,23 @@ pub const PatchTask = struct {
             while (i < STACK_SIZE and i < size) {
                 switch (bun.sys.read(fd, stack[i..])) {
                     .result => |w| i += w,
-                    .err => |e| return .{ .err = errDupePath(e) },
+                    .err => |e| {
+                        log.addErrorFmt(
+                            null,
+                            Loc.Empty,
+                            this.manager.allocator,
+                            "failed to read from patch file: {} ({s})",
+                            .{ e, absolute_patchfile_path },
+                        ) catch bun.outOfMemory();
+                        return null;
+                    },
                 }
             }
             read += i;
             hasher.update(stack[0..i]);
         }
 
-        return .{ .result = hasher.final() };
+        return hasher.final();
     }
 
     pub fn notify(this: *PatchTask) void {
@@ -481,6 +504,7 @@ pub const PatchTask = struct {
                     .state = state,
                     .patchfile_path = patchfile_path,
                     .name_and_version_hash = name_and_version_hash,
+                    .logger = logger.Log.init(manager.allocator),
                 },
             },
             .manager = manager,

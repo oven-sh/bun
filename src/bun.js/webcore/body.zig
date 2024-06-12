@@ -694,13 +694,20 @@ pub const Body = struct {
                                 if (fetch_headers.fastGet(.ContentType)) |content_type| {
                                     var content_slice = content_type.toSlice(bun.default_allocator);
                                     defer content_slice.deinit();
-                                    // we wanna keep this alive after the headers are GC'd
-                                    blob.content_type = bun.default_allocator.dupe(u8, content_slice.slice()) catch bun.outOfMemory();
-                                    blob.content_type_allocated = true;
+                                    var allocated = false;
+                                    const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
+                                    blob.content_type = mimeType.value;
+                                    blob.content_type_allocated = allocated;
                                     blob.content_type_was_set = true;
-                                    blob.store.?.mime_type = MimeType.init(blob.content_type, null, null);
+                                    if (blob.store != null) {
+                                        blob.store.?.mime_type = mimeType;
+                                    }
                                 }
-                            } else {
+                            }
+                            if (!blob.content_type_was_set and blob.store != null) {
+                                blob.content_type = MimeType.text.value;
+                                blob.content_type_allocated = false;
+                                blob.content_type_was_set = true;
                                 blob.store.?.mime_type = MimeType.text;
                             }
                             promise.resolve(global, blob.toJS(global));
@@ -1188,19 +1195,25 @@ pub fn BodyMixin(comptime Type: type) type {
 
             var blob = Blob.new(value.use());
             blob.allocator = getAllocator(globalObject);
-            if (blob.content_type.len == 0 and blob.store != null) {
+            if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
                         var content_slice = content_type.toSlice(blob.allocator.?);
                         defer content_slice.deinit();
-                        // we wanna keep this alive after the headers are GC'd
-                        blob.content_type = blob.allocator.?.dupe(u8, content_slice.slice()) catch bun.outOfMemory();
-                        blob.content_type_allocated = true;
+                        var allocated = false;
+                        const mimeType = MimeType.init(content_slice.slice(), blob.allocator.?, &allocated);
+                        blob.content_type = mimeType.value;
+                        blob.content_type_allocated = allocated;
                         blob.content_type_was_set = true;
-
-                        blob.store.?.mime_type = MimeType.init(blob.content_type, null, null);
+                        if (blob.store != null) {
+                            blob.store.?.mime_type = mimeType;
+                        }
                     }
-                } else {
+                }
+                if (!blob.content_type_was_set and blob.store != null) {
+                    blob.content_type = MimeType.text.value;
+                    blob.content_type_allocated = false;
+                    blob.content_type_was_set = true;
                     blob.store.?.mime_type = MimeType.text;
                 }
             }

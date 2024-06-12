@@ -3208,10 +3208,10 @@ it("promises exists should never throw ENAMETOOLONG", async () => {
 
 it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
   try {
-    await _promises.fdatasync(500);
+    await _promises.fdatasync(50000);
   } catch (e) {
     expect(typeof e.fd).toBe("number");
-    expect(e.fd).toBe(500);
+    expect(e.fd).toBe(50000);
     return;
   }
   expect.unreachable();

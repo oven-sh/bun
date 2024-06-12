@@ -6298,7 +6298,7 @@ pub const PackageManager = struct {
                                     extract.name.slice(),
                                     extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                                 },
-                            ) catch unreachable;
+                            ) catch bun.outOfMemory();
                         }
 
                         continue;
@@ -6337,7 +6337,7 @@ pub const PackageManager = struct {
                                 task.http.client.url.href,
                                 response.status_code,
                             },
-                        ) catch unreachable;
+                        ) catch bun.outOfMemory();
 
                         continue;
                     }
@@ -12765,11 +12765,6 @@ pub const PackageManager = struct {
             }
         }
 
-        try manager.log.printForLogLevel(Output.errorWriter());
-        if (manager.log.hasErrors()) Global.crash();
-
-        manager.log.reset();
-
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
             manager,
@@ -12955,9 +12950,6 @@ pub const PackageManager = struct {
             }
         }
 
-        try manager.log.printForLogLevel(Output.errorWriter());
-        if (manager.log.hasErrors()) Global.crash();
-
         if (needs_new_lockfile) {
             manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));
         }
@@ -12981,6 +12973,9 @@ pub const PackageManager = struct {
                 manager.progress = .{};
             }
         }
+
+        try manager.log.printForLogLevel(Output.errorWriter());
+        if (manager.log.hasErrors()) Global.crash();
 
         if (manager.options.do.run_scripts) {
             if (manager.root_lifecycle_scripts) |scripts| {

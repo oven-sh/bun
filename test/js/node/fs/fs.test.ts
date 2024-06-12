@@ -3235,3 +3235,19 @@ it("promises.cp should work even if dest does not exist", async () => {
   const text_actual = await Bun.file(dst).text();
   expect(text_actual).toBe(text_expected);
 });
+
+it("promises.writeFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.writeFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+});
+
+it("promises.readFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await Bun.write(Bun.file(x_path), "data");
+  await using file = await fs.promises.open(x_path, "r");
+  expect((await fs.promises.readFile(file)).toString()).toBe("data");
+});

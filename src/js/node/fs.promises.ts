@@ -153,9 +153,16 @@ const private_symbols = {
   fs,
 };
 
+const _readFile = fs.readFile.bind(fs);
+const _writeFile = fs.writeFile.bind(fs);
+const _appendFile = fs.appendFile.bind(fs);
+
 const exports = {
   access: fs.access.bind(fs),
-  appendFile: fs.appendFile.bind(fs),
+  appendFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    return _appendFile(fileHandleOrFdOrPath, ...args);
+  },
   close: fs.close.bind(fs),
   copyFile: fs.copyFile.bind(fs),
   cp,
@@ -187,8 +194,14 @@ const exports = {
   read: fs.read.bind(fs),
   write: fs.write.bind(fs),
   readdir: fs.readdir.bind(fs),
-  readFile: fs.readFile.bind(fs),
-  writeFile: fs.writeFile.bind(fs),
+  readFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    return _readFile(fileHandleOrFdOrPath, ...args);
+  },
+  writeFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    return _writeFile(fileHandleOrFdOrPath, ...args);
+  },
   readlink: fs.readlink.bind(fs),
   realpath: fs.realpath.bind(fs),
   rename: fs.rename.bind(fs),

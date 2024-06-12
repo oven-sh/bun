@@ -6086,17 +6086,13 @@ pub const PackageManager = struct {
                                 task.url_buf,
                             );
                         } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} downloading package manifest <b>{s}<r>\n";
-                            const args = .{ bun.span(@errorName(err)), name.slice() };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} downloading package manifest <b>{s}<r>",
+                                .{ @errorName(err), name.slice() },
+                            ) catch bun.outOfMemory();
                         }
                         continue;
                     };
@@ -6122,69 +6118,54 @@ pub const PackageManager = struct {
                         } else {
                             switch (response.status_code) {
                                 404 => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{}{s} 404<r>\n";
-                                        const args = .{
+                                    manager.log.addErrorFmt(
+                                        null,
+                                        logger.Loc.Empty,
+                                        manager.allocator,
+                                        "package <b>\"{s}\"<r> not found <d>{}{s} 404<r>",
+                                        .{
                                             name.slice(),
                                             task.http.url.displayHost(),
                                             task.http.url.pathname,
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
+                                        },
+                                    ) catch bun.outOfMemory();
                                 },
+
                                 401 => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{}{s} 401<r>\n";
-                                        const args = .{
+                                    manager.log.addErrorFmt(
+                                        null,
+                                        logger.Loc.Empty,
+                                        manager.allocator,
+                                        "unauthorized <b>\"{s}\"<r> <d>{}{s} 401<r>",
+                                        .{
                                             name.slice(),
                                             task.http.url.displayHost(),
                                             task.http.url.pathname,
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
+                                        },
+                                    ) catch bun.outOfMemory();
                                 },
                                 403 => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: forbidden while loading <b>\"{s}\"<r><d> 403<r>\n";
-                                        const args = .{
+                                    manager.log.addErrorFmt(
+                                        null,
+                                        logger.Loc.Empty,
+                                        manager.allocator,
+                                        "forbidden while loading <b>\"{s}\"<r><d> 403<r>",
+                                        .{
                                             name.slice(),
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
+                                        },
+                                    ) catch bun.outOfMemory();
                                 },
                                 else => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
-                                        const args = .{
+                                    manager.log.addErrorFmt(
+                                        null,
+                                        logger.Loc.Empty,
+                                        manager.allocator,
+                                        "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                                        .{
                                             task.http.client.url.href,
                                             response.status_code,
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
+                                        },
+                                    ) catch bun.outOfMemory();
                                 },
                             }
                         }
@@ -6277,7 +6258,11 @@ pub const PackageManager = struct {
                                     },
                                 ) catch unreachable;
                             }
-                        } else if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+
+                            continue;
+                        }
+
+                        if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
                             callbacks.onPackageDownloadError(
                                 extract_ctx,
@@ -6299,6 +6284,17 @@ pub const PackageManager = struct {
                                     extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
                                 },
                             ) catch bun.outOfMemory();
+                        }
+
+                        if (manager.subcommand != .remove) {
+                            for (manager.update_requests) |*request| {
+                                if (strings.eql(request.name, extract.name.slice())) {
+                                    request.failed = true;
+                                    manager.options.do.save_lockfile = false;
+                                    manager.options.do.save_yarn_lock = false;
+                                    manager.options.do.install_packages = false;
+                                }
+                            }
                         }
 
                         continue;
@@ -6325,19 +6321,29 @@ pub const PackageManager = struct {
                                 err,
                                 task.url_buf,
                             );
-                            continue;
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                                .{
+                                    task.http.client.url.href,
+                                    response.status_code,
+                                },
+                            ) catch bun.outOfMemory();
                         }
 
-                        manager.log.addErrorFmt(
-                            null,
-                            logger.Loc.Empty,
-                            manager.allocator,
-                            "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                            .{
-                                task.http.client.url.href,
-                                response.status_code,
-                            },
-                        ) catch bun.outOfMemory();
+                        if (manager.subcommand != .remove) {
+                            for (manager.update_requests) |*request| {
+                                if (strings.eql(request.name, extract.name.slice())) {
+                                    request.failed = true;
+                                    manager.options.do.save_lockfile = false;
+                                    manager.options.do.save_yarn_lock = false;
+                                    manager.options.do.install_packages = false;
+                                }
+                            }
+                        }
 
                         continue;
                     }
@@ -6391,21 +6397,19 @@ pub const PackageManager = struct {
                                 err,
                                 task.request.package_manifest.network.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} parsing package manifest for <b>{s}<r>";
-                            const error_name: string = @errorName(err);
-
-                            const args = .{ error_name, name.slice() };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} parsing package manifest for <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    name.slice(),
+                                },
+                            ) catch bun.outOfMemory();
                         }
+
                         continue;
                     }
                     const manifest = &task.data.package_manifest;
@@ -6459,21 +6463,21 @@ pub const PackageManager = struct {
                                     else => unreachable,
                                 },
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>\n";
-                            const args = .{
-                                @errorName(err),
-                                alias,
-                            };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(fmt, args);
-                                Output.flush();
-                            }
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} extracting tarball from <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    alias,
+                                },
+                            ) catch bun.outOfMemory();
                         }
                         continue;
                     }
+
                     manager.extracted_count += 1;
                     bun.Analytics.Features.extracted_packages += 1;
 
@@ -6562,19 +6566,16 @@ pub const PackageManager = struct {
                                 url,
                             );
                         } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} cloning repository for <b>{s}<r>";
-                            const error_name = @errorName(err);
-
-                            const args = .{ error_name, name };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} cloning repository for <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    name,
+                                },
+                            ) catch bun.outOfMemory();
                         }
                         continue;
                     }
@@ -6601,21 +6602,17 @@ pub const PackageManager = struct {
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
 
-                        if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} checking out repository for <b>{s}<r>";
-                            const error_name = @errorName(err);
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} checking out repository for <b>{s}<r>",
+                            .{
+                                @errorName(err),
+                                alias.slice(),
+                            },
+                        ) catch bun.outOfMemory();
 
-                            const args = .{ error_name, alias.slice() };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
-                        }
                         continue;
                     }
 
@@ -12974,7 +12971,9 @@ pub const PackageManager = struct {
             }
         }
 
-        try manager.log.printForLogLevel(Output.errorWriter());
+        if (comptime log_level != .silent) {
+            try manager.log.printForLogLevel(Output.errorWriter());
+        }
         if (manager.log.hasErrors()) Global.crash();
 
         if (manager.options.do.run_scripts) {

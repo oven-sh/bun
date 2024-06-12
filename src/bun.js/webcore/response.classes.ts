@@ -153,7 +153,7 @@ export default [
       // This is *not* spec-compliant.
       name: {
         getter: "getName",
-        cache: true,
+        setter: "setName",
       },
 
       // TODO: Move this to a separate `File` object or BunFile

@@ -128,3 +128,41 @@ test("blob: can be imported", async () => {
     await import(url);
   }).toThrow();
 });
+
+test("blob: can realiable get type", async () => {
+  using server = Bun.serve({
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(Buffer.from("Hello"));
+          },
+          async pull(controller) {
+            await Bun.sleep(100);
+            controller.enqueue(Buffer.from("World"));
+            await Bun.sleep(100);
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "plain/text",
+          },
+        },
+      );
+    },
+  });
+
+  const blob = await fetch(server.url).then(res => res.blob());
+  expect(blob.type).toBe("plain/text");
+});
+
+test("blob: can have the name set", () => {
+  const blob = new Blob([Buffer.from("Hello, World")]);
+  //@ts-ignore
+  expect(blob.name).toBeUndefined();
+  //@ts-ignore
+  blob.name = "logo.svg";
+  //@ts-ignore
+  expect(blob.name).toBe("logo.svg");
+});

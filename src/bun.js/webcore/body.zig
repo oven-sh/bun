@@ -617,7 +617,12 @@ pub const Body = struct {
             };
         }
 
-        pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
+        pub fn resolve(
+            to_resolve: *Value,
+            new: *Value,
+            global: *JSGlobalObject,
+            headers: ?*FetchHeaders,
+        ) void {
             log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
@@ -683,9 +688,22 @@ pub const Body = struct {
                             async_form_data.toJS(global, blob.slice(), promise);
                         },
                         else => {
-                            var ptr = Blob.new(new.use());
-                            ptr.allocator = bun.default_allocator;
-                            promise.resolve(global, ptr.toJS(global));
+                            var blob = Blob.new(new.use());
+                            blob.allocator = bun.default_allocator;
+                            if (headers) |fetch_headers| {
+                                if (fetch_headers.fastGet(.ContentType)) |content_type| {
+                                    var content_slice = content_type.toSlice(bun.default_allocator);
+                                    defer content_slice.deinit();
+                                    // we wanna keep this alive after the headers are GC'd
+                                    blob.content_type = bun.default_allocator.dupe(u8, content_slice.slice()) catch bun.outOfMemory();
+                                    blob.content_type_allocated = true;
+                                    blob.content_type_was_set = true;
+                                    blob.store.?.mime_type = MimeType.init(blob.content_type, null, null);
+                                }
+                            } else {
+                                blob.store.?.mime_type = MimeType.text;
+                            }
+                            promise.resolve(global, blob.toJS(global));
                         },
                     }
                     JSC.C.JSValueUnprotect(global, promise_.asObjectRef());
@@ -1162,26 +1180,30 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
-                    return handleBodyAlreadyUsed(globalObject);
+                if (value.Locked.promise == null or value.Locked.promise.?.isEmptyOrUndefinedOrNull()) {
+                    return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
                 }
-
-                return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
+                return handleBodyAlreadyUsed(globalObject);
             }
 
             var blob = Blob.new(value.use());
             blob.allocator = getAllocator(globalObject);
-
             if (blob.content_type.len == 0 and blob.store != null) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                        blob.store.?.mime_type = MimeType.init(content_type.slice(), null, null);
+                        var content_slice = content_type.toSlice(blob.allocator.?);
+                        defer content_slice.deinit();
+                        // we wanna keep this alive after the headers are GC'd
+                        blob.content_type = blob.allocator.?.dupe(u8, content_slice.slice()) catch bun.outOfMemory();
+                        blob.content_type_allocated = true;
+                        blob.content_type_was_set = true;
+
+                        blob.store.?.mime_type = MimeType.init(blob.content_type, null, null);
                     }
                 } else {
                     blob.store.?.mime_type = MimeType.text;
                 }
             }
-
             return JSC.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
         }
     };

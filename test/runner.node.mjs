@@ -69,7 +69,7 @@ function printInfo() {
  */
 async function runTests(target, filters) {
   let execPath;
-  if (isBuildKite) {
+  if (isBuildKite && !existsSync(target)) {
     execPath = await getExecPathFromBuildKite(target);
   } else {
     execPath = getExecPath(target);

@@ -1064,6 +1064,10 @@ function isIP(type: "IPv4" | "IPv6") {
 }
 
 export function isIPv6() {
+  // FIXME: AWS instances on Linux for Buildkite are not setup with IPv6
+  if (isBuildKite && isLinux) {
+    return false;
+  }
   return isIP("IPv6");
 }
 

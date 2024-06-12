@@ -3251,3 +3251,13 @@ it("promises.readFile should accept a FileHandle", async () => {
   await using file = await fs.promises.open(x_path, "r");
   expect((await fs.promises.readFile(file)).toString()).toBe("data");
 });
+
+it("promises.appendFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("datadata");
+});

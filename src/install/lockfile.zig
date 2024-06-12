@@ -846,7 +846,10 @@ pub fn cleanWithLogger(
     // never grow
 
     // preinstall_state is used during installPackages. the indexes(package ids) need
-    // to be remapped
+    // to be remapped. Also ensure `preinstall_state` has enough capacity to contain
+    // all packages. It's possible it doesn't because non-npm packages do not use
+    // preinstall state before linking stage.
+    manager.ensurePreinstallStateListCapacity(old.packages.len);
     var preinstall_state = manager.preinstall_state;
     var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
     defer old_preinstall_state.deinit(old.allocator);
@@ -1906,8 +1909,9 @@ pub const Printer = struct {
                                 }
                                 behavior = dep.behavior;
 
-                                // assert its sorted
-                                if (comptime Environment.allow_assert) assert(dependency_behavior_change_count < 3);
+                                // assert its sorted. debug only because of a bug saving incorrect ordering
+                                // of optional dependencies to lockfiles
+                                if (comptime Environment.isDebug) assert(dependency_behavior_change_count < 3);
                             }
 
                             try writer.writeAll("    ");

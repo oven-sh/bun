@@ -144,3 +144,4 @@ yarn.lock
 zig-cache
 zig-out
 test/node.js/upstream
+.zig-cache

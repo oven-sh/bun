@@ -60,7 +60,7 @@ describe("FormData", () => {
     expect(b1.name).toBeUndefined();
 
     b1 = form.get("foo") as Blob;
-    expect(blob.name).toBeUndefined();
+    expect(blob.name).toBe("foo.txt");
     expect(b1.name).toBe("foo.txt");
   });
 

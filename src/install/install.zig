@@ -1052,10 +1052,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 bunhashtag,
             }, .posix);
 
+            var destination_dir = this.node_modules.openDir(root_node_modules_dir) catch return false;
+            defer {
+                if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
+            }
+
             if (comptime bun.Environment.isPosix) {
-                _ = bun.sys.fstatat(bun.toFD(root_node_modules_dir.fd), patch_tag_path).unwrap() catch return false;
+                _ = bun.sys.fstatat(bun.toFD(destination_dir.fd), patch_tag_path).unwrap() catch return false;
             } else {
-                switch (bun.sys.openat(bun.toFD(root_node_modules_dir.fd), patch_tag_path, std.os.O.RDONLY, 0)) {
+                switch (bun.sys.openat(bun.toFD(destination_dir.fd), patch_tag_path, std.os.O.RDONLY, 0)) {
                     .err => return false,
                     .result => |fd| _ = bun.sys.close(fd),
                 }

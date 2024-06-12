@@ -795,8 +795,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             null,
             null,
             1, // true
-            0,
-            null,
+            w.CREATE_UNICODE_ENVIRONMENT,
+            @constCast(bun_ctx.environment),
             null,
             &startup_info,
             &process,

@@ -310,6 +310,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
   const bunEnv = {
     ...process.env,
+    [isWindows ? "Path" : "PATH"]: addPath(dirname(execPath), process.env.PATH),
     [isWindows ? "TEMP" : "TMPDIR"]: tmpdirPath,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",

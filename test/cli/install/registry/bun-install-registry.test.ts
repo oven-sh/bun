@@ -66,6 +66,33 @@ registry = "http://localhost:${port}/"
   );
 });
 
+test("exit code should be non-zero on tarball download failure and install should finish", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "uses-what-bin-slow": "1.0.0",
+        "missing-tarball": "1.0.0",
+      },
+      trustedDependencies: ["uses-what-bin-slow"],
+    }),
+  );
+
+  var { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).toContain(`error: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 404`);
+  expect(await exited).toBe(1);
+  expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeTrue();
+});
+
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
   const order = ["devDependencies", "dependencies"];

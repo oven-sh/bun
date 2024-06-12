@@ -129,7 +129,7 @@ test("blob: can be imported", async () => {
   }).toThrow();
 });
 
-test("blob: can realiable get type", async () => {
+test("blob: can realiable get type from fetch #10072", async () => {
   using server = Bun.serve({
     fetch() {
       return new Response(
@@ -157,7 +157,7 @@ test("blob: can realiable get type", async () => {
   expect(blob.type).toBe("plain/text");
 });
 
-test("blob: can have the name set", () => {
+test("blob: can set name property #10178", () => {
   const blob = new Blob([Buffer.from("Hello, World")]);
   //@ts-ignore
   expect(blob.name).toBeUndefined();

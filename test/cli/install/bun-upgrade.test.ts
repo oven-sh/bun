@@ -1,27 +1,28 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, expect, it, setDefaultTimeout, beforeAll } from "bun:test";
 import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
-import { join } from "path";
+import { join, basename } from "path";
 import { copyFileSync } from "node:fs";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
-let run_dir: string;
-let exe_name: string = "bun-debug" + (process.platform === "win32" ? ".exe" : "");
+let cwd: string;
+let execPath: string;
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
 });
 
 beforeEach(async () => {
-  run_dir = tmpdirSync();
-  copyFileSync(bunExe(), join(run_dir, exe_name));
+  cwd = tmpdirSync();
+  execPath = join(cwd, basename(bunExe()));
+  copyFileSync(bunExe(), execPath);
 });
 
 it("two invalid arguments, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [join(run_dir, exe_name), "upgrade", "bun-types", "--dev"],
-    cwd: run_dir,
+    cmd: [execPath, "upgrade", "bun-types", "--dev"],
+    cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -35,8 +36,8 @@ it("two invalid arguments, should display error message and suggest command", as
 
 it("two invalid arguments flipped, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [join(run_dir, exe_name), "upgrade", "--dev", "bun-types"],
-    cwd: run_dir,
+    cmd: [execPath, "upgrade", "--dev", "bun-types"],
+    cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -50,8 +51,8 @@ it("two invalid arguments flipped, should display error message and suggest comm
 
 it("one invalid argument, should display error message and suggest command", async () => {
   const { stderr } = spawn({
-    cmd: [join(run_dir, exe_name), "upgrade", "bun-types"],
-    cwd: run_dir,
+    cmd: [execPath, "upgrade", "bun-types"],
+    cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -65,8 +66,8 @@ it("one invalid argument, should display error message and suggest command", asy
 
 it("one valid argument, should succeed", async () => {
   const { stderr } = spawn({
-    cmd: [join(run_dir, exe_name), "upgrade", "--help"],
-    cwd: run_dir,
+    cmd: [execPath, "upgrade", "--help"],
+    cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -81,8 +82,8 @@ it("one valid argument, should succeed", async () => {
 
 it("two valid argument, should succeed", async () => {
   const { stderr } = spawn({
-    cmd: [join(run_dir, exe_name), "upgrade", "--stable", "--profile"],
-    cwd: run_dir,
+    cmd: [execPath, "upgrade", "--stable", "--profile"],
+    cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
@@ -96,57 +97,56 @@ it("two valid argument, should succeed", async () => {
 });
 
 it("zero arguments, should succeed", async () => {
-  const [major, minor, patch] = Bun.version.split(".").map(v => parseInt(v));
-  const newerTag = `bun-v${major}.${minor}.${patch + 1}`;
+  const tagName = bunExe().includes("-debug") ? "canary" : `bun-v${Bun.version}`;
   using server = Bun.serve({
     tls: tls,
     port: 0,
     async fetch() {
       return new Response(
         JSON.stringify({
-          "tag_name": newerTag,
+          "tag_name": tagName,
           "assets": [
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-windows-x64.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-windows-x64.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64.zip`,
             },
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-windows-x64-baseline.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-windows-x64-baseline.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64-baseline.zip`,
             },
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-linux-x64.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-linux-x64.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64.zip`,
             },
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-linux-x64-baseline.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-linux-x64-baseline.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64-baseline.zip`,
             },
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-darwin-x64.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-darwin-x64.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64.zip`,
             },
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-darwin-x64-baseline.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-darwin-x64-baseline.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64-baseline.zip`,
             },
             {
               "url": "foo",
               "content_type": "application/zip",
               "name": "bun-darwin-aarch64.zip",
-              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/latest/bun-darwin-aarch64.zip`,
+              "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-aarch64.zip`,
             },
           ],
         }),
@@ -159,15 +159,15 @@ it("zero arguments, should succeed", async () => {
   openTempDirWithoutSharingDelete();
 
   const { stderr } = spawnSync({
-    cmd: [join(run_dir, exe_name), "upgrade"],
-    cwd: run_dir,
+    cmd: [execPath, "upgrade"],
+    cwd,
     stdout: null,
     stdin: "pipe",
     stderr: "pipe",
     env: {
       ...env,
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
-      GITHUB_API_DOMAIN: `localhost:${server.port}`,
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
     },
   });
 

@@ -42,6 +42,8 @@ jobs:
     name: Build Submodules
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false
@@ -91,10 +93,7 @@ jobs:
           CCACHE_DIR: ccache
         run: |
           .\scripts\env.ps1 ${{ contains(inputs.tag, '-baseline') && '-Baseline' || '' }}
-          Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/win64/nasm-2.16.01-win64.zip" -OutFile nasm.zip
-          Expand-Archive nasm.zip (mkdir -Force "nasm")
-          $Nasm = (Get-ChildItem "nasm")
-          $env:Path += ";${Nasm}"
+          choco install -y nasm --version=2.16.01
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
           .\scripts\all-dependencies.ps1
       - name: Save Cache
@@ -142,6 +141,8 @@ jobs:
     needs: codegen
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false
@@ -221,6 +222,8 @@ jobs:
       - build-zig
       - codegen
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false

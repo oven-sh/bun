@@ -1,0 +1,42 @@
+{
+	"name": "2-peer-deps-c",
+	"versions": {
+		"1.0.0": {
+			"name": "2-peer-deps-c",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"no-deps": "1.0.0",
+				"a-dep": "1.0.10"
+			},
+			"_id": "2-peer-deps-c@1.0.0",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-A3VSPiBZgeAoc4r7m/4Z+/Xt5RXHLDuS8BHE0HJVHBnc4gmwfNPlFGW+VM89lHDoi1alCkFpO7+Cd5dNtbLqPA==",
+				"shasum": "1ff9f08f0e64b93ef34d389823ba5bc2c1b3a9c5",
+				"tarball": "http://localhost:4873/2-peer-deps-c/-/2-peer-deps-c-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-10T02:35:22.519Z",
+		"created": "2024-06-10T02:35:22.519Z",
+		"1.0.0": "2024-06-10T02:35:22.519Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"2-peer-deps-c-1.0.0.tgz": {
+			"shasum": "1ff9f08f0e64b93ef34d389823ba5bc2c1b3a9c5",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "2-peer-deps-c",
+	"readme": "ERROR: No README data found!"
+}

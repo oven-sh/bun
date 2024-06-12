@@ -1,3 +1,4 @@
+import type { ServerWebSocket, Server } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import path from "path";
@@ -471,4 +472,55 @@ test("Bun does not crash when given invalid config", async () => {
       Bun.serve(options as any);
     }).toThrow();
   }
+});
+
+test("Bun should be able to handle utf16 inside Content-Type header #11316", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const fileSuffix = "测试.html".match(/\.([a-z0-9]*)$/i)?.[1];
+
+      expect(fileSuffix).toBeUTF16String();
+
+      return new Response("Hello World!\n", {
+        headers: {
+          "Content-Type": `text/${fileSuffix}`,
+        },
+      });
+    },
+  });
+
+  const result = await fetch(server.url);
+  expect(result.status).toBe(200);
+  expect(result.headers.get("Content-Type")).toBe("text/html");
+});
+
+test("should be able to async upgrade using custom protocol", async () => {
+  const { promise, resolve } = Promise.withResolvers<{ code: number; reason: string } | boolean>();
+  using server = Bun.serve<unknown>({
+    async fetch(req: Request, server: Server) {
+      await Bun.sleep(1);
+
+      if (server.upgrade(req)) return;
+    },
+    websocket: {
+      close(ws: ServerWebSocket<unknown>, code: number, reason: string): void | Promise<void> {
+        resolve({ code, reason });
+      },
+      message(ws: ServerWebSocket<unknown>, data: string): void | Promise<void> {
+        ws.send("world");
+      },
+    },
+  });
+
+  const ws = new WebSocket(server.url.href, "ocpp1.6");
+  ws.onopen = () => {
+    ws.send("hello");
+  };
+  ws.onmessage = e => {
+    console.log(e.data);
+    resolve(true);
+  };
+
+  expect(await promise).toBe(true);
 });

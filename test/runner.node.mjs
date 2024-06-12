@@ -20,6 +20,7 @@ import { normalize as normalizeWindows } from "node:path/win32";
 const spawnTimeout = 30_000;
 const testTimeout = 3 * 60_000;
 
+const isLinux = process.platform === "linux";
 const isMacOS = process.platform === "darwin";
 const isWindows = process.platform === "win32";
 const isGitHubAction = !!process.env["GITHUB_ACTIONS"];
@@ -311,7 +312,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const homePath = mkdtempSync(join(testPath, "home-"));
   const cachePath = mkdtempSync(join(testPath, "cache-"));
   const bunEnv = {
-    [isWindows ? "Path" : "PATH"]: addPath(dirname(execPath), process.env.PATH),
+    [isWindows ? "Path" : "PATH"]: process.env.PATH,
     USER: process.env.USER,
     HOME: homePath,
     [isWindows ? "TEMP" : "TMPDIR"]: tmpdirPath,
@@ -327,10 +328,28 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   if (env) {
     Object.assign(bunEnv, env);
   }
+  let cmd = execPath;
+  let argList = args;
+  // On Linux, use namespaces to isolate the test process from the host.
+  if (isLinux) {
+    argList = [
+      "--mount",
+      "--uts",
+      "--pid",
+      "--cgroup",
+      "--time",
+      "--fork",
+      "--kill-child",
+      `--wd=${cwd}`,
+      cmd,
+      ...args,
+    ];
+    cmd = "unshare";
+  }
   try {
     return await spawnSafe({
-      command: execPath,
-      args,
+      command: cmd,
+      args: argList,
       cwd,
       timeout,
       env: bunEnv,

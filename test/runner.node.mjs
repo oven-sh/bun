@@ -13,7 +13,7 @@ import {
   rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir, hostname, userInfo } from "node:os";
+import { tmpdir, hostname, userInfo, homedir } from "node:os";
 import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -322,6 +322,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    HOME: homedir(),
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",

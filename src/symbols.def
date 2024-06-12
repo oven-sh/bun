@@ -2,6 +2,9 @@
 ;
 ; dumpbin /symbols .\src\deps\libuv.lib | Where-Object { $_.Contains('| uv_') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | Where-Object { $_ -match 'uv_[a-z]' } | ForEach-Object { "  ${_}" } > out.txt; dumpbin /symbols .\build\CMakeFiles\bun-zig.o | Where-Object { $_.Contains('| napi_') } | foreach-object { (($_ -split "\|")[1] -split " ")[1] } | ForEach-Object { "  ${_}" } >> out.txt
 ; -> out.txt
+;
+; the above will include extra symbols that do not exist, remember
+; to double check a local build
 EXPORTS
   uv_fs_poll_init
   uv_fs_poll_start
@@ -106,7 +109,6 @@ EXPORTS
   uv_inet_ntop
   uv_udp_getpeername
   uv_loop_init
-  uv_library_shutdown.was_shutdown
   uv_hrtime
   uv_mutex_lock
   uv_mutex_unlock
@@ -249,8 +251,6 @@ EXPORTS
   uv_pipe_getpeername
   uv_pipe_pending_type
   uv_pipe_chmod
-  uv_pipe_zero_readfile_thread_proc
-  uv_pipe_writefile_thread_proc
   uv_fatal_error
   uv_translate_sys_error
   uv_close
@@ -310,15 +310,12 @@ EXPORTS
   uv_translate_sys_error
   uv_once
   uv_fatal_error
-  uv_msafd_provider_ids
   uv_spawn
   uv_process_kill
   uv_kill
   uv_fatal_error
   uv_translate_sys_error
-  uv_global_job_handle_init_guard_
   uv_once
-  uv_global_job_handle_
   uv_disable_stdio_inheritance
   uv_signal_init
   uv_signal_stop
@@ -366,26 +363,15 @@ EXPORTS
   uv_tty_reset_mode
   uv_tty_set_vterm_state
   uv_tty_get_vterm_state
-  uv_tty_post_raw_read
-  uv_tty_line_read_thread
-  uv_tty_output_lock
   uv_sem_init
   uv_mutex_init
   uv_sem_wait
-  uv_tty_default_text_attributes
-  uv_tty_default_fg_color
-  uv_tty_default_bg_color
-  uv_tty_default_fg_bright
-  uv_tty_default_bg_bright
-  uv_tty_default_inverse
-  uv_tty_default_cursor_info
   uv_tty_virtual_width
   uv_tty_virtual_height
   uv_tty_virtual_offset
   uv_sem_post
   uv_translate_sys_error
   uv_buf_init
-  uv_null_buf_
   uv_mutex_lock
   uv_mutex_unlock
   uv_fatal_error
@@ -403,7 +389,6 @@ EXPORTS
   uv_translate_sys_error
   uv_udp_recv_stop
   uv_addr_ip4_any_
-  uv_zero_
   uv_buf_init
   uv_addr_ip6_any_
   uv_ip6_addr

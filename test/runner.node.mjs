@@ -13,7 +13,7 @@ import {
   rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir, hostname } from "node:os";
+import { tmpdir, hostname, userInfo } from "node:os";
 import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -335,7 +335,18 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   // Use Linux namespaces to isolate the child process
   // https://man7.org/linux/man-pages/man1/unshare.1.html
   if (isLinux) {
-    args = ["--pid", "--mount", "--fork", "--kill-child", `--wd=${cwd}`, execPath, ...args];
+    const { uid, gid } = userInfo();
+    args = [
+      `--wd=${cwd}`,
+      "--user",
+      `--map-user=${uid}`,
+      `--map-group=${gid}`,
+      "--fork",
+      "--kill-child",
+      "--pid",
+      execPath,
+      ...args,
+    ];
     execPath = "unshare";
   }
   try {

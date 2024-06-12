@@ -59,6 +59,7 @@ dep() {
     set +e
     bash "$SCRIPT_DIR/build-$script.sh"
     EXIT=$?
+    set -e
 
     if [ "$EXIT" -ne 0 ]; then
         printf "Failed to build %s\n" "$script"
@@ -72,8 +73,6 @@ dep() {
             printf "%s %s - cached\n" "$script" "$lib"
         done
     fi
-
-    set -e
 
     BUILT_ANY=1
 }

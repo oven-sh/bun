@@ -307,14 +307,9 @@ async function spawnSafe({
  * @returns {Promise<SpawnResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
-  const testPath = mkdtempSync(join(tmpPath, "bun-"));
-  const tmpdirPath = mkdtempSync(join(testPath, "tmp-"));
-  const homePath = mkdtempSync(join(testPath, "home-"));
-  const cachePath = mkdtempSync(join(testPath, "cache-"));
+  const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
   const bunEnv = {
-    [isWindows ? "Path" : "PATH"]: process.env.PATH,
-    USER: process.env.USER,
-    HOME: homePath,
+    ...process.env,
     [isWindows ? "TEMP" : "TMPDIR"]: tmpdirPath,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
@@ -322,34 +317,16 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_ENABLE_CRASH_REPORTING: "1",
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
-    BUN_INSTALL_CACHE_DIR: cachePath,
+    BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
   };
   if (env) {
     Object.assign(bunEnv, env);
   }
-  let cmd = execPath;
-  let argList = args;
-  // On Linux, use namespaces to isolate the test process from the host.
-  if (isLinux) {
-    argList = [
-      "--mount",
-      "--uts",
-      "--pid",
-      "--cgroup",
-      "--time",
-      "--fork",
-      "--kill-child",
-      `--wd=${cwd}`,
-      cmd,
-      ...args,
-    ];
-    cmd = "unshare";
-  }
   try {
     return await spawnSafe({
-      command: cmd,
-      args: argList,
+      command: execPath,
+      args,
       cwd,
       timeout,
       env: bunEnv,
@@ -358,7 +335,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     });
   } finally {
     try {
-      rmSync(testPath, { recursive: true, force: true });
+      rmSync(tmpdirPath, { recursive: true, force: true });
     } catch (error) {
       console.warn(error);
     }

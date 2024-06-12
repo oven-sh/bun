@@ -175,8 +175,8 @@ pub const Blob = struct {
             *Handler,
             handler,
             Handler.run,
-        );
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
+        ) catch bun.outOfMemory();
+        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
 
         // Create the Promise only after the store has been ref()'d.
         // The garbage collector runs on memory allocations
@@ -213,8 +213,8 @@ pub const Blob = struct {
             NewInternalReadFileHandler(Handler, Function).run,
             this.offset,
             this.size,
-        );
-        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read);
+        ) catch bun.outOfMemory();
+        var read_file_task = ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch bun.outOfMemory();
         read_file_task.schedule();
     }
 
@@ -858,7 +858,7 @@ pub const Blob = struct {
                 WriteFilePromise.run,
                 mkdirp_if_not_exists,
             ) catch unreachable;
-            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier);
+            var task = WriteFile.WriteFileTask.createOnJSThread(bun.default_allocator, ctx.ptr(), file_copier) catch bun.outOfMemory();
             // Defer promise creation until we're just about to schedule the task
             var promise = JSC.JSPromise.create(ctx.ptr());
             const promise_value = promise.asValue(ctx);
@@ -2258,7 +2258,7 @@ pub const Blob = struct {
                 });
                 store.ref();
                 source_store.ref();
-                return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file);
+                return CopyFilePromiseTask.createOnJSThread(allocator, globalThis, read_file) catch bun.outOfMemory();
             }
 
             const linux = std.os.linux;

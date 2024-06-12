@@ -114,9 +114,6 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 pub fn build(b: *Build) !void {
     std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
 
-    _ = b.top_level_steps.swapRemove("install");
-    _ = b.top_level_steps.swapRemove("uninstall");
-
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 
     var target_query = b.standardTargetOptionsQueryOnly(.{});
@@ -272,7 +269,8 @@ pub fn build(b: *Build) !void {
 
     // Running `zig build` with no arguments is almost always a mistake.
     {
-        const message =
+        const mistake_message = b.addSystemCommand(&.{
+            "echo",
             \\
             \\To build Bun from source, please use `bun run setup` instead of `zig build`"
             \\For more info, see https://bun.sh/docs/project/contributing
@@ -284,10 +282,9 @@ pub fn build(b: *Build) !void {
             \\  'zig build check'
             \\  'zig build check-all' (run linux+mac+windows)
             \\
-        ;
-        // TODO: this does not print on Windows
-        const print_message = b.addSystemCommand(&.{ "echo", message });
-        b.default_step.dependOn(&print_message.step);
+        });
+
+        b.default_step.dependOn(&mistake_message.step);
     }
 }
 
@@ -303,19 +300,31 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .pic = true,
         .strip = false, // stripped at the end
     });
+
     obj.bundle_compiler_rt = false;
+    obj.formatted_panics = true;
+    obj.root_module.omit_frame_pointer = false;
+
     // Link libc
     if (opts.os != .wasm) {
         obj.linkLibC();
+        obj.linkLibCpp();
     }
+
     // Disable stack probing on x86 so we don't need to include compiler_rt
     if (opts.arch.isX86()) {
         obj.root_module.stack_check = false;
+        obj.root_module.stack_protector = false;
     }
+
     if (opts.os == .linux) {
         obj.link_emit_relocs = true;
         obj.link_eh_frame_hdr = true;
         obj.link_function_sections = true;
+
+        if (opts.optimize == .Debug) {
+            obj.root_module.valgrind = true;
+        }
     }
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));

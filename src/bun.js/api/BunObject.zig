@@ -1500,7 +1500,7 @@ pub const Crypto = struct {
                 pub usingnamespace bun.New(@This());
 
                 pub fn runTask(task: *JSC.WorkPoolTask) void {
-                    const job = @fieldParentPtr(PBKDF2.Job, "task", task);
+                    const job: *PBKDF2.Job = @fieldParentPtr("task", task);
                     defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
                     job.output = bun.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
                         job.err = BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED;

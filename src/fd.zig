@@ -1,6 +1,5 @@
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
 
 const bun = @import("root").bun;
 const env = bun.Environment;
@@ -228,7 +227,7 @@ pub const FDImpl = packed struct {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
                 bun.assert(fd.cast() >= 0);
-                break :result switch (bun.C.getErrno(linux.close(fd.cast()))) {
+                break :result switch (bun.C.getErrno(bun.sys.system.close(fd.cast()))) {
                     .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };

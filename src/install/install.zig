@@ -69,6 +69,14 @@ pub const max_hex_hash_len: comptime_int = brk: {
 pub const max_buntag_hash_buf_len: comptime_int = max_hex_hash_len + bun_hash_tag.len + 1;
 pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
+pub fn buntaghashbuf_make(buf: *BuntagHashBuf, patch_hash: u64) [:0]u8 {
+    @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
+    const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash}) catch bun.outOfMemory();
+    buf[bun_hash_tag.len + digits.len] = 0;
+    const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len :0];
+    return bunhashtag;
+}
+
 pub const patch = @import("./patch_install.zig");
 pub const PatchTask = patch.PatchTask;
 
@@ -1037,9 +1045,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             // hash from the .patch file, to be checked against bun tag
             const patchfile_contents_hash = this.patch.patch_contents_hash;
             var buf: BuntagHashBuf = undefined;
-            @memcpy(buf[0..bun_hash_tag.len], bun_hash_tag);
-            const digits = std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patchfile_contents_hash}) catch bun.outOfMemory();
-            const bunhashtag = buf[0 .. bun_hash_tag.len + digits.len];
+            const bunhashtag = buntaghashbuf_make(&buf, patchfile_contents_hash);
 
             const patch_tag_path = bun.path.joinZ(&[_][]const u8{
                 this.destination_dir_subpath,
@@ -2652,6 +2658,9 @@ pub const PackageManager = struct {
     patch_calc_hash_batch: ThreadPool.Batch = .{},
     patch_task_fifo: PatchTaskFifo = PatchTaskFifo.init(),
     patch_task_queue: PatchTaskQueue = .{},
+    /// We actually need to calculate the patch file hashes
+    /// every single time, because someone could edit the patchfile at anytime
+    pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks.init(bun.default_allocator),
@@ -4249,6 +4258,17 @@ pub const PackageManager = struct {
         }
 
         this.patch_task_fifo.writeItemAssumeCapacity(task);
+    }
+
+    pub fn enqueuePatchTaskPre(this: *PackageManager, task: *PatchTask) void {
+        debug("Enqueue patch task pre: 0x{x} {s}", .{ @intFromPtr(task), @tagName(task.callback) });
+        task.pre = true;
+        if (this.patch_task_fifo.writableLength() == 0) {
+            this.flushPatchTaskQueue();
+        }
+
+        this.patch_task_fifo.writeItemAssumeCapacity(task);
+        _ = this.pending_pre_calc_hashes.fetchAdd(1, .Monotonic);
     }
 
     const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
@@ -10049,8 +10069,8 @@ pub const PackageManager = struct {
 
             if (matches_found > 1) {
                 Output.prettyErrorln(
-                    "\n<r><red>error<r>: please specify a precise version:<r>",
-                    .{},
+                    "\n<r><red>error<r>: Found multiple versions of <b>{s}<r>, please specify a precise version from the following list:<r>\n",
+                    .{name},
                 );
                 var i: usize = 0;
                 const pkg_hashes = lockfile.packages.items(.name_hash);
@@ -10172,11 +10192,22 @@ pub const PackageManager = struct {
                     },
                 };
 
+                const existing_patchfile_hash = existing_patchfile_hash: {
+                    var sfb = std.heap.stackFallback(1024, manager.allocator);
+                    const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    defer sfb.get().free(name_and_version);
+                    const name_and_version_hash = String.Builder.stringHash(name_and_version);
+                    if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
+                        if (patched_dep.patchfileHash()) |hash| break :existing_patchfile_hash hash;
+                    }
+                    break :existing_patchfile_hash null;
+                };
+
                 const cache_result = manager.computeCacheDirAndSubpath(
                     name,
                     &actual_package.resolution,
                     &folder_path_buf,
-                    null,
+                    existing_patchfile_hash,
                 );
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
@@ -10218,7 +10249,24 @@ pub const PackageManager = struct {
 
                 const pkg = manager.lockfile.packages.get(pkg_id);
                 const pkg_name = pkg.name.slice(strbuf);
-                const cache_result = manager.computeCacheDirAndSubpath(pkg_name, &pkg.resolution, &folder_path_buf, null);
+
+                const existing_patchfile_hash = existing_patchfile_hash: {
+                    var sfb = std.heap.stackFallback(1024, manager.allocator);
+                    const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    defer sfb.get().free(name_and_version);
+                    const name_and_version_hash = String.Builder.stringHash(name_and_version);
+                    if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
+                        if (patched_dep.patchfileHash()) |hash| break :existing_patchfile_hash hash;
+                    }
+                    break :existing_patchfile_hash null;
+                };
+
+                const cache_result = manager.computeCacheDirAndSubpath(
+                    pkg_name,
+                    &pkg.resolution,
+                    &folder_path_buf,
+                    existing_patchfile_hash,
+                );
 
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
@@ -10233,6 +10281,10 @@ pub const PackageManager = struct {
             },
         };
 
+        // The package may be installed using the hard link method,
+        // meaning that changes to the folder will also change the package in the cache.
+        //
+        // So we will overwrite the folder by directly copying the package in cache into it
         manager.overwriteNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
             Output.prettyError(
                 "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
@@ -10455,7 +10507,7 @@ pub const PackageManager = struct {
         };
 
         // Attempt to open the existing node_modules folder
-        const root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
+        var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
             .result => |fd| std.fs.Dir{ .fd = fd.cast() },
             .err => |e| {
                 Output.prettyError(
@@ -10466,6 +10518,7 @@ pub const PackageManager = struct {
                 Global.crash();
             },
         };
+        defer root_node_modules.close();
 
         var iterator = Lockfile.Tree.Iterator.init(lockfile);
         var resolution_buf: [1024]u8 = undefined;
@@ -10557,8 +10610,8 @@ pub const PackageManager = struct {
                 const name: []const u8, const version: ?[]const u8 = brk1: {
                     if (std.mem.indexOfScalar(u8, argument[1..], '@')) |version_delimiter| {
                         break :brk1 .{
-                            argument[0..version_delimiter],
-                            argument[1..][version_delimiter + 1 ..],
+                            argument[0 .. version_delimiter + 1],
+                            argument[version_delimiter + 2 ..],
                         };
                     }
                     break :brk1 .{
@@ -10585,6 +10638,7 @@ pub const PackageManager = struct {
                     name,
                 }, .auto);
                 const pkg = lockfile.packages.get(pkg_id);
+
                 const cache_result = manager.computeCacheDirAndSubpath(
                     pkg.name.slice(lockfile.buffers.string_bytes.items),
                     &pkg.resolution,
@@ -10609,6 +10663,7 @@ pub const PackageManager = struct {
         const patchfile_contents = brk: {
             const new_folder = changes_dir;
             var buf2: bun.PathBuffer = undefined;
+            var buf3: bun.PathBuffer = undefined;
             const old_folder = old_folder: {
                 const cache_dir_path = switch (bun.sys.getFdPath(bun.toFD(cache_dir.fd), &buf2)) {
                     .result => |s| s,
@@ -10635,6 +10690,12 @@ pub const PackageManager = struct {
                 Output.flush();
                 Global.crash();
             });
+
+            // If the package has nested a node_modules folder, we don't want this to
+            // appear in the patch file when we run git diff.
+            //
+            // There isn't an option to exclude it with `git diff --no-index`, so we
+            // will `rename()` it out and back again.
             const has_nested_node_modules = has_nested_node_modules: {
                 var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
                     Output.prettyError(
@@ -10655,8 +10716,52 @@ pub const PackageManager = struct {
 
                 break :has_nested_node_modules true;
             };
+
+            const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(name, buf3[0..], bun.fastRandom()) catch |e| {
+                Output.prettyError(
+                    "<r><red>error<r>: failed to make tempdir {s}<r>\n",
+                    .{@errorName(e)},
+                );
+                Output.flush();
+                Global.crash();
+            });
+
+            var bunpatchtagbuf: BuntagHashBuf = undefined;
+            // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
+            // we need to rename this out and back too.
+            const bun_patch_tag: ?[:0]const u8 = has_bun_patch_tag: {
+                const name_and_version_hash = String.Builder.stringHash(resolution_label);
+                const patch_tag = patch_tag: {
+                    if (lockfile.patched_dependencies.get(name_and_version_hash)) |patchdep| {
+                        if (patchdep.patchfileHash()) |hash| {
+                            break :patch_tag buntaghashbuf_make(&bunpatchtagbuf, hash);
+                        }
+                    }
+                    break :has_bun_patch_tag null;
+                };
+                var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
+                        .{ new_folder, @errorName(e) },
+                    );
+                    Output.flush();
+                    Global.crash();
+                };
+                defer new_folder_handle.close();
+
+                if (bun.sys.renameatConcurrently(
+                    bun.toFD(new_folder_handle.fd),
+                    patch_tag,
+                    bun.toFD(root_node_modules.fd),
+                    patch_tag_tmpname,
+                ).asErr()) |e| {
+                    Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                    break :has_bun_patch_tag null;
+                }
+                break :has_bun_patch_tag patch_tag;
+            };
             defer {
-                if (has_nested_node_modules) {
+                if (has_nested_node_modules or bun_patch_tag != null) {
                     var new_folder_handle = std.fs.cwd().openDir(new_folder, .{}) catch |e| {
                         Output.prettyError(
                             "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
@@ -10666,13 +10771,27 @@ pub const PackageManager = struct {
                         Global.crash();
                     };
                     defer new_folder_handle.close();
-                    if (bun.sys.renameatConcurrently(
-                        bun.toFD(root_node_modules.fd),
-                        random_tempdir,
-                        bun.toFD(new_folder_handle.fd),
-                        "node_modules",
-                    ).asErr()) |e| {
-                        Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+
+                    if (has_nested_node_modules) {
+                        if (bun.sys.renameatConcurrently(
+                            bun.toFD(root_node_modules.fd),
+                            random_tempdir,
+                            bun.toFD(new_folder_handle.fd),
+                            "node_modules",
+                        ).asErr()) |e| {
+                            Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+                        }
+                    }
+
+                    if (bun_patch_tag) |patch_tag| {
+                        if (bun.sys.renameatConcurrently(
+                            bun.toFD(root_node_modules.fd),
+                            patch_tag_tmpname,
+                            bun.toFD(new_folder_handle.fd),
+                            patch_tag,
+                        ).asErr()) |e| {
+                            Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                        }
                     }
                 }
             }
@@ -13059,15 +13178,15 @@ pub const PackageManager = struct {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
             }
-            manager.enqueueDependencyList(root.dependencies);
             {
                 var iter = manager.lockfile.patched_dependencies.iterator();
-                while (iter.next()) |entry| if (entry.value_ptr.patchfile_hash_is_null) manager.enqueuePatchTask(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
+                while (iter.next()) |entry| manager.enqueuePatchTaskPre(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
             }
+            manager.enqueueDependencyList(root.dependencies);
         } else {
             {
                 var iter = manager.lockfile.patched_dependencies.iterator();
-                while (iter.next()) |entry| if (entry.value_ptr.patchfile_hash_is_null) manager.enqueuePatchTask(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
+                while (iter.next()) |entry| manager.enqueuePatchTaskPre(PatchTask.newCalcPatchHash(manager, entry.key_ptr.*, null));
             }
             // Anything that needs to be downloaded from an update needs to be scheduled here
             manager.drainDependencyList();
@@ -13087,7 +13206,7 @@ pub const PackageManager = struct {
             }
 
             const runAndWaitFn = struct {
-                pub fn runAndWaitFn(comptime check_peers: bool) *const fn (*PackageManager) anyerror!void {
+                pub fn runAndWaitFn(comptime check_peers: bool, comptime only_pre_patch: bool) *const fn (*PackageManager) anyerror!void {
                     return struct {
                         manager: *PackageManager,
                         err: ?anyerror = null,
@@ -13125,6 +13244,11 @@ pub const PackageManager = struct {
                                 }
                             }
 
+                            if (comptime only_pre_patch) {
+                                const pending_patch = this.pending_pre_calc_hashes.load(.Monotonic);
+                                return pending_patch == 0;
+                            }
+
                             const pending_tasks = this.pendingTaskCount();
 
                             if (PackageManager.verbose_install and pending_tasks > 0) {
@@ -13149,8 +13273,13 @@ pub const PackageManager = struct {
                 }
             }.runAndWaitFn;
 
-            const waitForEverythingExceptPeers = runAndWaitFn(false);
-            const waitForPeers = runAndWaitFn(true);
+            const waitForCalcingPatchHashes = runAndWaitFn(false, true);
+            const waitForEverythingExceptPeers = runAndWaitFn(false, false);
+            const waitForPeers = runAndWaitFn(true, false);
+
+            if (manager.lockfile.patched_dependencies.entries.len > 0) {
+                try waitForCalcingPatchHashes(manager);
+            }
 
             if (manager.pendingTaskCount() > 0) {
                 try waitForEverythingExceptPeers(manager);

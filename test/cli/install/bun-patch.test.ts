@@ -4,7 +4,93 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test,
 import { join, sep } from "path";
 
 describe("bun patch <pkg>", async () => {
-  test("should patch a package when it is already patched", async () => {});
+  test("should patch a package when it is already patched", async () => {
+    const tempdir = tempDirWithFiles("lol", {
+      "package.json": JSON.stringify({
+        "name": "bun-patch-test",
+        "module": "index.ts",
+        "type": "module",
+        "dependencies": {
+          "is-even": "1.0.0",
+          "is-odd": "3.0.1",
+        },
+      }),
+      "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
+    });
+
+    await $`${bunExe()} i`.env(bunEnv).cwd(tempdir);
+    const { stderr } = await $`${bunExe()} patch is-odd@0.1.2`.env(bunEnv).cwd(tempdir).throws(false);
+    expect(stderr.toString()).not.toContain("error");
+
+    const firstChange = /* ts */ `/*!
+* is-odd <https://github.com/jonschlinkert/is-odd>
+*
+* Copyright (c) 2015-2017, Jon Schlinkert.
+* Released under the MIT License.
+*/
+
+'use strict';
+
+var isNumber = require('is-number');
+
+module.exports = function isOdd(i) {
+  if (!isNumber(i)) {
+    throw new TypeError('is-odd expects a number.');
+  }
+  if (Number(i) !== Math.floor(i)) {
+    throw new RangeError('is-odd expects an integer.');
+  }
+  console.log('hi')
+  return !!(~~i & 1);
+};`;
+
+    await $`echo ${firstChange} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(tempdir);
+
+    const { stderr: stderr2 } = await $`${bunExe()} patch-commit node_modules/is-even/node_modules/is-odd`
+      .env(bunEnv)
+      .cwd(tempdir)
+      .throws(false);
+    expect(stderr2.toString()).not.toContain("error");
+
+    const { stderr: stderr3 } = await $`${bunExe()} patch is-odd@0.1.2`.env(bunEnv).cwd(tempdir).throws(false);
+    expect(stderr3.toString()).not.toContain("error");
+
+    const secondChange = /* ts */ `/*!
+* is-odd <https://github.com/jonschlinkert/is-odd>
+*
+* Copyright (c) 2015-2017, Jon Schlinkert.
+* Released under the MIT License.
+*/
+
+'use strict';
+
+var isNumber = require('is-number');
+
+module.exports = function isOdd(i) {
+  if (!isNumber(i)) {
+    throw new TypeError('is-odd expects a number.');
+  }
+  if (Number(i) !== Math.floor(i)) {
+    throw new RangeError('is-odd expects an integer.');
+  }
+  console.log('hi')
+  console.log('hello')
+  return !!(~~i & 1);
+};`;
+
+    await $`echo ${secondChange} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(tempdir);
+    const { stderr: stderr4 } = await $`${bunExe()} patch-commit node_modules/is-even/node_modules/is-odd`
+      .env(bunEnv)
+      .cwd(tempdir)
+      .throws(false);
+    expect(stderr4.toString()).not.toContain("error");
+
+    await $`cat patches/is-odd@0.1.2.patch`.env(bunEnv).cwd(tempdir);
+
+    await $`${bunExe()} i`.env(bunEnv).cwd(tempdir).throws(false);
+    const { stdout } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir).throws(false);
+    expect(stdout.toString()).toContain("hi\nhello\n");
+  });
 
   test("bad patch arg", async () => {
     const tempdir = tempDirWithFiles("lol", {

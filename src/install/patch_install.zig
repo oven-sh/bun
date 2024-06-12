@@ -48,6 +48,7 @@ pub const PatchTask = struct {
     task: ThreadPool.Task = .{
         .callback = runFromThreadPool,
     },
+    pre: bool = false,
     next: ?*PatchTask = null,
 
     const debug = bun.Output.scoped(.InstallPatch, false);
@@ -147,6 +148,9 @@ pub const PatchTask = struct {
         comptime log_level: PackageManager.Options.LogLevel,
     ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
+        defer {
+            if (this.pre) _ = manager.pending_pre_calc_hashes.fetchSub(1, .Monotonic);
+        }
         switch (this.callback) {
             .calc_hash => try this.runFromMainThreadCalcHash(manager, log_level),
             .apply => this.runFromMainThreadApply(manager),
@@ -469,7 +473,6 @@ pub const PatchTask = struct {
         state: ?CalcPatchHash.EnqueueAfterState,
     ) *PatchTask {
         const patchdep = manager.lockfile.patched_dependencies.get(name_and_version_hash) orelse @panic("This is a bug");
-        bun.debugAssert(patchdep.patchfile_hash_is_null);
         const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
 
         const pt = bun.new(PatchTask, .{

@@ -5,6 +5,7 @@ steps:
       - key: "bun-darwin-aarch64-deps"
         label: ":darwin: aarch64 - bun-deps"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -20,6 +21,7 @@ steps:
       - key: "bun-darwin-aarch64-zig"
         label: ":darwin: aarch64 - bun-zig"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -34,6 +36,7 @@ steps:
       - key: "bun-darwin-aarch64-cpp"
         label: ":darwin: aarch64 - bun-cpp"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -51,6 +54,7 @@ steps:
           - "bun-darwin-aarch64-zig"
           - "bun-darwin-aarch64-cpp"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -84,6 +88,7 @@ steps:
       - key: "bun-darwin-x64-deps"
         label: ":darwin: x64 - bun-deps"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "x64"
         artifact_paths:
@@ -99,6 +104,7 @@ steps:
       - key: "bun-darwin-x64-zig"
         label: ":darwin: x64 - bun-zig"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -113,6 +119,7 @@ steps:
       - key: "bun-darwin-x64-cpp"
         label: ":darwin: x64 - bun-cpp"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "x64"
         artifact_paths:
@@ -130,6 +137,7 @@ steps:
           - "bun-darwin-x64-zig"
           - "bun-darwin-x64-cpp"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "x64"
         artifact_paths:
@@ -157,84 +165,92 @@ steps:
         command:
           - "./test/runner.node.mjs bun-darwin-x64"
 
-  - key: "build-darwin-x64-baseline-ci"
-    group: ":darwin: x64-baseline"
-    steps:
-      - key: "bun-darwin-x64-baseline-deps"
-        label: ":darwin: x64-baseline - bun-deps"
-        agents:
-          os: "darwin"
-          arch: "x64"
-        artifact_paths:
-          - "src/deps/*"
-        env:
-          CPU_TARGET: "nehalem"
-          CCACHE_DIR: "$$HOME/.cache/ccache"
-          SCCACHE_DIR: "$$HOME/.cache/sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
-          BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
-        command:
-          - "./scripts/all-dependencies.sh"
-      - key: "bun-darwin-x64-baseline-zig"
-        label: ":darwin: x64-baseline - bun-zig"
-        agents:
-          os: "darwin"
-          arch: "aarch64"
-        artifact_paths:
-          - "bun-zig.o"
-        env:
-          CPU_TARGET: "nehalem"
-          CCACHE_DIR: "$$HOME/.cache/ccache"
-          SCCACHE_DIR: "$$HOME/.cache/sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
-        command:
-          - "./scripts/build-bun-zig.sh darwin x64"
-      - key: "bun-darwin-x64-baseline-cpp"
-        label: ":darwin: x64-baseline - bun-cpp"
-        agents:
-          os: "darwin"
-          arch: "x64"
-        artifact_paths:
-          - "bun-cpp-objects.a"
-        env:
-          CCACHE_DIR: "$$HOME/.cache/ccache"
-          SCCACHE_DIR: "$$HOME/.cache/sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
-        command:
-          - "./scripts/build-bun-cpp.sh --baseline --fast"
-      - key: "bun-darwin-x64-baseline"
-        label: ":darwin: x64-baseline - bun"
-        depends_on:
-          - "bun-darwin-x64-baseline-deps"
-          - "bun-darwin-x64-baseline-zig"
-          - "bun-darwin-x64-baseline-cpp"
-        agents:
-          os: "darwin"
-          arch: "x64"
-        artifact_paths:
-          - "bun-darwin-x64-baseline.zip"
-          - "bun-darwin-x64-baseline-profile.zip"
-        env:
-          CCACHE_DIR: "$$HOME/.cache/ccache"
-          SCCACHE_DIR: "$$HOME/.cache/sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
-        command:
-          - "./scripts/buildkite-link-bun.sh --tag darwin-x64-baseline --baseline --fast"
-      - key: "bun-darwin-x64-baseline-test"
-        label: ":darwin: x64-baseline - bun-test-%n"
-        parallelism: 5
-        soft_fail:
-          - exit_status: 2
-        depends_on:
-          - "bun-darwin-x64-baseline"
-        agents:
-          os: "darwin"
-          arch: "x64"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
-        command:
-          - "./test/runner.node.mjs bun-darwin-x64-baseline"
+  # Note: darwin-x64-baseline is being deprecated due to
+  # not enough usage and not working on newer releases of macOS.
+  #
+  # - key: "build-darwin-x64-baseline-ci"
+  #   group: ":darwin: x64-baseline"
+  #   steps:
+  #     - key: "bun-darwin-x64-baseline-deps"
+  #       label: ":darwin: x64-baseline - bun-deps"
+  #       agents:
+  #         queue: "build"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       artifact_paths:
+  #         - "src/deps/*"
+  #       env:
+  #         CPU_TARGET: "nehalem"
+  #         CCACHE_DIR: "$$HOME/.cache/ccache"
+  #         SCCACHE_DIR: "$$HOME/.cache/sccache"
+  #         ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+  #         BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
+  #       command:
+  #         - "./scripts/all-dependencies.sh"
+  #     - key: "bun-darwin-x64-baseline-zig"
+  #       label: ":darwin: x64-baseline - bun-zig"
+  #       agents:
+  #         queue: "build"
+  #         os: "darwin"
+  #         arch: "aarch64"
+  #       artifact_paths:
+  #         - "bun-zig.o"
+  #       env:
+  #         CPU_TARGET: "nehalem"
+  #         CCACHE_DIR: "$$HOME/.cache/ccache"
+  #         SCCACHE_DIR: "$$HOME/.cache/sccache"
+  #         ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+  #       command:
+  #         - "./scripts/build-bun-zig.sh darwin x64"
+  #     - key: "bun-darwin-x64-baseline-cpp"
+  #       label: ":darwin: x64-baseline - bun-cpp"
+  #       agents:
+  #         queue: "build"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       artifact_paths:
+  #         - "bun-cpp-objects.a"
+  #       env:
+  #         CCACHE_DIR: "$$HOME/.cache/ccache"
+  #         SCCACHE_DIR: "$$HOME/.cache/sccache"
+  #         ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+  #       command:
+  #         - "./scripts/build-bun-cpp.sh --baseline --fast"
+  #     - key: "bun-darwin-x64-baseline"
+  #       label: ":darwin: x64-baseline - bun"
+  #       depends_on:
+  #         - "bun-darwin-x64-baseline-deps"
+  #         - "bun-darwin-x64-baseline-zig"
+  #         - "bun-darwin-x64-baseline-cpp"
+  #       agents:
+  #         queue: "build"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       artifact_paths:
+  #         - "bun-darwin-x64-baseline.zip"
+  #         - "bun-darwin-x64-baseline-profile.zip"
+  #       env:
+  #         CCACHE_DIR: "$$HOME/.cache/ccache"
+  #         SCCACHE_DIR: "$$HOME/.cache/sccache"
+  #         ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+  #       command:
+  #         - "./scripts/buildkite-link-bun.sh --tag darwin-x64-baseline --baseline --fast"
+  #     - key: "bun-darwin-x64-baseline-test"
+  #       label: ":darwin: x64-baseline - bun-test-%n"
+  #       parallelism: 5
+  #       soft_fail:
+  #         - exit_status: 2
+  #       depends_on:
+  #         - "bun-darwin-x64-baseline"
+  #       agents:
+  #         queue: "build"
+  #         os: "darwin"
+  #         arch: "x64"
+  #       artifact_paths:
+  #         - "logs/**/*.log"
+  #         - "summary.md"
+  #       command:
+  #         - "./test/runner.node.mjs bun-darwin-x64-baseline"
 
   - key: "build-linux-aarch64-ci"
     group: ":linux: aarch64"
@@ -242,6 +258,7 @@ steps:
       - key: "bun-linux-aarch64-deps"
         label: ":linux: aarch64 - bun-deps"
         agents:
+          queue: "build"
           os: "linux"
           arch: "aarch64"
         artifact_paths:
@@ -257,6 +274,7 @@ steps:
       - key: "bun-linux-aarch64-zig"
         label: ":linux: aarch64 - bun-zig"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -271,6 +289,7 @@ steps:
       - key: "bun-linux-aarch64-cpp"
         label: ":linux: aarch64 - bun-cpp"
         agents:
+          queue: "build"
           os: "linux"
           arch: "aarch64"
         artifact_paths:
@@ -288,6 +307,7 @@ steps:
           - "bun-linux-aarch64-zig"
           - "bun-linux-aarch64-cpp"
         agents:
+          queue: "build"
           os: "linux"
           arch: "aarch64"
         artifact_paths:
@@ -321,6 +341,7 @@ steps:
       - key: "bun-linux-x64-deps"
         label: ":linux: x64 - bun-deps"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:
@@ -336,6 +357,7 @@ steps:
       - key: "bun-linux-x64-zig"
         label: ":linux: x64 - bun-zig"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -350,6 +372,7 @@ steps:
       - key: "bun-linux-x64-cpp"
         label: ":linux: x64 - bun-cpp"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:
@@ -367,6 +390,7 @@ steps:
           - "bun-linux-x64-zig"
           - "bun-linux-x64-cpp"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:
@@ -400,6 +424,7 @@ steps:
       - key: "bun-linux-x64-baseline-deps"
         label: ":linux: x64-baseline - bun-deps"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:
@@ -415,6 +440,7 @@ steps:
       - key: "bun-linux-x64-baseline-zig"
         label: ":linux: x64-baseline - bun-zig"
         agents:
+          queue: "build"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
@@ -429,6 +455,7 @@ steps:
       - key: "bun-linux-x64-baseline-cpp"
         label: ":linux: x64-baseline - bun-cpp"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:
@@ -446,6 +473,7 @@ steps:
           - "bun-linux-x64-baseline-zig"
           - "bun-linux-x64-baseline-cpp"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:
@@ -465,6 +493,7 @@ steps:
         depends_on:
           - "bun-linux-x64-baseline"
         agents:
+          queue: "build"
           os: "linux"
           arch: "x64"
         artifact_paths:

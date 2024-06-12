@@ -1,0 +1,38 @@
+{
+	"name": "missing-tarball",
+	"versions": {
+		"1.0.0": {
+			"name": "missing-tarball",
+			"version": "1.0.0",
+			"_id": "missing-tarball@1.0.0",
+			"_nodeVersion": "22.3.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-4DAht8088HFd4j+tJLgBQPQUqmk/s1E4uCW5HPprFFwLMBGWSYSbHJFV8KNJDva1d2mk+NbaREcvRIXFlkZd1g==",
+				"shasum": "26f902977fc35d8ade333229e4756a786fc4fdde",
+				"tarball": "http://localhost:4873/missing-tarball/-/missing-tarball-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-12T18:15:45.931Z",
+		"created": "2024-06-12T18:15:45.931Z",
+		"1.0.0": "2024-06-12T18:15:45.931Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"missing-tarball-1.0.0.tgz": {
+			"shasum": "26f902977fc35d8ade333229e4756a786fc4fdde",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "missing-tarball",
+	"readme": "ERROR: No README data found!"
+}

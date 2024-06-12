@@ -148,7 +148,6 @@ EXPORTS
   uv_cpumask_size
   uv_mutex_lock
   uv_mutex_unlock
-  uv_init_guard_
   uv_once
   uv_mutex_init
   uv_async_init
@@ -254,11 +253,9 @@ EXPORTS
   uv_fatal_error
   uv_translate_sys_error
   uv_close
-  uv_zero_
   uv_timer_start
   uv_buf_init
   uv_timer_stop
-  uv_null_buf_
   uv_read_stop
   uv_timer_init
   uv_unref
@@ -350,7 +347,6 @@ EXPORTS
   uv_close
   uv_addr_ip4_any_
   uv_fatal_error
-  uv_zero_
   uv_buf_init
   uv_read_stop
   uv_addr_ip6_any_
@@ -366,9 +362,6 @@ EXPORTS
   uv_sem_init
   uv_mutex_init
   uv_sem_wait
-  uv_tty_virtual_width
-  uv_tty_virtual_height
-  uv_tty_virtual_offset
   uv_sem_post
   uv_translate_sys_error
   uv_buf_init

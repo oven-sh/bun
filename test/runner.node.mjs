@@ -19,6 +19,7 @@ import { normalize as normalizeWindows } from "node:path/win32";
 
 const spawnTimeout = 30_000;
 const testTimeout = 3 * 60_000;
+const integrationTimeout = 5 * 60_000;
 
 const isLinux = process.platform === "linux";
 const isMacOS = process.platform === "darwin";
@@ -315,11 +316,12 @@ async function spawnSafe({
  * @returns {Promise<SpawnResult>}
  */
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
+  const path = addPath(dirname(execPath), process.env.PATH);
   const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
   const bunEnv = {
     ...process.env,
-    [isWindows ? "Path" : "PATH"]: addPath(dirname(execPath), process.env.PATH),
-    [isWindows ? "TEMP" : "TMPDIR"]: tmpdirPath,
+    PATH: path,
+    TMPDIR: tmpdirPath,
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
@@ -348,6 +350,14 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       ...args,
     ];
     execPath = "unshare";
+  }
+  if (isWindows) {
+    delete bunEnv["PATH"];
+    bunEnv["Path"] = path;
+    for (const tmpdir of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
+      delete bunEnv[tmpdir];
+    }
+    bunEnv["TEMP"] = tmpdirPath;
   }
   try {
     return await spawnSafe({
@@ -409,7 +419,7 @@ async function spawnBunTest(execPath, testPath) {
   const { ok, error, stdout } = await spawnBun(execPath, {
     args: ["test", testPath],
     cwd: cwd,
-    timeout: testTimeout,
+    timeout: getTestTimeout(testPath),
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },
@@ -426,6 +436,17 @@ async function spawnBunTest(execPath, testPath) {
     tests,
     stdout: testStdout,
   };
+}
+
+/**
+ * @param {string} testPath
+ * @returns {number}
+ */
+function getTestTimeout(testPath) {
+  if (/integration|3rd_party|docker/i.test(testPath)) {
+    return integrationTimeout;
+  }
+  return testTimeout;
 }
 
 /**

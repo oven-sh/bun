@@ -448,7 +448,7 @@ pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
     return if (rc != null)
         Result{ .result = std.mem.sliceTo(rc.?[0..bun.MAX_PATH_BYTES], 0) }
     else
-        Result.errnoSys(@as(c_int, -1), .getcwd).?;
+        Result.errnoSys(@as(c_int, 0), .getcwd).?;
 }
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {

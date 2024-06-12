@@ -3511,7 +3511,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         loop.enter();
                         defer loop.exit();
 
-                        old.resolve(&body.value, this.server.globalThis);
+                        old.resolve(&body.value, this.server.globalThis, null);
                     }
                     return;
                 }
@@ -3563,7 +3563,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     var old = body.value;
                     old.Locked.onReceiveValue = null;
                     var new_body = .{ .Null = {} };
-                    old.resolve(&new_body, this.server.globalThis);
+                    old.resolve(&new_body, this.server.globalThis, null);
                     body.value = new_body;
                 }
             } else {

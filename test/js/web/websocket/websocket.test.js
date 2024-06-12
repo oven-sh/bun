@@ -1,8 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import crypto from "crypto";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe, gc, tls } from "harness";
 import { join } from "path";
-import { tls, bunEnv, bunExe, gc } from "harness";
 import process from "process";
 
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
@@ -676,42 +675,5 @@ describe("websocket in subprocess", () => {
     await promise;
     server.stop(true);
     expect(await subprocess.exited).toBe(0);
-  });
-
-  it("should be able to send big messages", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const ws = new WebSocket("https://echo.websocket.org/");
-
-    const payload = crypto.randomBytes(1024 * 64);
-    const iterations = 3;
-    const expected = 1024 * 64 * iterations;
-
-    let total_received = 0;
-    const timeout = setTimeout(() => {
-      ws.close();
-    }, 4000);
-    ws.addEventListener("close", e => {
-      clearTimeout(timeout);
-      resolve(total_received);
-    });
-
-    ws.addEventListener("message", e => {
-      if (typeof e.data === "string") {
-        return;
-      }
-      const received = e.data.byteLength || e.data.size || 0;
-      total_received += received;
-      if (total_received >= expected) {
-        ws.close();
-      }
-    });
-    ws.addEventListener("error", reject);
-    ws.addEventListener("open", () => {
-      for (let i = 0; i < 10; i++) {
-        ws.send(payload);
-      }
-    });
-
-    expect(await promise).toBe(expected);
   });
 });

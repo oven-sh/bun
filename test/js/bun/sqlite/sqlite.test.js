@@ -10,6 +10,64 @@ const tmpbase = tmpdir() + path.sep;
 
 var encode = text => new TextEncoder().encode(text);
 
+// Use different numbers of columns to ensure we crash if using initializeIndex() on a large array can cause bugs.
+// https://github.com/oven-sh/bun/issues/11747
+it.each([1, 16, 256, 512, 768])("should work with duplicate columns in values() of length %d", columnCount => {
+  const db = new Database(":memory:");
+
+  db.prepare(
+    `create table \`users\` ( id integer primary key autoincrement, name text, reportTo integer, ${Array.from(
+      {
+        length: columnCount,
+      },
+      (_, i) => `column${i} text DEFAULT "make GC happen!!" NOT NULL${i === columnCount - 1 ? "" : ","}`,
+    ).join("")} );`,
+  ).run();
+  const names = [
+    ["dan", null],
+    ["alef", 1],
+    ["bob", 2],
+    ["carl", 3],
+    ["dave", 4],
+    ["eve", 5],
+    ["fred", 6],
+    ["george", 7],
+    ["harry", 8],
+    ["isaac", 9],
+    ["jacob", 10],
+    ["kevin", 11],
+    ["larry", 12],
+    ["mike", 13],
+    ["nathan", 14],
+    ["oscar", 15],
+    ["peter", 16],
+    ["qwerty", 17],
+    ["robert", 18],
+    ["samuel", 19],
+    ["tom", 20],
+    ["william", 21],
+    ["xavier", 22],
+    ["yanny", 23],
+    ["zachary", 24],
+  ];
+  for (const [name, reportTo] of names) {
+    db.prepare("insert into `users` (name, reportTo) values (?, ?);").run(name, reportTo);
+  }
+  const results = db
+    .prepare("select * from 'users' left join 'users' reportee on `users`.id = reportee.reportTo; ")
+    .values();
+  expect(results).toHaveLength(names.length);
+  expect(results[0]).toHaveLength((columnCount + 3) * 2);
+  let prevResult;
+  for (let result of results) {
+    expect(result).toHaveLength((columnCount + 3) * 2);
+    if (prevResult) {
+      expect(prevResult.slice(columnCount + 3, (columnCount + 3) * 2)).toEqual(result.slice(0, columnCount + 3));
+    }
+    prevResult = result;
+  }
+});
+
 it("Database.open", () => {
   // in a folder which doesn't exist
   try {

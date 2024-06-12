@@ -1,6 +1,3 @@
-agents:
-  queue: "ci"
-
 steps:
   - key: "build-darwin-aarch64-ci"
     group: ":darwin: aarch64"

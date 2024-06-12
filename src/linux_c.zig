@@ -592,11 +592,28 @@ pub const S = std.posix.S;
 pub extern "c" fn umask(Mode) Mode;
 
 pub fn getErrno(rc: anytype) E {
-    if (rc == -1) {
-        return @enumFromInt(std.c._errno().*);
-    } else {
-        return .SUCCESS;
-    }
+    const Type = @TypeOf(rc);
+
+    return switch (Type) {
+        // raw system calls from std.os.linux.* will return usize
+        // the errno is stored in this value
+        usize => {
+            const signed: isize = @bitCast(rc);
+            const int = if (signed > -4096 and signed < 0) -signed else 0;
+            return @enumFromInt(int);
+        },
+
+        // glibc system call wrapper returns i32/int
+        // the errno is stored in a thread local variable
+        //
+        // TODO: the inclusion of  'u32' and 'isize' seems suspicous
+        i32, c_int, u32, isize, i64 => if (rc == -1)
+            @enumFromInt(std.c._errno().*)
+        else
+            .SUCCESS,
+
+        else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
+    };
 }
 
 pub const getuid = std.os.linux.getuid;

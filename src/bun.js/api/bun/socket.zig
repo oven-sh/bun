@@ -649,7 +649,7 @@ pub const Listener = struct {
                 hostname_or_unix.deinit();
             }
 
-            const errno = @intFromEnum(bun.C.getErrno(-1));
+            const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -749,7 +749,7 @@ pub const Listener = struct {
                     bun.span(hostname_or_unix.slice()),
                 },
             );
-            const errno = @intFromEnum(bun.C.getErrno(-1));
+            const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {

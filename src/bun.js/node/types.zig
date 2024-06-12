@@ -2084,7 +2084,10 @@ pub const Path = struct {
 
     pub fn getCwdU8(buf: []u8) MaybeBuf(u8) {
         const result = bun.getcwd(buf) catch {
-            return MaybeBuf(u8).errnoSys(0, Syscall.Tag.getcwd).?;
+            return MaybeBuf(u8).errnoSys(
+                @as(c_int, -1),
+                Syscall.Tag.getcwd,
+            ).?;
         };
         return MaybeBuf(u8){ .result = result };
     }

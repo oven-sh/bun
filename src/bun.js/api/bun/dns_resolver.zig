@@ -1074,7 +1074,7 @@ pub const DNSLookup = struct {
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
-                    break :brk bun.sys.Error.fromCode(bun.C.getErrno(-1), .getaddrinfo).toJSC(globalThis);
+                    break :brk bun.sys.Error.fromCode(bun.C.getErrno(@as(c_int, -1)), .getaddrinfo).toJSC(globalThis);
                 }
                 const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
                 error_value.put(

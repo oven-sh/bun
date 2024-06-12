@@ -64,8 +64,9 @@ function printInfo() {
 
 /**
  * @param {string} target
+ * @param {string[]} [filters]
  */
-async function runTests(target) {
+async function runTests(target, filters) {
   let execPath;
   if (isBuildKite) {
     execPath = await getExecPathFromBuildKite(target);
@@ -78,9 +79,16 @@ async function runTests(target) {
   console.log("Revision:", revision);
 
   const tests = getTests(testsPath);
-  const firstTest = shardId * Math.ceil(tests.length / maxShards);
-  const lastTest = Math.min(firstTest + Math.ceil(tests.length / maxShards), tests.length);
-  console.log("Running tests:", firstTest, "...", lastTest, "/", tests.length);
+  let actualTests;
+  if (filters?.length > 0) {
+    actualTests = tests.filter(testPath => filters.some(filter => testPath.includes(filter)));
+    console.log("Filtering tests:", actualTests.length, "/", tests.length);
+  } else {
+    const firstTest = shardId * Math.ceil(tests.length / maxShards);
+    const lastTest = Math.min(firstTest + Math.ceil(tests.length / maxShards), tests.length);
+    actualTests = tests.slice(firstTest, lastTest);
+    console.log("Running tests:", firstTest, "...", lastTest, "/", tests.length);
+  }
 
   const results = [];
 
@@ -128,7 +136,7 @@ async function runTests(target) {
   }
 
   if (results.every(({ ok }) => ok)) {
-    for (const testPath of tests.slice(firstTest, lastTest)) {
+    for (const testPath of actualTests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
@@ -1294,14 +1302,14 @@ function isExecutable(execPath) {
   return true;
 }
 
-const [target] = process.argv.slice(2);
+const [target, ...filters] = process.argv.slice(2);
 if (!target) {
   const filename = relative(cwd, import.meta.filename);
-  throw new Error(`Usage: ${process.argv0} ${filename} <target>`);
+  throw new Error(`Usage: ${process.argv0} ${filename} <target> [...filters]`);
 }
 
 runTask("Environment", printInfo);
-const results = await runTests(target);
+const results = await runTests(target, filters);
 const ok = results.every(({ ok }) => ok);
 if (isBuildKite) {
   process.exit(ok ? 0 : 2);

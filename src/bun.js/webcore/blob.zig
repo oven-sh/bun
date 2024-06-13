@@ -112,7 +112,7 @@ pub const Blob = struct {
     /// Blob name will lazy initialize when getName is called, but
     /// we must be able to set the name, and we need to keep the value alive
     /// https://github.com/oven-sh/bun/issues/10178
-    name: ?bun.String = null,
+    name: bun.String = bun.String.dead,
 
     /// Max int of double precision
     /// 9 petabytes is probably enough for awhile
@@ -3297,7 +3297,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.name) |name| return name.toJS(globalThis);
+        if (this.name.tag != .Dead) return this.name.toJS(globalThis);
 
         if (this.getFileName()) |path| {
             var str = bun.String.createUTF8(path);
@@ -3315,18 +3315,14 @@ pub const Blob = struct {
     ) callconv(.C) bool {
         // by default we don't have a name so lets allow it to be set undefined
         if (value.isEmptyOrUndefinedOrNull()) {
-            if (this.name) |name| {
-                name.deref();
-                this.name = null;
-            }
+            this.name.deref();
+            this.name = bun.String.dead;
             return true;
         }
         if (value.isString()) {
-            if (this.name) |name| {
-                name.deref();
-            }
+            this.name.deref();
             this.name = bun.String.tryFromJS(value, globalThis) orelse return false;
-            this.name.?.ref();
+            this.name.ref();
 
             return true;
         }
@@ -3731,10 +3727,9 @@ pub const Blob = struct {
 
     pub fn deinit(this: *Blob) void {
         this.detach();
-        if (this.name) |name| {
-            name.deref();
-            this.name = null;
-        }
+        this.name.deref();
+        this.name = bun.String.dead;
+
         // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;

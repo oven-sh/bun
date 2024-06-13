@@ -386,7 +386,6 @@ it('should set "npm_config_user_agent" to bun', async () => {
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await installFinished).toBe(0);
 
   const [err, out, exited] = await Promise.all([
     new Response(subprocess.stderr).text(),

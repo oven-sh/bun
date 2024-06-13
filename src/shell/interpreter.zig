@@ -1275,7 +1275,7 @@ pub const Interpreter = struct {
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
-        const export_env = brk: {
+        var export_env = brk: {
             if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
@@ -1320,6 +1320,14 @@ pub const Interpreter = struct {
         };
         var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
         cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
+
+        // PWD will point to whichever PWD is in the env, but this is not correct, since
+        // user supplied a custom cwd
+        if (cwd_ != null) {
+            // because PWD is always changed whenevever we mutate the cwd array
+            // it's okay to do this
+            export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initRefCounted(cwd_arr.items[0..cwd.len]));
+        }
 
         if (comptime bun.Environment.allow_assert) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
@@ -4591,13 +4599,14 @@ pub const Interpreter = struct {
                 .parent = parent,
 
                 .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
-                .args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory(),
+                .args = undefined,
                 .redirection_file = undefined,
 
                 .exit_code = null,
                 .io = io,
                 .state = .idle,
             };
+            cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory();
 
             cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
 

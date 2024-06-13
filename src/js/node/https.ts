@@ -4,10 +4,11 @@ const http = require("node:http");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function request(input, options, cb) {
+  const globalAgent = Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 });
   if (input && typeof input === "object" && !(input instanceof URL)) {
-    input.protocol ??= "https:";
+    input._defaultAgent = globalAgent;
   } else if (typeof options === "object") {
-    options.protocol ??= "https:";
+    options._defaultAgent = globalAgent;
   }
 
   return http.request(input, options, cb);

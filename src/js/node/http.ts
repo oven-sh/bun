@@ -1586,7 +1586,7 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    const agent = options.agent || Agent.globalAgent;
+    const agent = options.agent || options._defaultAgent || Agent.globalAgent;
     this.#agent = agent;
 
     let protocol = options.protocol || agent.protocol;

@@ -1672,7 +1672,9 @@ it("should add dependencies to workspaces directly", async () => {
     "package.json",
   ]);
   expect(await file(join(package_dir, "package.json")).text()).toEqual(bar_package);
-  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "node_modules", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
   expect(await file(join(package_dir, "moo", "package.json")).json()).toEqual({
     name: "moo",
     version: "0.3.0",
@@ -1680,9 +1682,7 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "foo", "moo"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "foo"))).toEqual(["package.json"]);
-  expect(await file(join(package_dir, "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "moo"]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {

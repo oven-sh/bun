@@ -605,17 +605,27 @@ pub const EnvMap = struct {
 pub const ShellArgs = struct {
     /// This is the arena used to allocate the input shell script's AST nodes,
     /// tokens, and a string pool used to store all strings.
-    arena: bun.ArenaAllocator,
+    __arena: *bun.ArenaAllocator,
     /// Root ast node
     script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
 
-    /// create new ShellArgs
-    /// the ShellArgs struct itself is allocated in the arena
-    pub fn init(allocator: Allocator) *ShellArgs {
-        var arena_ = bun.ArenaAllocator.init(allocator);
-        var shargs = arena_.allocator().create(ShellArgs) catch bun.outOfMemory();
-        shargs.arena = arena_;
-        return shargs;
+    pub usingnamespace bun.New(@This());
+
+    pub fn arena_allocator(this: *ShellArgs) std.mem.Allocator {
+        return this.__arena.allocator();
+    }
+
+    pub fn deinit(this: *ShellArgs) void {
+        this.__arena.deinit();
+        this.destroy();
+    }
+
+    pub fn init() *ShellArgs {
+        const arena = bun.new(bun.ArenaAllocator, bun.ArenaAllocator.init(bun.default_allocator));
+        return ShellArgs.new(.{
+            .__arena = arena,
+            .script_ast = undefined,
+        });
     }
 };
 
@@ -661,7 +671,7 @@ pub const ParsedShellScript = struct {
         for (this.jsobjs.items) |jsobj| {
             jsobj.unprotect();
         }
-        if (this.args) |a| a.arena.deinit();
+        if (this.args) |a| a.deinit();
         bun.destroy(this);
     }
 
@@ -731,10 +741,7 @@ pub const ParsedShellScript = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
-        const allocator = bun.default_allocator;
-        var _arena_ = bun.ArenaAllocator.init(allocator);
-        var shargs = _arena_.child_allocator.create(ShellArgs) catch bun.outOfMemory();
-        shargs.arena = _arena_;
+        var shargs = ShellArgs.init();
 
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -748,7 +755,7 @@ pub const ParsedShellScript = struct {
         };
         var template_args = template_args_js.arrayIterator(globalThis);
 
-        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena.allocator());
+        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
         var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
@@ -759,8 +766,8 @@ pub const ParsedShellScript = struct {
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(shargs.arena.allocator());
-        var script = std.ArrayList(u8).init(shargs.arena.allocator());
+        var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
+        var script = std.ArrayList(u8).init(shargs.arena_allocator());
         if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
@@ -771,7 +778,7 @@ pub const ParsedShellScript = struct {
         var parser: ?bun.shell.Parser = null;
         var lex_result: ?shell.LexResult = null;
         const script_ast = Interpreter.parse(
-            &shargs.arena,
+            shargs.arena_allocator(),
             script.items[0..],
             jsobjs.items[0..],
             jsstrings.items[0..],
@@ -780,7 +787,7 @@ pub const ParsedShellScript = struct {
         ) catch |err| {
             if (err == shell.ParseError.Lex) {
                 assert(lex_result != null);
-                const str = lex_result.?.combineErrors(shargs.arena.allocator());
+                const str = lex_result.?.combineErrors(shargs.arena_allocator());
                 globalThis.throwPretty("{s}", .{str});
                 return .undefined;
             }
@@ -1203,10 +1210,10 @@ pub const Interpreter = struct {
         )) {
             .result => |i| i,
             .err => |*e| {
-                shargs.arena.deinit();
                 jsobjs.deinit();
                 if (export_env) |*ee| ee.deinit();
                 if (cwd) |*cc| cc.deref();
+                shargs.deinit();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
                 return .undefined;
             },
@@ -1224,7 +1231,7 @@ pub const Interpreter = struct {
     }
 
     pub fn parse(
-        arena: *bun.ArenaAllocator,
+        arena_allocator: std.mem.Allocator,
         script: []const u8,
         jsobjs: []JSValue,
         jsstrings_to_escape: []bun.String,
@@ -1233,11 +1240,11 @@ pub const Interpreter = struct {
     ) !ast.Script {
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script)) {
-                var lexer = bun.shell.LexerAscii.new(arena.allocator(), script, jsstrings_to_escape);
+                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape);
                 try lexer.lex();
                 break :brk lexer.get_result();
             }
-            var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script, jsstrings_to_escape);
+            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape);
             try lexer.lex();
             break :brk lexer.get_result();
         };
@@ -1249,7 +1256,7 @@ pub const Interpreter = struct {
 
         if (comptime bun.Environment.allow_assert) {
             const debug = bun.Output.scoped(.ShellTokens, true);
-            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch @panic("OOPS");
+            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
                 const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
@@ -1261,7 +1268,7 @@ pub const Interpreter = struct {
             debug("Tokens: {s}", .{str});
         }
 
-        out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
+        out_parser.* = try bun.shell.Parser.new(arena_allocator, lex_result, jsobjs);
 
         const script_ast = try out_parser.*.?.parse();
         return script_ast;
@@ -1383,19 +1390,19 @@ pub const Interpreter = struct {
     }
 
     pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
-        var shargs = ShellArgs.init(bun.default_allocator);
+        var shargs = ShellArgs.init();
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
-            break :src try file.reader().readAllAlloc(shargs.arena.allocator(), std.math.maxInt(u32));
+            break :src try file.reader().readAllAlloc(shargs.arena_allocator(), std.math.maxInt(u32));
         };
-        defer shargs.arena.deinit();
+        defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
         const script = ThisInterpreter.parse(
-            &shargs.arena,
+            shargs.arena_allocator(),
             src,
             jsobjs,
             &[_]bun.String{},
@@ -1404,7 +1411,7 @@ pub const Interpreter = struct {
         ) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
                 assert(out_lex_result != null);
-                const str = out_lex_result.?.combineErrors(shargs.arena.allocator());
+                const str = out_lex_result.?.combineErrors(shargs.arena_allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), str });
                 bun.Global.exit(1);
             }
@@ -1465,16 +1472,16 @@ pub const Interpreter = struct {
 
     pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
-        var shargs = ShellArgs.init(bun.default_allocator);
-        defer shargs.arena.deinit();
+        var shargs = ShellArgs.init();
+        defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
-        const script = ThisInterpreter.parse(&shargs.arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
+        const script = ThisInterpreter.parse(shargs.arena_allocator(), src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
                 assert(out_lex_result != null);
-                const str = out_lex_result.?.combineErrors(shargs.arena.allocator());
+                const str = out_lex_result.?.combineErrors(shargs.arena_allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ path_for_errors, str });
                 bun.Global.exit(1);
             }

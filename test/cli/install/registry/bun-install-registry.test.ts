@@ -18,8 +18,8 @@ import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
-// import { install_test_helpers } from "bun:internal-for-testing";
-// const { parseLockfile } = install_test_helpers;
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
@@ -68,7 +68,7 @@ registry = "http://localhost:${port}/"
 });
 
 for (const optional of [true, false]) {
-  test.only(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
+  test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
     await write(
       join(packageDir, "package.json"),
       JSON.stringify({
@@ -84,6 +84,7 @@ for (const optional of [true, false]) {
     const { exited, err } = await runBunInstall(env, packageDir, {
       [optional ? "allowWarnings" : "allowErrors"]: true,
       expectedExitCode: optional ? 0 : 1,
+      savesLockfile: false,
     });
     expect(err).toContain(
       `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 404`,

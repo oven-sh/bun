@@ -336,7 +336,7 @@ const NetworkTask = struct {
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?*const Npm.PackageManifest,
-        warn_on_error: bool,
+        is_optional: bool,
     ) !void {
         this.url_buf = blk: {
 
@@ -359,31 +359,39 @@ const NetworkTask = struct {
             defer tmp.deref();
 
             if (tmp.tag == .Dead) {
-                const msg = .{
-                    .fmt = "Failed to join registry {} and package {} URLs",
-                    .args = .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                };
-
-                if (warn_on_error)
-                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
-                else
-                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
-
-                return error.InvalidURL;
+                if (!is_optional) {
+                    Output.errGeneric(
+                        "Failed to join registry {} and package {} URLs",
+                        .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
+                    );
+                    Global.crash();
+                } else {
+                    this.package_manager.log.addWarningFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Failed to join registry {} and package {} URLs",
+                        .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
+                    ) catch bun.outOfMemory();
+                }
             }
 
             if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
-                const msg = .{
-                    .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                    .args = .{tmp},
-                };
-
-                if (warn_on_error)
-                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
-                else
-                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
-
-                return error.InvalidURL;
+                if (!is_optional) {
+                    Output.errGeneric(
+                        "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                        .{tmp},
+                    );
+                    Global.crash();
+                } else {
+                    this.package_manager.log.addWarningFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                        .{tmp},
+                    ) catch bun.outOfMemory();
+                }
             }
 
             // This actually duplicates the string! So we defer deref the WTF managed one above.
@@ -4209,7 +4217,10 @@ pub const PackageManager = struct {
         const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
 
         // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
-        gpe.value_ptr.is_required = gpe.value_ptr.is_required or is_required;
+        gpe.value_ptr.is_required = if (!gpe.found_existing)
+            is_required
+        else
+            gpe.value_ptr.is_required or is_required;
 
         return gpe.found_existing;
     }
@@ -4970,7 +4981,7 @@ pub const PackageManager = struct {
                                                 null,
                                                 logger.Loc.Empty,
                                                 this.allocator,
-                                                "package \"{s}\" with tag \"{s}\" not found, but package exists",
+                                                "Package \"{s}\" with tag \"{s}\" not found, but package exists",
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.value.dist_tag.tag),
@@ -5342,7 +5353,7 @@ pub const PackageManager = struct {
                 };
 
                 const workspace_not_found_fmt =
-                    \\workspace dependency "{[name]s}" not found
+                    \\Workspace dependency "{[name]s}" not found
                     \\
                     \\Searched in <b>{[search_path]}<r>
                     \\
@@ -5350,7 +5361,7 @@ pub const PackageManager = struct {
                     \\
                 ;
                 const link_not_found_fmt =
-                    \\package "{[name]s}" is not linked
+                    \\Package "{[name]s}" is not linked
                     \\
                     \\To install a linked package:
                     \\   <cyan>bun link my-pkg-name-from-package-json<r>
@@ -12809,6 +12820,10 @@ pub const PackageManager = struct {
             }
         }
 
+        const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
+        try manager.log.printForLogLevel(Output.errorWriter());
+        manager.log.reset();
+
         // This operation doesn't perform any I/O, so it should be relatively cheap.
         manager.lockfile = try manager.lockfile.cleanWithLogger(
             manager,
@@ -12920,6 +12935,11 @@ pub const PackageManager = struct {
             );
         }
 
+        if (comptime log_level != .silent) {
+            try manager.log.printForLogLevel(Output.errorWriter());
+        }
+        if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
+
         const did_meta_hash_change =
             // If the lockfile was frozen, we already checked it
             !manager.options.enable.frozen_lockfile and
@@ -13017,11 +13037,6 @@ pub const PackageManager = struct {
                 manager.progress = .{};
             }
         }
-
-        if (comptime log_level != .silent) {
-            try manager.log.printForLogLevel(Output.errorWriter());
-        }
-        if (manager.log.hasErrors()) Global.crash();
 
         if (manager.options.do.run_scripts) {
             if (manager.root_lifecycle_scripts) |scripts| {

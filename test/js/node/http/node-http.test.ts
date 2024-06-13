@@ -2152,3 +2152,15 @@ it("should error with faulty args", async () => {
   }
   server.close();
 });
+
+it("http.Agent is configured correctly", () => {
+  const agent = new http.Agent();
+  expect(agent.defaultPort).toBe(80);
+  expect(agent.protocol).toBe("http:");
+});
+
+it("https.Agent is configured correctly", () => {
+  const agent = new https.Agent();
+  expect(agent.defaultPort).toBe(443);
+  expect(agent.protocol).toBe("https:");
+});

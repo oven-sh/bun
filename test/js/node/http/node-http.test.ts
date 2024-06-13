@@ -2164,3 +2164,21 @@ it("https.Agent is configured correctly", () => {
   expect(agent.defaultPort).toBe(443);
   expect(agent.protocol).toBe("https:");
 });
+
+it("http.get can use http.Agent", async () => {
+  const agent = new http.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  http.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("http.get can use https.Agent", async () => {
+  const agent = new https.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  http.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});

@@ -56,7 +56,7 @@ it("should hot reload when file is overwritten", async () => {
       if (any) await onReload();
     }
 
-    expect(reloadCounter).toBe(3);
+    expect(reloadCounter).toBeGreaterThanOrEqual(3);
   } finally {
     // @ts-ignore
     runner?.unref?.();

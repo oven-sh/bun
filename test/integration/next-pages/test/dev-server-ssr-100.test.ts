@@ -96,7 +96,7 @@ beforeAll(async () => {
     stdin: "inherit",
   });
   if (!install.success) {
-    throw new Error("Failed to install dependencies");
+    throw new Error(`Failed to install dependencies: ${install.signalCode || install.exitCode}`);
   }
 
   try {

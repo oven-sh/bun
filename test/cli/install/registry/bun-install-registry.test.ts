@@ -86,7 +86,7 @@ for (const optional of [true, false]) {
       savesLockfile: false,
     });
     expect(err).toContain(
-      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 404`,
+      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 500`,
     );
     expect(await exited).toBe(optional ? 0 : 1);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([

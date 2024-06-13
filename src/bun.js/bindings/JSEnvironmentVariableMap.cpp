@@ -179,14 +179,15 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * gl
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
-    if (decodedValue.isString()) {
-        WTF::String str = decodedValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (str == "0"_s || str == "false"_s) {
-            Bun__setTLSRejectUnauthorizedValue(0);
-        } else {
-            Bun__setTLSRejectUnauthorizedValue(1);
-        }
+    WTF::String str = decodedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    // TODO: only check "0". Node doesn't check both. But we already did. So we
+    // should wait to do that until Bun v1.2.0.
+    if (str == "0"_s || str == "false"_s) {
+        Bun__setTLSRejectUnauthorizedValue(0);
+    } else {
+        Bun__setTLSRejectUnauthorizedValue(1);
     }
 
     const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);

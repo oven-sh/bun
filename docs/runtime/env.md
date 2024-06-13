@@ -144,7 +144,7 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `NODE_TLS_REJECT_UNAUTHORIZED`
-- `NODE_TLS_REJECT_UNAUTHORIZED=0` disables SSL certificate validation. This is useful for testing and debugging, but should never be used in production. This was originally a Node.js environment variable, but Bun also respects it.
+- `NODE_TLS_REJECT_UNAUTHORIZED=0` disables SSL certificate validation. This is useful for testing and debugging, but you should be very hesitant to use this in production. Note: This environment variable was originally introduced by Node.js and we kept the name for compatibility.
 
 ---
 

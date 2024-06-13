@@ -46,7 +46,7 @@ module.exports = function isOdd(i) {
 
     await $`echo ${firstChange} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(tempdir);
 
-    const { stderr: stderr2 } = await $`${bunExe()} patch-commit node_modules/is-even/node_modules/is-odd`
+    const { stderr: stderr2 } = await $`${bunExe()} patch --commit node_modules/is-even/node_modules/is-odd`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
@@ -79,7 +79,7 @@ module.exports = function isOdd(i) {
 };`;
 
     await $`echo ${secondChange} > node_modules/is-even/node_modules/is-odd/index.js`.env(bunEnv).cwd(tempdir);
-    const { stderr: stderr4 } = await $`${bunExe()} patch-commit node_modules/is-even/node_modules/is-odd`
+    const { stderr: stderr4 } = await $`${bunExe()} patch --commit node_modules/is-even/node_modules/is-odd`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
@@ -128,7 +128,7 @@ module.exports = function isOdd(i) {
     const { stderr } = await $`${bunExe()} patch is-even`.env(bunEnv).cwd(tempdir);
     expect(stderr.toString()).not.toContain("error");
 
-    const { stderr: stderr2 } = await $`${bunExe()} patch-commit lskfjdslkfjsldkfjlsdkfj`
+    const { stderr: stderr2 } = await $`${bunExe()} patch --commit lskfjdslkfjsldkfjlsdkfj`
       .env(bunEnv)
       .cwd(tempdir)
       .throws(false);
@@ -180,7 +180,7 @@ module.exports = function isOdd(i) {
 
 Once you're done with your changes, run:
 
-  bun patch-commit '${expected.patchPath}'`,
+  bun patch --commit '${expected.patchPath}'`,
         );
       }
 
@@ -188,7 +188,7 @@ Once you're done with your changes, run:
         const newCode = patchedCode;
 
         await $`echo ${newCode} > ${expected.patchPath}/index.js`.env(bunEnv).cwd(filedir);
-        const { stderr, stdout } = await $`${bunExe()} patch-commit ${expected.patchPath}`.env(bunEnv).cwd(filedir);
+        const { stderr, stdout } = await $`${bunExe()} patch --commit ${expected.patchPath}`.env(bunEnv).cwd(filedir);
       }
 
       const output = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir).text();

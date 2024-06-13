@@ -416,7 +416,7 @@ pub const PatchTask = struct {
                     null,
                     Loc.Empty,
                     this.manager.allocator,
-                    "patchfile <b>{s}<r> is empty",
+                    "patchfile <b>{s}<r> is empty, please restore or delete it.",
                     .{absolute_patchfile_path},
                 ) catch bun.outOfMemory();
                 return null;
@@ -429,7 +429,7 @@ pub const PatchTask = struct {
                 null,
                 Loc.Empty,
                 this.manager.allocator,
-                "patchfile <b>{s}<r> is empty",
+                "patchfile <b>{s}<r> is empty, plese restore or delete it.",
                 .{absolute_patchfile_path},
             ) catch bun.outOfMemory();
             return null;

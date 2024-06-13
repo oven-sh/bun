@@ -6723,11 +6723,12 @@ pub const PackageManager = struct {
             .workspaces = true,
         },
         patch_features: union(enum) {
+            NOTHING: struct {},
             patch: struct {},
             commit: struct {
                 patches_dir: string,
             },
-        } = .{ .patch = .{} },
+        } = .{ .NOTHING = .{} },
         // The idea here is:
         // 1. package has a platform-specific binary to install
         // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
@@ -7189,15 +7190,28 @@ pub const PackageManager = struct {
                 this.update.development = cli.development;
                 if (!this.update.development) this.update.optional = cli.optional;
 
-                if (subcommand == .patch) {
-                    // TODO args
-                } else if (subcommand == .@"patch-commit") {
-                    this.patch_features = .{
-                        .commit = .{
-                            .patches_dir = cli.@"patch-commit".patches_dir,
-                        },
-                    };
+                switch (cli.patch) {
+                    .NOTHING => {},
+                    .patch => {
+                        this.patch_features = .{ .patch = .{} };
+                    },
+                    .commit => {
+                        this.patch_features = .{
+                            .commit = .{
+                                .patches_dir = cli.patch.commit.patches_dir,
+                            },
+                        };
+                    },
                 }
+                // if (subcommand == .patch) {
+                //     // TODO args
+                // } else if (subcommand == .@"patch-commit") {
+                //     this.patch_features = .{
+                //         .commit = .{
+                //             .patches_dir = cli.@"patch-commit".patches_dir,
+                //         },
+                //     };
+                // }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
                 PackageManager.verbose_install = false;
@@ -9016,6 +9030,8 @@ pub const PackageManager = struct {
 
     const patch_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
+        clap.parseParam("--commit                         Install a package containing modifications in `dir`") catch unreachable,
+        clap.parseParam("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)") catch unreachable,
     };
 
     const patch_commit_params = install_params_ ++ [_]ParamType{
@@ -9063,16 +9079,14 @@ pub const PackageManager = struct {
 
         concurrent_scripts: ?usize = null,
 
-        patch: PatchOpts = .{},
-        @"patch-commit": PatchCommitOpts = .{},
+        patch: PatchOpts = .{ .NOTHING = .{} },
 
-        const PatchOpts = struct {
-            edit_dir: ?[]const u8 = null,
-            ignore_existing: bool = false,
-        };
-
-        const PatchCommitOpts = struct {
-            patches_dir: []const u8 = "patches",
+        const PatchOpts = union(enum) {
+            NOTHING: struct {},
+            patch: struct {},
+            commit: struct {
+                patches_dir: []const u8 = "patches",
+            },
         };
 
         const Omit = struct {
@@ -9340,15 +9354,29 @@ pub const PackageManager = struct {
                 cli.no_save = args.flag("--no-save");
             }
 
-            if (comptime subcommand == .patch) {
-                cli.patch = .{};
+            if (subcommand == .patch) {
+                const patch_commit = args.flag("--commit");
+                if (patch_commit) {
+                    cli.patch = .{
+                        .commit = .{
+                            .patches_dir = args.option("--patches-dir") orelse "patches",
+                        },
+                    };
+                } else {
+                    cli.patch = .{
+                        .patch = .{},
+                    };
+                }
             }
-
-            if (comptime subcommand == .@"patch-commit") {
-                cli.@"patch-commit" = .{
-                    .patches_dir = args.option("--patches-dir") orelse "patches",
+            if (subcommand == .@"patch-commit") {
+                cli.patch = .{
+                    .commit = .{
+                        .patches_dir = args.option("--patches-dir") orelse "patches",
+                    },
                 };
             }
+
+            if (comptime subcommand == .@"patch-commit") {}
 
             if (args.option("--config")) |opt| {
                 cli.config = opt;
@@ -9600,7 +9628,7 @@ pub const PackageManager = struct {
                         Output.prettyErrorln("<r>No package.json, so nothing to remove\n", .{});
                         Global.crash();
                     },
-                    .patch => {
+                    .patch, .@"patch-commit" => {
                         Output.prettyErrorln("<r>No package.json, so nothing to patch\n", .{});
                         Global.crash();
                     },
@@ -9623,7 +9651,7 @@ pub const PackageManager = struct {
             inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
         }
 
-        if (comptime subcommand == .patch) {
+        if (manager.options.patch_features == .patch) {
             try manager.preparePatch();
         }
 
@@ -9800,24 +9828,7 @@ pub const PackageManager = struct {
                     }
                 }
             },
-            .@"patch-commit" => {
-                // _ = manager.lockfile.loadFromDisk(
-                //     manager,
-                //     manager.allocator,
-                //     manager.log,
-                //     manager.options.lockfile_path,
-                //     true,
-                // );
-                var pathbuf: bun.PathBuffer = undefined;
-                if (try manager.doPatchCommit(&pathbuf, log_level)) |stuff| {
-                    try PackageJSONEditor.editPatchedDependencies(
-                        manager,
-                        &current_package_json.root,
-                        stuff.patch_key,
-                        stuff.patchfile_path,
-                    );
-                }
-            },
+
             .link, .add, .update => {
                 // `bun update <package>` is basically the same as `bun add <package>`, except
                 // update will not exceed the current dependency range if it exists
@@ -9844,7 +9855,26 @@ pub const PackageManager = struct {
                     );
                 }
             },
-            else => {},
+            else => {
+                if (manager.options.patch_features == .commit) {
+                    // _ = manager.lockfile.loadFromDisk(
+                    //     manager,
+                    //     manager.allocator,
+                    //     manager.log,
+                    //     manager.options.lockfile_path,
+                    //     true,
+                    // );
+                    var pathbuf: bun.PathBuffer = undefined;
+                    if (try manager.doPatchCommit(&pathbuf, log_level)) |stuff| {
+                        try PackageJSONEditor.editPatchedDependencies(
+                            manager,
+                            &current_package_json.root,
+                            stuff.patch_key,
+                            stuff.patchfile_path,
+                        );
+                    }
+                }
+            },
         }
 
         manager.to_update = subcommand == .update;
@@ -10300,7 +10330,7 @@ pub const PackageManager = struct {
         };
 
         Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
-        Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch-commit '{s}'<r>\n", .{module_folder});
+        Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
 
         return;
     }

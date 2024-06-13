@@ -1329,8 +1329,10 @@ pub fn gitDiff(
 /// - b/src/index.js
 ///
 /// The operations look roughy like the following sequence of substitutions and regexes:
-///     .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
-///     .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
+///   .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
+///   .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
+///   .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
+///   .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
 fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_folder: []const u8) !void {
     const old_folder_trimmed = std.mem.trim(u8, old_folder, "/");
     const new_folder_trimmed = std.mem.trim(u8, new_folder, "/");
@@ -1355,39 +1357,59 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
     // const @"$old_folder/" = @"a/$old_folder/"[2..];
     // const @"$new_folder/" = @"b/$new_folder/"[2..];
 
+    // these vars are here to disambguate `a/$OLD_FOLDER` when $OLD_FOLDER itself contains "a/"
+    // basically if $OLD_FOLDER contains "a/" then the code will replace it
+    // so we need to not run that code path
+    var saw_a_folder: ?usize = null;
+    var saw_b_folder: ?usize = null;
+    var line_idx: u32 = 0;
+
     var line_iter = std.mem.splitScalar(u8, stdout.items, '\n');
     while (line_iter.next()) |line| {
-        if (shouldSkipLine(line)) continue;
-        if (std.mem.indexOf(u8, line, @"a/$old_folder/")) |idx| {
-            const @"$old_folder/ start" = idx + 2;
-            const line_start = line_iter.index.? - 1 - line.len;
-            line_iter.index.? -= 1 + line.len;
-            try stdout.replaceRange(line_start + @"$old_folder/ start", old_folder_trimmed.len + 1, "");
-            continue;
-        }
-        if (std.mem.indexOf(u8, line, @"b/$new_folder/")) |idx| {
-            const @"$new_folder/ start" = idx + 2;
-            const line_start = line_iter.index.? - 1 - line.len;
-            try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
-            line_iter.index.? -= new_folder_trimmed.len + 1;
-            continue;
-        }
-        if (std.mem.indexOf(u8, line, old_folder)) |idx| {
-            if (idx + old_folder.len < line.len and line[idx + old_folder.len] == '/') {
+        if (!shouldSkipLine(line)) {
+            if (std.mem.indexOf(u8, line, @"a/$old_folder/")) |idx| {
+                const @"$old_folder/ start" = idx + 2;
                 const line_start = line_iter.index.? - 1 - line.len;
                 line_iter.index.? -= 1 + line.len;
-                try stdout.replaceRange(line_start + idx, old_folder.len + 1, "");
+                try stdout.replaceRange(line_start + @"$old_folder/ start", old_folder_trimmed.len + 1, "");
+                saw_a_folder = line_idx;
                 continue;
             }
-        }
-        if (std.mem.indexOf(u8, line, new_folder)) |idx| {
-            if (idx + new_folder.len < line.len and line[idx + new_folder.len] == '/') {
+            if (std.mem.indexOf(u8, line, @"b/$new_folder/")) |idx| {
+                const @"$new_folder/ start" = idx + 2;
                 const line_start = line_iter.index.? - 1 - line.len;
-                line_iter.index.? -= 1 + line.len;
-                try stdout.replaceRange(line_start + idx, new_folder.len + 1, "");
+                try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
+                line_iter.index.? -= new_folder_trimmed.len + 1;
+                saw_b_folder = line_idx;
                 continue;
             }
+            if (saw_a_folder == null or saw_a_folder.? != line_idx) {
+                if (std.mem.indexOf(u8, line, old_folder)) |idx| {
+                    if (idx + old_folder.len < line.len and line[idx + old_folder.len] == '/') {
+                        const line_start = line_iter.index.? - 1 - line.len;
+                        line_iter.index.? -= 1 + line.len;
+                        try stdout.replaceRange(line_start + idx, old_folder.len + 1, "");
+                        saw_a_folder = line_idx;
+                        continue;
+                    }
+                }
+            }
+            if (saw_b_folder == null or saw_b_folder.? != line_idx) {
+                if (std.mem.indexOf(u8, line, new_folder)) |idx| {
+                    if (idx + new_folder.len < line.len and line[idx + new_folder.len] == '/') {
+                        const line_start = line_iter.index.? - 1 - line.len;
+                        line_iter.index.? -= 1 + line.len;
+                        try stdout.replaceRange(line_start + idx, new_folder.len + 1, "");
+                        saw_b_folder = line_idx;
+                        continue;
+                    }
+                }
+            }
         }
+
+        line_idx += 1;
+        saw_a_folder = null;
+        saw_b_folder = null;
     }
 }
 

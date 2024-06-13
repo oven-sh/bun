@@ -6,6 +6,7 @@ import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir, devNull } from "os";
 import { join } from "path";
 import { createTestBuilder } from "./util";
+import { bunExe } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 type TestBuilder = InstanceType<typeof TestBuilder>;
 
@@ -167,58 +168,75 @@ describe("fd leak", () => {
   );
   memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
 
-  test("#11816", async () => {
-    const files = tempDirWithFiles("hi", {
-      "input.txt": Array(2048).fill("a").join(""),
-    });
-    for (let j = 0; j < 10; j++) {
-      const promises = [];
-      for (let i = 0; i < 10; i++) {
-        promises.push($`cat ${files}/input.txt`.quiet());
-      }
+  describe("#11816", async () => {
+    function doit(builtin: boolean) {
+      test(builtin ? "builtin" : "external", async () => {
+        const files = tempDirWithFiles("hi", {
+          "input.txt": Array(2048).fill("a").join(""),
+        });
+        for (let j = 0; j < 10; j++) {
+          const promises = [];
+          for (let i = 0; i < 10; i++) {
+            if (builtin) {
+              promises.push($`cat ${files}/input.txt`.quiet());
+            } else {
+              promises.push(
+                $`${bunExe()} -e ${/* ts */ `console.log(Array(1024).fill('a').join(''))`}`.env(bunEnv).quiet(),
+              );
+            }
+          }
 
-      await Promise.all(promises);
-      Bun.gc(true);
-    }
-
-    const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
-    if (ShellInterpreter > 3 || ParsedShellScript > 3) {
-      console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
-      throw new Error("TOO many ParsedShellScript or ShellInterpreter objects");
-    }
-    if (((process.memoryUsage.rss() / 1024 / 1024) | 0) > DEFAULT_THRESHOLD) {
-      throw new Error("RSS too high: " + process.memoryUsage.rss());
-    }
-  });
-
-  test("not leaking ParsedShellScript when ShellInterpreter never runs", async () => {
-    const files = tempDirWithFiles("hi", {
-      "input.txt": Array(2048).fill("a").join(""),
-    });
-    // wrapping in a function
-    // because of an optimization
-    // which will hoist the `promise` array to the top (to avoid creating it in every iteration)
-    // this causes the array to be kept alive for the scope
-    function run() {
-      for (let j = 0; j < 10; j++) {
-        const promises = [];
-        for (let i = 0; i < 10; i++) {
-          promises.push($`cat ${files}/input.txt`);
+          await Promise.all(promises);
+          Bun.gc(true);
         }
 
-        Bun.gc(true);
-      }
+        const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
+        if (ShellInterpreter > 3 || ParsedShellScript > 3) {
+          console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
+          throw new Error("TOO many ParsedShellScript or ShellInterpreter objects");
+        }
+      });
     }
-    run();
-    Bun.gc(true);
+    doit(false);
+    doit(true);
+  });
 
-    const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
-    if (ShellInterpreter > 3 || ParsedShellScript > 3) {
-      console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
-      throw new Error("TOO many ParsedShellScript or ShellInterpreter objects");
+  describe("not leaking ParsedShellScript when ShellInterpreter never runs", async () => {
+    function doit(builtin: boolean) {
+      test(builtin ? "builtin" : "external", async () => {
+        const files = tempDirWithFiles("hi", {
+          "input.txt": Array(2048).fill("a").join(""),
+        });
+        // wrapping in a function
+        // because of an optimization
+        // which will hoist the `promise` array to the top (to avoid creating it in every iteration)
+        // this causes the array to be kept alive for the scope
+        function run() {
+          for (let j = 0; j < 10; j++) {
+            const promises = [];
+            for (let i = 0; i < 10; i++) {
+              if (builtin) {
+                promises.push($`cat ${files}/input.txt`);
+              } else {
+                promises.push($`${bunExe()} -e ${/* ts */ `console.log(Array(1024).fill('a').join(''))`}`.env(bunEnv));
+              }
+            }
+
+            Bun.gc(true);
+          }
+        }
+        run();
+        Bun.gc(true);
+
+        const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
+        if (ShellInterpreter > 3 || ParsedShellScript > 3) {
+          console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
+          throw new Error("TOO many ParsedShellScript or ShellInterpreter objects");
+        }
+      });
     }
-    if (((process.memoryUsage.rss() / 1024 / 1024) | 0) > DEFAULT_THRESHOLD) {
-      throw new Error("RSS too high: " + process.memoryUsage.rss());
-    }
+
+    doit(false);
+    doit(true);
   });
 });

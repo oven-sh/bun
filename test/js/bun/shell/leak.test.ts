@@ -1,6 +1,7 @@
 import { $ } from "bun";
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv } from "harness";
+import { bunEnv, tempDirWithFiles } from "harness";
 import { appendFileSync, closeSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir, devNull } from "os";
 import { join } from "path";
@@ -97,6 +98,14 @@ describe("fd leak", () => {
                 })()
                 Bun.gc(true);
                 Bun.gc(true);
+
+                const objectTypeCounts = heapStats().objectTypeCounts;
+                heapStats().objectTypeCounts.ParsedShellScript
+                if (objectTypeCounts.ParsedShellScript > 3 or objectTypeCounts.ShellInterpreter > 3) {
+                  console.error('TOO many ParsedShellScript or ShellInterpreter objects', objectTypeCounts.ParsedShellScript, objectTypeCounts.ShellInterpreter)
+                  process.exit(1);
+                }
+
                 const val = process.memoryUsage.rss();
                 if (prev === undefined) {
                   prev = val;
@@ -157,4 +166,28 @@ describe("fd leak", () => {
     100,
   );
   memLeakTest("String", () => TestBuilder.command`echo ${Array(4096).fill("a").join("")}`.stdout(() => {}), 100);
+
+  test("#11816", async () => {
+    const files = tempDirWithFiles("hi", {
+      "input.txt": Array(2048).fill("a").join(""),
+    });
+    for (let j = 0; j < 10; j++) {
+      const promises = [];
+      for (let i = 0; i < 10; i++) {
+        promises.push($`cat ${files}/input.txt`.quiet());
+      }
+
+      await Promise.all(promises);
+      Bun.gc(true);
+    }
+
+    const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
+    if (ShellInterpreter > 3 || ParsedShellScript > 3) {
+      console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
+      throw new Error("TOO many ParsedShellScript or ShellInterpreter objects");
+    }
+    if (((process.memoryUsage.rss() / 1024 / 1024) | 0) > DEFAULT_THRESHOLD) {
+      throw new Error("RSS too high: " + process.memoryUsage.rss());
+    }
+  });
 });

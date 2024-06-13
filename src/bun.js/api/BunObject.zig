@@ -39,10 +39,11 @@ pub const BunObject = struct {
     pub const stringWidth = Bun.stringWidth;
     pub const braces = Bun.braces;
     pub const shellEscape = Bun.shellEscape;
+    pub const createParsedShellScript = bun.shell.ParsedShellScript.createParsedShellScript;
+    pub const createShellInterpreter = bun.shell.Interpreter.createShellInterpreter;
     // --- Callbacks ---
 
     // --- Getters ---
-    pub const ShellInterpreter = Bun.getShellConstructor;
     pub const CryptoHasher = Crypto.CryptoHasher.getter;
     pub const FFI = Bun.FFIObject.getter;
     pub const FileSystemRouter = Bun.getFileSystemRouter;
@@ -90,7 +91,6 @@ pub const BunObject = struct {
         }
 
         // --- Getters ---
-        @export(BunObject.ShellInterpreter, .{ .name = getterName("ShellInterpreter") });
         @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
         @export(BunObject.FFI, .{ .name = getterName("FFI") });
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
@@ -121,6 +121,8 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
+        @export(BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
+        @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
@@ -315,11 +317,15 @@ pub fn shell(
         return JSC.JSValue.jsUndefined();
     };
 
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    const template_args_js = arguments.nextEat() orelse {
+        globalThis.throw("shell: expected 2 arguments, got 0", .{});
+        return .undefined;
+    };
+    var template_args = template_args_js.arrayIterator(globalThis);
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     var script = std.ArrayList(u8).init(arena.allocator());
 
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &script) catch {
         if (!globalThis.hasException())
             globalThis.throwOutOfMemory();
         return JSValue.undefined;
@@ -3718,13 +3724,6 @@ pub fn getTOMLObject(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return TOMLObject.create(globalThis);
-}
-
-pub fn getShellConstructor(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) callconv(.C) JSC.JSValue {
-    return JSC.API.Shell.Interpreter.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(

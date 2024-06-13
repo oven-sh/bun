@@ -602,9 +602,220 @@ pub const EnvMap = struct {
     }
 };
 
+pub const ParsedShellScript = struct {
+    pub usingnamespace JSC.Codegen.JSParsedShellScript;
+    /// all the fields are allocated with this arena
+    arena: bun.ArenaAllocator,
+    script_ast: ?*ast.Script,
+    jsobjs: std.ArrayList(JSValue),
+    export_env: ?EnvMap = null,
+    quiet: bool = false,
+    cwd: ?bun.String = null,
+    this_jsvalue: JSValue = .zero,
+
+    fn take(
+        this: *ParsedShellScript,
+        globalObject: *JSC.JSGlobalObject,
+        out_script_ast: **ast.Script,
+        out_jsobjs: *std.ArrayList(JSValue),
+        out_arena: *bun.ArenaAllocator,
+        out_quiet: *bool,
+        out_cwd: *?bun.String,
+        out_export_env: *?EnvMap,
+        out_resolve: *JSValue,
+        out_reject: *JSValue,
+    ) void {
+        bun.assert(this.script_ast != null);
+        out_script_ast.* = this.script_ast.?;
+        out_jsobjs.* = this.jsobjs;
+        out_arena.* = this.arena;
+        out_quiet.* = this.quiet;
+        out_cwd.* = this.cwd;
+        out_export_env.* = this.export_env;
+        out_resolve.* = JSC.Codegen.JSParsedShellScript.resolveGetCached(this.this_jsvalue) orelse @panic("Bug");
+        out_reject.* = JSC.Codegen.JSParsedShellScript.rejectGetCached(this.this_jsvalue) orelse @panic("Bug");
+
+        this.arena = bun.ArenaAllocator.init(bun.default_allocator);
+        this.script_ast = null;
+        this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
+        this.cwd = null;
+        this.export_env = null;
+        JSC.Codegen.JSParsedShellScript.resolveSetCached(this.this_jsvalue, globalObject, .undefined);
+        JSC.Codegen.JSParsedShellScript.rejectSetCached(this.this_jsvalue, globalObject, .undefined);
+    }
+
+    pub fn finalize(
+        this: *ParsedShellScript,
+    ) callconv(.C) void {
+        this.this_jsvalue = .zero;
+        log("ParsedShellScript(0x{x}) finalize", .{@intFromPtr(this)});
+        this.arena.deinit();
+        if (this.export_env) |*env| env.deinit();
+        if (this.cwd) |*cwd| cwd.deref();
+    }
+
+    pub fn setResolveAndReject(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const resolve = callframe.argument(0);
+        const reject = callframe.argument(1);
+        JSC.Codegen.JSParsedShellScript.resolveSetCached(this.this_jsvalue, globalThis, resolve.withAsyncContextIfNeeded(globalThis));
+        JSC.Codegen.JSParsedShellScript.rejectSetCached(this.this_jsvalue, globalThis, reject.withAsyncContextIfNeeded(globalThis));
+        return .undefined;
+    }
+
+    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const str_js = arguments.nextEat() orelse {
+            globalThis.throw("$`...`.cwd(): expected a string argument", .{});
+            return .undefined;
+        };
+        const str = bun.String.fromJS(str_js, globalThis);
+        this.cwd = str;
+        return .undefined;
+    }
+
+    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
+        this.quiet = true;
+        return .undefined;
+    }
+
+    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var env =
+            if (this.export_env) |*env|
+        brk: {
+            env.clearRetainingCapacity();
+            break :brk env.*;
+        } else EnvMap.init(bun.default_allocator);
+        defer this.export_env = env;
+
+        const value1 = callframe.argument(0);
+        if (!value1.isObject()) {
+            globalThis.throwInvalidArguments("env must be an object", .{});
+            return .undefined;
+        }
+
+        var object_iter = JSC.JSPropertyIterator(.{
+            .skip_empty_name = false,
+            .include_value = true,
+        }).init(globalThis, value1);
+        defer object_iter.deinit();
+
+        env.ensureTotalCapacity(object_iter.len);
+
+        // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+        // PATH = "";
+
+        while (object_iter.next()) |key| {
+            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            var value = object_iter.value;
+            if (value == .undefined) continue;
+
+            const value_str = value.getZigString(globalThis);
+            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyref = EnvStr.initRefCounted(keyslice);
+            defer keyref.deref();
+            const valueref = EnvStr.initRefCounted(slice);
+            defer valueref.deref();
+
+            env.insert(keyref, valueref);
+        }
+
+        return .undefined;
+    }
+
+    pub fn createParsedShellScript(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const allocator = bun.default_allocator;
+        var arena = bun.ArenaAllocator.init(allocator);
+
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const string_args = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 2 arguments, got 0", .{});
+            return .undefined;
+        };
+        const template_args_js = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 2 arguments, got 0", .{});
+            return .undefined;
+        };
+        var template_args = template_args_js.arrayIterator(globalThis);
+
+        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        defer {
+            for (jsstrings.items[0..]) |bunstr| {
+                bunstr.deref();
+            }
+            jsstrings.deinit();
+        }
+        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
+        var script = std.ArrayList(u8).init(arena.allocator());
+        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        })) {
+            return .undefined;
+        }
+
+        var parser: ?bun.shell.Parser = null;
+        var lex_result: ?shell.LexResult = null;
+        const script_ast = Interpreter.parse(
+            &arena,
+            script.items[0..],
+            jsobjs.items[0..],
+            jsstrings.items[0..],
+            &parser,
+            &lex_result,
+        ) catch |err| {
+            if (err == shell.ParseError.Lex) {
+                assert(lex_result != null);
+                const str = lex_result.?.combineErrors(arena.allocator());
+                globalThis.throwPretty("{s}", .{str});
+                return .undefined;
+            }
+
+            if (parser) |*p| {
+                if (bun.Environment.allow_assert) {
+                    assert(p.errors.items.len > 0);
+                }
+                const errstr = p.combineErrors();
+                globalThis.throwPretty("{s}", .{errstr});
+                return .undefined;
+            }
+
+            globalThis.throwError(err, "failed to lex/parse shell");
+            return .undefined;
+        };
+
+        const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+
+        script_heap.* = script_ast;
+
+        const parsed_shell_script = bun.create(bun.default_allocator, ParsedShellScript, .{
+            .arena = arena,
+            .script_ast = script_heap,
+            .jsobjs = jsobjs,
+        });
+        parsed_shell_script.this_jsvalue = JSC.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
+
+        bun.Analytics.Features.shell += 1;
+        return parsed_shell_script.this_jsvalue;
+    }
+};
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
+    pub usingnamespace JSC.Codegen.JSShellInterpreter;
     command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
     /// This is the arena used to allocate the input shell script's AST nodes,
@@ -623,13 +834,13 @@ pub const Interpreter = struct {
     root_shell: ShellState,
     root_io: IO,
 
-    resolve: JSC.Strong = .{},
-    reject: JSC.Strong = .{},
     has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
     async_commands_executing: u32 = 0,
+
+    globalThis: *JSC.JSGlobalObject,
 
     flags: packed struct(u8) {
         done: bool = false,
@@ -637,6 +848,7 @@ pub const Interpreter = struct {
         __unused: u6 = 0,
     } = .{},
     exit_code: ?ExitCode = 0,
+    this_jsvalue: JSValue = .zero,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -936,96 +1148,77 @@ pub const Interpreter = struct {
         }
     };
 
-    pub fn constructor(
+    pub fn createShellInterpreter(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*ThisInterpreter {
+    ) callconv(.C) JSValue {
         const allocator = bun.default_allocator;
-        var arena = bun.ArenaAllocator.init(allocator);
-
         const arguments_ = callframe.arguments(1);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-        const string_args = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return null;
+
+        const parsed_shell_script_js = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 1 arguments, got 0", .{});
+            return .undefined;
         };
 
-        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return null;
+        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse {
+            globalThis.throw("shell: expected a ParsedShellScript", .{});
+            return .undefined;
         };
-        defer {
-            for (jsstrings.items[0..]) |bunstr| {
-                bunstr.deref();
-            }
-            jsstrings.deinit();
-        }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        })) {
-            return null;
-        }
 
-        var parser: ?bun.shell.Parser = null;
-        var lex_result: ?shell.LexResult = null;
-        const script_ast = ThisInterpreter.parse(
+        var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(allocator);
+        var script_heap: *ast.Script = undefined;
+        var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
+        var quiet: bool = false;
+        var cwd: ?bun.String = null;
+        var export_env: ?EnvMap = null;
+        var resolve: JSValue = .undefined;
+        var reject: JSValue = .undefined;
+
+        parsed_shell_script.take(
+            globalThis,
+            &script_heap,
+            &jsobjs,
             &arena,
-            script.items[0..],
-            jsobjs.items[0..],
-            jsstrings.items[0..],
-            &parser,
-            &lex_result,
-        ) catch |err| {
-            if (err == shell.ParseError.Lex) {
-                assert(lex_result != null);
-                const str = lex_result.?.combineErrors(arena.allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return null;
-            }
+            &quiet,
+            &cwd,
+            &export_env,
+            &resolve,
+            &reject,
+        );
 
-            if (parser) |*p| {
-                if (bun.Environment.allow_assert) {
-                    assert(p.errors.items.len > 0);
-                }
-                const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return null;
-            }
+        const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {
+            break :brk c.toUTF8(bun.default_allocator);
+        } else null;
+        defer if (cwd_string) |c| c.deinit();
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return null;
-        };
-
-        const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
-
-        script_heap.* = script_ast;
-
-        const interpreter = switch (ThisInterpreter.init(
+        const interpreter: *Interpreter = switch (ThisInterpreter.init(
             undefined, // command_ctx, unused when event_loop is .js
             .{ .js = globalThis.bunVM().event_loop },
             allocator,
             &arena,
             script_heap,
             jsobjs.items[0..],
+            export_env,
+            if (cwd_string) |c| c.slice() else null,
         )) {
             .result => |i| i,
             .err => |*e| {
                 arena.deinit();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
-                return null;
+                return .undefined;
             },
         };
 
+        interpreter.flags.quiet = quiet;
+
+        interpreter.globalThis = globalThis;
+        interpreter.this_jsvalue = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
+        JSC.Codegen.JSShellInterpreter.resolveSetCached(interpreter.this_jsvalue, globalThis, resolve);
+        JSC.Codegen.JSShellInterpreter.rejectSetCached(interpreter.this_jsvalue, globalThis, reject);
+
         bun.Analytics.Features.shell += 1;
-        return interpreter;
+        return interpreter.this_jsvalue;
     }
 
     pub fn parse(
@@ -1081,10 +1274,11 @@ pub const Interpreter = struct {
         arena: *bun.ArenaAllocator,
         script: *ast.Script,
         jsobjs: []JSValue,
+        export_env_: ?EnvMap,
+        cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
         const export_env = brk: {
-            // This will be set in the shell builtin to `process.env`
-            if (event_loop == .js) break :brk EnvMap.init(allocator);
+            if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
@@ -1109,7 +1303,11 @@ pub const Interpreter = struct {
         };
 
         var pathbuf: bun.PathBuffer = undefined;
-        const cwd = switch (Syscall.getcwd(&pathbuf)) {
+        const cwd = if (cwd_) |c| brk: {
+            @memcpy(pathbuf[0..c.len], c);
+            pathbuf[c.len] = 0;
+            break :brk pathbuf[0..c.len :0];
+        } else switch (Syscall.getcwd(&pathbuf)) {
             .result => |cwd| cwd.ptr[0..cwd.len :0],
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
@@ -1171,6 +1369,7 @@ pub const Interpreter = struct {
             },
 
             .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
+            .globalThis = undefined,
         };
 
         return .{ .result = interpreter };
@@ -1213,7 +1412,16 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp = switch (ThisInterpreter.init(
+            ctx,
+            .{ .mini = mini },
+            bun.default_allocator,
+            &arena,
+            script_heap,
+            jsobjs,
+            null,
+            null,
+        )) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1276,7 +1484,16 @@ pub const Interpreter = struct {
         };
         const script_heap = try arena.allocator().create(ast.Script);
         script_heap.* = script;
-        var interp: *ThisInterpreter = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        var interp: *ThisInterpreter = switch (ThisInterpreter.init(
+            ctx,
+            .{ .mini = mini },
+            bun.default_allocator,
+            &arena,
+            script_heap,
+            jsobjs,
+            null,
+            null,
+        )) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1429,7 +1646,13 @@ pub const Interpreter = struct {
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
-            _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this.this_jsvalue)) |resolve| {
+                    _ = resolve.call(this.globalThis, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                }
+            }
         } else {
             this.flags.done = true;
             this.exit_code = exit_code;
@@ -1441,8 +1664,14 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
-            this.resolve.deinit();
-            _ = this.reject.call(&[_]JSValue{JSValue.jsNumberFromChar(1)});
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this.this_jsvalue)) |reject| {
+                    reject.call(this.globalThis, &[_]JSValue{ JSValue.jsNumberFromChar(1), this.getBufferedStdout(), this.getBufferedStderr() });
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                    this.this_jsvalue = .zero;
+                }
+            }
         }
     }
 
@@ -1453,6 +1682,7 @@ pub const Interpreter = struct {
         }
         this.root_io.deref();
         this.root_shell.deinitImpl(false, false);
+        this.this_jsvalue = .zero;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
@@ -1462,8 +1692,7 @@ pub const Interpreter = struct {
         if (this.root_shell._buffered_stdout == .owned) {
             this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
         }
-        this.resolve.deinit();
-        this.reject.deinit();
+        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }
 
@@ -1473,34 +1702,13 @@ pub const Interpreter = struct {
             jsobj.unprotect();
         }
         this.root_io.deref();
-        this.resolve.deinit();
-        this.reject.deinit();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
+        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
-    }
-
-    pub fn setResolve(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const value = callframe.argument(0);
-        if (!value.isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArguments("resolve must be a function", .{});
-            return .undefined;
-        }
-        this.resolve.set(globalThis, value.withAsyncContextIfNeeded(globalThis));
-        return .undefined;
-    }
-
-    pub fn setReject(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const value = callframe.argument(0);
-        if (!value.isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArguments("reject must be a function", .{});
-            return .undefined;
-        }
-        this.reject.set(globalThis, value.withAsyncContextIfNeeded(globalThis));
-        return .undefined;
     }
 
     pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1586,24 +1794,14 @@ pub const Interpreter = struct {
 
     pub fn getBufferedStdout(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
+    ) JSC.JSValue {
         const stdout = this.ioToJSValue(this.root_shell.buffered_stdout());
         return stdout;
     }
 
     pub fn getBufferedStderr(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
+    ) JSC.JSValue {
         const stdout = this.ioToJSValue(this.root_shell.buffered_stderr());
         return stdout;
     }
@@ -1611,7 +1809,7 @@ pub const Interpreter = struct {
     pub fn finalize(
         this: *ThisInterpreter,
     ) callconv(.C) void {
-        log("Interpreter finalize", .{});
+        log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }
 

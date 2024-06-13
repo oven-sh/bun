@@ -87,6 +87,7 @@ describe("fd leak", () => {
       writeFileSync(tempfile, testcode);
 
       const impl = /* ts */ `
+              import { heapStats } from "bun:jsc";
               const TestBuilder = createTestBuilder(import.meta.path);
 
               const threshold = ${threshold}
@@ -102,7 +103,7 @@ describe("fd leak", () => {
 
                 const objectTypeCounts = heapStats().objectTypeCounts;
                 heapStats().objectTypeCounts.ParsedShellScript
-                if (objectTypeCounts.ParsedShellScript > 3 or objectTypeCounts.ShellInterpreter > 3) {
+                if (objectTypeCounts.ParsedShellScript > 3 || objectTypeCounts.ShellInterpreter > 3) {
                   console.error('TOO many ParsedShellScript or ShellInterpreter objects', objectTypeCounts.ParsedShellScript, objectTypeCounts.ShellInterpreter)
                   process.exit(1);
                 }

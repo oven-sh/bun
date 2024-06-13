@@ -1285,7 +1285,7 @@ pub const Interpreter = struct {
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
-        var export_env = brk: {
+        const export_env = brk: {
             if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
@@ -1311,11 +1311,7 @@ pub const Interpreter = struct {
         };
 
         var pathbuf: bun.PathBuffer = undefined;
-        const cwd: [:0]const u8 = if (cwd_) |c| brk: {
-            @memcpy(pathbuf[0..c.len], c);
-            pathbuf[c.len] = 0;
-            break :brk pathbuf[0..c.len :0];
-        } else switch (Syscall.getcwd(&pathbuf)) {
+        const cwd: [:0]const u8 = switch (Syscall.getcwd(&pathbuf)) {
             .result => |cwd| cwd.ptr[0..cwd.len :0],
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
@@ -1330,14 +1326,6 @@ pub const Interpreter = struct {
         };
         var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
         cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
-
-        // PWD will point to whichever PWD is in the env, but this is not correct, since
-        // user supplied a custom cwd
-        if (cwd_ != null) {
-            // because PWD is always changed whenevever we mutate the cwd array
-            // it's okay to do this
-            export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initRefCounted(cwd_arr.items[0..cwd.len]));
-        }
 
         if (comptime bun.Environment.allow_assert) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
@@ -1385,6 +1373,10 @@ pub const Interpreter = struct {
             .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
             .globalThis = undefined,
         };
+
+        if (cwd_) |c| {
+            if (interpreter.root_shell.changeCwd(interpreter, c).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+        }
 
         return .{ .result = interpreter };
     }

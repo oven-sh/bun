@@ -3232,19 +3232,19 @@ pub const PackageManager = struct {
         }
     }
 
-    fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
+    pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) void {
         if (this.preinstall_state.items.len >= count) {
             return;
         }
 
         const offset = this.preinstall_state.items.len;
-        try this.preinstall_state.ensureTotalCapacity(this.allocator, count);
+        this.preinstall_state.ensureTotalCapacity(this.allocator, count) catch bun.outOfMemory();
         this.preinstall_state.expandToCapacity();
         @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
     }
 
     pub fn setPreinstallState(this: *PackageManager, package_id: PackageID, lockfile: *Lockfile, value: PreinstallState) void {
-        this.ensurePreinstallStateListCapacity(lockfile.packages.len) catch return;
+        this.ensurePreinstallStateListCapacity(lockfile.packages.len);
         this.preinstall_state.items[package_id] = value;
     }
 

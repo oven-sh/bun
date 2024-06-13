@@ -936,6 +936,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         patch: Patch = .{},
         file_count: u32 = 0,
         node_modules: *const PackageManager.NodeModulesFolder,
+        lockfile: *const Lockfile,
 
         const ThisPackageInstall = @This();
 
@@ -1098,8 +1099,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 switch (resolution.tag) {
                 .git => this.verifyGitResolution(&resolution.value.git, buf, root_node_modules_dir),
                 .github => this.verifyGitResolution(&resolution.value.github, buf, root_node_modules_dir),
-                // TODO: this should be any workspace tree id, not just root
-                .folder => if (this.node_modules.tree_id == 0)
+                .folder => if (this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id))
                     this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag)
                 else
                     this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
@@ -2145,36 +2145,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             }
         }
 
-        pub fn isDanglingSymlinkAt(dirfd: bun.FileDescriptor, path: [:0]const u8) bool {
-            if (comptime Environment.isLinux) {
-                const rc = bun.sys.system.openat(dirfd.cast(), path, @as(u32, std.os.O.PATH), @as(u32, 0));
-                switch (bun.sys.getErrno(rc)) {
-                    .SUCCESS => {
-                        _ = bun.sys.close(bun.toFD(rc));
-                        return false;
-                    },
-                    else => return true,
-                }
-            } else if (comptime Environment.isWindows) {
-                switch (bun.sys.sys_uv.openat(dirfd, path, 0, 0)) {
-                    .err => return true,
-                    .result => |fd| {
-                        _ = bun.sys.close(bun.toFD(fd));
-                        return false;
-                    },
-                }
-            } else {
-                const rc = bun.sys.system.openat(dirfd.cast(), path, @as(u32, 0), @as(u32, 0));
-                switch (bun.sys.getErrno(rc)) {
-                    .SUCCESS => {
-                        _ = bun.sys.close(bun.toFD(rc));
-                        return false;
-                    },
-                    else => return true,
-                }
-            }
-        }
-
         pub fn isDanglingWindowsBinLink(node_mod_fd: bun.FileDescriptor, path: []const u16, temp_buffer: []u8) bool {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
             const bin_path = bin_path: {
@@ -2385,8 +2355,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             var supported_method_to_use = method_;
 
-            // TODO: this should apply to all workspace tree ids, not just the root
-            if (resolution_tag == .folder and this.node_modules.tree_id != 0) {
+            if (resolution_tag == .folder and !this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id)) {
                 supported_method_to_use = .symlink;
             }
 
@@ -2613,10 +2582,11 @@ pub const PackageManager = struct {
 
     root_package_json_file: std.fs.File,
 
-    /// The package id corresponding to the workspace the install is happening in
+    /// The package id corresponding to the workspace the install is happening in. Could be root, or
+    /// could be any of the workspaces.
     root_package_id: struct {
         id: ?PackageID = null,
-        pub fn get(this: *@This(), lockfile: *Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
+        pub fn get(this: *@This(), lockfile: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
             return this.id orelse {
                 this.id = lockfile.getWorkspacePackageID(workspace_name_hash);
                 return this.id.?;
@@ -10168,6 +10138,7 @@ pub const PackageManager = struct {
             .package_version = resolution_label,
             // dummy value
             .node_modules = &dummy_node_modules,
+            .lockfile = manager.lockfile,
         };
 
         switch (pkg_install.installWithMethod(true, tmpdir, .copyfile, pkg.resolution.tag)) {
@@ -11116,6 +11087,7 @@ pub const PackageManager = struct {
                 } else PackageInstall.Patch.NULL,
                 .package_version = package_version,
                 .node_modules = &this.node_modules,
+                .lockfile = this.lockfile,
             };
             debug("Installing {s}@{s}", .{ name, resolution.fmt(buf, .posix) });
             const pkg_has_patch = !installer.patch.isNull();
@@ -11136,8 +11108,7 @@ pub const PackageManager = struct {
                 .folder => {
                     const folder = resolution.value.folder.slice(buf);
 
-                    // TODO: this applies to all workspace tree ids, not just root
-                    if (this.current_tree_id == 0) {
+                    if (this.lockfile.isWorkspaceTreeId(this.current_tree_id)) {
                         // Handle when a package depends on itself via file:
                         // example:
                         //   "mineflayer": "file:."
@@ -11376,8 +11347,9 @@ pub const PackageManager = struct {
                 const install_result = switch (resolution.tag) {
                     .symlink, .workspace => installer.installFromLink(this.skip_delete, destination_dir),
                     else => result: {
-                        // TODO: this applies to all workspace tree ids, not just root
-                        if (resolution.tag == .folder and this.current_tree_id != 0) {
+                        if (resolution.tag == .folder and !this.lockfile.isWorkspaceTreeId(this.current_tree_id)) {
+                            // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
+                            // and is not hoisted.
                             const dirname = std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items;
 
                             installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch

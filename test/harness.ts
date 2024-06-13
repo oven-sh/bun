@@ -893,7 +893,7 @@ export function tmpdirSync(pattern: string = "bun.test.") {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }
 
-export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
+export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string, options?: { doesntSaveLockfile?: boolean }) {
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd,
@@ -904,11 +904,15 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = await new Response(stderr).text();
+  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
   expect(err).not.toContain("panic:");
   expect(err).not.toContain("error:");
   expect(err).not.toContain("warn:");
-  expect(err).toContain("Saved lockfile");
+  if (options?.doesntSaveLockfile) {
+    expect(err).not.toContain("Saved lockfile");
+  } else {
+    expect(err).toContain("Saved lockfile");
+  }
   let out = await new Response(stdout).text();
   expect(await exited).toBe(0);
   return { out, err, exited };

@@ -320,12 +320,12 @@ pub const Tree = struct {
 
     pub fn toTree(out: External) Tree {
         return .{
-            .id = @as(Id, @bitCast(out[0..4].*)),
-            .dependency_id = @as(Id, @bitCast(out[4..8].*)),
-            .parent = @as(Id, @bitCast(out[8..12].*)),
+            .id = @bitCast(out[0..4].*),
+            .dependency_id = @bitCast(out[4..8].*),
+            .parent = @bitCast(out[8..12].*),
             .dependencies = .{
-                .off = @as(u32, @bitCast(out[12..16].*)),
-                .len = @as(u32, @bitCast(out[16..20].*)),
+                .off = @bitCast(out[12..16].*),
+                .len = @bitCast(out[16..20].*),
             },
         };
     }
@@ -575,7 +575,7 @@ pub const Tree = struct {
 
             const dependency = builder.dependencies[dep_id];
             // Do not hoist folder dependencies
-            const destination = if (resolutions[pid].tag == .folder and !builder.lockfile.isWorkspaceDependency(dep_id))
+            const destination = if (resolutions[pid].tag == .folder)
                 next.id
             else
                 try next.hoistDependency(
@@ -824,18 +824,18 @@ pub fn clean(
 }
 
 /// Is this a direct dependency of the workspace root package.json?
-pub fn isWorkspaceRootDependency(this: *Lockfile, id: DependencyID) bool {
+pub fn isWorkspaceRootDependency(this: *const Lockfile, id: DependencyID) bool {
     return this.packages.items(.dependencies)[0].contains(id);
 }
 
 /// Is this a direct dependency of the workspace the install is taking place in?
-pub fn isRootDependency(this: *Lockfile, manager: *PackageManager, id: DependencyID) bool {
+pub fn isRootDependency(this: *const Lockfile, manager: *PackageManager, id: DependencyID) bool {
     return this.packages.items(.dependencies)[manager.root_package_id.get(this, manager.workspace_name_hash)].contains(id);
 }
 
-/// Is this a direct dependency of any workspace (including workspace root)
+/// Is this a direct dependency of any workspace (including workspace root)?
 /// TODO make this faster by caching the workspace package ids
-pub fn isWorkspaceDependency(this: *Lockfile, id: DependencyID) bool {
+pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
     const packages = this.packages.slice();
     const resolutions = packages.items(.resolution);
     const dependencies_lists = packages.items(.dependencies);
@@ -845,6 +845,28 @@ pub fn isWorkspaceDependency(this: *Lockfile, id: DependencyID) bool {
     }
 
     return false;
+}
+
+/// Does this tree id belong to a workspace (including workspace root)?
+pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+}
+
+pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
+    return if (workspace_name_hash) |workspace_name_hash_| brk: {
+        const packages = this.packages.slice();
+        const name_hashes = packages.items(.name_hash);
+        const resolutions = packages.items(.resolution);
+        const metas = packages.items(.meta);
+        for (resolutions, name_hashes, metas) |res, name_hash, meta| {
+            if (res.tag == .workspace and name_hash == workspace_name_hash_) {
+                break :brk meta.id;
+            }
+        }
+
+        // should not hit this, default to root just in case
+        break :brk 0;
+    } else 0;
 }
 
 pub fn cleanWithLogger(
@@ -1040,23 +1062,6 @@ pub fn cleanWithLogger(
     }
 
     return new;
-}
-
-pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
-    return if (workspace_name_hash) |workspace_name_hash_| brk: {
-        const packages = this.packages.slice();
-        const name_hashes = packages.items(.name_hash);
-        const resolutions = packages.items(.resolution);
-        const metas = packages.items(.meta);
-        for (resolutions, name_hashes, metas) |res, name_hash, meta| {
-            if (res.tag == .workspace and name_hash == workspace_name_hash_) {
-                break :brk meta.id;
-            }
-        }
-
-        // should not hit this, default to root just in case
-        break :brk 0;
-    } else 0;
 }
 
 pub const MetaHashFormatter = struct {

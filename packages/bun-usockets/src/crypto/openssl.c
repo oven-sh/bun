@@ -1534,7 +1534,7 @@ struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
       2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size, is_connected);
-
+}
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
     size_t pathlen, int options, int socket_ext_size) {

@@ -10,7 +10,6 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
-    values: ["resolve", "reject"],
     proto: {
       setCwd: {
         fn: "setCwd",
@@ -23,10 +22,6 @@ export default [
       setQuiet: {
         fn: "setQuiet",
         length: 0,
-      },
-      setResolveAndReject: {
-        fn: "setResolveAndReject",
-        length: 2,
       },
     },
   }),

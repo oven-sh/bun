@@ -190,4 +190,35 @@ describe("fd leak", () => {
       throw new Error("RSS too high: " + process.memoryUsage.rss());
     }
   });
+
+  test("not leaking ParsedShellScript when ShellInterpreter never runs", async () => {
+    const files = tempDirWithFiles("hi", {
+      "input.txt": Array(2048).fill("a").join(""),
+    });
+    // wrapping in a function
+    // because of an optimization
+    // which will hoist the `promise` array to the top (to avoid creating it in every iteration)
+    // this causes the array to be kept alive for the scope
+    function run() {
+      for (let j = 0; j < 10; j++) {
+        const promises = [];
+        for (let i = 0; i < 10; i++) {
+          promises.push($`cat ${files}/input.txt`);
+        }
+
+        Bun.gc(true);
+      }
+    }
+    run();
+    Bun.gc(true);
+
+    const { ShellInterpreter, ParsedShellScript } = heapStats().objectTypeCounts;
+    if (ShellInterpreter > 3 || ParsedShellScript > 3) {
+      console.error("TOO many ParsedShellScript or ShellInterpreter objects", ParsedShellScript, ShellInterpreter);
+      throw new Error("TOO many ParsedShellScript or ShellInterpreter objects");
+    }
+    if (((process.memoryUsage.rss() / 1024 / 1024) | 0) > DEFAULT_THRESHOLD) {
+      throw new Error("RSS too high: " + process.memoryUsage.rss());
+    }
+  });
 });

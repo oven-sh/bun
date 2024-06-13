@@ -99,6 +99,8 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     #args: ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
+    #resolve: Function;
+    #reject: Function;
 
     constructor(args: ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
@@ -130,8 +132,8 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       this.#throws = throws;
       this.#args = args;
       this.#hasRun = false;
-
-      args.setResolveAndReject(resolve, reject);
+      this.#resolve = resolve;
+      this.#reject = reject;
 
       // this.#immediate = setImmediate(autoStartShell, this).unref();
     }
@@ -159,7 +161,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       if (!this.#hasRun) {
         this.#hasRun = true;
 
-        let interp = createShellInterpreter(this.#args);
+        let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args);
         this.#args = undefined;
         interp.run();
         interp = undefined;

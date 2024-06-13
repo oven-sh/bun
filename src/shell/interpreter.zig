@@ -622,9 +622,8 @@ pub const ParsedShellScript = struct {
         out_quiet: *bool,
         out_cwd: *?bun.String,
         out_export_env: *?EnvMap,
-        out_resolve: *JSValue,
-        out_reject: *JSValue,
     ) void {
+        _ = globalObject; // autofix
         bun.assert(this.script_ast != null);
         out_script_ast.* = this.script_ast.?;
         out_jsobjs.* = this.jsobjs;
@@ -632,16 +631,12 @@ pub const ParsedShellScript = struct {
         out_quiet.* = this.quiet;
         out_cwd.* = this.cwd;
         out_export_env.* = this.export_env;
-        out_resolve.* = JSC.Codegen.JSParsedShellScript.resolveGetCached(this.this_jsvalue) orelse @panic("Bug");
-        out_reject.* = JSC.Codegen.JSParsedShellScript.rejectGetCached(this.this_jsvalue) orelse @panic("Bug");
 
         this.arena = bun.ArenaAllocator.init(bun.default_allocator);
         this.script_ast = null;
         this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
         this.cwd = null;
         this.export_env = null;
-        JSC.Codegen.JSParsedShellScript.resolveSetCached(this.this_jsvalue, globalObject, .undefined);
-        JSC.Codegen.JSParsedShellScript.rejectSetCached(this.this_jsvalue, globalObject, .undefined);
     }
 
     pub fn finalize(
@@ -652,14 +647,10 @@ pub const ParsedShellScript = struct {
         this.arena.deinit();
         if (this.export_env) |*env| env.deinit();
         if (this.cwd) |*cwd| cwd.deref();
-    }
-
-    pub fn setResolveAndReject(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const resolve = callframe.argument(0);
-        const reject = callframe.argument(1);
-        JSC.Codegen.JSParsedShellScript.resolveSetCached(this.this_jsvalue, globalThis, resolve.withAsyncContextIfNeeded(globalThis));
-        JSC.Codegen.JSParsedShellScript.rejectSetCached(this.this_jsvalue, globalThis, reject.withAsyncContextIfNeeded(globalThis));
-        return .undefined;
+        for (this.jsobjs.items) |jsobj| {
+            jsobj.unprotect();
+        }
+        bun.destroy(this);
     }
 
     pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -800,12 +791,13 @@ pub const ParsedShellScript = struct {
 
         script_heap.* = script_ast;
 
-        const parsed_shell_script = bun.create(bun.default_allocator, ParsedShellScript, .{
+        const parsed_shell_script = bun.new(ParsedShellScript, .{
             .arena = arena,
             .script_ast = script_heap,
             .jsobjs = jsobjs,
         });
         parsed_shell_script.this_jsvalue = JSC.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
+        log("ParsedShellScript(0x{x}) create", .{@intFromPtr(parsed_shell_script)});
 
         bun.Analytics.Features.shell += 1;
         return parsed_shell_script.this_jsvalue;
@@ -1153,11 +1145,21 @@ pub const Interpreter = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         const allocator = bun.default_allocator;
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
+        const resolve = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 3 arguments, got 0", .{});
+            return .undefined;
+        };
+
+        const reject = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 3 arguments, got 0", .{});
+            return .undefined;
+        };
+
         const parsed_shell_script_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 1 arguments, got 0", .{});
+            globalThis.throw("shell: expected 3 arguments, got 0", .{});
             return .undefined;
         };
 
@@ -1172,8 +1174,6 @@ pub const Interpreter = struct {
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
-        var resolve: JSValue = .undefined;
-        var reject: JSValue = .undefined;
 
         parsed_shell_script.take(
             globalThis,
@@ -1183,8 +1183,6 @@ pub const Interpreter = struct {
             &quiet,
             &cwd,
             &export_env,
-            &resolve,
-            &reject,
         );
 
         const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {

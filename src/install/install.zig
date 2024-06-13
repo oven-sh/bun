@@ -4209,7 +4209,7 @@ pub const PackageManager = struct {
         const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
 
         // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
-        gpe.value_ptr.is_required = is_required;
+        gpe.value_ptr.is_required = gpe.value_ptr.is_required or is_required;
 
         return gpe.found_existing;
     }

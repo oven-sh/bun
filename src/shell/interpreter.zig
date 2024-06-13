@@ -602,11 +602,27 @@ pub const EnvMap = struct {
     }
 };
 
+pub const ShellArgs = struct {
+    /// This is the arena used to allocate the input shell script's AST nodes,
+    /// tokens, and a string pool used to store all strings.
+    arena: bun.ArenaAllocator,
+    /// Root ast node
+    script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
+
+    /// create new ShellArgs
+    /// the ShellArgs struct itself is allocated in the arena
+    pub fn init(allocator: Allocator) *ShellArgs {
+        var arena_ = bun.ArenaAllocator.init(allocator);
+        var shargs = arena_.allocator().create(ShellArgs) catch bun.outOfMemory();
+        shargs.arena = arena_;
+        return shargs;
+    }
+};
+
 pub const ParsedShellScript = struct {
     pub usingnamespace JSC.Codegen.JSParsedShellScript;
-    /// all the fields are allocated with this arena
-    arena: bun.ArenaAllocator,
-    script_ast: ?*ast.Script,
+    args: ?*ShellArgs = null,
+    /// allocated with arena in jsobjs
     jsobjs: std.ArrayList(JSValue),
     export_env: ?EnvMap = null,
     quiet: bool = false,
@@ -616,24 +632,20 @@ pub const ParsedShellScript = struct {
     fn take(
         this: *ParsedShellScript,
         globalObject: *JSC.JSGlobalObject,
-        out_script_ast: **ast.Script,
+        out_args: **ShellArgs,
         out_jsobjs: *std.ArrayList(JSValue),
-        out_arena: *bun.ArenaAllocator,
         out_quiet: *bool,
         out_cwd: *?bun.String,
         out_export_env: *?EnvMap,
     ) void {
         _ = globalObject; // autofix
-        bun.assert(this.script_ast != null);
-        out_script_ast.* = this.script_ast.?;
+        out_args.* = this.args.?;
         out_jsobjs.* = this.jsobjs;
-        out_arena.* = this.arena;
         out_quiet.* = this.quiet;
         out_cwd.* = this.cwd;
         out_export_env.* = this.export_env;
 
-        this.arena = bun.ArenaAllocator.init(bun.default_allocator);
-        this.script_ast = null;
+        this.args = null;
         this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
         this.cwd = null;
         this.export_env = null;
@@ -644,12 +656,12 @@ pub const ParsedShellScript = struct {
     ) callconv(.C) void {
         this.this_jsvalue = .zero;
         log("ParsedShellScript(0x{x}) finalize", .{@intFromPtr(this)});
-        this.arena.deinit();
         if (this.export_env) |*env| env.deinit();
         if (this.cwd) |*cwd| cwd.deref();
         for (this.jsobjs.items) |jsobj| {
             jsobj.unprotect();
         }
+        if (this.args) |a| a.arena.deinit();
         bun.destroy(this);
     }
 
@@ -720,7 +732,9 @@ pub const ParsedShellScript = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSValue {
         const allocator = bun.default_allocator;
-        var arena = bun.ArenaAllocator.init(allocator);
+        var _arena_ = bun.ArenaAllocator.init(allocator);
+        var shargs = _arena_.child_allocator.create(ShellArgs) catch bun.outOfMemory();
+        shargs.arena = _arena_;
 
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -734,7 +748,7 @@ pub const ParsedShellScript = struct {
         };
         var template_args = template_args_js.arrayIterator(globalThis);
 
-        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
+        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena.allocator());
         var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
@@ -745,8 +759,8 @@ pub const ParsedShellScript = struct {
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        var script = std.ArrayList(u8).init(arena.allocator());
+        var jsobjs = std.ArrayList(JSValue).init(shargs.arena.allocator());
+        var script = std.ArrayList(u8).init(shargs.arena.allocator());
         if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
             return .undefined;
@@ -757,7 +771,7 @@ pub const ParsedShellScript = struct {
         var parser: ?bun.shell.Parser = null;
         var lex_result: ?shell.LexResult = null;
         const script_ast = Interpreter.parse(
-            &arena,
+            &shargs.arena,
             script.items[0..],
             jsobjs.items[0..],
             jsstrings.items[0..],
@@ -766,7 +780,7 @@ pub const ParsedShellScript = struct {
         ) catch |err| {
             if (err == shell.ParseError.Lex) {
                 assert(lex_result != null);
-                const str = lex_result.?.combineErrors(arena.allocator());
+                const str = lex_result.?.combineErrors(shargs.arena.allocator());
                 globalThis.throwPretty("{s}", .{str});
                 return .undefined;
             }
@@ -784,16 +798,10 @@ pub const ParsedShellScript = struct {
             return .undefined;
         };
 
-        const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
-            globalThis.throwOutOfMemory();
-            return .undefined;
-        };
-
-        script_heap.* = script_ast;
+        shargs.script_ast = script_ast;
 
         const parsed_shell_script = bun.new(ParsedShellScript, .{
-            .arena = arena,
-            .script_ast = script_heap,
+            .args = shargs,
             .jsobjs = jsobjs,
         });
         parsed_shell_script.this_jsvalue = JSC.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
@@ -810,14 +818,10 @@ pub const Interpreter = struct {
     pub usingnamespace JSC.Codegen.JSShellInterpreter;
     command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
-    /// This is the arena used to allocate the input shell script's AST nodes,
-    /// tokens, and a string pool used to store all strings.
-    arena: bun.ArenaAllocator,
     /// This is the allocator used to allocate interpreter state
     allocator: Allocator,
 
-    /// Root ast node
-    script: *ast.Script,
+    args: *ShellArgs,
 
     /// JS objects used as input for the shell script
     /// This should be allocated using the arena
@@ -1168,8 +1172,7 @@ pub const Interpreter = struct {
             return .undefined;
         };
 
-        var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(allocator);
-        var script_heap: *ast.Script = undefined;
+        var shargs: *ShellArgs = undefined;
         var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
         var quiet: bool = false;
         var cwd: ?bun.String = null;
@@ -1177,9 +1180,8 @@ pub const Interpreter = struct {
 
         parsed_shell_script.take(
             globalThis,
-            &script_heap,
+            &shargs,
             &jsobjs,
-            &arena,
             &quiet,
             &cwd,
             &export_env,
@@ -1194,15 +1196,17 @@ pub const Interpreter = struct {
             undefined, // command_ctx, unused when event_loop is .js
             .{ .js = globalThis.bunVM().event_loop },
             allocator,
-            &arena,
-            script_heap,
+            shargs,
             jsobjs.items[0..],
             export_env,
             if (cwd_string) |c| c.slice() else null,
         )) {
             .result => |i| i,
             .err => |*e| {
-                arena.deinit();
+                shargs.arena.deinit();
+                jsobjs.deinit();
+                if (export_env) |*ee| ee.deinit();
+                if (cwd) |*cc| cc.deref();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
                 return .undefined;
             },
@@ -1269,8 +1273,7 @@ pub const Interpreter = struct {
         ctx: bun.CLI.Command.Context,
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
-        arena: *bun.ArenaAllocator,
-        script: *ast.Script,
+        shargs: *ShellArgs,
         jsobjs: []JSValue,
         export_env_: ?EnvMap,
         cwd_: ?[]const u8,
@@ -1301,7 +1304,7 @@ pub const Interpreter = struct {
         };
 
         var pathbuf: bun.PathBuffer = undefined;
-        const cwd = if (cwd_) |c| brk: {
+        const cwd: [:0]const u8 = if (cwd_) |c| brk: {
             @memcpy(pathbuf[0..c.len], c);
             pathbuf[c.len] = 0;
             break :brk pathbuf[0..c.len :0];
@@ -1346,11 +1349,9 @@ pub const Interpreter = struct {
             .command_ctx = ctx,
             .event_loop = event_loop,
 
-            .script = script,
+            .args = shargs,
             .allocator = allocator,
             .jsobjs = jsobjs,
-
-            .arena = arena.*,
 
             .root_shell = ShellState{
                 .shell_env = EnvMap.init(allocator),
@@ -1382,19 +1383,19 @@ pub const Interpreter = struct {
     }
 
     pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        var shargs = ShellArgs.init(bun.default_allocator);
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
-            break :src try file.reader().readAllAlloc(arena.allocator(), std.math.maxInt(u32));
+            break :src try file.reader().readAllAlloc(shargs.arena.allocator(), std.math.maxInt(u32));
         };
-        defer arena.deinit();
+        defer shargs.arena.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
         const script = ThisInterpreter.parse(
-            &arena,
+            &shargs.arena,
             src,
             jsobjs,
             &[_]bun.String{},
@@ -1403,7 +1404,7 @@ pub const Interpreter = struct {
         ) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
                 assert(out_lex_result != null);
-                const str = out_lex_result.?.combineErrors(arena.allocator());
+                const str = out_lex_result.?.combineErrors(shargs.arena.allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), str });
                 bun.Global.exit(1);
             }
@@ -1416,14 +1417,12 @@ pub const Interpreter = struct {
 
             return err;
         };
-        const script_heap = try arena.allocator().create(ast.Script);
-        script_heap.* = script;
+        shargs.script_ast = script;
         var interp = switch (ThisInterpreter.init(
             ctx,
             .{ .mini = mini },
             bun.default_allocator,
-            &arena,
-            script_heap,
+            shargs,
             jsobjs,
             null,
             null,
@@ -1466,16 +1465,16 @@ pub const Interpreter = struct {
 
     pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
-        defer arena.deinit();
+        var shargs = ShellArgs.init(bun.default_allocator);
+        defer shargs.arena.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
-        const script = ThisInterpreter.parse(&arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
+        const script = ThisInterpreter.parse(&shargs.arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
                 assert(out_lex_result != null);
-                const str = out_lex_result.?.combineErrors(arena.allocator());
+                const str = out_lex_result.?.combineErrors(shargs.arena.allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ path_for_errors, str });
                 bun.Global.exit(1);
             }
@@ -1488,14 +1487,12 @@ pub const Interpreter = struct {
 
             return err;
         };
-        const script_heap = try arena.allocator().create(ast.Script);
-        script_heap.* = script;
+        shargs.script_ast = script;
         var interp: *ThisInterpreter = switch (ThisInterpreter.init(
             ctx,
             .{ .mini = mini },
             bun.default_allocator,
-            &arena,
-            script_heap,
+            shargs,
             jsobjs,
             null,
             null,
@@ -1588,7 +1585,7 @@ pub const Interpreter = struct {
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
-        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
+        var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
 
@@ -1605,7 +1602,7 @@ pub const Interpreter = struct {
             return .undefined;
         }
         incrPendingActivityFlag(&this.has_pending_activity);
-        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
+        var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
         return .undefined;

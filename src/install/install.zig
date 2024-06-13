@@ -360,11 +360,13 @@ const NetworkTask = struct {
 
             if (tmp.tag == .Dead) {
                 if (!is_optional) {
-                    Output.errGeneric(
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
                         "Failed to join registry {} and package {} URLs",
                         .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                    );
-                    Global.crash();
+                    ) catch bun.outOfMemory();
                 } else {
                     this.package_manager.log.addWarningFmt(
                         null,
@@ -374,15 +376,18 @@ const NetworkTask = struct {
                         .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                     ) catch bun.outOfMemory();
                 }
+                return error.InvalidURL;
             }
 
             if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
                 if (!is_optional) {
-                    Output.errGeneric(
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
                         "Registry URL must be http:// or https://\nReceived: \"{}\"",
                         .{tmp},
-                    );
-                    Global.crash();
+                    ) catch bun.outOfMemory();
                 } else {
                     this.package_manager.log.addWarningFmt(
                         null,
@@ -392,6 +397,7 @@ const NetworkTask = struct {
                         .{tmp},
                     ) catch bun.outOfMemory();
                 }
+                return error.InvalidURL;
             }
 
             // This actually duplicates the string! So we defer deref the WTF managed one above.

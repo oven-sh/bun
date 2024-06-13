@@ -4,11 +4,10 @@ const http = require("node:http");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 function request(input, options, cb) {
-  const globalAgent = Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 });
   if (input && typeof input === "object" && !(input instanceof URL)) {
-    input._defaultAgent = globalAgent;
+    input._defaultAgent = https.globalAgent;
   } else if (typeof options === "object") {
-    options._defaultAgent = globalAgent;
+    options._defaultAgent = https.globalAgent;
   }
 
   return http.request(input, options, cb);
@@ -33,9 +32,12 @@ Agent.prototype = {};
 ObjectSetPrototypeOf(Agent.prototype, http.Agent.prototype);
 Agent.prototype.createConnection = http.createConnection;
 
-export default {
-  ...http,
+var https = {
+  Agent,
+  globalAgent: new Agent({ keepAlive: true, scheduling: "lifo", timeout: 5000 }),
+  Server: http.Server,
+  createServer: http.createServer,
   get,
   request,
-  Agent,
 };
+export default https;

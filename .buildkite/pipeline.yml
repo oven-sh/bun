@@ -69,11 +69,6 @@ steps:
       - key: "bun-darwin-aarch64-test"
         label: ":darwin: aarch64 - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -156,11 +151,6 @@ steps:
       - key: "bun-darwin-x64-test"
         label: ":darwin: x64 - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -331,11 +321,6 @@ steps:
       - key: "bun-linux-aarch64-test"
         label: ":linux: aarch64 - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -418,11 +403,6 @@ steps:
       - key: "bun-linux-x64-test"
         label: ":linux: x64 - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -505,11 +485,6 @@ steps:
       - key: "bun-linux-x64-baseline-test"
         label: ":linux: x64-baseline - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -596,11 +571,6 @@ steps:
       - key: "bun-windows-x64-test"
         label: ":windows: x64 - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -691,11 +661,6 @@ steps:
       - key: "bun-windows-x64-baseline-test"
         label: ":windows: x64-baseline - bun-test-%n"
         parallelism: 5
-        plugins:
-          - "sparse-checkout#v1.0.0":
-              paths:
-                - "package.json"
-                - "test/**/*"
         soft_fail:
           - exit_status: 2
         depends_on:

@@ -318,10 +318,12 @@ async function spawnSafe({
 async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   const path = addPath(dirname(execPath), process.env.PATH);
   const tmpdirPath = mkdtempSync(join(tmpPath, "buntmp-"));
+  const { username } = userInfo();
   const bunEnv = {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
+    USER: username,
     HOME: homedir(),
     FORCE_COLOR: "1",
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",

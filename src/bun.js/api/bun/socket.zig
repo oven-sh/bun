@@ -364,6 +364,7 @@ pub const SocketConfig = struct {
     exclusive: bool = false,
 
     pub fn fromJS(
+        vm: *JSC.VirtualMachine,
         opts: JSC.JSValue,
         globalObject: *JSC.JSGlobalObject,
         exception: JSC.C.ExceptionRef,
@@ -381,7 +382,7 @@ pub const SocketConfig = struct {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
                 }
             } else {
-                if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
+                if (JSC.API.ServerConfig.SSLConfig.inJS(vm, globalObject, tls, exception)) |ssl_config| {
                     ssl = ssl_config;
                 } else if (exception.* != null) {
                     return null;
@@ -616,7 +617,9 @@ pub const Listener = struct {
             return .zero;
         }
 
-        var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
+        const vm = JSC.VirtualMachine.get();
+
+        var socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
             return .zero;
         };
 
@@ -635,7 +638,7 @@ pub const Listener = struct {
         const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl);
 
         defer if (ssl != null) ssl.?.deinit();
-        globalObject.bunVM().eventLoop().ensureWaker();
+        vm.eventLoop().ensureWaker();
 
         const socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
@@ -858,7 +861,7 @@ pub const Listener = struct {
         var exception_ref = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_ref;
 
-        if (JSC.API.ServerConfig.SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+        if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), global, tls, exception)) |ssl_config| {
             // to keep nodejs compatibility, we allow to replace the server name
             uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
             uws.us_bun_socket_context_add_server_name(1, this.socket_context, server_name, ssl_config.asUSockets(), null);
@@ -994,8 +997,9 @@ pub const Listener = struct {
             exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
             return .zero;
         }
+        const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
+        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
             return .zero;
         };
 
@@ -1012,7 +1016,7 @@ pub const Listener = struct {
 
         const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
 
-        globalObject.bunVM().eventLoop().ensureWaker();
+        vm.eventLoop().ensureWaker();
 
         const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts) orelse {
             const err = JSC.SystemError{
@@ -2994,7 +2998,7 @@ fn NewSocket(comptime ssl: bool) type {
                         ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
                     }
                 } else {
-                    if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, &exception)) |ssl_config| {
+                    if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), globalObject, tls, &exception)) |ssl_config| {
                         ssl_opts = ssl_config;
                     } else if (exception != null) {
                         return .zero;

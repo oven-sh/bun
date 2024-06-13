@@ -1843,6 +1843,7 @@ pub const Fetch = struct {
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
         bun.Analytics.Features.fetch += 1;
+        const vm = JSC.VirtualMachine.get();
 
         var exception_val = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_val;
@@ -1868,9 +1869,8 @@ pub const Fetch = struct {
 
         var headers: ?Headers = null;
         var method = Method.GET;
-        var script_ctx = globalThis.bunVM();
 
-        var args = JSC.Node.ArgumentsSlice.init(script_ctx, arguments.slice());
+        var args = JSC.Node.ArgumentsSlice.init(vm, arguments.slice());
 
         var url = ZigURL{};
         var first_arg = args.nextEat().?;
@@ -1888,7 +1888,11 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var disable_decompression = false;
-        var verbose = script_ctx.log.level.atLeast(.debug);
+        var verbose = vm.log.level.atLeast(.debug);
+        if (!verbose) {
+            verbose = vm.getVerboseFetch();
+        }
+
         var proxy: ?ZigURL = null;
         var redirect_type: FetchRedirect = FetchRedirect.follow;
         var signal: ?*JSC.WebCore.AbortSignal = null;
@@ -1905,7 +1909,7 @@ pub const Fetch = struct {
         var url_type = URLType.remote;
 
         var ssl_config: ?*SSLConfig = null;
-        var reject_unauthorized = script_ctx.bundler.env.getTLSRejectUnauthorized();
+        var reject_unauthorized = vm.getTLSRejectUnauthorized();
         var check_server_identity: JSValue = .zero;
 
         defer {
@@ -2085,7 +2089,7 @@ pub const Fetch = struct {
 
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
-                                if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
+                                if (SSLConfig.inJS(vm, globalThis, tls, exception)) |config| {
                                     if (ssl_config) |existing_conf| {
                                         existing_conf.deinit();
                                         bun.default_allocator.destroy(existing_conf);
@@ -2381,7 +2385,7 @@ pub const Fetch = struct {
 
                         if (options.get(ctx, "tls")) |tls| {
                             if (!tls.isEmptyOrUndefinedOrNull() and tls.isObject()) {
-                                if (SSLConfig.inJS(globalThis, tls, exception)) |config| {
+                                if (SSLConfig.inJS(vm, globalThis, tls, exception)) |config| {
                                     ssl_config = bun.default_allocator.create(SSLConfig) catch bun.outOfMemory();
                                     ssl_config.?.* = config;
                                 }

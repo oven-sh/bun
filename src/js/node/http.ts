@@ -1481,27 +1481,34 @@ class ClientRequest extends OutgoingMessage {
 
     let url: string;
     let proxy: string | undefined;
-    if (this.#path.startsWith("http://") || this.#path.startsWith("https://")) {
-      url = this.#path;
-      proxy = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
+    const protocol = this.#protocol;
+    const path = this.#path;
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      url = path;
+      proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
     } else {
-      url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
+      url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
     }
-    const tls =
-      this.#protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
+    const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
       const fetchOptions: any = {
         method,
         headers: this.getHeaders(),
-        body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
         redirect: "manual",
         signal: this[kAbortController].signal,
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
-        tls: this.#tls,
       };
+
+      if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+        fetchOptions.body = body;
+      }
+
+      if (tls) {
+        fetchOptions.tls = tls;
+      }
 
       if (!!$debug) {
         fetchOptions.verbose = true;

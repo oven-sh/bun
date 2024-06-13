@@ -1,4 +1,6 @@
-After having prepared a package for patching with [`bun patch`](/docs/cli/patch), you can install with `bun patch-commit <temp-directory_path>`.
+An alias for `bun patch --commit` to maintain compatibility with pnpm.
+
+You must prepare the package for patching with [`bun patch <pkg>`](/docs/cli/patch) first.
 
 ### `--patches-dir`
 

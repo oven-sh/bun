@@ -3295,6 +3295,7 @@ pub const Blob = struct {
     // TODO: Move this to a separate `File` object or BunFile
     pub fn getName(
         this: *Blob,
+        _: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.name.tag != .Dead) return this.name.toJS(globalThis);
@@ -3310,6 +3311,7 @@ pub const Blob = struct {
 
     pub fn setName(
         this: *Blob,
+        jsThis: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
         value: JSValue,
     ) callconv(.C) bool {
@@ -3317,13 +3319,14 @@ pub const Blob = struct {
         if (value.isEmptyOrUndefinedOrNull()) {
             this.name.deref();
             this.name = bun.String.dead;
+            Blob.nameSetCached(jsThis, globalThis, value);
             return true;
         }
         if (value.isString()) {
             this.name.deref();
             this.name = bun.String.tryFromJS(value, globalThis) orelse return false;
             this.name.ref();
-
+            Blob.nameSetCached(jsThis, globalThis, value);
             return true;
         }
         return false;

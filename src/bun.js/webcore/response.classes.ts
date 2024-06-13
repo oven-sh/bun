@@ -152,6 +152,8 @@ export default [
       // TODO: Move this to a separate `File` object or BunFile
       // This is *not* spec-compliant.
       name: {
+        this: true,
+        cache: true,
         getter: "getName",
         setter: "setName",
       },

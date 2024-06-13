@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import crypto from "crypto";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { tls, bunEnv, bunExe, gc } from "harness";
@@ -681,9 +682,9 @@ describe("websocket in subprocess", () => {
     const { promise, resolve, reject } = Promise.withResolvers();
     const ws = new WebSocket("https://echo.websocket.org/");
 
-    const payload = crypto.randomBytes(1024 * 64);
-    const iterations = 3;
-    const expected = 1024 * 64 * iterations;
+    const payload = crypto.randomBytes(1024 * 16);
+    const iterations = 10;
+    const expected = payload.byteLength * iterations;
 
     let total_received = 0;
     const timeout = setTimeout(() => {

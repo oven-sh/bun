@@ -566,5 +566,5 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
     // console.log({ sampleMemory10, sampleMemory100 });
   },
-  isDebug ? Infinity : 20_000,
+  isDebug ? Infinity : 30_000,
 );

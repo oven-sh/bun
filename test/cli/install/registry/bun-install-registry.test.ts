@@ -11,14 +11,15 @@ import {
   toMatchNodeModulesAt,
   runBunInstall,
   runBunUpdate,
+  runFailingBunInstall,
 } from "harness";
 import { join, sep } from "path";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
-import { install_test_helpers } from "bun:internal-for-testing";
-const { parseLockfile } = install_test_helpers;
+// import { install_test_helpers } from "bun:internal-for-testing";
+// const { parseLockfile } = install_test_helpers;
 
 expect.extend({
   toBeValidBin,
@@ -66,32 +67,37 @@ registry = "http://localhost:${port}/"
   );
 });
 
-test("exit code should be non-zero on tarball download failure and install should finish", async () => {
-  await write(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "uses-what-bin-slow": "1.0.0",
-        "missing-tarball": "1.0.0",
-      },
-      trustedDependencies: ["uses-what-bin-slow"],
-    }),
-  );
+for (const optional of [true, false]) {
+  test.only(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        [optional ? "optionalDependencies" : "dependencies"]: {
+          "missing-tarball": "1.0.0",
+          "uses-what-bin": "1.0.0",
+        },
+        "trustedDependencies": ["uses-what-bin"],
+      }),
+    );
 
-  var { stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "ignore",
-    stderr: "pipe",
-    env,
+    const { exited, err } = await runBunInstall(env, packageDir, {
+      [optional ? "allowWarnings" : "allowErrors"]: true,
+      expectedExitCode: optional ? 0 : 1,
+    });
+    expect(err).toContain(
+      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 404`,
+    );
+    expect(await exited).toBe(optional ? 0 : 1);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "uses-what-bin",
+      "what-bin",
+    ]);
+    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
   });
-
-  const err = await Bun.readableStreamToText(stderr);
-  expect(err).toContain(`error: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 404`);
-  expect(await exited).toBe(1);
-  expect(await exists(join(packageDir, "node_modules", "uses-what-bin-slow", "what-bin.txt"))).toBeTrue();
-});
+}
 
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";

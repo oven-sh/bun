@@ -21,7 +21,7 @@ it("successfully traverses pnpm-generated install directory", async () => {
   //
 
   ({ exited } = Bun.spawn({
-    cmd: ["pnpm", "install"],
+    cmd: [bunExe(), "x", "pnpm@9", "install"],
     cwd: path.join(package_dir, "my-vite-app"),
     stdio: ["ignore", "inherit", "inherit"],
     env: bunEnv,

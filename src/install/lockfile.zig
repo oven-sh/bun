@@ -4450,7 +4450,7 @@ pub const Package = extern struct {
                 };
 
                 var walker: GlobWalker = .{};
-                var cwd = bun.path.dirname(source.path.textZ(), .auto);
+                var cwd = bun.path.dirname(source.path.text, .auto);
                 cwd = if (bun.strings.eql(cwd, "")) bun.fs.FileSystem.instance.top_level_dir else cwd;
                 if ((try walker.initWithCwd(&arena, glob_pattern, cwd, false, false, false, false, true)).asErr()) |e| {
                     log.addErrorFmt(

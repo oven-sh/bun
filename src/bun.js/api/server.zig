@@ -3515,7 +3515,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         loop.enter();
                         defer loop.exit();
 
-                        old.resolve(&body.value, this.server.globalThis);
+                        old.resolve(&body.value, this.server.globalThis, null);
                     }
                     return;
                 }
@@ -3567,7 +3567,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     var old = body.value;
                     old.Locked.onReceiveValue = null;
                     var new_body = .{ .Null = {} };
-                    old.resolve(&new_body, this.server.globalThis);
+                    old.resolve(&new_body, this.server.globalThis, null);
                     body.value = new_body;
                 }
             } else {
@@ -5788,6 +5788,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
                             var ip = bun.String.createUTF8(slice);
+                            defer ip.deref();
                             return JSSocketAddress__create(
                                 this.globalThis,
                                 ip.toJS(this.globalThis),
@@ -5834,6 +5835,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
+            defer value.deref();
             return value.toJSDOMURL(globalThis);
         }
 

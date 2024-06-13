@@ -5458,7 +5458,9 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        return bun.String.createUTF8(mutable_string.toOwnedSlice()).toJS(globalThis);
+        const str = bun.String.createUTF8(mutable_string.toOwnedSlice());
+        defer str.deref();
+        return str.toJS(globalThis);
     }
 
     inline fn printValueCatched(globalThis: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {

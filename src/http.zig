@@ -335,6 +335,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
             hostname_buf: [MAX_KEEPALIVE_HOSTNAME]u8 = undefined,
             hostname_len: u8 = 0,
             port: u16 = 0,
+            /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
+            did_have_handshaking_error_while_reject_unauthorized_is_false: bool = false,
         };
 
         pub fn markSocketAsDead(socket: HTTPSocket) void {
@@ -435,7 +437,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
-        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
+        ///
+        /// If `did_have_handshaking_error_while_reject_unauthorized_is_false`
+        /// is set, then we can only reuse the socket for HTTP Keep Alive if
+        /// `reject_unauthorized` is set to `false`.
+        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16) void {
             // log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
@@ -454,6 +460,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.setTimeoutMinutes(5);
 
                     pending.http_socket = socket;
+                    pending.did_have_handshaking_error_while_reject_unauthorized_is_false = did_have_handshaking_error_while_reject_unauthorized_is_false;
                     @memcpy(pending.hostname_buf[0..hostname.len], hostname);
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
@@ -508,10 +515,15 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     }
                     // no handshake_error at this point
                     if (authorized) {
+                        client.did_have_handshaking_error = handshake_error.error_no != 0;
+
                         // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                         if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
+                            client.did_have_handshaking_error = true;
+
                             return;
                         }
+
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
@@ -647,7 +659,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             }
         };
 
-        fn existingSocket(this: *@This(), hostname: []const u8, port: u16) ?HTTPSocket {
+        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16) ?HTTPSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
@@ -656,6 +668,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
                 if (socket.port != port) {
+                    continue;
+                }
+
+                if (socket.did_have_handshaking_error_while_reject_unauthorized_is_false and reject_unauthorized) {
                     continue;
                 }
 
@@ -702,7 +718,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url.hostname = hostname;
 
             if (client.isKeepAlivePossible()) {
-                if (this.existingSocket(hostname, port)) |sock| {
+                if (this.existingSocket(client.reject_unauthorized, hostname, port)) |sock| {
                     sock.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
@@ -1550,6 +1566,7 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
+did_have_handshaking_error: bool = false,
 tls_props: ?*SSLConfig = null,
 result_callback: HTTPClientResult.Callback = undefined,
 
@@ -2227,6 +2244,7 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
             socket,
+            this.did_have_handshaking_error and !this.reject_unauthorized,
             this.connected_url.hostname,
             this.connected_url.getPortAuto(),
         );
@@ -2327,15 +2345,17 @@ pub const HTTPResponseMetadata = struct {
     }
 };
 
-fn printRequest(request: picohttp.Request) void {
+fn printRequest(request: picohttp.Request, url: string) void {
     @setCold(true);
-    Output.prettyErrorln("Request: {}", .{request});
+    var request_ = request;
+    request_.path = url;
+    Output.prettyErrorln("{}", .{request_});
     Output.flush();
 }
 
 fn printResponse(response: picohttp.Response) void {
     @setCold(true);
-    Output.prettyErrorln("Response: {}", .{response});
+    Output.prettyErrorln("{}", .{response});
     Output.flush();
 }
 
@@ -2425,7 +2445,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             const has_sent_headers = this.state.request_sent_len >= headers_len;
 
             if (has_sent_headers and this.verbose) {
-                printRequest(request);
+                printRequest(request, this.url.href);
             }
 
             if (has_sent_headers and this.state.request_body.len > 0) {
@@ -3041,6 +3061,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(
                     socket,
+                    this.did_have_handshaking_error and !this.reject_unauthorized,
                     this.connected_url.hostname,
                     this.connected_url.getPortAuto(),
                 );

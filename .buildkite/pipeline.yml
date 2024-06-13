@@ -68,14 +68,13 @@ steps:
           - "./scripts/buildkite-link-bun.sh --tag darwin-aarch64 --fast"
       - key: "bun-darwin-aarch64-test"
         label: ":darwin: aarch64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         depends_on:
           - "bun-darwin-aarch64"
         agents:
-          os: "darwin"
-          arch: "aarch64"
+          queue: "darwin-aarch64-buildkite"
         artifact_paths:
           - "logs/**/*.log"
           - "summary.md"
@@ -321,14 +320,13 @@ steps:
           - "./scripts/buildkite-link-bun.sh --tag linux-aarch64 --fast"
       - key: "bun-linux-aarch64-test"
         label: ":linux: aarch64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         depends_on:
           - "bun-linux-aarch64"
         agents:
-          os: "linux"
-          arch: "aarch64"
+          queue: "linux-aarch64-buildkite"
         artifact_paths:
           - "logs/**/*.log"
           - "summary.md"
@@ -404,14 +402,13 @@ steps:
           - "./scripts/buildkite-link-bun.sh --tag linux-x64 --fast"
       - key: "bun-linux-x64-test"
         label: ":linux: x64 - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         depends_on:
           - "bun-linux-x64"
         agents:
-          os: "linux"
-          arch: "x64"
+          queue: "linux-x64-buildkite"
         artifact_paths:
           - "logs/**/*.log"
           - "summary.md"
@@ -487,15 +484,13 @@ steps:
           - "./scripts/buildkite-link-bun.sh --tag linux-x64-baseline --baseline --fast"
       - key: "bun-linux-x64-baseline-test"
         label: ":linux: x64-baseline - bun-test-%n"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 2
         depends_on:
           - "bun-linux-x64-baseline"
         agents:
-          queue: "build"
-          os: "linux"
-          arch: "x64"
+          queue: "linux-x64-buildkite"
         artifact_paths:
           - "logs/**/*.log"
           - "summary.md"

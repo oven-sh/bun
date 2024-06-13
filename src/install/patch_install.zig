@@ -251,7 +251,7 @@ pub const PatchTask = struct {
     // 5. Add bun tag for patch hash
     // 6. rename() newly patched pkg to cache
     pub fn apply(this: *PatchTask) !void {
-        var log = this.callback.apply.logger;
+        var log = &this.callback.apply.logger;
         debug("apply patch task", .{});
         bun.assert(this.callback == .apply);
 

@@ -5998,34 +5998,36 @@ pub const PackageManager = struct {
             defer ptask.deinit();
             try ptask.runFromMainThread(manager, log_level);
             if (ptask.callback == .apply) {
-                if (comptime @TypeOf(callbacks.onExtract) != void) {
-                    if (ptask.callback.apply.task_id) |task_id| {
-                        _ = task_id; // autofix
+                if (ptask.callback.apply.logger.errors == 0) {
+                    if (comptime @TypeOf(callbacks.onExtract) != void) {
+                        if (ptask.callback.apply.task_id) |task_id| {
+                            _ = task_id; // autofix
 
-                        // const name = manager.lockfile.packages.items(.name)[ptask.callback.apply.pkg_id].slice(manager.lockfile.buffers.string_bytes.items);
-                        // if (!callbacks.onPatch(extract_ctx, name, task_id, log_level)) {
-                        //     if (comptime Environment.allow_assert) {
-                        //         Output.panic("Ran callback to install enqueued packages, but there was no task associated with it.", .{});
-                        //     }
-                        // }
-                    } else if (ExtractCompletionContext == *PackageInstaller) {
-                        if (ptask.callback.apply.install_context) |*ctx| {
-                            var installer: *PackageInstaller = extract_ctx;
-                            const path = ctx.path;
-                            ctx.path = std.ArrayList(u8).init(bun.default_allocator);
-                            installer.node_modules.path = path;
-                            installer.current_tree_id = ctx.tree_id;
-                            const pkg_id = ptask.callback.apply.pkg_id;
+                            // const name = manager.lockfile.packages.items(.name)[ptask.callback.apply.pkg_id].slice(manager.lockfile.buffers.string_bytes.items);
+                            // if (!callbacks.onPatch(extract_ctx, name, task_id, log_level)) {
+                            //     if (comptime Environment.allow_assert) {
+                            //         Output.panic("Ran callback to install enqueued packages, but there was no task associated with it.", .{});
+                            //     }
+                            // }
+                        } else if (ExtractCompletionContext == *PackageInstaller) {
+                            if (ptask.callback.apply.install_context) |*ctx| {
+                                var installer: *PackageInstaller = extract_ctx;
+                                const path = ctx.path;
+                                ctx.path = std.ArrayList(u8).init(bun.default_allocator);
+                                installer.node_modules.path = path;
+                                installer.current_tree_id = ctx.tree_id;
+                                const pkg_id = ptask.callback.apply.pkg_id;
 
-                            installer.installPackageWithNameAndResolution(
-                                ctx.dependency_id,
-                                pkg_id,
-                                log_level,
-                                ptask.callback.apply.pkgname,
-                                ptask.callback.apply.resolution,
-                                false,
-                                false,
-                            );
+                                installer.installPackageWithNameAndResolution(
+                                    ctx.dependency_id,
+                                    pkg_id,
+                                    log_level,
+                                    ptask.callback.apply.pkgname,
+                                    ptask.callback.apply.resolution,
+                                    false,
+                                    false,
+                                );
+                            }
                         }
                     }
                 }

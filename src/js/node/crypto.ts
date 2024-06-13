@@ -20,7 +20,11 @@ const {
   verify: nativeVerify,
 } = $cpp("KeyObject.cpp", "createNodeCryptoBinding");
 
-const _randomInt = $zig("node_crypto_binding.zig", "randomInt");
+const {
+  randomInt: _randomInt,
+  pbkdf2: pbkdf2_,
+  pbkdf2Sync: pbkdf2Sync_,
+} = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 function randomInt(min, max, callback) {
   if (max == null) {
@@ -1611,258 +1615,22 @@ var require_algos = __commonJS({
     module.exports = require_algorithms();
   },
 });
+function pbkdf2(password, salt, iterations, keylen, digest, callback) {
+  const promise = pbkdf2_(password, salt, iterations, keylen, digest);
+  if (callback) {
+    promise.then(
+      result => callback(null, result),
+      err => callback(err),
+    );
+    return;
+  }
 
-// node_modules/pbkdf2/lib/precondition.js
-var require_precondition = __commonJS({
-  "node_modules/pbkdf2/lib/precondition.js"(exports, module) {
-    var MAX_ALLOC = Math.pow(2, 30) - 1;
-    module.exports = function (iterations, keylen) {
-      if (typeof iterations != "number") throw new TypeError("Iterations not a number");
-      if (iterations < 0) throw new TypeError("Bad iterations");
-      if (typeof keylen != "number") throw new TypeError("Key length not a number");
-      if (keylen < 0 || keylen > MAX_ALLOC || keylen !== keylen) throw new TypeError("Bad key length");
-    };
-  },
-});
+  promise.then(() => {});
+}
 
-// node_modules/pbkdf2/lib/default-encoding.js
-var require_default_encoding = __commonJS({
-  "node_modules/pbkdf2/lib/default-encoding.js"(exports, module) {
-    var defaultEncoding;
-    global.process && global.process.browser
-      ? (defaultEncoding = "utf-8")
-      : global.process && global.process.version
-        ? ((pVersionMajor = parseInt(process.version.split(".")[0].slice(1), 10)),
-          (defaultEncoding = pVersionMajor >= 6 ? "utf-8" : "binary"))
-        : (defaultEncoding = "utf-8");
-    var pVersionMajor;
-    module.exports = defaultEncoding;
-  },
-});
-
-// node_modules/pbkdf2/lib/to-buffer.js
-var require_to_buffer = __commonJS({
-  "node_modules/pbkdf2/lib/to-buffer.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer;
-    module.exports = function (thing, encoding, name) {
-      if (Buffer2.isBuffer(thing)) return thing;
-      if (typeof thing == "string") return Buffer2.from(thing, encoding);
-      if (ArrayBuffer.isView(thing)) return Buffer2.from(thing.buffer);
-      throw new TypeError(name + " must be a string, a Buffer, a typed array or a DataView");
-    };
-  },
-});
-
-// node_modules/pbkdf2/lib/sync-browser.js
-var require_sync_browser = __commonJS({
-  "node_modules/pbkdf2/lib/sync-browser.js"(exports, module) {
-    var md5 = require_md52(),
-      RIPEMD160 = require_ripemd160(),
-      sha = require_sha2(),
-      Buffer2 = require_safe_buffer().Buffer,
-      checkParameters = require_precondition(),
-      defaultEncoding = require_default_encoding(),
-      toBuffer = require_to_buffer(),
-      ZEROS = Buffer2.alloc(128),
-      sizes = {
-        md5: 16,
-        sha1: 20,
-        sha224: 28,
-        sha256: 32,
-        sha384: 48,
-        sha512: 64,
-        rmd160: 20,
-        ripemd160: 20,
-      };
-    function Hmac(alg, key, saltLen) {
-      key = exportIfKeyObject(key);
-      var hash = getDigest(alg),
-        blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
-      key.length > blocksize
-        ? (key = hash(key))
-        : key.length < blocksize && (key = Buffer2.concat([key, ZEROS], blocksize));
-      for (
-        var ipad = Buffer2.allocUnsafe(blocksize + sizes[alg]),
-          opad = Buffer2.allocUnsafe(blocksize + sizes[alg]),
-          i = 0;
-        i < blocksize;
-        i++
-      )
-        (ipad[i] = key[i] ^ 54), (opad[i] = key[i] ^ 92);
-      var ipad1 = Buffer2.allocUnsafe(blocksize + saltLen + 4);
-      ipad.copy(ipad1, 0, 0, blocksize),
-        (this.ipad1 = ipad1),
-        (this.ipad2 = ipad),
-        (this.opad = opad),
-        (this.alg = alg),
-        (this.blocksize = blocksize),
-        (this.hash = hash),
-        (this.size = sizes[alg]);
-    }
-    Hmac.prototype = {};
-    Hmac.prototype.run = function (data, ipad) {
-      data.copy(ipad, this.blocksize);
-      var h = this.hash(ipad);
-      return h.copy(this.opad, this.blocksize), this.hash(this.opad);
-    };
-    function getDigest(alg) {
-      function shaFunc(data) {
-        return sha(alg).update(data).digest();
-      }
-      function rmd160Func(data) {
-        return new RIPEMD160().update(data).digest();
-      }
-      return alg === "rmd160" || alg === "ripemd160" ? rmd160Func : alg === "md5" ? md5 : shaFunc;
-    }
-    function pbkdf2(password, salt, iterations, keylen, digest) {
-      checkParameters(iterations, keylen),
-        (password = toBuffer(password, defaultEncoding, "Password")),
-        (salt = toBuffer(salt, defaultEncoding, "Salt")),
-        (digest = digest || "sha1");
-      var hmac = new Hmac(digest, password, salt.length),
-        DK = Buffer2.allocUnsafe(keylen),
-        block1 = Buffer2.allocUnsafe(salt.length + 4);
-      salt.copy(block1, 0, 0, salt.length);
-      for (var destPos = 0, hLen = sizes[digest], l = Math.ceil(keylen / hLen), i = 1; i <= l; i++) {
-        block1.writeUInt32BE(i, salt.length);
-        for (var T = hmac.run(block1, hmac.ipad1), U = T, j = 1; j < iterations; j++) {
-          U = hmac.run(U, hmac.ipad2);
-          for (var k = 0; k < hLen; k++) T[k] ^= U[k];
-        }
-        T.copy(DK, destPos), (destPos += hLen);
-      }
-      return DK;
-    }
-    module.exports = pbkdf2;
-  },
-});
-
-// node_modules/pbkdf2/lib/async.js
-var require_async = __commonJS({
-  "node_modules/pbkdf2/lib/async.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      checkParameters = require_precondition(),
-      defaultEncoding = require_default_encoding(),
-      sync = require_sync_browser(),
-      toBuffer = require_to_buffer(),
-      ZERO_BUF,
-      subtle = globalCrypto.subtle,
-      toBrowser = {
-        sha: "SHA-1",
-        "sha-1": "SHA-1",
-        sha1: "SHA-1",
-        sha256: "SHA-256",
-        "sha-256": "SHA-256",
-        sha384: "SHA-384",
-        "sha-384": "SHA-384",
-        "sha-512": "SHA-512",
-        sha512: "SHA-512",
-      },
-      checks = [];
-    function checkNative(algo) {
-      if ((global.process && !global.process.browser) || !subtle || !subtle.importKey || !subtle.deriveBits)
-        return Promise.resolve(!1);
-      if (checks[algo] !== void 0) return checks[algo];
-      ZERO_BUF = ZERO_BUF || Buffer2.alloc(8);
-      var prom = browserPbkdf2(ZERO_BUF, ZERO_BUF, 10, 128, algo)
-        .then(function () {
-          return !0;
-        })
-        .catch(function () {
-          return !1;
-        });
-      return (checks[algo] = prom), prom;
-    }
-    var nextTick;
-    function getNextTick() {
-      return (
-        nextTick ||
-        (global.process && global.process.nextTick
-          ? (nextTick = global.process.nextTick)
-          : global.queueMicrotask
-            ? (nextTick = global.queueMicrotask)
-            : global.setImmediate
-              ? (nextTick = global.setImmediate)
-              : (nextTick = global.setTimeout),
-        nextTick)
-      );
-    }
-    function browserPbkdf2(password, salt, iterations, length, algo) {
-      return subtle
-        .importKey("raw", password, { name: "PBKDF2" }, !1, ["deriveBits"])
-        .then(function (key) {
-          return subtle.deriveBits(
-            {
-              name: "PBKDF2",
-              salt,
-              iterations,
-              hash: {
-                name: algo,
-              },
-            },
-            key,
-            length << 3,
-          );
-        })
-        .then(function (res) {
-          return Buffer2.from(res);
-        });
-    }
-    function resolvePromise(promise, callback) {
-      promise.then(
-        function (out) {
-          getNextTick()(function () {
-            callback(null, out);
-          });
-        },
-        function (e) {
-          getNextTick()(function () {
-            callback(e);
-          });
-        },
-      );
-    }
-    module.exports = function (password, salt, iterations, keylen, digest, callback) {
-      typeof digest == "function" && ((callback = digest), (digest = void 0)), (digest = digest || "sha1");
-      var algo = toBrowser[digest.toLowerCase()];
-      if (!algo || typeof global.Promise != "function") {
-        getNextTick()(function () {
-          var out;
-          try {
-            out = sync(password, salt, iterations, keylen, digest);
-          } catch (e) {
-            return callback(e);
-          }
-          callback(null, out);
-        });
-        return;
-      }
-      if (
-        (checkParameters(iterations, keylen),
-        (password = toBuffer(password, defaultEncoding, "Password")),
-        (salt = toBuffer(salt, defaultEncoding, "Salt")),
-        typeof callback != "function")
-      )
-        throw new Error("No callback provided to pbkdf2");
-      resolvePromise(
-        checkNative(algo).then(function (resp) {
-          return resp
-            ? browserPbkdf2(password, salt, iterations, keylen, algo)
-            : sync(password, salt, iterations, keylen, digest);
-        }),
-        callback,
-      );
-    };
-  },
-});
-
-// node_modules/pbkdf2/browser.js
-var require_browser4 = __commonJS({
-  "node_modules/pbkdf2/browser.js"(exports) {
-    exports.pbkdf2 = require_async();
-    exports.pbkdf2Sync = require_sync_browser();
-  },
-});
+function pbkdf2Sync(password, salt, iterations, keylen, digest) {
+  return pbkdf2Sync_(password, salt, iterations, keylen, digest);
+}
 
 // node_modules/des.js/lib/des/utils.js
 var require_utils = __commonJS({
@@ -11132,7 +10900,6 @@ var require_parse_asn1 = __commonJS({
       aesid = require_aesid(),
       fixProc = require_fixProc(),
       ciphers = require_browser5(),
-      compat = require_browser4(),
       Buffer2 = require_safe_buffer().Buffer;
     module.exports = parseKeys;
     function parseKeys(buffer) {
@@ -11286,7 +11053,7 @@ var require_parse_asn1 = __commonJS({
         iv = data.algorithm.decrypt.cipher.iv,
         cipherText = data.subjectPrivateKey,
         keylen = parseInt(algo.split("-")[1], 10) / 8,
-        key = compat.pbkdf2Sync(password, salt, iters, keylen, "sha1"),
+        key = pbkdf2Sync(password, salt, iters, keylen, "sha1"),
         cipher = ciphers.createDecipheriv(algo, key, iv),
         out = [];
       return out.push(cipher.update(cipherText)), out.push(cipher.final()), Buffer2.concat(out);
@@ -11928,9 +11695,8 @@ var require_crypto_browserify2 = __commonJS({
     exports.getHashes = function () {
       return hashes;
     };
-    var p = require_browser4();
-    exports.pbkdf2 = p.pbkdf2;
-    exports.pbkdf2Sync = p.pbkdf2Sync;
+    exports.pbkdf2Sync = pbkdf2Sync;
+    exports.pbkdf2 = pbkdf2;
     var aes = require_browser6();
     exports.Cipher = aes.Cipher;
     exports.createCipher = aes.createCipher;

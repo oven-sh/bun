@@ -20,7 +20,7 @@ pub const Header = struct {
     }
 
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stderr) {
             if (self.isMultiline()) {
                 try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
             } else {
@@ -75,9 +75,15 @@ pub const Request = struct {
     }
 
     pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
+        if (Output.enable_ansi_colors_stderr) {
+            _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+        }
+        try fmt.format(writer, "> HTTP/1.1 {s} {s}\n", .{ self.method, self.path });
         for (self.headers) |header| {
-            _ = try writer.write("\t");
+            if (Output.enable_ansi_colors_stderr) {
+                _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+            }
+            _ = try writer.write("> ");
             try fmt.format(writer, "{s}\n", .{header});
         }
     }
@@ -118,6 +124,22 @@ pub const Request = struct {
     }
 };
 
+const StatusCodeFormatter = struct {
+    code: usize,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        if (Output.enable_ansi_colors_stderr) {
+            switch (self.code) {
+                101, 200...299 => try fmt.format(writer, comptime Output.prettyFmt("<r><green>{d}<r>", true), .{self.code}),
+                300...399 => try fmt.format(writer, comptime Output.prettyFmt("<r><yellow>{d}<r>", true), .{self.code}),
+                else => try fmt.format(writer, comptime Output.prettyFmt("<r><red>{d}<r>", true), .{self.code}),
+            }
+        } else {
+            try fmt.format(writer, "{d}", .{self.code});
+        }
+    }
+};
+
 pub const Response = struct {
     minor_version: usize = 0,
     status_code: usize = 0,
@@ -126,9 +148,26 @@ pub const Response = struct {
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "< {d} {s}\n", .{ self.status_code, self.status });
+        if (Output.enable_ansi_colors_stderr) {
+            _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+        }
+
+        try fmt.format(
+            writer,
+            "< {} {s}\n",
+            .{
+                StatusCodeFormatter{
+                    .code = self.status_code,
+                },
+                self.status,
+            },
+        );
         for (self.headers) |header| {
-            _ = try writer.write("< \t");
+            if (Output.enable_ansi_colors_stderr) {
+                _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+            }
+
+            _ = try writer.write("< ");
             try fmt.format(writer, "{s}\n", .{header});
         }
     }

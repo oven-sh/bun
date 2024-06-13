@@ -511,15 +511,7 @@ pub const ZigString = extern struct {
 
         /// Does nothing if the slice is not allocated
         pub fn deinit(this: *const Slice) void {
-            if (this.allocator.get()) |allocator| {
-                if (bun.String.isWTFAllocator(allocator)) {
-                    // workaround for https://github.com/ziglang/zig/issues/4298
-                    bun.String.StringImplAllocator.free(allocator.ptr, @constCast(this.slice()), 0, 0);
-                    return;
-                }
-
-                allocator.free(this.slice());
-            }
+            this.allocator.free(this.slice());
         }
     };
 
@@ -4311,7 +4303,12 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    /// This is `Object.values`.
+    /// `value` is assumed to be not empty, undefined, or null.
     pub fn values(value: JSValue, globalThis: *JSGlobalObject) JSValue {
+        if (comptime bun.Environment.allow_assert) {
+            bun.assert(!value.isEmptyOrUndefinedOrNull());
+        }
         return cppFn("values", .{
             globalThis,
             value,
@@ -4703,7 +4700,14 @@ pub const JSValue = enum(JSValueReprInt) {
     ///
     /// To handle exceptions, use `JSValue.toSliceOrNull`.
     pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
-        return getZigString(this, global).toSlice(allocator);
+        const str = bun.String.fromJS(this, global);
+        defer str.deref();
+
+        // This keeps the WTF::StringImpl alive if it was originally a latin1
+        // ASCII-only string.
+        //
+        // Otherwise, it will be cloned using the allocator.
+        return str.toUTF8(allocator);
     }
 
     pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {

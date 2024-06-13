@@ -722,6 +722,8 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
+  /* we should always accept moving write buffer so we can retry writes with a
+   * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
   /* Anything below TLS 1.2 is disabled */
@@ -733,10 +735,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
   /* Important option for lowering memory usage, but lowers performance slightly
    */
   if (options.ssl_prefer_low_memory_usage) {
-    // we should always accept moving write buffer so we can retry writes with a
-    // buffer allocated in a different address
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
-                                      SSL_MODE_RELEASE_BUFFERS);
+    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
   }
 
   if (options.passphrase) {
@@ -1078,6 +1077,8 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
+  /* we should always accept moving write buffer so we can retry writes with a
+   * buffer allocated in a different address */
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
   /* Anything below TLS 1.2 is disabled */
@@ -1089,10 +1090,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
   /* Important option for lowering memory usage, but lowers performance slightly
    */
   if (options.ssl_prefer_low_memory_usage) {
-    // we should always accept moving write buffer so we can retry writes with a
-    // buffer allocated in a different address
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
-                                      SSL_MODE_RELEASE_BUFFERS);
+    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
   }
 
   if (options.passphrase) {

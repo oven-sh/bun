@@ -12,6 +12,7 @@
 
 #include "BunClientData.h"
 #include "wtf/Compiler.h"
+#include "wtf/Forward.h"
 
 using namespace JSC;
 
@@ -233,14 +234,13 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
         return false;
 
     JSValue decodedValue = JSValue::decode(value);
-    if (decodedValue.isString()) {
-        WTF::String str = decodedValue.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (str == "1"_s || str == "true"_s) {
-            Bun__setVerboseFetchValue(1);
-        } else {
-            Bun__setVerboseFetchValue(0);
-        }
+    WTF::String str = decodedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    if (str == "1"_s || str == "true"_s) {
+        Bun__setVerboseFetchValue(1);
+    } else {
+        Bun__setVerboseFetchValue(0);
     }
 
     const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);

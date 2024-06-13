@@ -1586,14 +1586,15 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    this.#agent = options.agent || Agent.globalAgent;
+    const agent = options.agent || Agent.globalAgent;
+    this.#agent = agent;
 
-    let protocol = options.protocol;
+    let protocol = options.protocol || agent.protocol;
     if (!protocol) {
       if (options.port === 443) {
         protocol = "https:";
       } else {
-        protocol = this.#agent.protocol;
+        protocol = agent.protocol;
       }
     }
     this.#protocol = protocol;
@@ -1609,7 +1610,7 @@ class ClientRequest extends OutgoingMessage {
 
     // Since we don't implement Agent, we don't need this
     if (protocol !== "http:" && protocol !== "https:" && protocol) {
-      const expectedProtocol = this.#agent.protocol ?? "http:";
+      const expectedProtocol = agent.protocol ?? "http:";
       throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }

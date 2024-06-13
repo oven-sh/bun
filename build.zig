@@ -228,6 +228,13 @@ pub fn build(b: *Build) !void {
         var bun_check_obj = addBunObject(b, &build_options);
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
+
+        // The default install step will run zig build check This is so ZLS
+        // identifies the codebase, as well as performs checking if build on
+        // save is enabled.
+
+        // For building Bun itself, one should run `bun setup`
+        b.default_step.dependOn(step);
     }
 
     // zig build check-all
@@ -268,23 +275,24 @@ pub fn build(b: *Build) !void {
     }
 
     // Running `zig build` with no arguments is almost always a mistake.
+    // TODO: revive this error. cannot right now since ZLS runs zig build without arguments
     {
-        const mistake_message = b.addSystemCommand(&.{
-            "echo",
-            \\
-            \\To build Bun from source, please use `bun run setup` instead of `zig build`"
-            \\For more info, see https://bun.sh/docs/project/contributing
-            \\
-            \\If you want to build the zig code in isolation, run:
-            \\  'zig build obj -Dgenerated-code=./build/codegen [...opts]'
-            \\
-            \\If you want to test a compile without emitting an object:
-            \\  'zig build check'
-            \\  'zig build check-all' (run linux+mac+windows)
-            \\
-        });
+        // const mistake_message = b.addSystemCommand(&.{
+        //     "echo",
+        //     \\
+        //     \\To build Bun from source, please use `bun run setup` instead of `zig build`"
+        //     \\For more info, see https://bun.sh/docs/project/contributing
+        //     \\
+        //     \\If you want to build the zig code in isolation, run:
+        //     \\  'zig build obj -Dgenerated-code=./build/codegen [...opts]'
+        //     \\
+        //     \\If you want to test a compile without emitting an object:
+        //     \\  'zig build check'
+        //     \\  'zig build check-all' (run linux+mac+windows)
+        //     \\
+        // });
 
-        b.default_step.dependOn(&mistake_message.step);
+        // b.default_step.dependOn(&mistake_message.step);
     }
 }
 

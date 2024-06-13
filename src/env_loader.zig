@@ -1269,6 +1269,10 @@ pub const Map = struct {
     pub fn remove(this: *Map, key: string) void {
         this.map.remove(key);
     }
+
+    pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) !Map {
+        return .{ .map = try this.map.cloneWithAllocator(new_allocator) };
+    }
 };
 
 pub var instance: ?*Loader = null;

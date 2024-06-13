@@ -104,6 +104,9 @@ pub fn crashHandler(
     // the handler.
     resetSegfaultHandler();
 
+    if (bun.Environment.isDebug)
+        bun.Output.disableScopedDebugWriter();
+
     var trace_str_buf = std.BoundedArray(u8, 1024){};
 
     nosuspend switch (panic_stage) {

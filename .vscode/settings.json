@@ -27,7 +27,10 @@
   // Zig
   "zig.initialSetupDone": true,
   "zig.buildOption": "build",
-  "zig.buildArgs": ["check", "-Dgenerated-code=./build/codegen"],
+  "zig.buildArgs": ["-Dgenerated-code=./build/codegen"],
+  "zig.zls.buildOnSaveStep": "check",
+  // "zig.zls.enableBuildOnSave": true,
+  // "zig.buildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
   "zig.formattingProvider": "zls",

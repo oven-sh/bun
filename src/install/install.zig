@@ -11063,9 +11063,12 @@ pub const PackageManager = struct {
 
             const patch_patch, const patch_contents_hash, const patch_name_and_version_hash = brk: {
                 if (this.manager.lockfile.patched_dependencies.entries.len == 0) break :brk .{ null, null, null };
-                var sfb = std.heap.stackFallback(1024, this.lockfile.allocator);
-                const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{s}", .{ name, package_version }) catch unreachable;
-                defer sfb.get().free(name_and_version);
+                var sfa = std.heap.stackFallback(1024, this.lockfile.allocator);
+                const alloc = sfa.get();
+
+                const name_and_version = std.fmt.allocPrint(alloc, "{s}@{s}", .{ name, package_version }) catch unreachable;
+                defer alloc.free(name_and_version);
+
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
 
                 const patchdep = this.lockfile.patched_dependencies.get(name_and_version_hash) orelse break :brk .{ null, null, null };

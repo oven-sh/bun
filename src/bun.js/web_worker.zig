@@ -207,6 +207,16 @@ pub const WebWorker = struct {
             return;
         };
 
+        // TODO: we may have to clone other parts of vm state. this will be more
+        // important when implementing vm.deinit()
+        const map = try vm.allocator.create(bun.DotEnv.Map);
+        map.* = try vm.bundler.env.map.cloneWithAllocator(vm.allocator);
+
+        const loader = try vm.allocator.create(bun.DotEnv.Loader);
+        loader.* = bun.DotEnv.Loader.init(map, vm.allocator);
+
+        vm.bundler.env = loader;
+
         vm.loadExtraEnv();
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;

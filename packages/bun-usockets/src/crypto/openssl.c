@@ -150,8 +150,9 @@ int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   int written = us_socket_write(0, loop_ssl_data->ssl_socket, data, length,
                                 loop_ssl_data->last_write_was_msg_more);
 
+  BIO_clear_retry_flags(bio);
   if (!written) {
-    BIO_set_flags(bio, BIO_FLAGS_SHOULD_RETRY | BIO_FLAGS_WRITE);
+    BIO_set_retry_write(bio);
     return -1;
   }
 
@@ -162,8 +163,9 @@ int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *)BIO_get_data(bio);
 
+  BIO_clear_retry_flags(bio);
   if (!loop_ssl_data->ssl_read_input_length) {
-    BIO_set_flags(bio, BIO_FLAGS_SHOULD_RETRY | BIO_FLAGS_READ);
+    BIO_set_retry_read(bio);
     return -1;
   }
 
@@ -444,6 +446,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
     // no further processing of data when in shutdown state
     return s;
   }
+
   // bug checking: this loop needs a lot of attention and clean-ups and
   // check-ups
   int read = 0;
@@ -719,8 +722,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
-  SSL_CTX_set_mode(ssl_context, SSL_MODE_ENABLE_PARTIAL_WRITE |
-                                    SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
   /* Anything below TLS 1.2 is disabled */
   SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
@@ -731,7 +733,10 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
   /* Important option for lowering memory usage, but lowers performance slightly
    */
   if (options.ssl_prefer_low_memory_usage) {
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
+    // we should always accept moving write buffer so we can retry writes with a
+    // buffer allocated in a different address
+    SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+                                      SSL_MODE_RELEASE_BUFFERS);
   }
 
   if (options.passphrase) {
@@ -1073,8 +1078,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
-  SSL_CTX_set_mode(ssl_context, SSL_MODE_ENABLE_PARTIAL_WRITE |
-                                    SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
 
   /* Anything below TLS 1.2 is disabled */
   SSL_CTX_set_min_proto_version(ssl_context, TLS1_2_VERSION);
@@ -1085,7 +1089,10 @@ SSL_CTX *create_ssl_context_from_bun_options(
   /* Important option for lowering memory usage, but lowers performance slightly
    */
   if (options.ssl_prefer_low_memory_usage) {
-    SSL_CTX_set_mode(ssl_context, SSL_MODE_RELEASE_BUFFERS);
+    // we should always accept moving write buffer so we can retry writes with a
+    // buffer allocated in a different address
+    SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+                                      SSL_MODE_RELEASE_BUFFERS);
   }
 
   if (options.passphrase) {
@@ -1681,12 +1688,6 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
 
   if (loop_ssl_data->last_write_was_msg_more && !msg_more) {
     us_socket_flush(0, &s->s);
-  }
-
-  if (written != length) {
-    loop->data.last_write_failed = 1;
-    us_poll_change(&s->s.p, loop,
-                   LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
   if (written > 0) {

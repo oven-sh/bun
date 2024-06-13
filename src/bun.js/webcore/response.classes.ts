@@ -154,6 +154,7 @@ export default [
       name: {
         getter: "getName",
         setter: "setName",
+        cache: true,
       },
 
       // TODO: Move this to a separate `File` object or BunFile

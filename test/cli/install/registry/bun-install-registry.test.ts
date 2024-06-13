@@ -11,7 +11,6 @@ import {
   toMatchNodeModulesAt,
   runBunInstall,
   runBunUpdate,
-  runFailingBunInstall,
 } from "harness";
 import { join, sep } from "path";
 import { rm, writeFile, mkdir, exists, cp } from "fs/promises";

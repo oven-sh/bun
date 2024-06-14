@@ -8055,3 +8055,50 @@ describe("yarn tests", () => {
     expect(await exited).toBe(0);
   });
 });
+
+test("tarball `./` prefix and empty directory", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "tarball-without-package-prefix": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const prefix = join(packageDir, "node_modules", "tarball-without-package-prefix");
+  const results = await Promise.all([
+    file(join(prefix, "package.json")).json(),
+    file(join(prefix, "package1000.js")).text(),
+    file(join(prefix, "package", "index.js")).text(),
+    file(join(prefix, "package2", "index.js")).text(),
+    file(join(prefix, "package3", "package6", "index.js")).text(),
+    file(join(prefix, "package4", "package.json")).json(),
+    exists(join(prefix, "package4", "package5")),
+    exists(join(prefix, "package1000")),
+  ]);
+  expect(results).toEqual([
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+    "hi",
+    "ooops",
+    "ooooops",
+    "oooooops",
+    {
+      "name": "tarball-without-package-prefix",
+      "version": "2.0.0",
+    },
+    false,
+    false,
+  ]);
+  expect(await file(join(packageDir, "node_modules", "tarball-without-package-prefix", "package.json")).json()).toEqual(
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+  );
+});

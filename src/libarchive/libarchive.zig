@@ -470,10 +470,10 @@ pub const Archive = struct {
     }
 
     pub const ExtractOptions = struct {
-        depth_to_skip: usize = 0,
+        depth_to_skip: usize,
         close_handles: bool = true,
         log: bool = false,
-        npm_registry_tarball: bool = false,
+        npm: bool = false,
     };
 
     pub fn extractToDir(
@@ -494,7 +494,7 @@ pub const Archive = struct {
         var count: u32 = 0;
         const dir_fd = dir.fd;
 
-        var w_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
+        var normalized_buf: bun.OSPathBuffer = undefined;
 
         loop: while (true) {
             const r: Status = @enumFromInt(lib.archive_read_next_header(archive, &entry));
@@ -512,27 +512,60 @@ pub const Archive = struct {
                     //
                     // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
-                    var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows) brk: {
-                        const normalized = bun.path.normalizeBufT(
-                            u16,
-                            std.mem.span(lib.archive_entry_pathname_w(entry)),
-                            &w_path_buf,
-                            .windows,
-                        );
+                    var pathname: bun.OSPathSliceZ = if (comptime Environment.isWindows)
+                        std.mem.sliceTo(lib.archive_entry_pathname_w(entry), 0)
+                    else
+                        std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
 
+                    if (comptime Environment.isWindows and options.npm) {
                         // When writing files on Windows, translate the characters to their
                         // 0xf000 higher-encoded versions.
                         // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                        for (normalized) |*c| {
+                        var remain = pathname;
+                        if (strings.startsWithWindowsDriveLetterT(bun.OSPathChar, remain)) {
+                            // don't encode `:` from the drive letter
+                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
+                            remain = remain[2..];
+                        }
+
+                        // TODO: do this in normalizeBufT
+                        for (remain) |*c| {
                             switch (c.*) {
                                 '|', '<', '>', '?', ':' => c.* += 0xf000,
                                 else => {},
                             }
                         }
+                    }
 
-                        w_path_buf[normalized.len] = 0;
-                        break :brk w_path_buf[0..normalized.len :0];
-                    } else std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
+                    const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
+
+                    if (comptime options.npm) {
+                        // - ignore entries other than files (`true` can only be returned if type is file)
+                        //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
+                        if (kind != .file) continue;
+
+                        // - ignore entries with `..` in the path (`-P` from tar, default is false)
+                        if (strings.containsT(bun.OSPathChar, pathname, comptime bun.OSPathLiteral(".."))) continue;
+
+                        // TODO: .npmignore, or .gitignore if it doesn't exist
+                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
+                    }
+
+                    {
+                        // strip and normalize the path
+                        var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
+                        inline for (0..options.depth_to_skip) |_| {
+                            if (tokenizer.next() == null) continue :loop;
+                        }
+
+                        const rest = tokenizer.rest();
+                        pathname = rest.ptr[0..rest.len :0];
+
+                        const normalized = bun.path.normalizeBufT(bun.OSPathChar, pathname, &normalized_buf, .auto);
+                        normalized_buf[normalized.len] = 0;
+                        pathname = normalized_buf[0..normalized.len :0];
+                        if (pathname.len == 0 or pathname.len == 1 and pathname[0] == '.') continue;
+                    }
 
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
@@ -547,31 +580,6 @@ pub const Archive = struct {
                             }
                         }
                     }
-
-                    if (comptime options.npm_registry_tarball) {
-                        var normalized_buf: bun.OSPathBuffer = undefined;
-                        const normalized = bun.path.normalizeBufT(bun.OSPathChar, pathname, &normalized_buf, .posix);
-                        normalized_buf[normalized.len] = 0;
-                        pathname = normalized_buf[0..normalized.len :0];
-
-                        // remove `package/` prefix if it exists
-                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/lib/utils/tar.js#L67
-                        if (strings.hasPrefixComptimeType(bun.OSPathChar, pathname, "package/")) {
-                            pathname = pathname["package/".len.. :0];
-                        }
-                    } else {
-                        var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
-
-                        inline for (0..options.depth_to_skip) |_| {
-                            if (tokenizer.next() == null) continue :loop;
-                        }
-
-                        const pathname_ = tokenizer.rest();
-                        pathname = @as([*]const bun.OSPathChar, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
-                    }
-                    if (pathname.len == 0 or pathname.len == 1 and pathname[0] == '.') continue;
-
-                    const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
                     const path_slice: bun.OSPathSlice = pathname.ptr[0..pathname.len];
 

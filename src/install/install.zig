@@ -3717,10 +3717,6 @@ pub const PackageManager = struct {
         return result;
     }
 
-    pub fn cachedNPMPackageFolderBasename(name: string, version: Semver.Version) stringZ {
-        return cachedNPMPackageFolderPrintBasename(&cached_package_folder_name_buf, name, version);
-    }
-
     pub fn cachedNPMPackageFolderName(this: *const PackageManager, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
         return this.cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version, patch_hash);
     }

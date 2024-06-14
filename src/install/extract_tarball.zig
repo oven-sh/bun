@@ -266,10 +266,12 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     null,
                     void,
                     {},
-                    // for npm packages, the root dir is sometimes "package"
                     .{
                         .log = log,
-                        .npm_registry_tarball = true,
+                        // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
+                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
+                        .depth_to_skip = 1,
+                        .npm = true,
                     },
                 ),
             },

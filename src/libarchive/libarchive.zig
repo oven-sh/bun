@@ -517,6 +517,20 @@ pub const Archive = struct {
                     else
                         std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
 
+                    if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
+                        if (appender.needs_first_dirname) {
+                            if (comptime Environment.isWindows) {
+                                const list = std.ArrayList(u8).init(default_allocator);
+                                var result = try strings.toUTF8ListWithType(list, []const u16, pathname[0..pathname.len]);
+                                // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
+                                defer result.deinit();
+                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
+                            } else {
+                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(pathname)));
+                            }
+                        }
+                    }
+
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
                     if (comptime options.npm) {
@@ -526,7 +540,6 @@ pub const Archive = struct {
 
                         // TODO: .npmignore, or .gitignore if it doesn't exist
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
-
                     }
 
                     // strip and normalize the path
@@ -558,20 +571,6 @@ pub const Archive = struct {
                             switch (c.*) {
                                 '|', '<', '>', '?', ':' => c.* += 0xf000,
                                 else => {},
-                            }
-                        }
-                    }
-
-                    if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
-                        if (appender.needs_first_dirname) {
-                            if (comptime Environment.isWindows) {
-                                const list = std.ArrayList(u8).init(default_allocator);
-                                var result = try strings.toUTF8ListWithType(list, []const u16, path[0..path.len]);
-                                // onFirstDirectoryName copies the contents of path to another buffer, safe to free
-                                defer result.deinit();
-                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
-                            } else {
-                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(path)));
                             }
                         }
                     }

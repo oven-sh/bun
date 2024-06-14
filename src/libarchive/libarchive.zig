@@ -524,68 +524,59 @@ pub const Archive = struct {
                         //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
                         if (kind != .file) continue;
 
-                        if (comptime Environment.isWindows) {
-                            // When writing files on Windows, translate the characters to their
-                            // 0xf000 higher-encoded versions.
-                            // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                            var remain = pathname;
-                            if (strings.startsWithWindowsDriveLetterT(bun.OSPathChar, remain)) {
-                                // don't encode `:` from the drive letter
-                                // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
-                                remain = remain[2..];
-                            }
-
-                            // TODO: do this in normalizeBufT
-                            for (remain, 0..) |*c, i| {
-                                switch (c.*) {
-                                    '|', '<', '>', '?', ':' => c.* += 0xf000,
-
-                                    // - ignore entries with `..` in the path (`-P` from tar, default is false)
-                                    '.' => if (i + 1 < remain.len and remain[i + 1] == '.') continue :loop,
-
-                                    else => {},
-                                }
-                            }
-                        } else {
-                            // - ignore entries with `..` in the path (`-P` from tar, default is false)
-                            if (strings.containsT(bun.OSPathChar, pathname, comptime bun.OSPathLiteral(".."))) continue;
-                        }
-
                         // TODO: .npmignore, or .gitignore if it doesn't exist
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434
+
                     }
 
-                    {
-                        // strip and normalize the path
-                        var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
-                        inline for (0..options.depth_to_skip) |_| {
-                            if (tokenizer.next() == null) continue :loop;
+                    // strip and normalize the path
+                    var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
+                    inline for (0..options.depth_to_skip) |_| {
+                        if (tokenizer.next() == null) continue :loop;
+                    }
+
+                    const rest = tokenizer.rest();
+                    pathname = rest.ptr[0..rest.len :0];
+
+                    const normalized = bun.path.normalizeBufT(bun.OSPathChar, pathname, &normalized_buf, .auto);
+                    normalized_buf[normalized.len] = 0;
+                    const path: [:0]bun.OSPathChar = normalized_buf[0..normalized.len :0];
+                    if (path.len == 0 or path.len == 1 and path[0] == '.') continue;
+
+                    if (comptime options.npm and Environment.isWindows) {
+                        // When writing files on Windows, translate the characters to their
+                        // 0xf000 higher-encoded versions.
+                        // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
+                        var remain = path;
+                        if (strings.startsWithWindowsDriveLetterT(bun.OSPathChar, remain)) {
+                            // don't encode `:` from the drive letter
+                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
+                            remain = remain[2..];
                         }
 
-                        const rest = tokenizer.rest();
-                        pathname = rest.ptr[0..rest.len :0];
-
-                        const normalized = bun.path.normalizeBufT(bun.OSPathChar, pathname, &normalized_buf, .auto);
-                        normalized_buf[normalized.len] = 0;
-                        pathname = normalized_buf[0..normalized.len :0];
-                        if (pathname.len == 0 or pathname.len == 1 and pathname[0] == '.') continue;
+                        for (remain) |*c| {
+                            switch (c.*) {
+                                '|', '<', '>', '?', ':' => c.* += 0xf000,
+                                else => {},
+                            }
+                        }
                     }
 
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
                             if (comptime Environment.isWindows) {
                                 const list = std.ArrayList(u8).init(default_allocator);
-                                var result = try strings.toUTF8ListWithType(list, []const u16, pathname[0..pathname.len]);
-                                // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
+                                var result = try strings.toUTF8ListWithType(list, []const u16, path[0..path.len]);
+                                // onFirstDirectoryName copies the contents of path to another buffer, safe to free
                                 defer result.deinit();
                                 appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
                             } else {
-                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(pathname)));
+                                appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(path)));
                             }
                         }
                     }
 
-                    const path_slice: bun.OSPathSlice = pathname.ptr[0..pathname.len];
+                    const path_slice: bun.OSPathSlice = path.ptr[0..path.len];
 
                     if (comptime options.log) {
                         Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
@@ -607,26 +598,26 @@ pub const Archive = struct {
                                 mode |= 0o1;
 
                             if (comptime Environment.isWindows) {
-                                try bun.MakePath.makePath(u16, dir, pathname);
+                                try bun.MakePath.makePath(u16, dir, path);
                             } else {
-                                std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
+                                std.os.mkdiratZ(dir_fd, path, @as(u32, @intCast(mode))) catch |err| {
                                     // It's possible for some tarballs to return a directory twice, with and
                                     // without `./` in the beginning. So if it already exists, continue to the
                                     // next entry.
                                     if (err == error.PathAlreadyExists or err == error.NotDir) continue;
                                     bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                    std.os.mkdiratZ(dir_fd, pathname, 0o777) catch {};
+                                    std.os.mkdiratZ(dir_fd, path, 0o777) catch {};
                                 };
                             }
                         },
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (Environment.isPosix) {
-                                std.os.symlinkatZ(link_target, dir_fd, pathname) catch |err| brk: {
+                                std.os.symlinkatZ(link_target, dir_fd, path) catch |err| brk: {
                                     switch (err) {
                                         error.AccessDenied, error.FileNotFound => {
                                             dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, pathname);
+                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, path);
                                         },
                                         else => {
                                             return err;
@@ -641,12 +632,12 @@ pub const Archive = struct {
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
                                     const flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
-                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), pathname, flags)) {
+                                    switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags)) {
                                         .result => |fd| break :brk fd,
                                         .err => |e| switch (e.errno) {
                                             @intFromEnum(bun.C.E.PERM), @intFromEnum(bun.C.E.NOENT) => {
                                                 bun.MakePath.makePath(u16, dir, bun.Dirname.dirname(u16, path_slice) orelse return bun.errnoToZigErr(e.errno)) catch {};
-                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), pathname, flags).unwrap();
+                                                break :brk try bun.sys.openatWindows(bun.toFD(dir_fd), path, flags).unwrap();
                                             },
                                             else => {
                                                 return bun.errnoToZigErr(e.errno);
@@ -654,11 +645,11 @@ pub const Archive = struct {
                                         },
                                     }
                                 } else {
-                                    break :brk (dir.createFileZ(pathname, .{ .truncate = true, .mode = mode }) catch |err| {
+                                    break :brk (dir.createFileZ(path, .{ .truncate = true, .mode = mode }) catch |err| {
                                         switch (err) {
                                             error.AccessDenied, error.FileNotFound => {
                                                 dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                                break :brk (try dir.createFileZ(pathname, .{
+                                                break :brk (try dir.createFileZ(path, .{
                                                     .truncate = true,
                                                     .mode = mode,
                                                 })).handle;

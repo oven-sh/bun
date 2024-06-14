@@ -2721,12 +2721,12 @@ describe("transitive file dependencies", () => {
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
     // reinstall
-    ({ out } = await runBunInstall(env, packageDir, { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
 
     await checkHoistedFiles();
 
-    ({ out } = await runBunInstall(env, packageDir, { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await checkHoistedFiles();
@@ -2752,12 +2752,12 @@ describe("transitive file dependencies", () => {
     await checkHoistedFiles();
     expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
 
-    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.0",
@@ -2836,7 +2836,7 @@ describe("transitive file dependencies", () => {
     await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
 
     // reinstall
-    ({ out } = await runBunInstall(env, packageDir, { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.1",
@@ -2852,7 +2852,7 @@ describe("transitive file dependencies", () => {
 
     await checkUnhoistedFiles();
 
-    ({ out } = await runBunInstall(env, packageDir, { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await checkUnhoistedFiles();
@@ -2878,13 +2878,13 @@ describe("transitive file dependencies", () => {
 
     await checkUnhoistedFiles();
 
-    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
 
-    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { doesntSaveLockfile: true }));
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       "",
       "+ @another-scope/file-dep@1.0.0",

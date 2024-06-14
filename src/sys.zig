@@ -1699,8 +1699,11 @@ pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8,
 
             // Fallback path: the folder exists in the cache dir, it might be in a strange state
             // let's attempt to atomically replace it with the temporary folder's version
-            if (switch (err.getErrno()) {
+            if (if (comptime bun.Environment.isPosix) switch (err.getErrno()) {
                 .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                else => false,
+            } else switch (err.getErrno()) {
+                .EXIST, .NOTEMPTY => true,
                 else => false,
             }) {
                 did_atomically_replace = true;

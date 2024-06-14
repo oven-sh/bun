@@ -196,6 +196,28 @@ Once you're done with your changes, run:
     });
   }
 
+  test("overwriting module with multiple levels of directories", async () => {
+    const filedir = tempDirWithFiles("patch1", {
+      "package.json": JSON.stringify({
+        "name": "bun-patch-test",
+        "module": "index.ts",
+        "type": "module",
+        "dependencies": { lodash: "4.17.21" },
+      }),
+      "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
+    });
+
+    {
+      const { stderr } = await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
+      expect(stderr.toString()).not.toContain("error");
+    }
+
+    {
+      const { stderr, stdout } = await $`${bunExe()} patch lodash`.env(bunEnv).cwd(filedir);
+      expect(stderr.toString()).not.toContain("error");
+    }
+  });
+
   ["is-even@1.0.0", "node_modules/is-even"].map(patchArg =>
     makeTest("should patch a node_modules package", {
       dependencies: { "is-even": "1.0.0" },

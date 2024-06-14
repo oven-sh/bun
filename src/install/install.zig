@@ -286,47 +286,6 @@ const NetworkTask = struct {
         header_builder.count("npm-auth-type", "legacy");
     }
 
-    // The first time this happened!
-    //
-    // "peerDependencies": {
-    //   "@ianvs/prettier-plugin-sort-imports": "*",
-    //   "prettier-plugin-twig-melody": "*"
-    // },
-    // "peerDependenciesMeta": {
-    //   "@ianvs/prettier-plugin-sort-imports": {
-    //     "optional": true
-    //   },
-    // Example case ^
-    // `@ianvs/prettier-plugin-sort-imports` is peer and also optional but was not marked optional because
-    // the offset would be 0 and the current loop index is also 0.
-    // const invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index = 1697871350;
-    // ----
-    // The second time this happened!
-    //
-    // pre-release sorting when the number of segments between dots were different, was sorted incorrectly
-    // so we must invalidate the manifest cache once again.
-    //
-    // example:
-    //
-    //  1.0.0-pre.a.b > 1.0.0-pre.a
-    //  before ordering said the left was smaller than the right
-    //
-    // const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1697871350;
-    //
-    // ----
-    // The third time this happened!
-    //
-    // pre-release sorting bug again! If part of the pre-release segment is a number, and the other pre-release part is a string,
-    // it would order them incorrectly by comparing them as strings.
-    //
-    // example:
-    //
-    // 1.0.0-alpha.22 < 1.0.0-alpha.1beta
-    // before: false
-    // after: true
-    //
-    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1702425477;
-
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -390,10 +349,8 @@ const NetworkTask = struct {
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
-            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes) {
-                last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
-                etag = manifest.pkg.etag.slice(manifest.string_buf);
-            }
+            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+            etag = manifest.pkg.etag.slice(manifest.string_buf);
         }
 
         var header_builder = HeaderBuilder{};

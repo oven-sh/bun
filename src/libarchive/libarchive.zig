@@ -469,15 +469,20 @@ pub const Archive = struct {
         }
     }
 
+    pub const ExtractOptions = struct {
+        depth_to_skip: usize = 0,
+        close_handles: bool = true,
+        log: bool = false,
+        npm_registry_tarball: bool = false,
+    };
+
     pub fn extractToDir(
         file_buffer: []const u8,
         dir: std.fs.Dir,
         ctx: ?*Archive.Context,
         comptime ContextType: type,
         appender: ContextType,
-        comptime depth_to_skip: usize,
-        comptime close_handles: bool,
-        comptime log: bool,
+        comptime options: ExtractOptions,
     ) !u32 {
         var entry: *lib.archive_entry = undefined;
 
@@ -492,7 +497,7 @@ pub const Archive = struct {
         var w_path_buf: if (Environment.isWindows) bun.WPathBuffer else void = undefined;
 
         loop: while (true) {
-            const r = @as(Status, @enumFromInt(lib.archive_read_next_header(archive, &entry)));
+            const r: Status = @enumFromInt(lib.archive_read_next_header(archive, &entry));
 
             switch (r) {
                 Status.eof => break :loop,
@@ -543,22 +548,34 @@ pub const Archive = struct {
                         }
                     }
 
-                    var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
-                    comptime var depth_i: usize = 0;
+                    if (comptime options.npm_registry_tarball) {
+                        var normalized_buf: bun.OSPathBuffer = undefined;
+                        const normalized = bun.path.normalizeBufT(bun.OSPathChar, pathname, &normalized_buf, .posix);
+                        normalized_buf[normalized.len] = 0;
+                        pathname = normalized_buf[0..normalized.len :0];
 
-                    inline while (depth_i < depth_to_skip) : (depth_i += 1) {
-                        if (tokenizer.next() == null) continue :loop;
+                        // remove `package/` prefix if it exists
+                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/lib/utils/tar.js#L67
+                        if (strings.hasPrefixComptime(pathname, "package/")) {
+                            pathname = pathname["package/".len.. :0];
+                        }
+                    } else {
+                        var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
+
+                        inline for (0..options.depth_to_skip) |_| {
+                            if (tokenizer.next() == null) continue :loop;
+                        }
+
+                        const pathname_ = tokenizer.rest();
+                        pathname = @as([*]const bun.OSPathChar, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
                     }
-
-                    const pathname_ = tokenizer.rest();
-                    pathname = @as([*]const bun.OSPathChar, @ptrFromInt(@intFromPtr(pathname_.ptr)))[0..pathname_.len :0];
-                    if (pathname.len == 0) continue;
+                    if (pathname.len == 0 or pathname.len == 1 and pathname[0] == '.') continue;
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
                     const path_slice: bun.OSPathSlice = pathname.ptr[0..pathname.len];
 
-                    if (comptime log) {
+                    if (comptime options.log) {
                         Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
@@ -581,9 +598,12 @@ pub const Archive = struct {
                                 try bun.MakePath.makePath(u16, dir, pathname);
                             } else {
                                 std.os.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
-                                    if (err == error.PathAlreadyExists or err == error.NotDir) break;
-                                    try bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err);
-                                    try std.os.mkdiratZ(dir_fd, pathname, 0o777);
+                                    // It's possible for some tarballs to return a directory twice, with and
+                                    // without `./` in the beginning. So if it already exists, continue to the
+                                    // next entry.
+                                    if (err == error.PathAlreadyExists or err == error.NotDir) continue;
+                                    bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
+                                    std.os.mkdiratZ(dir_fd, pathname, 0o777) catch {};
                                 };
                             }
                         },
@@ -643,7 +663,7 @@ pub const Archive = struct {
                                 break :brk try bun.toLibUVOwnedFD(file_handle_native);
                             };
 
-                            defer if (comptime close_handles) {
+                            defer if (comptime options.close_handles) {
                                 // On windows, AV hangs these closes really badly.
                                 // 'bun i @mui/icons-material' takes like 20 seconds to extract
                                 // mostly spend on waiting for things to close closing
@@ -706,7 +726,7 @@ pub const Archive = struct {
                                         lib.ARCHIVE_EOF => break :loop,
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {
-                                            if (comptime log) {
+                                            if (comptime options.log) {
                                                 Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     retries_remaining,
@@ -715,7 +735,7 @@ pub const Archive = struct {
                                             }
                                         },
                                         else => {
-                                            if (comptime log) {
+                                            if (comptime options.log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
                                                 Output.err("libarchive error", "extracting {}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
@@ -743,9 +763,7 @@ pub const Archive = struct {
         ctx: ?*Archive.Context,
         comptime FilePathAppender: type,
         appender: FilePathAppender,
-        comptime depth_to_skip: usize,
-        comptime close_handles: bool,
-        comptime log: bool,
+        comptime options: ExtractOptions,
     ) !u32 {
         var dir: std.fs.Dir = brk: {
             const cwd = std.fs.cwd();
@@ -760,7 +778,7 @@ pub const Archive = struct {
             }
         };
 
-        defer if (comptime close_handles) dir.close();
-        return try extractToDir(file_buffer, dir, ctx, FilePathAppender, appender, depth_to_skip, close_handles, log);
+        defer if (comptime options.close_handles) dir.close();
+        return try extractToDir(file_buffer, dir, ctx, FilePathAppender, appender, options);
     }
 };

@@ -240,10 +240,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         null,
                         *DirnameReader,
                         &dirname_reader,
-                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
-                        1,
-                        true,
-                        log,
+                        .{
+                            // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
+                            .depth_to_skip = 1,
+                            .log = log,
+                        },
                     ),
                 }
 
@@ -265,10 +266,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     null,
                     void,
                     {},
-                    // for npm packages, the root dir is always "package"
-                    1,
-                    true,
-                    log,
+                    // for npm packages, the root dir is sometimes "package"
+                    .{
+                        .log = log,
+                        .npm_registry_tarball = true,
+                    },
                 ),
             },
         }

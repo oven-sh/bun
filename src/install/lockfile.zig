@@ -857,10 +857,9 @@ pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?Packag
         const packages = this.packages.slice();
         const name_hashes = packages.items(.name_hash);
         const resolutions = packages.items(.resolution);
-        const metas = packages.items(.meta);
-        for (resolutions, name_hashes, metas) |res, name_hash, meta| {
+        for (resolutions, name_hashes, 0..) |res, name_hash, i| {
             if (res.tag == .workspace and name_hash == workspace_name_hash_) {
-                break :brk meta.id;
+                break :brk @intCast(i);
             }
         }
 

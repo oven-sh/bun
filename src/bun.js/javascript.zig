@@ -602,11 +602,15 @@ export fn Bun__getTLSRejectUnauthorizedValue() i32 {
 }
 
 export fn Bun__setVerboseFetchValue(value: i32) void {
-    VirtualMachine.get().default_verbose_fetch = value != 0;
+    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
 }
 
 export fn Bun__getVerboseFetchValue() i32 {
-    return if (JSC.VirtualMachine.get().getVerboseFetch()) 1 else 0;
+    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
+        .none => 0,
+        .headers => 1,
+        .curl => 2,
+    };
 }
 
 /// TODO: rename this to ScriptExecutionContext
@@ -652,7 +656,7 @@ pub const VirtualMachine = struct {
     exit_handler: ExitHandler = .{},
 
     default_tls_reject_unauthorized: ?bool = null,
-    default_verbose_fetch: ?bool = null,
+    default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -781,16 +785,19 @@ pub const VirtualMachine = struct {
         return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
     }
 
-    pub fn getVerboseFetch(this: *VirtualMachine) bool {
+    pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
         return this.default_verbose_fetch orelse {
             if (this.bundler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
                 if (strings.eqlComptime(verbose_fetch, "true") or strings.eqlComptime(verbose_fetch, "1")) {
-                    this.default_verbose_fetch = true;
-                    return true;
+                    this.default_verbose_fetch = .headers;
+                    return .headers;
+                } else if (strings.eqlComptime(verbose_fetch, "curl")) {
+                    this.default_verbose_fetch = .curl;
+                    return .curl;
                 }
             }
-            this.default_verbose_fetch = false;
-            return false;
+            this.default_verbose_fetch = .none;
+            return .none;
         };
     }
 

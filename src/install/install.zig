@@ -3696,12 +3696,11 @@ pub const PackageManager = struct {
     pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
         const scope = this.scopeForPackageName(name);
 
-        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version, null);
-
         if (scope.name.len == 0 and !this.options.did_override_default_scope) {
-            if (patch_hash != null) return cachedNPMPackageFolderPrintBasename(buf, name, version, patch_hash);
-            return basename;
+            return cachedNPMPackageFolderPrintBasename(buf, name, version, patch_hash);
         }
+
+        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version, null);
 
         const spanned = bun.span(basename);
         const available = buf[spanned.len..];
@@ -3728,11 +3727,13 @@ pub const PackageManager = struct {
 
     // TODO: normalize to alphanumeric
     pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
+        const extract_cache_version_number = 1;
+
         if (version.tag.hasPre()) {
             if (version.tag.hasBuild()) {
                 return std.fmt.bufPrintZ(
                     buf,
-                    "{s}@{d}.{d}.{d}-{any}+{any}{}",
+                    "{s}@{d}.{d}.{d}-{any}+{any}{}@@@{d}",
                     .{
                         name,
                         version.major,
@@ -3741,12 +3742,13 @@ pub const PackageManager = struct {
                         bun.fmt.hexIntLower(version.tag.pre.hash),
                         bun.fmt.hexIntUpper(version.tag.build.hash),
                         PatchHashFmt{ .hash = patch_hash },
+                        extract_cache_version_number,
                     },
                 ) catch unreachable;
             }
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{any}{}",
+                "{s}@{d}.{d}.{d}-{any}{}@@@{d}",
                 .{
                     name,
                     version.major,
@@ -3754,13 +3756,14 @@ pub const PackageManager = struct {
                     version.patch,
                     bun.fmt.hexIntLower(version.tag.pre.hash),
                     PatchHashFmt{ .hash = patch_hash },
+                    extract_cache_version_number,
                 },
             ) catch unreachable;
         }
         if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}+{any}{}",
+                "{s}@{d}.{d}.{d}+{any}{}@@@{d}",
                 .{
                     name,
                     version.major,
@@ -3768,15 +3771,17 @@ pub const PackageManager = struct {
                     version.patch,
                     bun.fmt.hexIntUpper(version.tag.build.hash),
                     PatchHashFmt{ .hash = patch_hash },
+                    extract_cache_version_number,
                 },
             ) catch unreachable;
         }
-        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}", .{
+        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}@@@{d}", .{
             name,
             version.major,
             version.minor,
             version.patch,
             PatchHashFmt{ .hash = patch_hash },
+            extract_cache_version_number,
         }) catch unreachable;
     }
 

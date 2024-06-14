@@ -543,7 +543,7 @@ pub const Archive = struct {
                     }
 
                     // strip and normalize the path
-                    var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, std.fs.path.sep);
+                    var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, '/');
                     inline for (0..options.depth_to_skip) |_| {
                         if (tokenizer.next() == null) continue :loop;
                     }

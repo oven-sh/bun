@@ -10977,27 +10977,29 @@ pub const PackageManager = struct {
                 Output.flush();
                 Global.crash();
             };
-            const subproc = bun.patch.Subproc.init(
-                manager,
-                old_folder,
-                new_folder,
-                cwd[0..cwd.len :0],
-                git,
-            );
+            const paths = bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, new_folder, false);
+            const opts = bun.patch.spawnOpts(paths[0], paths[1], cwd, git, &manager.event_loop);
 
-            subproc.spawn() catch |e| {
+            var spawn_result = switch (bun.spawnSync(&opts) catch |e| {
                 Output.prettyError(
-                    "<r><red>error<r>: failed to make git dif: {s} <r>\n",
+                    "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},
                 );
                 Output.flush();
                 Global.crash();
+            }) {
+                .result => |r| r,
+                .err => |e| {
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to make diff {}<r>\n",
+                        .{e},
+                    );
+                    Output.flush();
+                    Global.crash();
+                },
             };
-            defer subproc.deinit();
 
-            manager.sleepUntil(subproc, bun.patch.Subproc.isDone);
-
-            const contents = switch (subproc.diffPostProcess() catch |e| {
+            const contents = switch (bun.patch.diffPostProcess(&spawn_result, paths[0], paths[1]) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},

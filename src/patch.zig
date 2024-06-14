@@ -1234,6 +1234,92 @@ pub const TestingAPIs = struct {
     }
 };
 
+pub fn spawnOpts(
+    old_folder: []const u8,
+    new_folder: []const u8,
+    cwd: [:0]const u8,
+    git: [:0]const u8,
+    loop: *JSC.AnyEventLoop,
+) bun.spawn.sync.Options {
+    const argv: []const []const u8 = brk: {
+        const ARGV = &[_][:0]const u8{
+            "git",
+            "-c",
+            "core.safecrlf=false",
+            "diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--ignore-cr-at-eol",
+            "--irreversible-delete",
+            "--full-index",
+            "--no-index",
+        };
+        const argv_buf = bun.default_allocator.alloc([]const u8, ARGV.len + 2) catch bun.outOfMemory();
+        argv_buf[0] = git;
+        for (1..ARGV.len) |i| {
+            argv_buf[i] = ARGV[i];
+        }
+        argv_buf[ARGV.len] = old_folder;
+        argv_buf[ARGV.len + 1] = new_folder;
+        break :brk argv_buf;
+    };
+
+    const envp: [:null]?[*:0]const u8 = brk: {
+        const env_arr = &[_][:0]const u8{
+            "GIT_CONFIG_NOSYSTEM",
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "USERPROFILE",
+        };
+        const PATH = bun.getenvZ("PATH");
+        const envp_buf = bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null) catch bun.outOfMemory();
+        for (0..env_arr.len) |i| {
+            envp_buf[i] = env_arr[i].ptr;
+        }
+        if (PATH) |p| {
+            envp_buf[envp_buf.len - 1] = @ptrCast(p.ptr);
+        }
+        break :brk envp_buf;
+    };
+
+    return bun.spawn.sync.Options{
+        .stdout = .buffer,
+        .stderr = .buffer,
+        .cwd = cwd,
+        .envp = envp,
+        .argv = argv,
+        .windows = if (bun.Environment.isWindows) .{ .loop = switch (loop.*) {
+            .js => |x| .{ .js = x },
+            .mini => |*x| .{ .mini = x },
+        } } else {},
+    };
+}
+
+pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+    var stdout = std.ArrayList(u8).init(bun.default_allocator);
+    var stderr = std.ArrayList(u8).init(bun.default_allocator);
+
+    std.mem.swap(std.ArrayList(u8), &stdout, &result.stdout);
+    std.mem.swap(std.ArrayList(u8), &stderr, &result.stderr);
+
+    var deinit_stdout = true;
+    var deinit_stderr = true;
+    defer {
+        if (deinit_stdout) stdout.deinit();
+        if (deinit_stderr) stderr.deinit();
+    }
+
+    if (stderr.items.len > 0) {
+        deinit_stderr = false;
+        return .{ .err = stderr };
+    }
+
+    debug("Before postprocess: {s}\n", .{stdout.items});
+    try gitDiffPostprocess(&stdout, old_folder, new_folder);
+    deinit_stdout = false;
+    return .{ .result = stdout };
+}
+
 pub const Subproc = struct {
     const Process = bun.spawn.Process;
     const PackageManager = bun.install.PackageManager;
@@ -1498,7 +1584,7 @@ pub const Subproc = struct {
     }
 };
 
-fn gitDiffPreprocessPaths(
+pub fn gitDiffPreprocessPaths(
     allocator: std.mem.Allocator,
     old_folder_: []const u8,
     new_folder_: []const u8,

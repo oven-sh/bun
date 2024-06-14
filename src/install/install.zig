@@ -10993,10 +10993,11 @@ pub const PackageManager = struct {
                 Output.flush();
                 Global.crash();
             };
+            defer subproc.deinit();
 
             manager.sleepUntil(subproc, bun.patch.Subproc.isDone);
 
-            const contents = switch (bun.patch.gitDiffInternal(manager.allocator, old_folder, new_folder) catch |e| {
+            const contents = switch (subproc.diffPostProcess() catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},

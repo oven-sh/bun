@@ -1300,6 +1300,28 @@ pub const Subproc = struct {
         return this.is_done;
     }
 
+    pub fn diffPostProcess(this: *Subproc) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+        var stdout = this.stdout.takeBuffer();
+        var stderr = this.stdout.takeBuffer();
+
+        var deinit_stdout = true;
+        var deinit_stderr = true;
+        defer {
+            if (deinit_stdout) stdout.deinit();
+            if (deinit_stderr) stderr.deinit();
+        }
+
+        if (stderr.items.len > 0) {
+            deinit_stderr = false;
+            return .{ .err = stderr };
+        }
+
+        debug("Before postprocess: {s}\n", .{stdout.items});
+        try gitDiffPostprocess(&stdout, this.old_folder, this.new_folder);
+        deinit_stdout = false;
+        return .{ .result = stdout };
+    }
+
     pub fn init(
         manager: *PackageManager,
         old_folder_: []const u8,
@@ -1403,6 +1425,9 @@ pub const Subproc = struct {
     }
 
     pub fn spawn(this: *Subproc) !void {
+        this.stdout.setParent(this);
+        this.stderr.setParent(this);
+
         if (bun.Environment.isWindows) {
             this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
             this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
@@ -1479,12 +1504,11 @@ fn gitDiffPreprocessPaths(
     new_folder_: []const u8,
     comptime sentinel: bool,
 ) [2]if (sentinel) [:0]const u8 else []const u8 {
-    const T = if (sentinel) [:0]const u8 else []const u8;
     const bump = if (sentinel) 1 else 0;
-    const old_folder: T = if (comptime bun.Environment.isWindows) brk: {
+    const old_folder = if (comptime bun.Environment.isWindows) brk: {
         // backslash in the path fucks everything up
         const cpy = allocator.alloc(u8, old_folder_.len + bump) catch bun.outOfMemory();
-        @memcpy(cpy, old_folder_);
+        @memcpy(cpy[0..old_folder_.len], old_folder_);
         std.mem.replaceScalar(u8, cpy, '\\', '/');
         if (sentinel) {
             cpy[old_folder_.len] = 0;
@@ -1492,9 +1516,9 @@ fn gitDiffPreprocessPaths(
         }
         break :brk cpy;
     } else old_folder_;
-    const new_folder: T = if (comptime bun.Environment.isWindows) brk: {
+    const new_folder = if (comptime bun.Environment.isWindows) brk: {
         const cpy = allocator.alloc(u8, new_folder_.len + bump) catch bun.outOfMemory();
-        @memcpy(cpy, new_folder_);
+        @memcpy(cpy[0..new_folder_.len], new_folder_);
         std.mem.replaceScalar(u8, cpy, '\\', '/');
         if (sentinel) {
             cpy[new_folder_.len] = 0;

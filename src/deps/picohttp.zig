@@ -110,7 +110,7 @@ pub const Request = struct {
                     }
                 }
 
-                try header.curl().format(comptime "", .{}, writer);
+                try header.curl().format("", .{}, writer);
 
                 if (bun.strings.eqlCaseInsensitiveASCII("accept-encoding", header.name, true)) {
                     _ = try writer.writeAll(" --compressed");

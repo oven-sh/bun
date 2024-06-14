@@ -66,6 +66,39 @@ registry = "http://localhost:${port}/"
   );
 });
 
+for (const optional of [true, false]) {
+  test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        [optional ? "optionalDependencies" : "dependencies"]: {
+          "missing-tarball": "1.0.0",
+          "uses-what-bin": "1.0.0",
+        },
+        "trustedDependencies": ["uses-what-bin"],
+      }),
+    );
+
+    const { exited, err } = await runBunInstall(env, packageDir, {
+      [optional ? "allowWarnings" : "allowErrors"]: true,
+      expectedExitCode: optional ? 0 : 1,
+      savesLockfile: false,
+    });
+    expect(err).toContain(
+      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 500`,
+    );
+    expect(await exited).toBe(optional ? 0 : 1);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "uses-what-bin",
+      "what-bin",
+    ]);
+    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+  });
+}
+
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
   const order = ["devDependencies", "dependencies"];

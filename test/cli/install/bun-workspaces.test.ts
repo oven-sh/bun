@@ -451,7 +451,7 @@ describe("workspace aliases", async () => {
 
       const err = await Bun.readableStreamToText(stderr);
       if (version === "workspace:@org/b") {
-        expect(err).toContain('workspace dependency "a1" not found');
+        expect(err).toContain('Workspace dependency "a1" not found');
       } else {
         expect(err).toContain(`No matching version for workspace dependency "a1". Version: "${version}"`);
       }

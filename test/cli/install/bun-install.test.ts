@@ -404,7 +404,7 @@ it("should handle missing package", async () => {
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: package "foo" not found localhost:${new URL(root_url).port}/foo 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${new URL(root_url).port}/foo - 404`);
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/foo`]);
@@ -454,7 +454,7 @@ foo = { token = "bar" }
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`GET ${url} - 555`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET ${url} - 555`);
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([url]);
@@ -7789,10 +7789,8 @@ describe("Registry URLs", () => {
 
         if (fails === -1) {
           expect(err).toContain(`Registry URL must be http:// or https://`);
-          expect(err).toContain("error: InvalidURL");
         } else if (fails) {
           expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-          expect(err).toContain("error: InvalidURL");
         } else {
           expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
         }
@@ -7832,7 +7830,6 @@ describe("Registry URLs", () => {
     const err = await new Response(stderr).text();
 
     expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-    expect(err).toContain("warn: InvalidURL");
 
     expect(await exited).toBe(0);
   });

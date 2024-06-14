@@ -246,7 +246,7 @@ it("should handle semver-like names", async () => {
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: package "1.2.3" not found localhost:${port}/1.2.3 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/1.2.3 - 404`);
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/1.2.3`]);
@@ -287,7 +287,7 @@ it("should handle @scoped names", async () => {
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: package "@bar/baz" not found localhost:${port}/@bar%2fbaz 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2fbaz - 404`);
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);

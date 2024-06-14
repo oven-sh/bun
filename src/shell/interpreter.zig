@@ -1082,7 +1082,9 @@ pub const Interpreter = struct {
                     return Maybe(void).initErr(err);
                 },
             };
-            _ = Syscall.close2(this.cwd_fd);
+            if (comptime !in_init) {
+                _ = Syscall.close2(this.cwd_fd);
+            }
 
             this.__prev_cwd.clearRetainingCapacity();
             this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
@@ -1324,12 +1326,6 @@ pub const Interpreter = struct {
             },
         };
 
-        const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
-            .result => |fd| fd,
-            .err => |err| {
-                return .{ .err = .{ .sys = err.toSystemError() } };
-            },
-        };
         var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
         cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
 
@@ -1361,7 +1357,7 @@ pub const Interpreter = struct {
 
                 .__cwd = cwd_arr,
                 .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
-                .cwd_fd = cwd_fd,
+                .cwd_fd = bun.invalid_fd,
             },
 
             .root_io = .{
@@ -1382,6 +1378,14 @@ pub const Interpreter = struct {
 
         if (cwd_) |c| {
             if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+        } else {
+            const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                .result => |fd| fd,
+                .err => |err| {
+                    return .{ .err = .{ .sys = err.toSystemError() } };
+                },
+            };
+            interpreter.root_shell.cwd_fd = cwd_fd;
         }
 
         return .{ .result = interpreter };

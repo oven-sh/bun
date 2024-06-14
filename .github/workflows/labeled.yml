@@ -20,9 +20,9 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.10"
+          bun-version: "1.1.13"
       - name: "add platform and command label"
-          id: add-labels
+        id: add-labels
         env:
           GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
           GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
@@ -33,7 +33,7 @@ jobs:
       - name: Add labels
         uses: actions-cool/issues-helper@v3
         with:
-          actions: 'add-labels'
+          actions: "add-labels"
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
-          labels: ${{ steps.add-labels.outputs.labels }} 
+          labels: ${{ steps.add-labels.outputs.labels }}

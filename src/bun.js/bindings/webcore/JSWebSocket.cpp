@@ -982,4 +982,5 @@ JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
 {
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }
+
 }

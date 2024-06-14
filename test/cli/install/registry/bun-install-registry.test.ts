@@ -8067,6 +8067,31 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
     }),
   );
 
+  // Entries in this tarball:
+  //
+  //  ./
+  //  ./package1000.js
+  //  ./package2/
+  //  ./package3/
+  //  ./package4/
+  //  ./package.json
+  //  ./package/
+  //  ./package1000/
+  //  ./package/index.js
+  //  ./package4/package5/
+  //  ./package4/package.json
+  //  ./package3/package6/
+  //  ./package3/package6/index.js
+  //  ./package2/index.js
+  //  package3/
+  //  package3/package6/
+  //  package3/package6/index.js
+  //
+  // The directory `package3` is added twice, but because one doesn't start
+  // with `./`, it is stripped from the path and a copy of `package6` is placed
+  // at the root of the output directory. Also `package1000` is not included in
+  // the output because it is an empty directory.
+
   await runBunInstall(env, packageDir);
   const prefix = join(packageDir, "node_modules", "tarball-without-package-prefix");
   const results = await Promise.all([

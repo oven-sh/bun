@@ -10334,12 +10334,10 @@ pub const PackageManager = struct {
             };
             defer parent_dir.close();
 
-            manager.overwriteNodeModulesFolderWindows(
+            manager.overwriteNodeModulesFolderPosix(
                 cache_dir,
                 cache_dir_subpath,
                 module_folder,
-                parent_dir,
-                bun.path.basename(module_folder),
             ) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
@@ -10389,28 +10387,32 @@ pub const PackageManager = struct {
 
                 var copy_file_state: bun.CopyFileState = .{};
 
+                var pathbuf: bun.PathBuffer = undefined;
+
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
                     real_file_count += 1;
                     const openFile = std.fs.Dir.openFile;
                     const createFile = std.fs.Dir.createFile;
 
-                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                    const basename = bun.strings.fromWPath(pathbuf[0..], entry.basename);
+
+                    var in_file = try openFile(entry.dir, basename, .{ .mode = .read_only });
                     defer in_file.close();
 
                     if (bun.sys.unlinkat(
                         bun.toFD(destination_dir_.fd),
-                        entry.basename.ptr[0..entry.basename.len :0],
+                        basename.ptr[0..basename.len :0],
                     ).asErr()) |e| {
                         Output.prettyError("<r><red>error<r>: copying file {}", .{e});
                         Global.crash();
                     }
 
                     const mode = try in_file.mode();
-                    var outfile = try createFile(destination_dir_, entry.basename, .{ .mode = mode });
+                    var outfile = try createFile(destination_dir_, basename, .{ .mode = mode });
                     defer outfile.close();
 
-                    debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
+                    // debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
                     // var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
                     //     if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
                     //         bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
@@ -10432,10 +10434,37 @@ pub const PackageManager = struct {
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                     }
 
-                    bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
-                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.crash();
-                    };
+                    if (comptime bun.Environment.isPosix) {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                            Global.crash();
+                        };
+                    } else {
+                        var buf1: bun.windows.WPathBuffer = undefined;
+                        var buf2: bun.windows.WPathBuffer = undefined;
+
+                        const infile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(in_file.handle, &buf1, buf1.len, 0);
+                        if (infile_path_len == 0) {
+                            const e = bun.windows.Win32Error.get();
+                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
+                            Global.crash();
+                        }
+                        buf1[infile_path_len] = 0;
+
+                        const outfile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(outfile.handle, &buf2, buf2.len, 0);
+                        if (outfile_path_len == 0) {
+                            const e = bun.windows.Win32Error.get();
+                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
+                            Global.crash();
+                        }
+                        buf2[outfile_path_len] = 0;
+                        bun.copyFileWithState(buf1[0..infile_path_len :0], buf2[0..outfile_path_len :0], &copy_file_state) catch |err| {
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                            Global.crash();
+                        };
+                    }
                 }
 
                 return real_file_count;
@@ -10471,6 +10500,13 @@ pub const PackageManager = struct {
             bun.OSPathLiteral("CMakeFiles"),
         };
 
+        const IGNORED_PATHS2: []const []const u8 = &[_][]const u8{
+            "node_modules",
+            ".git",
+            "CMakeFiles",
+        };
+        _ = IGNORED_PATHS2; // autofix
+
         const FileCopier = struct {
             pub fn copy(
                 destination_dir_: std.fs.Dir,
@@ -10501,11 +10537,12 @@ pub const PackageManager = struct {
 
                     switch (entry.kind) {
                         .directory => {
-                            if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
-                                bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
-                            }
+                            // if (bun.windows.CreateDirectoryExW(src.ptr, dest.ptr, null) == 0) {
+                            //     bun.MakePath.makePath(u16, destination_dir_, entry.path) catch {};
+                            // }
                         },
                         .file => {
+                            // bun.sys.unlinkat(dirfd: bun.FileDescriptor, to: anytype)
                             if (bun.windows.CopyFileW(src.ptr, dest.ptr, 0) == 0) {
                                 if (bun.Dirname.dirname(u16, entry.path)) |entry_dirname| {
                                     bun.MakePath.makePath(u16, destination_dir_, entry_dirname) catch {};

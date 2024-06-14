@@ -1599,23 +1599,30 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     return JSValue(result);
 }
 
-static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, ObjectInitializationScope& scope, JSC::GCDeferralContext* deferralContext)
+static inline JSC::JSArray* constructResultRow(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis, size_t columnCount)
 {
-    int count = castedThis->columnNames->size();
-    auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::JSArray* result = JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
     auto* stmt = castedThis->stmt;
 
-    for (int i = 0, j = 0; j < count; i++, j++) {
-        if (!castedThis->validColumns.get(i)) {
-            j -= 1;
-            continue;
-        }
+    MarkedArgumentBuffer arguments;
+    arguments.ensureCapacity(columnCount);
+    for (size_t i = 0; i < columnCount; i++) {
         JSValue value = toJS(vm, lexicalGlobalObject, stmt, i);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
-        result->putDirectIndex(lexicalGlobalObject, j, value);
+        arguments.append(value);
+    }
+
+    JSC::ObjectInitializationScope initializationScope(vm);
+    Structure* arrayStructure = lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    JSC::JSArray* result;
+
+    if (LIKELY(result = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, arrayStructure, columnCount))) {
+        for (size_t i = 0; i < columnCount; i++) {
+            result->initializeIndex(initializationScope, i, arguments.at(i));
+        }
+    } else {
+        RETURN_IF_EXCEPTION(throwScope, nullptr);
+        result = JSC::constructArray(lexicalGlobalObject, arrayStructure, arguments);
     }
 
     return result;
@@ -1833,17 +1840,20 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
             result = jsNumber(sqlite3_column_count(stmt));
 
         } else {
-            JSC::ObjectInitializationScope initializationScope(vm);
-            JSC::GCDeferralContext deferralContext(vm);
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
             {
+                size_t columnCount = sqlite3_column_count(stmt);
 
-                while (status == SQLITE_ROW) {
-                    JSC::JSValue row = constructResultRow(lexicalGlobalObject, castedThis, initializationScope, &deferralContext);
+                do {
+                    JSC::JSArray* row = constructResultRow(vm, lexicalGlobalObject, castedThis, columnCount);
+                    if (UNLIKELY(!row || scope.exception())) {
+                        sqlite3_reset(stmt);
+                        RELEASE_AND_RETURN(scope, {});
+                    }
                     resultArray->push(lexicalGlobalObject, row);
                     status = sqlite3_step(stmt);
-                }
+                } while (status == SQLITE_ROW);
             }
 
             result = resultArray;

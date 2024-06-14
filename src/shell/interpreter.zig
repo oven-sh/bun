@@ -1027,6 +1027,10 @@ pub const Interpreter = struct {
         }
 
         pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
+            return this.changeCwdImpl(interp, new_cwd_, false);
+        }
+
+        pub fn changeCwdImpl(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype, comptime in_init: bool) Maybe(void) {
             _ = interp; // autofix
             if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
@@ -1093,7 +1097,9 @@ pub const Interpreter = struct {
 
             this.cwd_fd = new_cwd_fd;
 
-            this.export_env.insert(EnvStr.initSlice("OLDPWD"), EnvStr.initSlice(this.prevCwd()));
+            if (comptime !in_init) {
+                this.export_env.insert(EnvStr.initSlice("OLDPWD"), EnvStr.initSlice(this.prevCwd()));
+            }
             this.export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initSlice(this.cwd()));
 
             return Maybe(void).success;
@@ -1375,7 +1381,7 @@ pub const Interpreter = struct {
         };
 
         if (cwd_) |c| {
-            if (interpreter.root_shell.changeCwd(interpreter, c).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
         }
 
         return .{ .result = interpreter };

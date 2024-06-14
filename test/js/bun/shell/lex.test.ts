@@ -692,16 +692,10 @@ describe("lex shell", () => {
         Delimit: {},
       },
       {
-        CmdSubstBegin: {},
-      },
-      {
-        Text: "ls",
+        Text: "`ls`",
       },
       {
         Delimit: {},
-      },
-      {
-        CmdSubstEnd: {},
       },
       {
         Eof: {},

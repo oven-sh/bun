@@ -7,14 +7,21 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const createTypeError = JSC.JSGlobalObject.createTypeErrorInstanceWithCode;
 
-pub fn ERR_SOCKET_BAD_TYPE(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            _ = callframe;
-            return createTypeError(globalThis, .ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6", .{});
+const ERR_SOCKET_BAD_TYPE = createSimpleError(createTypeError, .ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6");
+
+fn createSimpleError(createFn: anytype, comptime code: JSC.Node.ErrorCode, comptime message: string) JSC.JSBuiltinFunctionPtr {
+    const R = struct {
+        pub fn cbb(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+            const S = struct {
+                fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                    _ = callframe;
+                    return createFn(globalThis, code, message, .{});
+                }
+            };
+            return JSC.JSFunction.create(global, @tagName(code), S.cb, 0, .{});
         }
     };
-    return JSC.JSFunction.create(global, "ERR_SOCKET_BAD_TYPE", S.cb, 0, .{});
+    return R.cbb;
 }
 
 pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

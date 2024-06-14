@@ -10,6 +10,7 @@ const tags = process.argv
   .filter(arg => /^--.*=.*$/i.test(arg))
   .map(arg => arg.replace(/^--/, ""));
 const sshArgs = process.argv.slice(2).filter(arg => /^-i/i.test(arg));
+const sshCommand = process.argv.includes("--") ? ["-t", ...process.argv.slice(process.argv.indexOf("--"))] : [];
 
 const agents = [];
 for (let page = 1; ; page++) {
@@ -49,11 +50,11 @@ for (let i = 0; i < filteredMachines.length; i++) {
 
   for (const username of getUsers(name)) {
     const target = `${username}@${address}`;
-    const { status } = spawnSync("ssh", ["-oBatchMode=yes", ...sshArgs, target], {
+    const { status } = spawnSync("ssh", ["-oBatchMode=yes", ...sshArgs, target, ...sshCommand], {
       stdio: "inherit",
       shell: process.env.SHELL || true,
     });
-    if (status === 0) {
+    if (status !== 255) {
       break;
     }
   }

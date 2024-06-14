@@ -1169,10 +1169,11 @@ function formatTestToMarkdown(result, concise) {
 function reportAnnotationToBuildKite(label, content, attempt = 0) {
   const { error, status, signal, stderr } = spawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", "error", "--context", `${label}`],
+    ["annotate", "--append", "--style", "error", "--context", `${label}`, "--priority", `${attempt}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
+      encoding: "utf-8",
       timeout: spawnTimeout,
       cwd,
     },
@@ -1184,8 +1185,10 @@ function reportAnnotationToBuildKite(label, content, attempt = 0) {
   if (attempt > 0) {
     throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
-  const preview = `\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\``;
-  const message = `Failed to create annotation for \`${label}\`: ${cause}\n${preview}`;
+  let message = `Failed to create annotation for \`${label}\`: ${cause}`;
+  if (stderr) {
+    message += `\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\``;
+  }
   reportAnnotationToBuildKite(`${label}-error`, message, attempt + 1);
 }
 

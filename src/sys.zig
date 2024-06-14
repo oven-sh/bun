@@ -352,6 +352,17 @@ pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
         Result.errnoSys(0, .getcwd).?;
 }
 
+pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
+    const Result = Maybe([:0]const u8);
+    buf[0] = 0;
+    buf[buf.len - 1] = 0;
+    const rc: ?[*:0]u8 = @ptrCast(std.c.getcwd(buf, bun.MAX_PATH_BYTES));
+    return if (rc != null)
+        Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }
+    else
+        Result.errnoSys(0, .getcwd).?;
+}
+
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchmod(fd, mode);

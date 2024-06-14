@@ -1,3 +1,5 @@
+const Output = bun.Output;
+const Global = bun.Global;
 const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
@@ -1113,7 +1115,7 @@ pub const TestingAPIs = struct {
         const new_folder = new_folder_bunstr.toUTF8(bun.default_allocator);
         defer new_folder.deinit();
 
-        return switch (gitDiff(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
+        return switch (gitDiffInternal(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
             globalThis.throwError(e, "failed to make diff");
             return .undefined;
         }) {
@@ -1232,24 +1234,293 @@ pub const TestingAPIs = struct {
     }
 };
 
-pub fn gitDiff(
+pub const Subproc = struct {
+    const Process = bun.spawn.Process;
+    const PackageManager = bun.install.PackageManager;
+    const uv = bun.windows.libuv;
+    pub const OutputReader = bun.io.BufferedReader;
+
+    manager: *PackageManager,
+    process: ?*Process = null,
+    stdout: OutputReader = OutputReader.init(@This()),
+    stderr: OutputReader = OutputReader.init(@This()),
+    envp: [:null]?[*:0]const u8,
+    argv: [:null]?[*:0]const u8,
+
+    is_done: bool = false,
+
+    cwd: [:0]const u8,
+    old_folder: [:0]const u8,
+    new_folder: [:0]const u8,
+
+    const ARGV = &[_][:0]const u8{
+        "git",
+        "-c",
+        "core.safecrlf=false",
+        "diff",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--ignore-cr-at-eol",
+        "--irreversible-delete",
+        "--full-index",
+        "--no-index",
+    };
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn resetPolls(this: *Subproc) void {
+        if (this.process) |process| {
+            this.process = null;
+            process.close();
+            process.deref();
+        }
+
+        this.stdout.deinit();
+        this.stderr.deinit();
+        this.stdout = OutputReader.init(@This());
+        this.stderr = OutputReader.init(@This());
+    }
+
+    pub fn deinit(this: *Subproc) void {
+        this.resetPolls();
+
+        this.stdout.deinit();
+        this.stderr.deinit();
+
+        bun.default_allocator.free(this.old_folder);
+        bun.default_allocator.free(this.new_folder);
+
+        bun.default_allocator.free(this.envp);
+        bun.default_allocator.free(this.argv);
+
+        this.destroy();
+    }
+
+    pub fn isDone(this: *Subproc) bool {
+        return this.is_done;
+    }
+
+    pub fn init(
+        manager: *PackageManager,
+        old_folder_: []const u8,
+        new_folder_: []const u8,
+        cwd: [:0]const u8,
+        git: [:0]const u8,
+    ) *Subproc {
+        const paths = gitDiffPreprocessPaths(bun.default_allocator, old_folder_, new_folder_, true);
+
+        const giiit = bun.default_allocator.dupeZ(u8, git) catch bun.outOfMemory();
+        const argv: [:null]?[*:0]const u8 = brk: {
+            const argv_buf = bun.default_allocator.allocSentinel(?[*:0]const u8, ARGV.len + 2, null) catch bun.outOfMemory();
+            argv_buf[0] = giiit.ptr;
+            for (1..ARGV.len) |i| {
+                argv_buf[i] = ARGV[i].ptr;
+            }
+            argv_buf[ARGV.len] = paths[0];
+            argv_buf[ARGV.len + 1] = paths[1];
+            break :brk argv_buf;
+        };
+
+        const envp: [:null]?[*:0]const u8 = brk: {
+            const env_arr = &[_][:0]const u8{
+                "GIT_CONFIG_NOSYSTEM",
+                "HOME",
+                "XDG_CONFIG_HOME",
+                "USERPROFILE",
+            };
+            const PATH = bun.getenvZ("PATH");
+            const envp_buf = bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null) catch bun.outOfMemory();
+            for (0..env_arr.len) |i| {
+                envp_buf[i] = env_arr[i].ptr;
+            }
+            if (PATH) |p| {
+                envp_buf[envp_buf.len - 1] = @ptrCast(p.ptr);
+            }
+            break :brk envp_buf;
+        };
+
+        return Subproc.new(Subproc{
+            .old_folder = paths[0],
+            .new_folder = paths[1],
+            .cwd = cwd,
+            .argv = argv,
+            .envp = envp,
+            .manager = manager,
+        });
+    }
+
+    pub fn loop(this: *const Subproc) *bun.uws.Loop {
+        return this.manager.event_loop.loop();
+    }
+
+    pub fn eventLoop(this: *const Subproc) *JSC.AnyEventLoop {
+        return &this.manager.event_loop;
+    }
+
+    pub fn onReaderError(this: *Subproc, err: bun.sys.Error) void {
+        Output.prettyErrorln("<r><red>error<r>: Failed to git diff due to error <b>{s}<r>", .{
+            @tagName(err.getErrno()),
+        });
+        Output.flush();
+        this.maybeFinished();
+    }
+
+    pub fn onReaderDone(this: *Subproc) void {
+        this.maybeFinished();
+    }
+
+    fn maybeFinished(this: *Subproc) void {
+        const process = this.process orelse return;
+
+        this.handleExit(process.status);
+    }
+
+    fn handleExit(this: *Subproc, status: bun.spawn.Status) void {
+        defer this.is_done = true;
+
+        switch (status) {
+            // we can't rely on the exit code because git diff returns 1 even when
+            // it succeeds
+            .exited => {},
+            .signaled => |signal| {
+                Output.prettyError(
+                    "<r><red>error<r>: git diff terminated with{}<r>\n",
+                    .{bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr)},
+                );
+                Output.flush();
+                Global.crash();
+            },
+            .err => |err| {
+                Output.prettyError(
+                    "<r><red>error<r>: failed to make diff {}<r>\n",
+                    .{err},
+                );
+                Output.flush();
+                Global.crash();
+            },
+            else => {},
+        }
+    }
+
+    pub fn spawn(this: *Subproc) !void {
+        if (bun.Environment.isWindows) {
+            this.stdout.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+            this.stderr.source = .{ .pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+        }
+
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdin = .ignore,
+            .stdout = if (bun.Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
+            .stderr = if (bun.Environment.isPosix) .buffer else .{ .buffer = this.stdout.source.?.pipe },
+
+            .cwd = this.cwd,
+
+            .windows = if (bun.Environment.isWindows)
+                .{ .loop = JSC.EventLoopHandle.init(&this.manager.event_loop) }
+            else {},
+
+            .stream = false,
+        };
+
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, this.argv, this.envp)).unwrap();
+
+        if (comptime bun.Environment.isPosix) {
+            if (spawned.stdout) |stdout| {
+                if (!spawned.memfds[1]) {
+                    this.stdout.setParent(this);
+                    _ = bun.sys.setNonblocking(stdout);
+                    try this.stdout.start(stdout, true).unwrap();
+                } else {
+                    this.stdout.setParent(this);
+                    this.stdout.startMemfd(stdout);
+                }
+            }
+            if (spawned.stderr) |stderr| {
+                if (!spawned.memfds[2]) {
+                    this.stderr.setParent(this);
+                    _ = bun.sys.setNonblocking(stderr);
+                    try this.stderr.start(stderr, true).unwrap();
+                } else {
+                    this.stderr.setParent(this);
+                    this.stderr.startMemfd(stderr);
+                }
+            }
+        } else if (comptime bun.Environment.isWindows) {
+            if (spawned.stdout == .buffer) {
+                this.stdout.parent = this;
+                try this.stdout.startWithCurrentPipe().unwrap();
+            }
+            if (spawned.stderr == .buffer) {
+                this.stderr.parent = this;
+                try this.stderr.startWithCurrentPipe().unwrap();
+            }
+        }
+
+        const event_loop = &this.manager.event_loop;
+        var process = spawned.toProcess(
+            event_loop,
+            false,
+        );
+
+        this.process = process;
+        switch (process.watchOrReap()) {
+            .err => |err| {
+                if (!process.hasExited())
+                    process.onExit(.{ .err = err }, &std.mem.zeroes(bun.spawn.Rusage));
+            },
+            .result => {},
+        }
+    }
+};
+
+fn gitDiffPreprocessPaths(
+    allocator: std.mem.Allocator,
+    old_folder_: []const u8,
+    new_folder_: []const u8,
+    comptime sentinel: bool,
+) [2]if (sentinel) [:0]const u8 else []const u8 {
+    const T = if (sentinel) [:0]const u8 else []const u8;
+    const bump = if (sentinel) 1 else 0;
+    const old_folder: T = if (comptime bun.Environment.isWindows) brk: {
+        // backslash in the path fucks everything up
+        const cpy = allocator.alloc(u8, old_folder_.len + bump) catch bun.outOfMemory();
+        @memcpy(cpy, old_folder_);
+        std.mem.replaceScalar(u8, cpy, '\\', '/');
+        if (sentinel) {
+            cpy[old_folder_.len] = 0;
+            break :brk cpy[0..old_folder_.len :0];
+        }
+        break :brk cpy;
+    } else old_folder_;
+    const new_folder: T = if (comptime bun.Environment.isWindows) brk: {
+        const cpy = allocator.alloc(u8, new_folder_.len + bump) catch bun.outOfMemory();
+        @memcpy(cpy, new_folder_);
+        std.mem.replaceScalar(u8, cpy, '\\', '/');
+        if (sentinel) {
+            cpy[new_folder_.len] = 0;
+            break :brk cpy[0..new_folder_.len :0];
+        }
+        break :brk cpy;
+    } else new_folder_;
+
+    if (bun.Environment.isPosix and sentinel) {
+        return .{
+            allocator.dupeZ(u8, old_folder) catch bun.outOfMemory(),
+            allocator.dupeZ(u8, new_folder) catch bun.outOfMemory(),
+        };
+    }
+
+    return .{ old_folder, new_folder };
+}
+
+pub fn gitDiffInternal(
     allocator: std.mem.Allocator,
     old_folder_: []const u8,
     new_folder_: []const u8,
 ) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
-    const old_folder: []const u8 = if (comptime bun.Environment.isWindows) brk: {
-        // backslash in the path fucks everything up
-        const cpy = allocator.alloc(u8, old_folder_.len) catch bun.outOfMemory();
-        @memcpy(cpy, old_folder_);
-        std.mem.replaceScalar(u8, cpy, '\\', '/');
-        break :brk cpy;
-    } else old_folder_;
-    const new_folder = if (comptime bun.Environment.isWindows) brk: {
-        const cpy = allocator.alloc(u8, new_folder_.len) catch bun.outOfMemory();
-        @memcpy(cpy, new_folder_);
-        std.mem.replaceScalar(u8, cpy, '\\', '/');
-        break :brk cpy;
-    } else new_folder_;
+    const paths = gitDiffPreprocessPaths(allocator, old_folder_, new_folder_, false);
+    const old_folder = paths[0];
+    const new_folder = paths[1];
 
     defer if (comptime bun.Environment.isWindows) {
         allocator.free(old_folder);

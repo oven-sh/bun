@@ -10449,10 +10449,6 @@ pub const PackageManager = struct {
         _ = try FileCopier.copy(
             node_modules_folder,
             &walker,
-            {},
-            {},
-            {},
-            {},
         );
     }
 
@@ -10960,7 +10956,47 @@ pub const PackageManager = struct {
                 }
             }
 
-            const contents = switch (bun.patch.gitDiff(manager.allocator, old_folder, new_folder) catch |e| {
+            var cwdbuf: bun.PathBuffer = undefined;
+            const cwd = switch (bun.sys.getcwdZ(&cwdbuf)) {
+                .result => |fd| fd,
+                .err => |e| {
+                    Output.prettyError(
+                        "<r><red>error<r>: failed to get cwd path {}<r>\n",
+                        .{e},
+                    );
+                    Output.flush();
+                    Global.crash();
+                },
+            };
+            var gitbuf: bun.PathBuffer = undefined;
+            const git = bun.which(&gitbuf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+                Output.prettyError(
+                    "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
+                    .{},
+                );
+                Output.flush();
+                Global.crash();
+            };
+            const subproc = bun.patch.Subproc.init(
+                manager,
+                old_folder,
+                new_folder,
+                cwd[0..cwd.len :0],
+                git,
+            );
+
+            subproc.spawn() catch |e| {
+                Output.prettyError(
+                    "<r><red>error<r>: failed to make git dif: {s} <r>\n",
+                    .{@errorName(e)},
+                );
+                Output.flush();
+                Global.crash();
+            };
+
+            manager.sleepUntil(subproc, bun.patch.Subproc.isDone);
+
+            const contents = switch (bun.patch.gitDiffInternal(manager.allocator, old_folder, new_folder) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},

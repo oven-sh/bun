@@ -524,9 +524,6 @@ pub const Archive = struct {
                         //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
                         if (kind != .file) continue;
 
-                        // - ignore entries with `..` in the path (`-P` from tar, default is false)
-                        if (strings.containsT(bun.OSPathChar, pathname, comptime bun.OSPathLiteral(".."))) continue;
-
                         if (comptime Environment.isWindows) {
                             // When writing files on Windows, translate the characters to their
                             // 0xf000 higher-encoded versions.
@@ -539,12 +536,19 @@ pub const Archive = struct {
                             }
 
                             // TODO: do this in normalizeBufT
-                            for (remain) |*c| {
+                            for (remain, 0..) |*c, i| {
                                 switch (c.*) {
                                     '|', '<', '>', '?', ':' => c.* += 0xf000,
+
+                                    // - ignore entries with `..` in the path (`-P` from tar, default is false)
+                                    '.' => if (i + 1 < remain.len and remain[i + 1] == '.') continue :loop,
+
                                     else => {},
                                 }
                             }
+                        } else {
+                            // - ignore entries with `..` in the path (`-P` from tar, default is false)
+                            if (strings.containsT(bun.OSPathChar, pathname, comptime bun.OSPathLiteral(".."))) continue;
                         }
 
                         // TODO: .npmignore, or .gitignore if it doesn't exist

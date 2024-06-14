@@ -517,26 +517,6 @@ pub const Archive = struct {
                     else
                         std.mem.sliceTo(lib.archive_entry_pathname(entry), 0);
 
-                    if (comptime Environment.isWindows and options.npm) {
-                        // When writing files on Windows, translate the characters to their
-                        // 0xf000 higher-encoded versions.
-                        // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
-                        var remain = pathname;
-                        if (strings.startsWithWindowsDriveLetterT(bun.OSPathChar, remain)) {
-                            // don't encode `:` from the drive letter
-                            // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
-                            remain = remain[2..];
-                        }
-
-                        // TODO: do this in normalizeBufT
-                        for (remain) |*c| {
-                            switch (c.*) {
-                                '|', '<', '>', '?', ':' => c.* += 0xf000,
-                                else => {},
-                            }
-                        }
-                    }
-
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
                     if (comptime options.npm) {
@@ -546,6 +526,26 @@ pub const Archive = struct {
 
                         // - ignore entries with `..` in the path (`-P` from tar, default is false)
                         if (strings.containsT(bun.OSPathChar, pathname, comptime bun.OSPathLiteral(".."))) continue;
+
+                        if (comptime Environment.isWindows) {
+                            // When writing files on Windows, translate the characters to their
+                            // 0xf000 higher-encoded versions.
+                            // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
+                            var remain = pathname;
+                            if (strings.startsWithWindowsDriveLetterT(bun.OSPathChar, remain)) {
+                                // don't encode `:` from the drive letter
+                                // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/tar/lib/unpack.js#L327
+                                remain = remain[2..];
+                            }
+
+                            // TODO: do this in normalizeBufT
+                            for (remain) |*c| {
+                                switch (c.*) {
+                                    '|', '<', '>', '?', ':' => c.* += 0xf000,
+                                    else => {},
+                                }
+                            }
+                        }
 
                         // TODO: .npmignore, or .gitignore if it doesn't exist
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L434

@@ -246,7 +246,10 @@ const NetworkTask = struct {
     apply_patch_task: ?*PatchTask = null,
     next: ?*NetworkTask = null,
 
-    pub const DedupeMap = std.HashMap(u64, void, IdentityContext(u64), 80);
+    pub const DedupeMapEntry = struct {
+        is_required: bool,
+    };
+    pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
 
     pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
         defer this.package_manager.wake();
@@ -292,7 +295,7 @@ const NetworkTask = struct {
         allocator: std.mem.Allocator,
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?*const Npm.PackageManifest,
-        warn_on_error: bool,
+        is_optional: bool,
     ) !void {
         this.url_buf = blk: {
 
@@ -315,30 +318,44 @@ const NetworkTask = struct {
             defer tmp.deref();
 
             if (tmp.tag == .Dead) {
-                const msg = .{
-                    .fmt = "Failed to join registry {} and package {} URLs",
-                    .args = .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
-                };
-
-                if (warn_on_error)
-                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
-                else
-                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
-
+                if (!is_optional) {
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Failed to join registry {} and package {} URLs",
+                        .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
+                    ) catch bun.outOfMemory();
+                } else {
+                    this.package_manager.log.addWarningFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Failed to join registry {} and package {} URLs",
+                        .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
+                    ) catch bun.outOfMemory();
+                }
                 return error.InvalidURL;
             }
 
             if (!(tmp.hasPrefixComptime("https://") or tmp.hasPrefixComptime("http://"))) {
-                const msg = .{
-                    .fmt = "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                    .args = .{tmp},
-                };
-
-                if (warn_on_error)
-                    this.package_manager.log.addWarningFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable
-                else
-                    this.package_manager.log.addErrorFmt(null, .{}, allocator, msg.fmt, msg.args) catch unreachable;
-
+                if (!is_optional) {
+                    this.package_manager.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                        .{tmp},
+                    ) catch bun.outOfMemory();
+                } else {
+                    this.package_manager.log.addWarningFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                        .{tmp},
+                    ) catch bun.outOfMemory();
+                }
                 return error.InvalidURL;
             }
 
@@ -359,7 +376,9 @@ const NetworkTask = struct {
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);
-        } else if (last_modified.len != 0) {
+        }
+
+        if (last_modified.len != 0) {
             header_builder.count("If-Modified-Since", last_modified);
         }
 
@@ -405,7 +424,7 @@ const NetworkTask = struct {
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = true;
+            this.http.client.verbose = .headers;
         }
 
         this.callback = .{
@@ -416,8 +435,8 @@ const NetworkTask = struct {
         };
 
         if (PackageManager.verbose_install) {
-            this.http.verbose = true;
-            this.http.client.verbose = true;
+            this.http.verbose = .headers;
+            this.http.client.verbose = .headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -488,7 +507,7 @@ const NetworkTask = struct {
         });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = true;
+            this.http.client.verbose = .headers;
         }
     }
 };
@@ -4122,6 +4141,7 @@ pub const PackageManager = struct {
                             package.resolution.value.npm.version,
                         ),
                         manifest.str(&find_result.package.tarball_url),
+                        dependency.behavior.isRequired(),
                         dependency_id,
                         package,
                         name_and_version_hash,
@@ -4159,21 +4179,33 @@ pub const PackageManager = struct {
         };
     }
 
-    pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64) bool {
+    pub fn hasCreatedNetworkTask(this: *PackageManager, task_id: u64, is_required: bool) bool {
         const gpe = this.network_dedupe_map.getOrPut(task_id) catch bun.outOfMemory();
+
+        // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
+        gpe.value_ptr.is_required = if (!gpe.found_existing)
+            is_required
+        else
+            gpe.value_ptr.is_required or is_required;
+
         return gpe.found_existing;
+    }
+
+    pub fn isNetworkTaskRequired(this: *const PackageManager, task_id: u64) bool {
+        return (this.network_dedupe_map.get(task_id) orelse return true).is_required;
     }
 
     pub fn generateNetworkTaskForTarball(
         this: *PackageManager,
         task_id: u64,
         url: string,
+        is_required: bool,
         dependency_id: DependencyID,
         package: Lockfile.Package,
         /// if patched then we need to do apply step after network task is done
         patch_name_and_version_hash: ?u64,
     ) !?*NetworkTask {
-        if (this.hasCreatedNetworkTask(task_id)) {
+        if (this.hasCreatedNetworkTask(task_id, is_required)) {
             return null;
         }
 
@@ -4915,7 +4947,7 @@ pub const PackageManager = struct {
                                                 null,
                                                 logger.Loc.Empty,
                                                 this.allocator,
-                                                "package \"{s}\" with tag \"{s}\" not found, but package exists",
+                                                "Package \"{s}\" with tag \"{s}\" not found, but package exists",
                                                 .{
                                                     this.lockfile.str(&name),
                                                     this.lockfile.str(&version.value.dist_tag.tag),
@@ -5035,7 +5067,7 @@ pub const PackageManager = struct {
                                 );
 
                             if (!dependency.behavior.isPeer() or install_peer) {
-                                if (!this.hasCreatedNetworkTask(task_id)) {
+                                if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
                                     if (this.options.enable.manifest_cache) {
                                         var expired = false;
                                         if (this.manifests.byNameHashAllowExpired(this.scopeForPackageName(name_str), name_hash, &expired)) |manifest| {
@@ -5175,7 +5207,7 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (this.hasCreatedNetworkTask(checkout_id)) return;
+                    if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
                         checkout_id,
@@ -5191,9 +5223,16 @@ pub const PackageManager = struct {
                     if (!entry.found_existing) entry.value_ptr.* = .{};
                     try entry.value_ptr.append(this.allocator, ctx);
 
-                    if (dependency.behavior.isPeer()) return;
+                    if (dependency.behavior.isPeer()) {
+                        if (!install_peer) {
+                            if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                                try this.peer_dependencies.writeItem(id);
+                            }
+                            return;
+                        }
+                    }
 
-                    if (this.hasCreatedNetworkTask(clone_id)) return;
+                    if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitClone(clone_id, alias, dep, dependency, null)));
                 }
@@ -5248,6 +5287,7 @@ pub const PackageManager = struct {
                 if (try this.generateNetworkTaskForTarball(
                     task_id,
                     url,
+                    dependency.behavior.isRequired(),
                     id,
                     .{
                         .name = dependency.name,
@@ -5279,7 +5319,7 @@ pub const PackageManager = struct {
                 };
 
                 const workspace_not_found_fmt =
-                    \\workspace dependency "{[name]s}" not found
+                    \\Workspace dependency "{[name]s}" not found
                     \\
                     \\Searched in <b>{[search_path]}<r>
                     \\
@@ -5287,7 +5327,7 @@ pub const PackageManager = struct {
                     \\
                 ;
                 const link_not_found_fmt =
-                    \\package "{[name]s}" is not linked
+                    \\Package "{[name]s}" is not linked
                     \\
                     \\To install a linked package:
                     \\   <cyan>bun link my-pkg-name-from-package-json<r>
@@ -5434,7 +5474,7 @@ pub const PackageManager = struct {
 
                 switch (version.value.tarball.uri) {
                     .local => {
-                        if (this.hasCreatedNetworkTask(task_id)) return;
+                        if (this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) return;
 
                         this.task_batch.push(ThreadPool.Batch.from(this.enqueueLocalTarball(
                             task_id,
@@ -5448,6 +5488,7 @@ pub const PackageManager = struct {
                         if (try this.generateNetworkTaskForTarball(
                             task_id,
                             url,
+                            dependency.behavior.isRequired(),
                             id,
                             .{
                                 .name = dependency.name,
@@ -6036,26 +6077,49 @@ pub const PackageManager = struct {
                                     .{ bun.span(@errorName(err)), name.slice() },
                                 ) catch unreachable;
                             }
-                        } else if (@TypeOf(callbacks.onPackageManifestError) != void) {
+
+                            continue;
+                        }
+
+                        if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
                                 extract_ctx,
                                 name.slice(),
                                 err,
                                 task.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} downloading package manifest <b>{s}<r>\n";
-                            const args = .{ bun.span(@errorName(err)), name.slice() };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
+                        } else {
+                            const fmt = "{s} downloading package manifest <b>{s}<r>";
+                            if (manager.isNetworkTaskRequired(task.task_id)) {
+                                manager.log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    manager.allocator,
                                     fmt,
-                                    args,
-                                );
-                                Output.flush();
+                                    .{ @errorName(err), name.slice() },
+                                ) catch bun.outOfMemory();
+                            } else {
+                                manager.log.addWarningFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    manager.allocator,
+                                    fmt,
+                                    .{ @errorName(err), name.slice() },
+                                ) catch bun.outOfMemory();
+                            }
+
+                            if (manager.subcommand != .remove) {
+                                for (manager.update_requests) |*request| {
+                                    if (strings.eql(request.name, name.slice())) {
+                                        request.failed = true;
+                                        manager.options.do.save_lockfile = false;
+                                        manager.options.do.save_yarn_lock = false;
+                                        manager.options.do.install_packages = false;
+                                    }
+                                }
                             }
                         }
+
                         continue;
                     };
 
@@ -6077,76 +6141,27 @@ pub const PackageManager = struct {
                                 err,
                                 task.url_buf,
                             );
-                        } else {
-                            switch (response.status_code) {
-                                404 => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: package <b>\"{s}\"<r> not found <d>{}{s} 404<r>\n";
-                                        const args = .{
-                                            name.slice(),
-                                            task.http.url.displayHost(),
-                                            task.http.url.pathname,
-                                        };
 
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
-                                },
-                                401 => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: unauthorized <b>\"{s}\"<r> <d>{}{s} 401<r>\n";
-                                        const args = .{
-                                            name.slice(),
-                                            task.http.url.displayHost(),
-                                            task.http.url.pathname,
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
-                                },
-                                403 => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error<r>: forbidden while loading <b>\"{s}\"<r><d> 403<r>\n";
-                                        const args = .{
-                                            name.slice(),
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
-                                },
-                                else => {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
-                                        const args = .{
-                                            task.http.client.url.href,
-                                            response.status_code,
-                                        };
-
-                                        if (comptime log_level.showProgress()) {
-                                            Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
-                                            Output.flush();
-                                        }
-                                    }
-                                },
-                            }
+                            continue;
                         }
 
+                        if (manager.isNetworkTaskRequired(task.task_id)) {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                                .{ task.http.client.url.href, response.status_code },
+                            ) catch bun.outOfMemory();
+                        } else {
+                            manager.log.addWarningFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
+                                .{ task.http.client.url.href, response.status_code },
+                            ) catch bun.outOfMemory();
+                        }
                         if (manager.subcommand != .remove) {
                             for (manager.update_requests) |*request| {
                                 if (strings.eql(request.name, name.slice())) {
@@ -6235,7 +6250,11 @@ pub const PackageManager = struct {
                                     },
                                 ) catch unreachable;
                             }
-                        } else if (@TypeOf(callbacks.onPackageDownloadError) != void) {
+
+                            continue;
+                        }
+
+                        if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
                             callbacks.onPackageDownloadError(
                                 extract_ctx,
@@ -6245,18 +6264,43 @@ pub const PackageManager = struct {
                                 err,
                                 task.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} downloading tarball <b>{s}@{s}<r>\n";
-                            const args = .{
-                                bun.span(@errorName(err)),
-                                extract.name.slice(),
-                                extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
-                            };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(fmt, args);
-                                Output.flush();
+                            continue;
+                        }
+
+                        const fmt = "{s} downloading tarball <b>{s}@{s}<r>";
+                        if (manager.isNetworkTaskRequired(task.task_id)) {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                fmt,
+                                .{
+                                    @errorName(err),
+                                    extract.name.slice(),
+                                    extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
+                                },
+                            ) catch bun.outOfMemory();
+                        } else {
+                            manager.log.addWarningFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                fmt,
+                                .{
+                                    @errorName(err),
+                                    extract.name.slice(),
+                                    extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
+                                },
+                            ) catch bun.outOfMemory();
+                        }
+                        if (manager.subcommand != .remove) {
+                            for (manager.update_requests) |*request| {
+                                if (strings.eql(request.name, extract.name.slice())) {
+                                    request.failed = true;
+                                    manager.options.do.save_lockfile = false;
+                                    manager.options.do.save_yarn_lock = false;
+                                    manager.options.do.install_packages = false;
+                                }
                             }
                         }
 
@@ -6284,21 +6328,40 @@ pub const PackageManager = struct {
                                 err,
                                 task.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red><b>GET<r><red> {s}<d> - {d}<r>\n";
-                            const args = .{
-                                task.http.client.url.href,
-                                response.status_code,
-                            };
+                            continue;
+                        }
 
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
+                        if (manager.isNetworkTaskRequired(task.task_id)) {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
+                                .{
+                                    task.http.client.url.href,
+                                    response.status_code,
+                                },
+                            ) catch bun.outOfMemory();
+                        } else {
+                            manager.log.addWarningFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
+                                .{
+                                    task.http.client.url.href,
+                                    response.status_code,
+                                },
+                            ) catch bun.outOfMemory();
+                        }
+                        if (manager.subcommand != .remove) {
+                            for (manager.update_requests) |*request| {
+                                if (strings.eql(request.name, extract.name.slice())) {
+                                    request.failed = true;
+                                    manager.options.do.save_lockfile = false;
+                                    manager.options.do.save_yarn_lock = false;
+                                    manager.options.do.install_packages = false;
+                                }
                             }
                         }
 
@@ -6354,21 +6417,19 @@ pub const PackageManager = struct {
                                 err,
                                 task.request.package_manifest.network.url_buf,
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} parsing package manifest for <b>{s}<r>";
-                            const error_name: string = @errorName(err);
-
-                            const args = .{ error_name, name.slice() };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} parsing package manifest for <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    name.slice(),
+                                },
+                            ) catch bun.outOfMemory();
                         }
+
                         continue;
                     }
                     const manifest = &task.data.package_manifest;
@@ -6422,21 +6483,21 @@ pub const PackageManager = struct {
                                     else => unreachable,
                                 },
                             );
-                        } else if (comptime log_level != .silent) {
-                            const fmt = "<r><red>error<r>: {s} extracting tarball for <b>{s}<r>\n";
-                            const args = .{
-                                @errorName(err),
-                                alias,
-                            };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(fmt, args);
-                                Output.flush();
-                            }
+                        } else {
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} extracting tarball from <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    alias,
+                                },
+                            ) catch bun.outOfMemory();
                         }
                         continue;
                     }
+
                     manager.extracted_count += 1;
                     bun.Analytics.Features.extracted_packages += 1;
 
@@ -6525,19 +6586,16 @@ pub const PackageManager = struct {
                                 url,
                             );
                         } else if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} cloning repository for <b>{s}<r>";
-                            const error_name = @errorName(err);
-
-                            const args = .{ error_name, name };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
+                            manager.log.addErrorFmt(
+                                null,
+                                logger.Loc.Empty,
+                                manager.allocator,
+                                "{s} cloning repository for <b>{s}<r>",
+                                .{
+                                    @errorName(err),
+                                    name,
+                                },
+                            ) catch bun.outOfMemory();
                         }
                         continue;
                     }
@@ -6564,21 +6622,17 @@ pub const PackageManager = struct {
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
 
-                        if (comptime log_level != .silent) {
-                            const fmt = "\n<r><red>error<r>: {s} checking out repository for <b>{s}<r>";
-                            const error_name = @errorName(err);
+                        manager.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            manager.allocator,
+                            "{s} checking out repository for <b>{s}<r>",
+                            .{
+                                @errorName(err),
+                                alias.slice(),
+                            },
+                        ) catch bun.outOfMemory();
 
-                            const args = .{ error_name, alias.slice() };
-                            if (comptime log_level.showProgress()) {
-                                Output.prettyWithPrinterFn(fmt, args, Progress.log, &manager.progress);
-                            } else {
-                                Output.prettyErrorln(
-                                    fmt,
-                                    args,
-                                );
-                                Output.flush();
-                            }
-                        }
                         continue;
                     }
 
@@ -11693,9 +11747,12 @@ pub const PackageManager = struct {
 
         if (task_queue.found_existing) return;
 
+        const is_required = this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired();
+
         if (this.generateNetworkTaskForTarball(
             task_id,
             url,
+            is_required,
             dependency_id,
             this.lockfile.packages.get(package_id),
             patch_name_and_version_hash,
@@ -11731,6 +11788,7 @@ pub const PackageManager = struct {
         if (this.generateNetworkTaskForTarball(
             task_id,
             url,
+            this.lockfile.buffers.dependencies.items[dependency_id].behavior.isRequired(),
             dependency_id,
             this.lockfile.packages.get(package_id),
             patch_name_and_version_hash,
@@ -12728,9 +12786,8 @@ pub const PackageManager = struct {
             }
         }
 
+        const had_errors_before_cleaning_lockfile = manager.log.hasErrors();
         try manager.log.printForLogLevel(Output.errorWriter());
-        if (manager.log.hasErrors()) Global.crash();
-
         manager.log.reset();
 
         // This operation doesn't perform any I/O, so it should be relatively cheap.
@@ -12844,6 +12901,11 @@ pub const PackageManager = struct {
             );
         }
 
+        if (comptime log_level != .silent) {
+            try manager.log.printForLogLevel(Output.errorWriter());
+        }
+        if (had_errors_before_cleaning_lockfile or manager.log.hasErrors()) Global.crash();
+
         const did_meta_hash_change =
             // If the lockfile was frozen, we already checked it
             !manager.options.enable.frozen_lockfile and
@@ -12917,9 +12979,6 @@ pub const PackageManager = struct {
                 Output.flush();
             }
         }
-
-        try manager.log.printForLogLevel(Output.errorWriter());
-        if (manager.log.hasErrors()) Global.crash();
 
         if (needs_new_lockfile) {
             manager.summary.add = @as(u32, @truncate(manager.lockfile.packages.len));

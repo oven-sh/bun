@@ -149,7 +149,7 @@ These environment variables are read by Bun and configure aspects of its behavio
 ---
 
 - `BUN_CONFIG_VERBOSE_FETCH`
-- If `BUN_CONFIG_VERBOSE_FETCH=1`, then fetch requests will log the url, method, request headers and response headers to the console. This is useful for debugging network requests. This also works with `node:http`.
+- If `BUN_CONFIG_VERBOSE_FETCH=curl`, then fetch requests will log the url, method, request headers and response headers to the console. This is useful for debugging network requests. This also works with `node:http`. `BUN_CONFIG_VERBOSE_FETCH=1` is equivalent to `BUN_CONFIG_VERBOSE_FETCH=curl` except without the `curl` output.
 
 ---
 

@@ -556,7 +556,7 @@ pub const Archive = struct {
 
                         // remove `package/` prefix if it exists
                         // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/lib/utils/tar.js#L67
-                        if (strings.hasPrefixComptime(pathname, "package/")) {
+                        if (strings.hasPrefixComptimeType(bun.OSPathChar, pathname, "package/")) {
                             pathname = pathname["package/".len.. :0];
                         }
                     } else {

@@ -8056,7 +8056,7 @@ describe("yarn tests", () => {
   });
 });
 
-test("tarball `./` prefix and empty directory", async () => {
+test("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
   await write(
     join(packageDir, "package.json"),
     JSON.stringify({
@@ -8078,6 +8078,7 @@ test("tarball `./` prefix and empty directory", async () => {
     file(join(prefix, "package4", "package.json")).json(),
     exists(join(prefix, "package4", "package5")),
     exists(join(prefix, "package1000")),
+    file(join(prefix, "package6", "index.js")).text(),
   ]);
   expect(results).toEqual([
     {
@@ -8094,6 +8095,7 @@ test("tarball `./` prefix and empty directory", async () => {
     },
     false,
     false,
+    "oooooops",
   ]);
   expect(await file(join(packageDir, "node_modules", "tarball-without-package-prefix", "package.json")).json()).toEqual(
     {

@@ -3,6 +3,7 @@ const std = @import("std");
 const LineOffsetTable = bun.sourcemap.LineOffsetTable;
 const SourceMap = bun.sourcemap;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const LinesHits = @import("../baby_list.zig").BabyList(u32);
 const Output = bun.Output;
 const prettyFmt = Output.prettyFmt;
 
@@ -24,16 +25,11 @@ pub const CodeCoverageReport = struct {
     source_url: bun.JSC.ZigString.Slice,
     executable_lines: Bitset,
     lines_which_have_executed: Bitset,
-    functions: std.ArrayListUnmanaged(Block),
+    functions: std.ArrayListUnmanaged(CommonCodeCoverageReport.Block),
     functions_which_have_executed: Bitset,
     stmts_which_have_executed: Bitset,
-    stmts: std.ArrayListUnmanaged(Block),
+    stmts: std.ArrayListUnmanaged(CommonCodeCoverageReport.Block),
     total_lines: u32 = 0,
-
-    pub const Block = struct {
-        start_line: u32 = 0,
-        end_line: u32 = 0,
-    };
 
     pub fn linesCoverageFraction(this: *const CodeCoverageReport) f64 {
         var intersected = this.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
@@ -357,21 +353,22 @@ pub const ByteRangeMapping = struct {
         return entry;
     }
 
-    pub fn generateCodeCoverageReportFromBlocks(
+    fn _generateCodeCoverageReportFromBlocks(
         this: *ByteRangeMapping,
         allocator: std.mem.Allocator,
         source_url: bun.JSC.ZigString.Slice,
         blocks: []const BasicBlockRange,
         function_blocks: []const BasicBlockRange,
         ignore_sourcemap: bool,
-    ) !CodeCoverageReport {
+    ) !CommonCodeCoverageReport {
         const line_starts = this.line_offset_table.items(.byte_offset_to_start_of_line);
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
         const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
+        var lines_hits = LinesHits{};
 
-        var functions = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
+        var functions = std.ArrayListUnmanaged(CommonCodeCoverageReport.Block){};
         try functions.ensureTotalCapacityPrecise(allocator, function_blocks.len);
         errdefer functions.deinit(allocator);
         var functions_which_have_executed: Bitset = try Bitset.initEmpty(allocator, function_blocks.len);
@@ -379,7 +376,7 @@ pub const ByteRangeMapping = struct {
         var stmts_which_have_executed: Bitset = try Bitset.initEmpty(allocator, blocks.len);
         errdefer stmts_which_have_executed.deinit(allocator);
 
-        var stmts = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
+        var stmts = std.ArrayListUnmanaged(CommonCodeCoverageReport.Block){};
         try stmts.ensureTotalCapacityPrecise(allocator, function_blocks.len);
         errdefer stmts.deinit(allocator);
 
@@ -391,6 +388,9 @@ pub const ByteRangeMapping = struct {
             line_count = @truncate(line_starts.len);
             executable_lines = try Bitset.initEmpty(allocator, line_count);
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
+            lines_hits = try LinesHits.initCapacity(allocator, line_count);
+            errdefer lines_hits.deinitWithAllocator(allocator);
+
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
 
@@ -415,6 +415,7 @@ pub const ByteRangeMapping = struct {
                     executable_lines.set(line);
                     if (has_executed) {
                         lines_which_have_executed.set(line);
+                        lines_hits.ptr[line] += 1;
                     }
                 }
 
@@ -458,6 +459,7 @@ pub const ByteRangeMapping = struct {
                     for (min_line..end) |line| {
                         executable_lines.set(line);
                         lines_which_have_executed.unset(line);
+                        lines_hits.ptr[line] = 0;
                     }
                 }
 
@@ -473,6 +475,8 @@ pub const ByteRangeMapping = struct {
             line_count = @as(u32, @truncate(parsed_mapping.input_line_count)) + 1;
             executable_lines = try Bitset.initEmpty(allocator, line_count);
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
+            lines_hits = try LinesHits.initCapacity(allocator, line_count);
+            errdefer lines_hits.deinitWithAllocator(allocator);
 
             for (blocks, 0..) |block, i| {
                 if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
@@ -499,6 +503,7 @@ pub const ByteRangeMapping = struct {
                         executable_lines.set(line);
                         if (has_executed) {
                             lines_which_have_executed.set(line);
+                            lines_hits.ptr[line] += 1;
                         }
 
                         min_line = @min(min_line, line);
@@ -557,6 +562,7 @@ pub const ByteRangeMapping = struct {
                     for (min_line..end) |line| {
                         executable_lines.set(line);
                         lines_which_have_executed.unset(line);
+                        lines_hits.ptr[line] = 0;
                     }
                 }
 
@@ -571,15 +577,59 @@ pub const ByteRangeMapping = struct {
             unreachable;
         }
 
-        return CodeCoverageReport{
+        return CommonCodeCoverageReport{
             .source_url = source_url,
             .functions = functions,
             .executable_lines = executable_lines,
             .lines_which_have_executed = lines_which_have_executed,
+            .lines_hits = lines_hits,
             .total_lines = line_count,
             .stmts = stmts,
             .functions_which_have_executed = functions_which_have_executed,
             .stmts_which_have_executed = stmts_which_have_executed,
+        };
+    }
+
+    pub fn generateCodeCoverageReportFromBlocks(
+        this: *ByteRangeMapping,
+        allocator: std.mem.Allocator,
+        source_url: bun.JSC.ZigString.Slice,
+        blocks: []const BasicBlockRange,
+        function_blocks: []const BasicBlockRange,
+        ignore_sourcemap: bool,
+    ) !CodeCoverageReport {
+        const common = try this._generateCodeCoverageReportFromBlocks(allocator, source_url, blocks, function_blocks, ignore_sourcemap);
+        return CodeCoverageReport{
+            .source_url = source_url,
+            .functions = common.functions,
+            .executable_lines = common.executable_lines,
+            .lines_which_have_executed = common.lines_which_have_executed,
+            .total_lines = common.total_lines,
+            .stmts = common.stmts,
+            .functions_which_have_executed = common.functions_which_have_executed,
+            .stmts_which_have_executed = common.stmts_which_have_executed,
+        };
+    }
+
+    pub fn generateLcovCodeCoverageReportFromBlocks(
+        this: *ByteRangeMapping,
+        allocator: std.mem.Allocator,
+        source_url: bun.JSC.ZigString.Slice,
+        blocks: []const BasicBlockRange,
+        function_blocks: []const BasicBlockRange,
+        ignore_sourcemap: bool,
+    ) !LcovCodeCoverageReport {
+        const common = try this._generateCodeCoverageReportFromBlocks(allocator, source_url, blocks, function_blocks, ignore_sourcemap);
+        return LcovCodeCoverageReport{
+            .source_url = source_url,
+            .functions = common.functions,
+            .executable_lines = common.executable_lines,
+            .lines_which_have_executed = common.lines_which_have_executed,
+            .lines_hits = common.lines_hits,
+            .total_lines = common.total_lines,
+            .stmts = common.stmts,
+            .functions_which_have_executed = common.functions_which_have_executed,
+            .stmts_which_have_executed = common.stmts_which_have_executed,
         };
     }
 
@@ -636,6 +686,175 @@ pub const ByteRangeMapping = struct {
         };
     }
 };
+
+const CommonCodeCoverageReport = struct {
+    source_url: bun.JSC.ZigString.Slice,
+    executable_lines: Bitset,
+    lines_which_have_executed: Bitset,
+    lines_hits: LinesHits,
+    functions: std.ArrayListUnmanaged(Block),
+    functions_which_have_executed: Bitset,
+    stmts_which_have_executed: Bitset,
+    stmts: std.ArrayListUnmanaged(Block),
+    total_lines: u32 = 0,
+
+    pub const Block = struct {
+        start_line: u32 = 0,
+        end_line: u32 = 0,
+    };
+};
+
+// Coverage report for LCOV format
+pub const LcovCodeCoverageReport = struct {
+    source_url: bun.JSC.ZigString.Slice,
+    executable_lines: Bitset,
+    lines_which_have_executed: Bitset,
+    lines_hits: LinesHits,
+    functions: std.ArrayListUnmanaged(CommonCodeCoverageReport.Block),
+    functions_which_have_executed: Bitset,
+    stmts_which_have_executed: Bitset,
+    stmts: std.ArrayListUnmanaged(CommonCodeCoverageReport.Block),
+    total_lines: u32 = 0,
+
+    pub fn writeFormat(
+        report: *const LcovCodeCoverageReport,
+        base_path: []const u8,
+        writer: anytype,
+    ) !void {
+        var filename = report.source_url.slice();
+        if (base_path.len > 0) {
+            filename = bun.path.relative(base_path, filename);
+        }
+
+        // TN: test name
+        // Empty value appears fine. For example, `TN:`.
+        try writer.writeAll("TN:\n");
+
+        // SF: Source File path
+        // For example, `SF:path/to/source.ts`
+        try writer.print("SF:{s}\n", .{ filename });
+
+        // ** Per-function coverage not supported yet, since JSC does not support function names yet. **
+        // FN: line number,function name
+
+        // FNF: functions found
+        try writer.print("FNF:{d}\n", .{ report.functions.items.len });
+
+        // FNH: functions hit
+        try writer.print("FNH:{d}\n", .{ report.functions_which_have_executed.count() });
+
+        var executable_lines_that_have_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
+        defer executable_lines_that_have_been_executed.deinit(bun.default_allocator);
+        // This sets statements in executed scopes
+        executable_lines_that_have_been_executed.setIntersection(report.executable_lines);
+        var iter = executable_lines_that_have_been_executed.iterator(.{});
+
+        // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
+        // BRDA: line, block, (expressions,count)+
+        // BRF: branches found
+        // BRH: branches hit
+
+        while (iter.next()) |line| {
+            // DA: line number, hit count
+            // FIXME: Remove the magic number that is used to convert the hit count to the correct value
+            try writer.print("DA:{d},{d}\n", .{ line + 1, report.lines_hits.ptr[line] - 2863311530 });
+        }
+
+        // LF: lines found
+        try writer.print("LF:{d}\n", .{ report.total_lines });
+
+        // LH: lines hit
+        try writer.print("LH:{d}\n", .{ executable_lines_that_have_been_executed.count() });
+
+        try writer.writeAll("end_of_record\n");
+    }
+
+    pub fn deinit(this: *LcovCodeCoverageReport, allocator: std.mem.Allocator) void {
+        this.executable_lines.deinit(allocator);
+        this.lines_which_have_executed.deinit(allocator);
+        this.functions.deinit(allocator);
+        this.stmts.deinit(allocator);
+        this.functions_which_have_executed.deinit(allocator);
+        this.stmts_which_have_executed.deinit(allocator);
+    }
+
+    extern fn CodeCoverage__withBlocksAndFunctions(
+        *bun.JSC.VM,
+        i32,
+        *anyopaque,
+        bool,
+        *const fn (
+            *Generator,
+            [*]const BasicBlockRange,
+            usize,
+            usize,
+            bool,
+        ) callconv(.C) void,
+    ) bool;
+
+    const Generator = struct {
+        allocator: std.mem.Allocator,
+        byte_range_mapping: *ByteRangeMapping,
+        result: *?LcovCodeCoverageReport,
+
+        pub fn do(
+            this: *@This(),
+            blocks_ptr: [*]const BasicBlockRange,
+            blocks_len: usize,
+            function_start_offset: usize,
+            ignore_sourcemap: bool,
+        ) callconv(.C) void {
+            const blocks: []const BasicBlockRange = blocks_ptr[0..function_start_offset];
+            var function_blocks: []const BasicBlockRange = blocks_ptr[function_start_offset..blocks_len];
+            if (function_blocks.len > 1) {
+                function_blocks = function_blocks[1..];
+            }
+
+            if (blocks.len == 0) {
+                return;
+            }
+
+            this.result.* = this.byte_range_mapping.generateLcovCodeCoverageReportFromBlocks(
+                this.allocator,
+                this.byte_range_mapping.source_url,
+                blocks,
+                function_blocks,
+                ignore_sourcemap,
+            ) catch null;
+        }
+    };
+
+    pub fn generate(
+        globalThis: *bun.JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+        byte_range_mapping: *ByteRangeMapping,
+        ignore_sourcemap_: bool,
+    ) ?LcovCodeCoverageReport {
+        bun.JSC.markBinding(@src());
+        const vm = globalThis.vm();
+
+        var result: ?LcovCodeCoverageReport = null;
+
+        var generator = Generator{
+            .result = &result,
+            .allocator = allocator,
+            .byte_range_mapping = byte_range_mapping,
+        };
+
+        if (!CodeCoverage__withBlocksAndFunctions(
+            vm,
+            byte_range_mapping.source_id,
+            &generator,
+            ignore_sourcemap_,
+            &Generator.do,
+        )) {
+            return null;
+        }
+
+        return result;
+    }
+};
+
 
 comptime {
     if (bun.Environment.isNative) {

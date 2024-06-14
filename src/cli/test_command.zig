@@ -271,6 +271,48 @@ pub const CommandLineReporter = struct {
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
+    pub fn writeCodeCoverageInLcov(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions) !void {
+        const trace = bun.tracy.traceNamed(@src(), "TestCommand.writeCodeCoverageInLcov");
+        defer trace.end();
+        _ = this;
+
+        const reports_dir = try std.fs.cwd().openDir(opts.reports_directory,.{});
+        const lcov_file = try reports_dir.createFile("lcov.info",  .{.truncate = true });
+        defer lcov_file.close();
+
+        var map = bun.sourcemap.ByteRangeMapping.map orelse return;
+        var iter = map.valueIterator();
+        const relative_dir = vm.bundler.fs.top_level_dir;
+
+        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+
+        while (iter.next()) |entry| {
+            const value: bun.sourcemap.ByteRangeMapping = entry.*;
+            byte_ranges.appendAssumeCapacity(value);
+        }
+
+        if (byte_ranges.items.len == 0) {
+            return;
+        }
+
+        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+
+        iter = map.valueIterator();
+
+        var coverage_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        var coverage_buffer_buffer = coverage_buffer.bufferedWriter();
+        const coverage_writer = coverage_buffer_buffer.writer();
+
+        for (byte_ranges.items) |*entry| {
+            var report = bun.sourcemap.LcovCodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            defer report.deinit(bun.default_allocator);
+            report.writeFormat(relative_dir, coverage_writer) catch continue;
+        }
+
+        coverage_buffer_buffer.flush() catch return;
+        try lcov_file.writeAll(coverage_buffer.list.items);
+    }
+
     pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime enable_ansi_colors: bool) !void {
         const trace = bun.tracy.traceNamed(@src(), "TestCommand.printCodeCoverage");
         defer trace.end();
@@ -613,7 +655,6 @@ pub const TestCommand = struct {
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
         JSC.isBunTest = true;
 
-
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
@@ -877,7 +918,7 @@ pub const TestCommand = struct {
                             }
                         },
                         .lcov => {
-                            // TODO: implement
+                            reporter.writeCodeCoverageInLcov(vm, &coverage) catch {};
                         }
                     }
                 }

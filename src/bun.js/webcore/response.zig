@@ -1686,7 +1686,7 @@ pub const Fetch = struct {
             disable_decompression: bool,
             reject_unauthorized: bool,
             url: ZigURL,
-            verbose: bool = false,
+            verbose: http.HTTPVerboseLevel = .none,
             redirect_type: FetchRedirect = FetchRedirect.follow,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
@@ -1889,8 +1889,8 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var disable_decompression = false;
-        var verbose = vm.log.level.atLeast(.debug);
-        if (!verbose) {
+        var verbose: http.HTTPVerboseLevel = if (vm.log.level.atLeast(.debug)) .headers else .none;
+        if (verbose == .none) {
             verbose = vm.getVerboseFetch();
         }
 
@@ -2069,8 +2069,17 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(globalThis, "verbose")) |verb| {
-                            verbose = verb.toBoolean();
+                        if (options.get(globalThis, "verbose")) |verb| verbose: {
+                            if (verb.isString()) {
+                                if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                                    verbose = .curl;
+                                    break :verbose;
+                                }
+                            }
+
+                            if (verb.isBoolean()) {
+                                verbose = if (verb.toBoolean()) .headers else .none;
+                            }
                         }
 
                         if (options.get(globalThis, "signal")) |signal_arg| {
@@ -2365,8 +2374,17 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(globalThis, "verbose")) |verb| {
-                            verbose = verb.toBoolean();
+                        if (options.get(globalThis, "verbose")) |verb| verbose: {
+                            if (verb.isString()) {
+                                if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                                    verbose = .curl;
+                                    break :verbose;
+                                }
+                            }
+
+                            if (verb.isBoolean()) {
+                                verbose = if (verb.toBoolean()) .headers else .none;
+                            }
                         }
 
                         if (options.get(globalThis, "signal")) |signal_arg| {

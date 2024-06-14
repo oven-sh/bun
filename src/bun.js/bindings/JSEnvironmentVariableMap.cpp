@@ -239,6 +239,8 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 
     if (str == "1"_s || str == "true"_s) {
         Bun__setVerboseFetchValue(1);
+    } else if (str == "curl"_s) {
+        Bun__setVerboseFetchValue(2);
     } else {
         Bun__setVerboseFetchValue(0);
     }

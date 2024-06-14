@@ -49,7 +49,7 @@ pub const HTMLRewriter = struct {
     pub usingnamespace JSC.Codegen.JSHTMLRewriter;
 
     pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*HTMLRewriter {
-        const rewriter = bun.default_allocator.create(HTMLRewriter) catch unreachable;
+        const rewriter = bun.default_allocator.create(HTMLRewriter) catch bun.outOfMemory();
         rewriter.* = HTMLRewriter{
             .builder = LOLHTML.HTMLRewriter.Builder.init(),
             .context = LOLHTMLContext.new(.{}),
@@ -65,12 +65,12 @@ pub const HTMLRewriter = struct {
         callFrame: *JSC.CallFrame,
         listener: JSValue,
     ) JSValue {
-        const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch unreachable;
+        const selector_slice = std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}) catch bun.outOfMemory();
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch
             return throwLOLHTMLError(global);
         const handler_ = ElementHandler.init(global, listener) catch return .zero;
-        const handler = getAllocator(global).create(ElementHandler) catch unreachable;
+        const handler = getAllocator(global).create(ElementHandler) catch bun.outOfMemory();
         handler.* = handler_;
 
         this.builder.addElementContentHandlers(
@@ -101,8 +101,8 @@ pub const HTMLRewriter = struct {
             return throwLOLHTMLError(global);
         };
 
-        this.context.selectors.append(bun.default_allocator, selector) catch unreachable;
-        this.context.element_handlers.append(bun.default_allocator, handler) catch unreachable;
+        this.context.selectors.append(bun.default_allocator, selector) catch bun.outOfMemory();
+        this.context.element_handlers.append(bun.default_allocator, handler) catch bun.outOfMemory();
         return callFrame.this();
     }
 
@@ -114,7 +114,7 @@ pub const HTMLRewriter = struct {
     ) JSValue {
         const handler_ = DocumentHandler.init(global, listener) catch return .zero;
 
-        const handler = getAllocator(global).create(DocumentHandler) catch unreachable;
+        const handler = getAllocator(global).create(DocumentHandler) catch bun.outOfMemory();
         handler.* = handler_;
 
         // If this fails, subsequent calls to write or end should throw
@@ -148,7 +148,7 @@ pub const HTMLRewriter = struct {
                 null,
         );
 
-        this.context.document_handlers.append(bun.default_allocator, handler) catch unreachable;
+        this.context.document_handlers.append(bun.default_allocator, handler) catch bun.outOfMemory();
         return callFrame.this();
     }
 
@@ -341,7 +341,7 @@ pub const HTMLRewriter = struct {
                 return bun.sys.Error{
                     .errno = 1,
                     // TODO: make this a union
-                    .path = bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice()) catch unreachable,
+                    .path = bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice()) catch bun.outOfMemory(),
                 };
             };
             if (comptime deinit_) bytes.listManaged(bun.default_allocator).deinit();
@@ -536,7 +536,7 @@ pub const HTMLRewriter = struct {
             bytes: []const u8,
             is_async: bool,
         ) ?JSValue {
-            sink.bytes.growBy(bytes.len) catch unreachable;
+            sink.bytes.growBy(bytes.len) catch bun.outOfMemory();
             const global = sink.global;
             var response = sink.response;
 
@@ -589,11 +589,12 @@ pub const HTMLRewriter = struct {
             prev_value.resolve(
                 &this.response.body.value,
                 this.global,
+                null,
             );
         }
 
         pub fn write(this: *BufferOutputSink, bytes: []const u8) void {
-            this.bytes.append(bytes) catch unreachable;
+            this.bytes.append(bytes) catch bun.outOfMemory();
         }
 
         pub fn deinit(this: *BufferOutputSink) void {
@@ -875,7 +876,7 @@ fn HandlerCallback(
     return struct {
         pub fn callback(this: *HandlerType, value: *LOLHTMLType) bool {
             JSC.markBinding(@src());
-            var zig_element = bun.default_allocator.create(ZigType) catch unreachable;
+            var zig_element = bun.default_allocator.create(ZigType) catch bun.outOfMemory();
             @field(zig_element, field_name) = value;
             defer @field(zig_element, field_name) = null;
 
@@ -1495,7 +1496,7 @@ pub const Element = struct {
             return ZigString.init("Expected a function").withEncoding().toValueGC(globalObject);
         }
 
-        const end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch unreachable;
+        const end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch bun.outOfMemory();
         end_tag_handler.* = .{ .global = globalObject, .callback = function };
 
         this.element.?.onEndTag(EndTag.Handler.onEndTagHandler, end_tag_handler) catch {
@@ -1760,7 +1761,7 @@ pub const Element = struct {
             return JSValue.jsUndefined();
 
         const iter = this.element.?.attributes() orelse return throwLOLHTMLError(globalObject);
-        var attr_iter = bun.default_allocator.create(AttributeIterator) catch unreachable;
+        var attr_iter = bun.default_allocator.create(AttributeIterator) catch bun.outOfMemory();
         attr_iter.* = .{ .iterator = iter };
         var js_attr_iter = attr_iter.toJS(globalObject);
         js_attr_iter.protect();

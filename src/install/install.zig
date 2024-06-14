@@ -402,7 +402,9 @@ const NetworkTask = struct {
 
         if (etag.len != 0) {
             header_builder.count("If-None-Match", etag);
-        } else if (last_modified.len != 0) {
+        }
+
+        if (last_modified.len != 0) {
             header_builder.count("If-Modified-Since", last_modified);
         }
 
@@ -448,7 +450,7 @@ const NetworkTask = struct {
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = true;
+            this.http.client.verbose = .headers;
         }
 
         this.callback = .{
@@ -459,8 +461,8 @@ const NetworkTask = struct {
         };
 
         if (PackageManager.verbose_install) {
-            this.http.verbose = true;
-            this.http.client.verbose = true;
+            this.http.verbose = .headers;
+            this.http.client.verbose = .headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -531,7 +533,7 @@ const NetworkTask = struct {
         });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
-            this.http.client.verbose = true;
+            this.http.client.verbose = .headers;
         }
     }
 };

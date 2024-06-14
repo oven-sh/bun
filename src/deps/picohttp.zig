@@ -51,6 +51,23 @@ pub const Header = struct {
         assert(@sizeOf(Header) == @sizeOf(c.phr_header));
         assert(@alignOf(Header) == @alignOf(c.phr_header));
     }
+
+    pub const CURLFormatter = struct {
+        header: *const Header,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            const header = self.header;
+            if (header.value.len > 0) {
+                try fmt.format(writer, "-H \"{s}: {s}\"", .{ header.name, header.value });
+            } else {
+                try fmt.format(writer, "-H \"{s}\"", .{header.name});
+            }
+        }
+    };
+
+    pub fn curl(self: *const Header) Header.CURLFormatter {
+        return .{ .header = self };
+    }
 };
 
 pub const Request = struct {
@@ -59,6 +76,61 @@ pub const Request = struct {
     minor_version: usize,
     headers: []const Header,
     bytes_read: u32 = 0,
+
+    pub const CURLFormatter = struct {
+        request: *const Request,
+        ignore_insecure: bool = false,
+        body: []const u8 = "",
+
+        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            const request = self.request;
+            if (Output.enable_ansi_colors_stderr) {
+                _ = try writer.write(Output.prettyFmt("<r><d>[fetch] $<r> ", true));
+
+                try fmt.format(writer, Output.prettyFmt("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{s}\"<r>", true), .{request.path});
+            } else {
+                try fmt.format(writer, "curl --http1.1 \"{s}\"", .{request.path});
+            }
+
+            if (!bun.strings.eqlComptime(request.method, "GET")) {
+                try fmt.format(writer, " -X {s}", .{request.method});
+            }
+
+            if (self.ignore_insecure) {
+                _ = try writer.writeAll(" -k");
+            }
+
+            var content_type: []const u8 = "";
+
+            for (request.headers) |*header| {
+                _ = try writer.writeAll(" ");
+                if (content_type.len == 0) {
+                    if (bun.strings.eqlCaseInsensitiveASCII("content-type", header.name, true)) {
+                        content_type = header.value;
+                    }
+                }
+
+                try header.curl().format(comptime "", .{}, writer);
+
+                if (bun.strings.eqlCaseInsensitiveASCII("accept-encoding", header.name, true)) {
+                    _ = try writer.writeAll(" --compressed");
+                }
+            }
+
+            if (self.body.len > 0 and (content_type.len > 0 and bun.strings.hasPrefixComptime(content_type, "application/json") or bun.strings.hasPrefixComptime(content_type, "text/") or bun.strings.containsComptime(content_type, "json"))) {
+                _ = try writer.writeAll(" --data-raw ");
+                try bun.js_printer.writeJSONString(self.body, @TypeOf(writer), writer, .utf8);
+            }
+        }
+    };
+
+    pub fn curl(self: *const Request, ignore_insecure: bool, body: []const u8) Request.CURLFormatter {
+        return .{
+            .request = self,
+            .ignore_insecure = ignore_insecure,
+            .body = body,
+        };
+    }
 
     pub fn clone(this: *const Request, headers: []Header, builder: *StringBuilder) Request {
         for (this.headers, 0..) |header, i| {

@@ -237,6 +237,7 @@ pub const PatchTask = struct {
                             pkg.resolution.value.npm.version,
                         ),
                         url,
+                        manager.lockfile.buffers.dependencies.items[dep_id].behavior.isRequired(),
                         dep_id,
                         pkg,
                         this.callback.calc_hash.name_and_version_hash,

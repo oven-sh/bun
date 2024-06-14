@@ -251,7 +251,7 @@ it("should link package", async () => {
     env,
   });
   const err4 = await new Response(stderr4).text();
-  expect(err4).toContain(`error: package "${link_name}" is not linked`);
+  expect(err4).toContain(`error: Package "${link_name}" is not linked`);
   expect(await new Response(stdout4).text()).toBe("");
   expect(await exited4).toBe(1);
 });
@@ -343,7 +343,7 @@ it("should link scoped package", async () => {
     env,
   });
   const err4 = await new Response(stderr4).text();
-  expect(err4).toContain(`error: package "${link_name}" is not linked`);
+  expect(err4).toContain(`error: Package "${link_name}" is not linked`);
   expect(await new Response(stdout4).text()).toBe("");
   expect(await exited4).toBe(1);
 });

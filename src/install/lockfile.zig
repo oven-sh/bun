@@ -320,12 +320,12 @@ pub const Tree = struct {
 
     pub fn toTree(out: External) Tree {
         return .{
-            .id = @as(Id, @bitCast(out[0..4].*)),
-            .dependency_id = @as(Id, @bitCast(out[4..8].*)),
-            .parent = @as(Id, @bitCast(out[8..12].*)),
+            .id = @bitCast(out[0..4].*),
+            .dependency_id = @bitCast(out[4..8].*),
+            .parent = @bitCast(out[8..12].*),
             .dependencies = .{
-                .off = @as(u32, @bitCast(out[12..16].*)),
-                .len = @as(u32, @bitCast(out[16..20].*)),
+                .off = @bitCast(out[12..16].*),
+                .len = @bitCast(out[16..20].*),
             },
         };
     }
@@ -474,7 +474,7 @@ pub const Tree = struct {
     const Builder = struct {
         allocator: Allocator,
         name_hashes: []const PackageNameHash,
-        list: ArrayList = .{},
+        list: bun.MultiArrayList(Entry) = .{},
         resolutions: []const PackageID,
         dependencies: []const Dependency,
         resolution_lists: []const Lockfile.DependencyIDSlice,
@@ -503,8 +503,6 @@ pub const Tree = struct {
             tree: Tree,
             dependencies: Lockfile.DependencyIDList,
         };
-
-        pub const ArrayList = bun.MultiArrayList(Entry);
 
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *Builder) !DependencyIDList {
@@ -565,6 +563,8 @@ pub const Tree = struct {
         const next: *Tree = &trees[builder.list.len - 1];
         const name_hashes: []const PackageNameHash = builder.name_hashes;
         const max_package_id = @as(PackageID, @truncate(name_hashes.len));
+        const resolutions = builder.lockfile.packages.items(.resolution);
+
         var dep_id = resolution_list.off;
         const end = dep_id + resolution_list.len;
 
@@ -574,16 +574,19 @@ pub const Tree = struct {
             if (pid >= max_package_id) continue;
 
             const dependency = builder.dependencies[dep_id];
-
-            const destination = try next.hoistDependency(
-                true,
-                pid,
-                dep_id,
-                &dependency,
-                dependency_lists,
-                trees,
-                builder,
-            );
+            // Do not hoist folder dependencies
+            const destination = if (resolutions[pid].tag == .folder)
+                next.id
+            else
+                try next.hoistDependency(
+                    true,
+                    pid,
+                    dep_id,
+                    &dependency,
+                    dependency_lists,
+                    trees,
+                    builder,
+                );
 
             switch (destination) {
                 Tree.dependency_loop, Tree.hoisted => continue,
@@ -821,13 +824,48 @@ pub fn clean(
 }
 
 /// Is this a direct dependency of the workspace root package.json?
-pub fn isWorkspaceRootDependency(this: *Lockfile, id: DependencyID) bool {
+pub fn isWorkspaceRootDependency(this: *const Lockfile, id: DependencyID) bool {
     return this.packages.items(.dependencies)[0].contains(id);
 }
 
 /// Is this a direct dependency of the workspace the install is taking place in?
-pub fn isRootDependency(this: *Lockfile, manager: *PackageManager, id: DependencyID) bool {
+pub fn isRootDependency(this: *const Lockfile, manager: *PackageManager, id: DependencyID) bool {
     return this.packages.items(.dependencies)[manager.root_package_id.get(this, manager.workspace_name_hash)].contains(id);
+}
+
+/// Is this a direct dependency of any workspace (including workspace root)?
+/// TODO make this faster by caching the workspace package ids
+pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
+    const packages = this.packages.slice();
+    const resolutions = packages.items(.resolution);
+    const dependencies_lists = packages.items(.dependencies);
+    for (resolutions, dependencies_lists) |resolution, dependencies| {
+        if (resolution.tag != .workspace and resolution.tag != .root) continue;
+        if (dependencies.contains(id)) return true;
+    }
+
+    return false;
+}
+
+/// Does this tree id belong to a workspace (including workspace root)?
+pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
+    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
+}
+
+pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
+    return if (workspace_name_hash) |workspace_name_hash_| brk: {
+        const packages = this.packages.slice();
+        const name_hashes = packages.items(.name_hash);
+        const resolutions = packages.items(.resolution);
+        for (resolutions, name_hashes, 0..) |res, name_hash, i| {
+            if (res.tag == .workspace and name_hash == workspace_name_hash_) {
+                break :brk @intCast(i);
+            }
+        }
+
+        // should not hit this, default to root just in case
+        break :brk 0;
+    } else 0;
 }
 
 pub fn cleanWithLogger(
@@ -1023,23 +1061,6 @@ pub fn cleanWithLogger(
     }
 
     return new;
-}
-
-pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
-    return if (workspace_name_hash) |workspace_name_hash_| brk: {
-        const packages = this.packages.slice();
-        const name_hashes = packages.items(.name_hash);
-        const resolutions = packages.items(.resolution);
-        const metas = packages.items(.meta);
-        for (resolutions, name_hashes, metas) |res, name_hash, meta| {
-            if (res.tag == .workspace and name_hash == workspace_name_hash_) {
-                break :brk meta.id;
-            }
-        }
-
-        // should not hit this, default to root just in case
-        break :brk 0;
-    } else 0;
 }
 
 pub const MetaHashFormatter = struct {

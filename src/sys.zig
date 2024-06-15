@@ -10,6 +10,7 @@ const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
 const linux = os.linux;
+const openbsd = std.c;
 const mem = std.mem;
 const mode_t = os.mode_t;
 const open_sym = system.open;
@@ -34,6 +35,7 @@ const use_libc = !(Environment.isLinux and Environment.isX64);
 pub const system = switch (Environment.os) {
     .linux => linux,
     .mac => bun.AsyncIO.system,
+    .openbsd => openbsd,
     else => @compileError("not implemented"),
 };
 
@@ -544,6 +546,8 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 
         .linux => Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
 
+        .openbsd => Maybe(void).errnoSysP(openbsd.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success,
+
         .windows => {
             var wbuf: bun.WPathBuffer = undefined;
             return Maybe(void).errnoSysP(
@@ -558,7 +562,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: bun.Mode) Maybe(void) {
 }
 
 pub fn mkdirA(file_path: []const u8, flags: bun.Mode) Maybe(void) {
-    if (comptime Environment.isMac) {
+    if (comptime (Environment.isMac or Environment.isOpenBSD)) {
         return Maybe(void).errnoSysP(system.mkdir(&(std.os.toPosixPath(file_path) catch return Maybe(void){
             .err = .{
                 .errno = @intFromEnum(bun.C.E.NOMEM),
@@ -1102,7 +1106,8 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     }
 
     while (true) {
-        const rc = Syscall.system.openat(dirfd.cast(), file_path, flags, perm);
+        const O_flags: std.c.O = @as(*const std.c.O, @ptrCast(&flags)).*;
+        const rc = Syscall.system.openat(dirfd.cast(), file_path, O_flags, perm);
         if (comptime Environment.allow_assert)
             log("openat({}, {s}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), rc });
         return switch (Syscall.getErrno(rc)) {
@@ -1215,6 +1220,19 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             while (true) {
                 const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
                 log("write({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+
+                if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
+                    if (err.getErrno() == .INTR) continue;
+                    return err;
+                }
+
+                return Maybe(usize){ .result = @intCast(rc) };
+            }
+        },
+        .openbsd => {
+            while (true) {
+                const rc = sys.write(fd.cast(), bytes.ptr, adjusted_len);
+                log("write({}, {d}) = {d}", .{ fd, adjusted_len, rc });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -1504,6 +1522,17 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
             }
         },
+        .openbsd => {
+            while (true) {
+                const rc = sys.read(fd.cast(), buf.ptr, adjusted_len);
+                log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+
+                if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
+                    if (err.getErrno() == .INTR) continue;
+                    return err;
+                }
+                return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
+            }
         .windows => if (bun.FDImpl.decode(fd).kind == .uv)
             sys_uv.read(fd, buf)
         else {

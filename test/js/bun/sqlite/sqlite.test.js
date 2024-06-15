@@ -2,7 +2,7 @@ import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { spawnSync } from "bun";
-import { bunExe, isWindows, tempDirWithFiles } from "harness";
+import { BREAKING_CHANGES_BUN_1_2, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -435,6 +435,93 @@ it("db.query()", () => {
   db.close();
   db.close();
   db.close();
+});
+
+it("db.run()", () => {
+  const db = Database.open(":memory:");
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+
+  const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+    "@name": "Joey",
+    "@age": 2,
+  });
+});
+
+for (let pretty of [false, true]) {
+  it(`pretty: ${pretty}`, () => {
+    const db = Database.open(":memory:", { pretty });
+
+    db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+
+    const result = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+      [(!pretty ? "@" : "") + "name"]: "Joey",
+      [(!pretty ? "@" : "") + "age"]: 2,
+    });
+    expect(result).toStrictEqual([{ name: "Joey" }]);
+  });
+}
+it("pretty: true", () => {
+  const db = Database.open(":memory:", { pretty: true });
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+
+  const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+    "name": "Joey",
+    "age": 2,
+  });
+});
+
+describe("throws missing parameter error in", () => {
+  for (let method of ["all", "get", "values", "run"]) {
+    it.todoIf(!BREAKING_CHANGES_BUN_1_2)(`${method}()`, () => {
+      const db = Database.open(":memory:");
+
+      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+
+      expect(() => {
+        const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
+
+        query[method]({
+          "@name": "Joey",
+        });
+      }).toThrow('Missing parameter "@age"');
+    });
+  }
+});
+
+describe("does not throw missing parameter error in", () => {
+  for (let method of ["all", "get", "values", "run"]) {
+    it(`${method}()`, () => {
+      it.skipIf(BREAKING_CHANGES_BUN_1_2)(`${method}()`, () => {
+        const db = Database.open(":memory:");
+
+        db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+
+        expect(() => {
+          const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
+          const result = query[method]({
+            "@name": "Joey",
+          });
+          switch (method) {
+            case "all":
+              expect(result).toHaveLength(1);
+              expect(result[0]).toStrictEqual({ name: "Joey" });
+              break;
+            case "get":
+              expect(result).toStrictEqual({ name: "Joey" });
+              break;
+            case "values":
+              expect(result).toStrictEqual([["Joey"]]);
+              break;
+            case "run":
+              expect(result).toBeUndefined();
+              break;
+          }
+        }).not.toThrow();
+      });
+    });
+  }
 });
 
 it("db.transaction()", () => {

@@ -82,6 +82,26 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
+
+            /**
+             * When binding parameters, remove the leading `$`, `@`, or `:` prefix from the parameter name.
+             *
+             * @default false (prefix is not removed, e.g. `$bar` in SQL is `$bar: string` in JavaScript)
+             *
+             * For example, `$bar` becomes `bar`.
+             * @example
+             * ```ts
+             * const db = new Database(":memory:");
+             * db.run("CREATE TABLE foo (bar TEXT)");
+             * // pretty: true
+             * db.run("INSERT INTO foo VALUES ($bar)", { bar: "hiiiiii" });
+             * // pretty: false
+             * db.run("INSERT INTO foo VALUES ($bar)", { $bar: "hiiiiii" });
+             * ```
+             *
+             * @since v1.1.14
+             */
+            pretty?: boolean;
           },
     );
 

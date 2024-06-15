@@ -174,6 +174,43 @@ const query = db.query(`SELECT $param1, $param2;`);
 
 Values are bound to these parameters when the query is executed. A `Statement` can be executed with several different methods, each returning the results in a different form.
 
+### Binding values
+
+To bind values to a statement, pass an object to the `.all()`, `.get()`, `.run()`, or `.values()` method.
+
+```ts
+const query = db.query(`select $message;`);
+query.all({ $message: "Hello world" });
+```
+
+You can bind using positional parameters too:
+
+```ts
+const query = db.query(`select ?1;`);
+query.all("Hello world");
+```
+
+#### `pretty: true` lets you bind values without prefixes
+
+By default, the `$`, `:`, and `@` prefixes are **included** when binding values to named parameters. To bind without these prefixes, use the `bind`
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", {
+  // bind values without prefixes
+  pretty: true,
+});
+
+const query = db.query(`select $message;`);
+
+// pretty: true
+query.all({ message: "Hello world" });
+
+// pretty: false
+// query.all({ $message: "Hello world" });
+```
+
 ### `.all()`
 
 Use `.all()` to run a query and get back the results as an array of objects.

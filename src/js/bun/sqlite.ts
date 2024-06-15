@@ -224,6 +224,9 @@ class Database {
             : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
         );
         this.filename = ":memory:";
+        if (options?.pretty) {
+          this.#prettyNames = true;
+        }
         return;
       }
 
@@ -248,6 +251,15 @@ class Database {
       if (options.readwrite) {
         flags |= constants.SQLITE_OPEN_READWRITE;
       }
+
+      if ("pretty" in options) {
+        this.#prettyNames = !!options.pretty;
+
+        // If they only set pretty: true, reset it back.
+        if (flags === 0) {
+          flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
+        }
+      }
     } else if (typeof options === "number") {
       flags = options;
     }
@@ -265,6 +277,7 @@ class Database {
     this.filename = filename;
   }
 
+  #prettyNames = false;
   #handle;
   #cachedQueriesKeys = [];
   #cachedQueriesLengths = [];
@@ -354,7 +367,7 @@ class Database {
   }
 
   prepare(query, params, flags) {
-    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0));
+    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#prettyNames));
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;

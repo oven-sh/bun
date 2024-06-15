@@ -2,9 +2,9 @@ import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, gc, tls } from "harness";
+import { createServer } from "net";
 import { join } from "path";
 import process from "process";
-
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const isWindows = process.platform === "win32";
 const COMMON_CERT = { ...tls };
@@ -469,79 +469,182 @@ describe("WebSocket", () => {
     ws.onclose = () => resolve2();
     await Promise.all([promise, promise2]);
   });
-});
 
-// We want to test that the `onConnectError` callback gets called.
-it("should report failing websocket connection in onerror and onclose for connection refused", async () => {
-  const url = `ws://localhost:65412`;
-  const { promise, resolve, reject } = Promise.withResolvers();
-  const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
+  // We want to test that the `onConnectError` callback gets called.
+  it("should report failing websocket connection in onerror and onclose for connection refused", async () => {
+    const url = `ws://localhost:65412`;
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
 
-  const ws = new WebSocket(url, {});
-  ws.onopen = () => reject(new Error("should not be called"));
-  ws.onmessage = () => reject(new Error("should not be called"));
-  ws.onerror = () => {
-    resolve();
-  };
-  ws.onclose = () => resolve2();
-  await Promise.all([promise, promise2]);
-});
-
-it("instances should be finalized when GC'd", async () => {
-  const { expect } = require("bun:test");
-
-  using server = Bun.serve({
-    port: 0,
-    fetch(req, server) {
-      return server.upgrade(req);
-    },
-    websocket: {
-      open() {},
-      data() {},
-      message() {},
-      drain() {},
-    },
+    const ws = new WebSocket(url, {});
+    ws.onopen = () => reject(new Error("should not be called"));
+    ws.onmessage = () => reject(new Error("should not be called"));
+    ws.onerror = () => {
+      resolve();
+    };
+    ws.onclose = () => resolve2();
+    await Promise.all([promise, promise2]);
   });
 
-  function openAndCloseWS() {
-    const { promise, resolve } = Promise.withResolvers();
-    const sock = new WebSocket(server.url.href.replace("http", "ws"));
-    sock.addEventListener("open", _ => {
-      sock.addEventListener("close", () => {
-        resolve();
-      });
-      sock.close();
+  it("instances should be finalized when GC'd", async () => {
+    const { expect } = require("bun:test");
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return server.upgrade(req);
+      },
+      websocket: {
+        open() {},
+        data() {},
+        message() {},
+        drain() {},
+      },
     });
 
-    return promise;
-  }
+    function openAndCloseWS() {
+      const { promise, resolve } = Promise.withResolvers();
+      const sock = new WebSocket(server.url.href.replace("http", "ws"));
+      sock.addEventListener("open", _ => {
+        sock.addEventListener("close", () => {
+          resolve();
+        });
+        sock.close();
+      });
 
-  function getWebSocketCount() {
-    Bun.gc(true);
-    const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
-      WebSocket: 0,
-    };
-    return objectTypeCounts.WebSocket || 0;
-  }
-  let current_websocket_count = 0;
-  let initial_websocket_count = 0;
+      return promise;
+    }
 
-  for (let i = 0; i < 1000; i++) {
-    await openAndCloseWS();
-    if (i % 100 === 0) {
-      current_websocket_count = getWebSocketCount();
-      // if we have more than 10 websockets open, we have a problem
-      expect(current_websocket_count).toBeLessThanOrEqual(10);
-      if (initial_websocket_count === 0) {
-        initial_websocket_count = current_websocket_count;
+    function getWebSocketCount() {
+      Bun.gc(true);
+      const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
+        WebSocket: 0,
+      };
+      return objectTypeCounts.WebSocket || 0;
+    }
+    let current_websocket_count = 0;
+    let initial_websocket_count = 0;
+
+    for (let i = 0; i < 1000; i++) {
+      await openAndCloseWS();
+      if (i % 100 === 0) {
+        current_websocket_count = getWebSocketCount();
+        // if we have more than 10 websockets open, we have a problem
+        expect(current_websocket_count).toBeLessThanOrEqual(10);
+        if (initial_websocket_count === 0) {
+          initial_websocket_count = current_websocket_count;
+        }
       }
     }
-  }
-  // wait next tick to run the last time
-  await Bun.sleep(1);
-  current_websocket_count = getWebSocketCount();
-  // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
-  expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(5);
+    // wait next tick to run the last time
+    await Bun.sleep(1);
+    current_websocket_count = getWebSocketCount();
+    // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
+    expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(5);
+  });
+
+  it("should be able to send big messages", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const ws = new WebSocket("https://echo.websocket.org/");
+
+    const payload = crypto.randomBytes(1024 * 16);
+    const iterations = 10;
+    const expected = payload.byteLength * iterations;
+
+    let total_received = 0;
+    const timeout = setTimeout(() => {
+      ws.close();
+    }, 4000);
+    ws.addEventListener("close", e => {
+      clearTimeout(timeout);
+      resolve(total_received);
+    });
+
+    ws.addEventListener("message", e => {
+      if (typeof e.data === "string") {
+        return;
+      }
+      const received = e.data.byteLength || e.data.size || 0;
+      total_received += received;
+      if (total_received >= expected) {
+        ws.close();
+      }
+    });
+    ws.addEventListener("error", reject);
+    ws.addEventListener("open", () => {
+      for (let i = 0; i < 10; i++) {
+        ws.send(payload);
+      }
+    });
+
+    expect(await promise).toBe(expected);
+  });
+
+  it("headers should keep the original case", async () => {
+    const receivedHeaders = [];
+    const { promise, resolve } = Promise.withResolvers();
+    const server = createServer(socket => {
+      socket.on("data", data => {
+        const request = data.toString();
+        const headers = request.split("\r\n").slice(1);
+
+        for (const header of headers) {
+          const [key, value] = header.split(": ");
+          if (key) {
+            receivedHeaders.push(key);
+          }
+        }
+
+        const response = "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n";
+
+        socket.write(response);
+        socket.end();
+      });
+
+      socket.on("error", err => {
+        console.error("Socket error:", err);
+      });
+    });
+
+    server.listen(0, () => {
+      const address = server.address();
+      const ws = new WebSocket(`ws://localhost:${address.port}`, {
+        headers: {
+          Origin: "https://bun.sh",
+          MyCustomHeader: "Hello, World!",
+          Custom_Header_2: "Hello, World!",
+          "Custom-Header-3": "Hello, World!",
+          mycustomheader4: "Hello, World!",
+        },
+      });
+
+      ws.onclose = () => {
+        resolve();
+      };
+    });
+
+    try {
+      await promise;
+
+      expect(receivedHeaders).toContain("MyCustomHeader");
+      expect(receivedHeaders).toContain("Custom_Header_2");
+      expect(receivedHeaders).toContain("Custom-Header-3");
+      expect(receivedHeaders).toContain("Origin");
+      expect(receivedHeaders).toContain("Sec-WebSocket-Key");
+      expect(receivedHeaders).toContain("Sec-WebSocket-Version");
+      expect(receivedHeaders).toContain("Upgrade");
+      expect(receivedHeaders).toContain("Connection");
+      expect(receivedHeaders).toContain("Host");
+      expect(receivedHeaders).toContain("mycustomheader4");
+
+      for (const header of receivedHeaders) {
+        if (header === "mycustomheader4") continue;
+        expect(header).not.toBe(header.toLowerCase());
+      }
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("websocket in subprocess", () => {
@@ -676,42 +779,5 @@ describe("websocket in subprocess", () => {
     await promise;
     server.stop(true);
     expect(await subprocess.exited).toBe(0);
-  });
-
-  it("should be able to send big messages", async () => {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    const ws = new WebSocket("https://echo.websocket.org/");
-
-    const payload = crypto.randomBytes(1024 * 16);
-    const iterations = 10;
-    const expected = payload.byteLength * iterations;
-
-    let total_received = 0;
-    const timeout = setTimeout(() => {
-      ws.close();
-    }, 4000);
-    ws.addEventListener("close", e => {
-      clearTimeout(timeout);
-      resolve(total_received);
-    });
-
-    ws.addEventListener("message", e => {
-      if (typeof e.data === "string") {
-        return;
-      }
-      const received = e.data.byteLength || e.data.size || 0;
-      total_received += received;
-      if (total_received >= expected) {
-        ws.close();
-      }
-    });
-    ws.addEventListener("error", reject);
-    ws.addEventListener("open", () => {
-      for (let i = 0; i < 10; i++) {
-        ws.send(payload);
-      }
-    });
-
-    expect(await promise).toBe(expected);
   });
 });

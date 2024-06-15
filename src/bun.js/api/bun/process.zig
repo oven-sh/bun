@@ -1262,6 +1262,7 @@ pub fn spawnProcessPosix(
     const stdios: [3]*?bun.FileDescriptor = .{ &spawned.stdin, &spawned.stdout, &spawned.stderr };
 
     var dup_stdout_to_stderr: bool = false;
+    const sock_flags = if (comptime Environment.isLinux) std.os.SOCK.STREAM | std.os.SOCK.CLOEXEC else std.os.SOCK.STREAM;
 
     for (0..3) |i| {
         const stdio = stdios[i];
@@ -1319,14 +1320,16 @@ pub fn spawnProcessPosix(
 
                 const fds: [2]bun.FileDescriptor = brk: {
                     var fds_: [2]std.c.fd_t = undefined;
-                    const rc = std.c.socketpair(std.os.AF.UNIX, std.os.SOCK.STREAM, 0, &fds_);
+                    const rc = std.c.socketpair(std.os.AF.UNIX, sock_flags, 0, &fds_);
                     if (rc != 0) {
                         return error.SystemResources;
                     }
 
-                    {
-                        const before = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.GETFD);
-                        _ = std.c.fcntl(fds_[if (i == 0) 1 else 0], std.os.F.SETFD, before | std.os.FD_CLOEXEC);
+                    if (comptime !Environment.isLinux) {
+                        for (fds_) |fd| {
+                            const before = std.c.fcntl(fd, std.os.F.GETFD);
+                            _ = std.c.fcntl(fd, std.os.F.SETFD, before | std.os.FD_CLOEXEC);
+                        }
                     }
 
                     if (comptime Environment.isMac) {
@@ -1411,7 +1414,7 @@ pub fn spawnProcessPosix(
             .buffer => {
                 const fds: [2]bun.FileDescriptor = brk: {
                     var fds_: [2]std.c.fd_t = undefined;
-                    const rc = std.c.socketpair(std.os.AF.UNIX, std.os.SOCK.STREAM, 0, &fds_);
+                    const rc = std.c.socketpair(std.os.AF.UNIX, sock_flags, 0, &fds_);
                     if (rc != 0) {
                         return error.SystemResources;
                     }

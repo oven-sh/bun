@@ -65,7 +65,7 @@ extern "C" ssize_t posix_spawn_bun(
     const auto childFailed = [&]() -> ssize_t {
         res = errno;
         status = res;
-        bun_close_range(0, ~0U, 0);
+        bun_close_range(0, ~0U, CLOSE_RANGE_CLOEXEC);
         _exit(127);
 
         // should never be reached
@@ -164,10 +164,11 @@ extern "C" ssize_t posix_spawn_bun(
         sigprocmask(SIG_SETMASK, &childmask, 0);
         if (!envp)
             envp = environ;
+        
+        // If CLOSE_RANGE_CLOEXEC is unsupported, we risk leaking some file descriptors
+        // This is better than potentially causing a different thread (like the watcher) to crash.
+        bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC);
 
-        if (bun_close_range(current_max_fd + 1, ~0U, CLOSE_RANGE_CLOEXEC) != 0) {
-            bun_close_range(current_max_fd + 1, ~0U, 0);
-        }
         if (execve(path, argv, envp) == -1) {
             return childFailed();
         }

@@ -13,7 +13,7 @@ import {
   runBunUpdate,
 } from "harness";
 import { join, sep, resolve } from "path";
-import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
+import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
@@ -2577,13 +2577,22 @@ describe("workspaces", async () => {
 
 describe("transitive file dependencies", () => {
   async function checkHoistedFiles() {
+    const aliasedFileDepFilesPackageJson = join(
+      packageDir,
+      "node_modules",
+      "aliased-file-dep",
+      "node_modules",
+      "files",
+      "the-files",
+      "package.json",
+    );
     const results = await Promise.all([
       exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
       readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules")),
       exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json")),
-      file(
-        join(packageDir, "node_modules", "aliased-file-dep", "node_modules", "files", "the-files", "package.json"),
-      ).json(),
+      isWindows
+        ? file(await readlink(aliasedFileDepFilesPackageJson)).json()
+        : file(aliasedFileDepFilesPackageJson).json(),
       exists(
         join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
       ),

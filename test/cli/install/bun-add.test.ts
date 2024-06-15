@@ -1674,9 +1674,13 @@ it("should add dependencies to workspaces directly", async () => {
   expect(await file(join(package_dir, "package.json")).text()).toEqual(barPackage);
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "node_modules", "package.json"]);
   expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
-  expect(await file(await readlink(join(package_dir, "moo", "node_modules", "foo", "package.json"))).json()).toEqual(
-    fooPackage,
-  );
+  if (process.platform === "win32") {
+    expect(await file(await readlink(join(package_dir, "moo", "node_modules", "foo", "package.json"))).json()).toEqual(
+      fooPackage,
+    );
+  } else {
+    expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
+  }
   expect(await file(join(package_dir, "moo", "package.json")).json()).toEqual({
     name: "moo",
     version: "0.3.0",

@@ -3811,7 +3811,7 @@ pub const PackageManager = struct {
             bun.assertWithLocation(cache_path[package_name.len] == '@', @src());
         }
 
-        cache_path_buf[cache_path.len] = std.fs.path.sep;
+        cache_path_buf[package_name.len] = std.fs.path.sep;
 
         return this.getCacheDirectory().readLink(
             cache_path,

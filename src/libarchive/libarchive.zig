@@ -665,7 +665,8 @@ pub const Archive = struct {
                                 break :brk try bun.toLibUVOwnedFD(file_handle_native);
                             };
 
-                            defer if (options.close_handles) {
+                            var plucked_file = false;
+                            defer if (options.close_handles and !plucked_file) {
                                 // On windows, AV hangs these closes really badly.
                                 // 'bun i @mui/icons-material' takes like 20 seconds to extract
                                 // mostly spend on waiting for things to close closing
@@ -706,6 +707,7 @@ pub const Archive = struct {
                                             try plucker_.contents.inflate(@as(usize, @intCast(read)));
                                             plucker_.found = read > 0;
                                             plucker_.fd = file_handle;
+                                            plucked_file = true;
                                             continue :loop;
                                         }
                                     }

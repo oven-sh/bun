@@ -617,6 +617,7 @@ pub const ShellArgs = struct {
 
     pub fn deinit(this: *ShellArgs) void {
         this.__arena.deinit();
+        bun.destroy(this.__arena);
         this.destroy();
     }
 

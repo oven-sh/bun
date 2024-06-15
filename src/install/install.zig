@@ -10675,7 +10675,8 @@ pub const PackageManager = struct {
         defer lockfile.deinit();
         switch (lockfile.loadFromDisk(manager, manager.allocator, manager.log, manager.options.lockfile_path, true)) {
             .not_found => {
-                Output.panic("Lockfile not found", .{});
+                Output.errGeneric("Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.", .{});
+                Global.crash();
             },
             .err => |cause| {
                 if (log_level != .silent) {

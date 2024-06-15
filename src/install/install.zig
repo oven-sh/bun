@@ -10887,8 +10887,13 @@ pub const PackageManager = struct {
         /// A tree can start installing packages when the parent has installed all its packages. If the parent
         /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
         pub fn canInstallPackageForTree(this: *const PackageInstaller, trees: []Lockfile.Tree, package_tree_id: Lockfile.Tree.Id) bool {
-            const parent_id = trees[package_tree_id].parent;
-            return parent_id == Lockfile.Tree.invalid_id or this.completed_trees.isSet(parent_id);
+            var curr_tree_id = trees[package_tree_id].parent;
+            while (curr_tree_id != Lockfile.Tree.invalid_id) {
+                if (!this.completed_trees.isSet(curr_tree_id)) return false;
+                curr_tree_id = trees[curr_tree_id].parent;
+            }
+
+            return true;
         }
 
         pub fn deinit(this: *PackageInstaller) void {
@@ -11409,8 +11414,8 @@ pub const PackageManager = struct {
                             // and is not hoisted.
                             const dirname = std.fs.path.dirname(this.node_modules.path.items) orelse this.node_modules.path.items;
 
-                            installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch
-                                break :result PackageInstall.Result.fail(error.FileNotFound, .opening_cache_dir);
+                            installer.cache_dir = this.root_node_modules_folder.openDir(dirname, .{ .iterate = true, .access_sub_paths = true }) catch |err|
+                                break :result PackageInstall.Result.fail(err, .opening_cache_dir);
 
                             const result = installer.install(this.skip_delete, destination_dir, resolution.tag);
 

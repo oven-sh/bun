@@ -10322,7 +10322,7 @@ pub const PackageManager = struct {
         // meaning that changes to the folder will also change the package in the cache.
         //
         // So we will overwrite the folder by directly copying the package in cache into it
-        manager.overwriteNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
+        manager.overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
             Output.prettyError(
                 "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
                 .{@errorName(e)},
@@ -10337,7 +10337,7 @@ pub const PackageManager = struct {
         return;
     }
 
-    fn overwriteNodeModulesFolder(
+    fn overwritePackageInNodeModulesFolder(
         manager: *PackageManager,
         cache_dir: std.fs.Dir,
         cache_dir_subpath: []const u8,
@@ -10364,33 +10364,73 @@ pub const PackageManager = struct {
                 var pathbuf2: bun.PathBuffer = undefined;
                 // _ = pathbuf; // autofix
 
-                // var tmpdir: if (bun.Environment.isWindows) std.fs.Dir else struct {} = if (comptime bun.Environment.isWindows) brk: {} else .{};
-
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
                     real_file_count += 1;
                     const openFile = std.fs.Dir.openFile;
                     const createFile = std.fs.Dir.createFile;
 
-                    // - rename node_modules/$PKG/$FILE -> $TMPDIR/$FILE
+                    // - rename node_modules/$PKG/$FILE -> node_modules/$PKG/$TMPNAME
                     // - create node_modules/$PKG/$FILE
                     // - copy: cache/$PKG/$FILE -> node_modules/$PKG/$FILE
                     // - unlink: $TMPDIR/$FILE
                     if (comptime bun.Environment.isWindows) {
-                        const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
                         var tmpbuf: [1024]u8 = undefined;
+                        const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
                         const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(basename, tmpbuf[0..], bun.fastRandom()) catch |e| {
                             Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
                             Global.crash();
                         });
-                        _ = tmpname; // autofix
 
-                        @memcpy(pathbuf[0..entry.path.len], entry.path);
-                        pathbuf[entry.path.len] = 0;
+                        const entrypath = bun.strings.fromWPath(pathbuf[0..], entry.path);
+                        pathbuf[entrypath.len] = 0;
+                        const entrypathZ = pathbuf[0..entrypath.len :0];
 
-                        // bun.sys.renameatConcurrently(bun.toFD(destination_dir_.fd), pathbuf[0..entry.path.len :0], to_dir_fd: bun.FileDescriptor, to: [:0]const u8);
-                        // var in_file = try openFile(entry.dir, basename, .{ .mode = .read_only });
-                        // defer in_file.close();
+                        if (bun.sys.renameatConcurrently(
+                            bun.toFD(destination_dir_.fd),
+                            entrypathZ,
+                            bun.toFD(destination_dir_.fd),
+                            tmpname,
+                        ).asErr()) |e| {
+                            Output.prettyError("<r><red>error<r>: copying file {}", .{e});
+                            Global.crash();
+                        }
+
+                        var in_file = openFile(entry.dir, basename, .{ .mode = .read_only }) catch |e| {
+                            Output.prettyError("<r><red>error<r>: opening node_modules file {s} {s} ()", .{ @errorName(e), entrypath });
+                            Global.crash();
+                        };
+                        defer in_file.close();
+
+                        const mode = in_file.mode() catch @panic("OH NO");
+                        var outfile = createFile(destination_dir_, entrypath, .{ .mode = mode }) catch @panic("OH NO");
+                        defer outfile.close();
+
+                        var buf1: bun.windows.WPathBuffer = undefined;
+                        var buf2: bun.windows.WPathBuffer = undefined;
+
+                        const infile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(in_file.handle, &buf1, buf1.len, 0);
+                        if (infile_path_len == 0) {
+                            const e = bun.windows.Win32Error.get();
+                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
+                            Global.crash();
+                        }
+                        buf1[infile_path_len] = 0;
+
+                        const outfile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(outfile.handle, &buf2, buf2.len, 0);
+                        if (outfile_path_len == 0) {
+                            const e = bun.windows.Win32Error.get();
+                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
+                            Global.crash();
+                        }
+                        buf2[outfile_path_len] = 0;
+
+                        bun.copyFileWithState(buf1[0..infile_path_len :0], buf2[0..outfile_path_len :0], &copy_file_state) catch |err| {
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                            Global.crash();
+                        };
 
                         continue;
                     }
@@ -10409,8 +10449,7 @@ pub const PackageManager = struct {
                         Global.crash();
                     }
 
-                    const mode = try in_file.mode();
-                    var outfile = try createFile(destination_dir_, entry.basename, .{ .mode = mode });
+                    var outfile = try createFile(destination_dir_, entry.path, .{});
                     defer outfile.close();
 
                     // debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
@@ -10435,37 +10474,10 @@ pub const PackageManager = struct {
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                     }
 
-                    if (comptime bun.Environment.isPosix) {
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                            Global.crash();
-                        };
-                    } else {
-                        var buf1: bun.windows.WPathBuffer = undefined;
-                        var buf2: bun.windows.WPathBuffer = undefined;
-
-                        const infile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(in_file.handle, &buf1, buf1.len, 0);
-                        if (infile_path_len == 0) {
-                            const e = bun.windows.Win32Error.get();
-                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-                            Global.crash();
-                        }
-                        buf1[infile_path_len] = 0;
-
-                        const outfile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(outfile.handle, &buf2, buf2.len, 0);
-                        if (outfile_path_len == 0) {
-                            const e = bun.windows.Win32Error.get();
-                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-                            Global.crash();
-                        }
-                        buf2[outfile_path_len] = 0;
-                        bun.copyFileWithState(buf1[0..infile_path_len :0], buf2[0..outfile_path_len :0], &copy_file_state) catch |err| {
-                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                            Global.crash();
-                        };
-                    }
+                    bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                        Global.crash();
+                    };
                 }
 
                 return real_file_count;
@@ -10481,6 +10493,167 @@ pub const PackageManager = struct {
             &walker,
         );
     }
+
+    // fn overwriteNodeModulesFolder(
+    //     manager: *PackageManager,
+    //     cache_dir: std.fs.Dir,
+    //     cache_dir_subpath: []const u8,
+    //     node_modules_folder_path: []const u8,
+    // ) !void {
+    //     var node_modules_folder = try std.fs.cwd().openDir(node_modules_folder_path, .{ .iterate = true });
+    //     defer node_modules_folder.close();
+
+    //     const IGNORED_PATHS: []const bun.OSPathSlice = &[_][]const bun.OSPathChar{
+    //         bun.OSPathLiteral("node_modules"),
+    //         bun.OSPathLiteral(".git"),
+    //         bun.OSPathLiteral("CMakeFiles"),
+    //     };
+
+    //     const FileCopier = struct {
+    //         pub fn copy(
+    //             destination_dir_: std.fs.Dir,
+    //             walker: *Walker,
+    //         ) !u32 {
+    //             var real_file_count: u32 = 0;
+
+    //             var copy_file_state: bun.CopyFileState = .{};
+    //             var pathbuf: bun.PathBuffer = undefined;
+    //             var pathbuf2: bun.PathBuffer = undefined;
+    //             // _ = pathbuf; // autofix
+
+    //             while (try walker.next()) |entry| {
+    //                 if (entry.kind != .file) continue;
+    //                 real_file_count += 1;
+    //                 const openFile = std.fs.Dir.openFile;
+    //                 const createFile = std.fs.Dir.createFile;
+
+    //                 // - rename node_modules/$PKG/$FILE -> node_modules/$PKG/$TMPNAME
+    //                 // - create node_modules/$PKG/$FILE
+    //                 // - copy: cache/$PKG/$FILE -> node_modules/$PKG/$FILE
+    //                 // - unlink: $TMPDIR/$FILE
+    //                 if (comptime bun.Environment.isWindows) {
+    //                     var tmpbuf: [1024]u8 = undefined;
+    //                     const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
+    //                     const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(basename, tmpbuf[0..], bun.fastRandom()) catch |e| {
+    //                         Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
+    //                         Global.crash();
+    //                     });
+
+    //                     const entrypath = bun.strings.fromWPath(pathbuf[0..], entry.path);
+    //                     pathbuf[entrypath.len] = 0;
+    //                     const entrypathZ = pathbuf[0..entrypath.len :0];
+
+    //                     if (bun.sys.renameatConcurrently(
+    //                         bun.toFD(destination_dir_.fd),
+    //                         entrypathZ,
+    //                         bun.toFD(destination_dir_.fd),
+    //                         tmpname,
+    //                     ).asErr()) |e| {
+    //                         Output.prettyError("<r><red>error<r>: copying file {}", .{e});
+    //                         Global.crash();
+    //                     }
+
+    //                     var in_file = try openFile(entry.dir, entrypath, .{ .mode = .read_only });
+    //                     defer in_file.close();
+
+    //                     if (bun.sys.unlinkat(
+    //                         bun.toFD(destination_dir_.fd),
+    //                         entrypath,
+    //                     ).asErr()) |e| {
+    //                         Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entrypath)});
+    //                         Global.crash();
+    //                     }
+
+    //                     const mode = try in_file.mode();
+    //                     var outfile = try createFile(destination_dir_, entrypath, .{ .mode = mode });
+    //                     defer outfile.close();
+
+    //                     var buf1: bun.windows.WPathBuffer = undefined;
+    //                     var buf2: bun.windows.WPathBuffer = undefined;
+
+    //                     const infile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(in_file.handle, &buf1, buf1.len, 0);
+    //                     if (infile_path_len == 0) {
+    //                         const e = bun.windows.Win32Error.get();
+    //                         const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+    //                         Output.prettyError("<r><red>error<r>: copying in path {}", .{err});
+    //                         Global.crash();
+    //                     }
+    //                     buf1[infile_path_len] = 0;
+
+    //                     const outfile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(outfile.handle, &buf2, buf2.len, 0);
+    //                     if (outfile_path_len == 0) {
+    //                         const e = bun.windows.Win32Error.get();
+    //                         const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+    //                         Output.prettyError("<r><red>error<r>: getting out path {}", .{err});
+    //                         Global.crash();
+    //                     }
+    //                     buf2[outfile_path_len] = 0;
+    //                     bun.copyFileWithState(buf1[0..infile_path_len :0], buf2[0..outfile_path_len :0], &copy_file_state) catch |err| {
+    //                         Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+    //                         Global.crash();
+    //                     };
+
+    //                     continue;
+    //                 }
+
+    //                 var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+    //                 defer in_file.close();
+
+    //                 @memcpy(pathbuf[0..entry.path.len], entry.path);
+    //                 pathbuf[entry.path.len] = 0;
+
+    //                 if (bun.sys.unlinkat(
+    //                     bun.toFD(destination_dir_.fd),
+    //                     pathbuf[0..entry.path.len :0],
+    //                 ).asErr()) |e| {
+    //                     Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
+    //                     Global.crash();
+    //                 }
+
+    //                 var outfile = try createFile(destination_dir_, entry.path, .{});
+    //                 defer outfile.close();
+
+    //                 // debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
+    //                 // var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
+    //                 //     if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
+    //                 //         bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
+    //                 //     }
+    //                 //     break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
+    //                 //         if (do_progress) {
+    //                 //             progress_.root.end();
+    //                 //             progress_.refresh();
+    //                 //         }
+
+    //                 //         Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+    //                 //         Global.crash();
+    //                 //     };
+    //                 // };
+    //                 // defer outfile.close();
+
+    //                 if (comptime Environment.isPosix) {
+    //                     const stat = in_file.stat() catch continue;
+    //                     _ = C.fchmod(outfile.handle, @intCast(stat.mode));
+    //                 }
+
+    //                 bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+    //                     Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+    //                     Global.crash();
+    //                 };
+    //             }
+
+    //             return real_file_count;
+    //         }
+    //     };
+
+    //     var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
+    //     defer pkg_in_cache_dir.close();
+    //     var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
+    //     defer walker.deinit();
+    //     _ = try FileCopier.copy(
+    //         node_modules_folder,
+    //         &walker,
+    //     );
+    // }
 
     const PatchCommitResult = struct {
         patch_key: []const u8,

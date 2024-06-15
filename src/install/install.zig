@@ -10258,19 +10258,7 @@ pub const PackageManager = struct {
             },
             .name_and_version => brk: {
                 const pkg_maybe_version_to_patch = argument;
-                const name: []const u8, const version: ?[]const u8 = namever: {
-                    if (std.mem.indexOfScalar(u8, pkg_maybe_version_to_patch[1..], '@')) |version_delimiter| {
-                        break :namever .{
-                            pkg_maybe_version_to_patch[0 .. version_delimiter + 1],
-                            pkg_maybe_version_to_patch[version_delimiter + 2 ..],
-                        };
-                    }
-                    break :namever .{
-                        pkg_maybe_version_to_patch,
-                        null,
-                    };
-                };
-
+                const name, const version = Dependency.splitNameAndVersion(pkg_maybe_version_to_patch);
                 const result = pkg_dep_id_for_name_and_version(manager.lockfile, pkg_maybe_version_to_patch, name, version);
                 const pkg_id = result[0];
                 const dependency_id = result[1];
@@ -10822,18 +10810,7 @@ pub const PackageManager = struct {
                 break :result .{ cache_dir, cache_dir_subpath, changes_dir, actual_package };
             },
             .name_and_version => brk: {
-                const name: []const u8, const version: ?[]const u8 = brk1: {
-                    if (std.mem.indexOfScalar(u8, argument[1..], '@')) |version_delimiter| {
-                        break :brk1 .{
-                            argument[0 .. version_delimiter + 1],
-                            argument[version_delimiter + 2 ..],
-                        };
-                    }
-                    break :brk1 .{
-                        argument,
-                        null,
-                    };
-                };
+                const name, const version = Dependency.splitNameAndVersion(argument);
                 const result = pkg_dep_id_for_name_and_version(lockfile, argument, name, version);
                 const pkg_id: PackageID = result[0];
                 const dependency_id: DependencyID = result[1];

@@ -482,7 +482,7 @@ pub const Archive = struct {
         ctx: ?*Archive.Context,
         comptime ContextType: type,
         appender: ContextType,
-        comptime options: ExtractOptions,
+        options: ExtractOptions,
     ) !u32 {
         var entry: *lib.archive_entry = undefined;
 
@@ -533,7 +533,7 @@ pub const Archive = struct {
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
-                    if (comptime options.npm) {
+                    if (options.npm) {
                         // - ignore entries other than files (`true` can only be returned if type is file)
                         //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
                         if (kind != .file) continue;
@@ -544,7 +544,7 @@ pub const Archive = struct {
 
                     // strip and normalize the path
                     var tokenizer = std.mem.tokenizeScalar(bun.OSPathChar, pathname, '/');
-                    inline for (0..options.depth_to_skip) |_| {
+                    for (0..options.depth_to_skip) |_| {
                         if (tokenizer.next() == null) continue :loop;
                     }
 
@@ -556,7 +556,7 @@ pub const Archive = struct {
                     const path: [:0]bun.OSPathChar = normalized_buf[0..normalized.len :0];
                     if (path.len == 0 or path.len == 1 and path[0] == '.') continue;
 
-                    if (comptime options.npm and Environment.isWindows) {
+                    if (options.npm and Environment.isWindows) {
                         // When writing files on Windows, translate the characters to their
                         // 0xf000 higher-encoded versions.
                         // https://github.com/isaacs/node-tar/blob/0510c9ea6d000c40446d56674a7efeec8e72f052/lib/winchars.js
@@ -577,7 +577,7 @@ pub const Archive = struct {
 
                     const path_slice: bun.OSPathSlice = path.ptr[0..path.len];
 
-                    if (comptime options.log) {
+                    if (options.log) {
                         Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
@@ -665,7 +665,7 @@ pub const Archive = struct {
                                 break :brk try bun.toLibUVOwnedFD(file_handle_native);
                             };
 
-                            defer if (comptime options.close_handles) {
+                            defer if (options.close_handles) {
                                 // On windows, AV hangs these closes really badly.
                                 // 'bun i @mui/icons-material' takes like 20 seconds to extract
                                 // mostly spend on waiting for things to close closing
@@ -728,7 +728,7 @@ pub const Archive = struct {
                                         lib.ARCHIVE_EOF => break :loop,
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {
-                                            if (comptime options.log) {
+                                            if (options.log) {
                                                 Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     retries_remaining,
@@ -737,7 +737,7 @@ pub const Archive = struct {
                                             }
                                         },
                                         else => {
-                                            if (comptime options.log) {
+                                            if (options.log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
                                                 Output.err("libarchive error", "extracting {}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),

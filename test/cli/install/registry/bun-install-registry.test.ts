@@ -8603,3 +8603,77 @@ describe("yarn tests", () => {
     expect(await exited).toBe(0);
   });
 });
+
+test("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "tarball-without-package-prefix": "1.0.0",
+      },
+    }),
+  );
+
+  // Entries in this tarball:
+  //
+  //  ./
+  //  ./package1000.js
+  //  ./package2/
+  //  ./package3/
+  //  ./package4/
+  //  ./package.json
+  //  ./package/
+  //  ./package1000/
+  //  ./package/index.js
+  //  ./package4/package5/
+  //  ./package4/package.json
+  //  ./package3/package6/
+  //  ./package3/package6/index.js
+  //  ./package2/index.js
+  //  package3/
+  //  package3/package6/
+  //  package3/package6/index.js
+  //
+  // The directory `package3` is added twice, but because one doesn't start
+  // with `./`, it is stripped from the path and a copy of `package6` is placed
+  // at the root of the output directory. Also `package1000` is not included in
+  // the output because it is an empty directory.
+
+  await runBunInstall(env, packageDir);
+  const prefix = join(packageDir, "node_modules", "tarball-without-package-prefix");
+  const results = await Promise.all([
+    file(join(prefix, "package.json")).json(),
+    file(join(prefix, "package1000.js")).text(),
+    file(join(prefix, "package", "index.js")).text(),
+    file(join(prefix, "package2", "index.js")).text(),
+    file(join(prefix, "package3", "package6", "index.js")).text(),
+    file(join(prefix, "package4", "package.json")).json(),
+    exists(join(prefix, "package4", "package5")),
+    exists(join(prefix, "package1000")),
+    file(join(prefix, "package6", "index.js")).text(),
+  ]);
+  expect(results).toEqual([
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+    "hi",
+    "ooops",
+    "ooooops",
+    "oooooops",
+    {
+      "name": "tarball-without-package-prefix",
+      "version": "2.0.0",
+    },
+    false,
+    false,
+    "oooooops",
+  ]);
+  expect(await file(join(packageDir, "node_modules", "tarball-without-package-prefix", "package.json")).json()).toEqual(
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+  );
+});

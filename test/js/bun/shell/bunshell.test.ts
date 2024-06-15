@@ -24,11 +24,11 @@ export const bunEnv: NodeJS.ProcessEnv = {
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   // windows doesn't set this, but we do to match posix compatibility
-  PWD: process.env.PWD || process.cwd(),
+  PWD: (process.env.PWD || process.cwd()).replaceAll("\\", "/"),
 };
 
 $.env(bunEnv);
-$.cwd(process.cwd());
+$.cwd(process.cwd().replaceAll("\\", "/"));
 $.nothrow();
 
 let temp_dir: string;

@@ -3642,9 +3642,10 @@ pub const PackageManager = struct {
             const string_buf = this.lockfile.buffers.string_bytes.items;
             return std.fmt.bufPrintZ(
                 &cached_package_folder_name_buf,
-                "@G@{any}{}",
+                "@G@{any}{}{}",
                 .{
                     repository.committish.fmt(string_buf),
+                    CacheVersion.Formatter{ .version_number = CacheVersion.current },
                     PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
@@ -3654,7 +3655,11 @@ pub const PackageManager = struct {
     }
 
     pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-        return std.fmt.bufPrintZ(buf, "@GH@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+        return std.fmt.bufPrintZ(buf, "@GH@{s}{}{}", .{
+            resolved,
+            CacheVersion.Formatter{ .version_number = CacheVersion.current },
+            PatchHashFmt{ .hash = patch_hash },
+        }) catch unreachable;
     }
 
     pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -3664,8 +3669,14 @@ pub const PackageManager = struct {
     fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
         return std.fmt.bufPrintZ(
             buf,
-            "@GH@{any}-{any}-{any}{}",
-            .{ repository.owner.fmt(string_buf), repository.repo.fmt(string_buf), repository.committish.fmt(string_buf), PatchHashFmt{ .hash = patch_hash } },
+            "@GH@{any}-{any}-{any}{}{}",
+            .{
+                repository.owner.fmt(string_buf),
+                repository.repo.fmt(string_buf),
+                repository.committish.fmt(string_buf),
+                CacheVersion.Formatter{ .version_number = CacheVersion.current },
+                PatchHashFmt{ .hash = patch_hash },
+            },
         ) catch unreachable;
     }
 
@@ -3701,14 +3712,14 @@ pub const PackageManager = struct {
             end = std.fmt.bufPrint(available, "@@{s}__{any}{}{}", .{
                 visible_hostname,
                 bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)),
-                PatchHashFmt{ .hash = patch_hash },
                 CacheVersion.Formatter{ .version_number = CacheVersion.current },
+                PatchHashFmt{ .hash = patch_hash },
             }) catch unreachable;
         } else {
             end = std.fmt.bufPrint(available, "@@{s}{}{}", .{
                 scope.url.hostname,
-                PatchHashFmt{ .hash = patch_hash },
                 CacheVersion.Formatter{ .version_number = CacheVersion.current },
+                PatchHashFmt{ .hash = patch_hash },
             }) catch unreachable;
         }
 
@@ -3741,8 +3752,8 @@ pub const PackageManager = struct {
                         version.patch,
                         bun.fmt.hexIntLower(version.tag.pre.hash),
                         bun.fmt.hexIntUpper(version.tag.build.hash),
-                        PatchHashFmt{ .hash = patch_hash },
                         CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
+                        PatchHashFmt{ .hash = patch_hash },
                     },
                 ) catch unreachable;
             }
@@ -3755,8 +3766,8 @@ pub const PackageManager = struct {
                     version.minor,
                     version.patch,
                     bun.fmt.hexIntLower(version.tag.pre.hash),
-                    PatchHashFmt{ .hash = patch_hash },
                     CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
+                    PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
         }
@@ -3770,8 +3781,8 @@ pub const PackageManager = struct {
                     version.minor,
                     version.patch,
                     bun.fmt.hexIntUpper(version.tag.build.hash),
-                    PatchHashFmt{ .hash = patch_hash },
                     CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
+                    PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
         }
@@ -3780,13 +3791,17 @@ pub const PackageManager = struct {
             version.major,
             version.minor,
             version.patch,
-            PatchHashFmt{ .hash = patch_hash },
             CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
+            PatchHashFmt{ .hash = patch_hash },
         }) catch unreachable;
     }
 
     pub fn cachedTarballFolderNamePrint(buf: []u8, url: string, patch_hash: ?u64) stringZ {
-        return std.fmt.bufPrintZ(buf, "@T@{any}{}", .{ bun.fmt.hexIntLower(String.Builder.stringHash(url)), PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+        return std.fmt.bufPrintZ(buf, "@T@{any}{}{}", .{
+            bun.fmt.hexIntLower(String.Builder.stringHash(url)),
+            CacheVersion.Formatter{ .version_number = CacheVersion.current },
+            PatchHashFmt{ .hash = patch_hash },
+        }) catch unreachable;
     }
 
     pub fn cachedTarballFolderName(this: *const PackageManager, url: String, patch_hash: ?u64) stringZ {

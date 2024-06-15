@@ -1454,7 +1454,14 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             const destbase = destination_dir;
             const destpath = this.destination_dir_subpath;
 
-            state.cached_package_dir = bun.openDir(this.cache_dir, this.cache_dir_subpath) catch |err| return Result.fail(err, .opening_cache_dir);
+            state.cached_package_dir = (if (comptime Environment.isWindows)
+                if (method == .symlink)
+                    bun.openDirNoRenamingOrDeletingWindows(this.cache_dir, this.cache_dir_subpath)
+                else
+                    bun.openDir(this.cache_dir, this.cache_dir_subpath)
+            else
+                bun.openDir(this.cache_dir, this.cache_dir_subpath)) catch |err| return Result.fail(err, .opening_cache_dir);
+
             state.walker = Walker.walk(
                 state.cached_package_dir,
                 this.allocator,
@@ -10877,15 +10884,11 @@ pub const PackageManager = struct {
                 LifecycleScriptSubprocess.alive_count.load(.Monotonic) < this.manager.options.max_concurrent_lifecycle_scripts;
         }
 
-        /// If all parents of the tree have finished installing their packages, the package can be installed
+        /// A tree can start installing packages when the parent has installed all its packages. If the parent
+        /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
         pub fn canInstallPackageForTree(this: *const PackageInstaller, trees: []Lockfile.Tree, package_tree_id: Lockfile.Tree.Id) bool {
-            var curr_tree_id = trees[package_tree_id].parent;
-            while (curr_tree_id != Lockfile.Tree.invalid_id) {
-                if (!this.completed_trees.isSet(curr_tree_id)) return false;
-                curr_tree_id = trees[curr_tree_id].parent;
-            }
-
-            return true;
+            const parent_id = trees[package_tree_id].parent;
+            return parent_id == Lockfile.Tree.invalid_id or this.completed_trees.isSet(parent_id);
         }
 
         pub fn deinit(this: *PackageInstaller) void {

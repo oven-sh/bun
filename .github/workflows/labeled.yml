@@ -1,0 +1,41 @@
+name: Issue Labeled
+env:
+  BUN_VERSION: 1.1.13
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  reply-labeled:
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'crash'
+    permissions:
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+            .github
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: "1.1.13"
+      - name: "add platform and command label"
+        id: add-labels
+        env:
+          GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+        shell: bash
+        run: |
+          LABELS=$(bun scripts/read-issue.ts)
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
+      - name: Add labels
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "add-labels"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          labels: ${{ steps.add-labels.outputs.labels }}

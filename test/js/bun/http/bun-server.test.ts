@@ -1,6 +1,6 @@
 import type { ServerWebSocket, Server } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, rejectUnauthorizedScope } from "harness";
 import path from "path";
 
 describe("Server", () => {
@@ -396,7 +396,7 @@ describe("Server", () => {
     const url = `${server.hostname}:${server.port}`;
 
     try {
-      // should fail
+      // This should fail because it's "http://" and not "https://"
       await fetch(`http://${url}`, { tls: { rejectUnauthorized: false } });
       expect.unreachable();
     } catch (err: any) {
@@ -404,7 +404,26 @@ describe("Server", () => {
     }
 
     {
-      const result = await fetch(`https://${url}`, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+      const result = await fetch(server.url, { tls: { rejectUnauthorized: false } }).then(res => res.text());
+      expect(result).toBe("Hello");
+    }
+
+    // Test that HTTPS keep-alive doesn't cause it to re-use the connection on
+    // the next attempt, when the next attempt has reject unauthorized enabled
+    {
+      expect(
+        async () => await fetch(server.url, { tls: { rejectUnauthorized: true } }).then(res => res.text()),
+      ).toThrow("self signed certificate");
+    }
+
+    {
+      using _ = rejectUnauthorizedScope(true);
+      expect(async () => await fetch(server.url).then(res => res.text())).toThrow("self signed certificate");
+    }
+
+    {
+      using _ = rejectUnauthorizedScope(false);
+      const result = await fetch(server.url).then(res => res.text());
       expect(result).toBe("Hello");
     }
   });

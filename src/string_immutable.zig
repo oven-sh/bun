@@ -28,7 +28,11 @@ pub inline fn containsChar(self: string, char: u8) bool {
 }
 
 pub inline fn contains(self: string, str: string) bool {
-    return indexOf(self, str) != null;
+    return containsT(u8, self, str);
+}
+
+pub inline fn containsT(comptime T: type, self: []const T, str: []const T) bool {
+    return indexOfT(T, self, str) != null;
 }
 
 pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
@@ -5131,6 +5135,10 @@ pub inline fn charIsAnySlash(char: u8) bool {
 }
 
 pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
+    return startsWithWindowsDriveLetterT(u8, s);
+}
+
+pub inline fn startsWithWindowsDriveLetterT(comptime T: type, s: []const T) bool {
     return s.len > 2 and s[1] == ':' and switch (s[0]) {
         'a'...'z', 'A'...'Z' => true,
         else => false,

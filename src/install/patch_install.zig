@@ -237,6 +237,7 @@ pub const PatchTask = struct {
                             pkg.resolution.value.npm.version,
                         ),
                         url,
+                        manager.lockfile.buffers.dependencies.items[dep_id].behavior.isRequired(),
                         dep_id,
                         pkg,
                         this.callback.calc_hash.name_and_version_hash,
@@ -348,9 +349,10 @@ pub const PatchTask = struct {
             .package_version = resolution_label,
             // dummy value
             .node_modules = &dummy_node_modules,
+            .lockfile = this.manager.lockfile,
         };
 
-        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile)) {
+        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
             .success => {},
             .fail => |reason| {
                 return try log.addErrorFmtNoLoc(

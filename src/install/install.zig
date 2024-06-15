@@ -10322,40 +10322,14 @@ pub const PackageManager = struct {
         // meaning that changes to the folder will also change the package in the cache.
         //
         // So we will overwrite the folder by directly copying the package in cache into it
-        if (comptime bun.Environment.isWindows) {
-            const modules_parent_dir = bun.path.dirname(module_folder, .auto);
-            var parent_dir = std.fs.cwd().openDir(modules_parent_dir, .{ .iterate = true }) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: error opening folder in node_modules: {s}\n<r>",
-                    .{@errorName(e)},
-                );
-                Output.flush();
-                Global.crash();
-            };
-            defer parent_dir.close();
-
-            manager.overwriteNodeModulesFolderPosix(
-                cache_dir,
-                cache_dir_subpath,
-                module_folder,
-            ) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
-                    .{@errorName(e)},
-                );
-                Output.flush();
-                Global.crash();
-            };
-        } else {
-            manager.overwriteNodeModulesFolderPosix(cache_dir, cache_dir_subpath, module_folder) catch |e| {
-                Output.prettyError(
-                    "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
-                    .{@errorName(e)},
-                );
-                Output.flush();
-                Global.crash();
-            };
-        }
+        manager.overwriteNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
+            Output.prettyError(
+                "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
+                .{@errorName(e)},
+            );
+            Output.flush();
+            Global.crash();
+        };
 
         Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
         Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
@@ -10387,13 +10361,39 @@ pub const PackageManager = struct {
 
                 var copy_file_state: bun.CopyFileState = .{};
                 var pathbuf: bun.PathBuffer = undefined;
+                var pathbuf2: bun.PathBuffer = undefined;
                 // _ = pathbuf; // autofix
+
+                // var tmpdir: if (bun.Environment.isWindows) std.fs.Dir else struct {} = if (comptime bun.Environment.isWindows) brk: {} else .{};
 
                 while (try walker.next()) |entry| {
                     if (entry.kind != .file) continue;
                     real_file_count += 1;
                     const openFile = std.fs.Dir.openFile;
                     const createFile = std.fs.Dir.createFile;
+
+                    // - rename node_modules/$PKG/$FILE -> $TMPDIR/$FILE
+                    // - create node_modules/$PKG/$FILE
+                    // - copy: cache/$PKG/$FILE -> node_modules/$PKG/$FILE
+                    // - unlink: $TMPDIR/$FILE
+                    if (comptime bun.Environment.isWindows) {
+                        const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
+                        var tmpbuf: [1024]u8 = undefined;
+                        const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(basename, tmpbuf[0..], bun.fastRandom()) catch |e| {
+                            Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
+                            Global.crash();
+                        });
+                        _ = tmpname; // autofix
+
+                        @memcpy(pathbuf[0..entry.path.len], entry.path);
+                        pathbuf[entry.path.len] = 0;
+
+                        // bun.sys.renameatConcurrently(bun.toFD(destination_dir_.fd), pathbuf[0..entry.path.len :0], to_dir_fd: bun.FileDescriptor, to: [:0]const u8);
+                        // var in_file = try openFile(entry.dir, basename, .{ .mode = .read_only });
+                        // defer in_file.close();
+
+                        continue;
+                    }
 
                     var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                     defer in_file.close();
@@ -10405,7 +10405,7 @@ pub const PackageManager = struct {
                         bun.toFD(destination_dir_.fd),
                         pathbuf[0..entry.path.len :0],
                     ).asErr()) |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {s} {}", .{e.withPath(entry.path)});
+                        Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
                         Global.crash();
                     }
 

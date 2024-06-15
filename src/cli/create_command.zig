@@ -435,7 +435,6 @@ pub const CreateCommand = struct {
                     {},
                     .{
                         .depth_to_skip = 1,
-                        .close_handles = false,
                     },
                 );
 

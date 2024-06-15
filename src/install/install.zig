@@ -11406,43 +11406,39 @@ pub const PackageManager = struct {
 
                         const bin = this.bins[package_id];
                         if (bin.tag != .none) {
-                            const bin_task_id = Task.Id.forBinLink(package_id);
-                            const task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, bin_task_id) catch unreachable;
-                            if (!task_queue.found_existing) {
-                                var bin_linker = Bin.Linker{
-                                    .bin = bin,
-                                    .package_installed_node_modules = bun.toFD(destination_dir),
-                                    .global_bin_path = this.options.bin_path,
-                                    .global_bin_dir = this.options.global_bin_dir,
+                            var bin_linker = Bin.Linker{
+                                .bin = bin,
+                                .package_installed_node_modules = bun.toFD(destination_dir),
+                                .global_bin_path = this.options.bin_path,
+                                .global_bin_dir = this.options.global_bin_dir,
 
-                                    // .destination_dir_subpath = destination_dir_subpath,
-                                    .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
-                                    .package_name = strings.StringOrTinyString.init(alias),
-                                    .string_buf = buf,
-                                    .extern_string_buf = extern_string_buf,
-                                };
+                                // .destination_dir_subpath = destination_dir_subpath,
+                                .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
+                                .package_name = strings.StringOrTinyString.init(alias),
+                                .string_buf = buf,
+                                .extern_string_buf = extern_string_buf,
+                            };
 
-                                bin_linker.link(this.manager.options.global);
-                                if (bin_linker.err) |err| {
-                                    if (comptime log_level != .silent) {
-                                        const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
-                                        const args = .{ alias, @errorName(err) };
+                            bin_linker.link(this.manager.options.global);
+                            if (bin_linker.err) |err| {
+                                if (comptime log_level != .silent) {
+                                    const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
+                                    const args = .{ alias, @errorName(err) };
 
-                                        if (comptime log_level.showProgress()) {
-                                            switch (Output.enable_ansi_colors) {
-                                                inline else => |enable_ansi_colors| {
-                                                    this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
-                                                },
-                                            }
-                                        } else {
-                                            Output.prettyErrorln(fmt, args);
+                                    if (comptime log_level.showProgress()) {
+                                        switch (Output.enable_ansi_colors) {
+                                            inline else => |enable_ansi_colors| {
+                                                this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
+                                            },
                                         }
+                                    } else {
+                                        Output.prettyErrorln(fmt, args);
                                     }
+                                }
 
-                                    if (this.manager.options.enable.fail_early) {
-                                        installer.uninstall(destination_dir);
-                                        Global.crash();
-                                    }
+                                if (this.manager.options.enable.fail_early) {
+                                    installer.uninstall(destination_dir);
+                                    Global.crash();
                                 }
                             }
                         }

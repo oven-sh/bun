@@ -927,6 +927,54 @@ test("it should correctly link binaries after deleting node_modules", async () =
   expect(await exited).toBe(0);
 });
 
+test("will link binaries for packages installed multiple times", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "uses-what-bin": "1.5.0",
+        },
+        workspaces: ["packages/*"],
+        trustedDependencies: ["uses-what-bin"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "uses-what-bin": "1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        dependencies: {
+          "uses-what-bin": "1.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  // Root dependends on `uses-what-bin@1.5.0` and both packages depend on `uses-what-bin@1.0.0`.
+  // This test makes sure the binaries used by `pkg1` and `pkg2` are the correct version (`1.0.0`)
+  // instead of using the root version (`1.5.0`).
+
+  await runBunInstall(env, packageDir);
+  const results = await Promise.all([
+    file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+    file(join(packageDir, "packages", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+    file(join(packageDir, "packages", "pkg2", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+  ]);
+
+  expect(results).toEqual(["what-bin@1.5.0", "what-bin@1.0.0", "what-bin@1.0.0"]);
+});
+
 test("it should re-symlink binaries that become invalid when updating package versions", async () => {
   await writeFile(
     join(packageDir, "package.json"),

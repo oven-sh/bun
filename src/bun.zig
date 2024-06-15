@@ -3260,6 +3260,19 @@ noinline fn assertionFailure() noreturn {
     Output.panic("Internal assertion failure", .{});
 }
 
+noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure {s}:{d}:{d}", .{
+        src.file,
+        src.line,
+        src.column,
+    });
+}
+
 pub inline fn debugAssert(cheap_value_only_plz: bool) void {
     if (comptime !Environment.isDebug) {
         return;
@@ -3278,6 +3291,17 @@ pub fn assert(value: bool) callconv(callconv_inline) void {
     if (!value) {
         if (comptime Environment.isDebug) unreachable;
         assertionFailure();
+    }
+}
+
+pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailureWithLocation(src);
     }
 }
 

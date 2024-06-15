@@ -289,47 +289,6 @@ const NetworkTask = struct {
         header_builder.count("npm-auth-type", "legacy");
     }
 
-    // The first time this happened!
-    //
-    // "peerDependencies": {
-    //   "@ianvs/prettier-plugin-sort-imports": "*",
-    //   "prettier-plugin-twig-melody": "*"
-    // },
-    // "peerDependenciesMeta": {
-    //   "@ianvs/prettier-plugin-sort-imports": {
-    //     "optional": true
-    //   },
-    // Example case ^
-    // `@ianvs/prettier-plugin-sort-imports` is peer and also optional but was not marked optional because
-    // the offset would be 0 and the current loop index is also 0.
-    // const invalidate_manifest_cache_because_optional_peer_dependencies_were_not_marked_as_optional_if_the_optional_peer_dependency_offset_was_equal_to_the_current_index = 1697871350;
-    // ----
-    // The second time this happened!
-    //
-    // pre-release sorting when the number of segments between dots were different, was sorted incorrectly
-    // so we must invalidate the manifest cache once again.
-    //
-    // example:
-    //
-    //  1.0.0-pre.a.b > 1.0.0-pre.a
-    //  before ordering said the left was smaller than the right
-    //
-    // const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1697871350;
-    //
-    // ----
-    // The third time this happened!
-    //
-    // pre-release sorting bug again! If part of the pre-release segment is a number, and the other pre-release part is a string,
-    // it would order them incorrectly by comparing them as strings.
-    //
-    // example:
-    //
-    // 1.0.0-alpha.22 < 1.0.0-alpha.1beta
-    // before: false
-    // after: true
-    //
-    const invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes = 1702425477;
-
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -407,10 +366,8 @@ const NetworkTask = struct {
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {
-            if (manifest.pkg.public_max_age > invalidate_manifest_cache_because_prerelease_segments_were_sorted_incorrectly_sometimes) {
-                last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
-                etag = manifest.pkg.etag.slice(manifest.string_buf);
-            }
+            last_modified = manifest.pkg.last_modified.slice(manifest.string_buf);
+            etag = manifest.pkg.etag.slice(manifest.string_buf);
         }
 
         var header_builder = HeaderBuilder{};
@@ -3626,6 +3583,19 @@ pub const PackageManager = struct {
         }
     };
 
+    pub const CacheVersion = struct {
+        pub const current = 1;
+        pub const Formatter = struct {
+            version_number: ?usize = null,
+
+            pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.version_number) |version| {
+                    try writer.print("@@@{d}", .{version});
+                }
+            }
+        };
+    };
+
     pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
         if (!repository.resolved.isEmpty()) {
             return this.cachedGitFolderName(repository, patch_hash);
@@ -3635,9 +3605,10 @@ pub const PackageManager = struct {
             const string_buf = this.lockfile.buffers.string_bytes.items;
             return std.fmt.bufPrintZ(
                 &cached_package_folder_name_buf,
-                "@G@{any}{}",
+                "@G@{any}{}{}",
                 .{
                     repository.committish.fmt(string_buf),
+                    CacheVersion.Formatter{ .version_number = CacheVersion.current },
                     PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
@@ -3647,7 +3618,11 @@ pub const PackageManager = struct {
     }
 
     pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-        return std.fmt.bufPrintZ(buf, "@GH@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+        return std.fmt.bufPrintZ(buf, "@GH@{s}{}{}", .{
+            resolved,
+            CacheVersion.Formatter{ .version_number = CacheVersion.current },
+            PatchHashFmt{ .hash = patch_hash },
+        }) catch unreachable;
     }
 
     pub fn cachedGitHubFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -3657,8 +3632,14 @@ pub const PackageManager = struct {
     fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
         return std.fmt.bufPrintZ(
             buf,
-            "@GH@{any}-{any}-{any}{}",
-            .{ repository.owner.fmt(string_buf), repository.repo.fmt(string_buf), repository.committish.fmt(string_buf), PatchHashFmt{ .hash = patch_hash } },
+            "@GH@{any}-{any}-{any}{}{}",
+            .{
+                repository.owner.fmt(string_buf),
+                repository.repo.fmt(string_buf),
+                repository.committish.fmt(string_buf),
+                CacheVersion.Formatter{ .version_number = CacheVersion.current },
+                PatchHashFmt{ .hash = patch_hash },
+            },
         ) catch unreachable;
     }
 
@@ -3678,21 +3659,31 @@ pub const PackageManager = struct {
     pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
         const scope = this.scopeForPackageName(name);
 
-        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version, null);
-
         if (scope.name.len == 0 and !this.options.did_override_default_scope) {
-            if (patch_hash != null) return cachedNPMPackageFolderPrintBasename(buf, name, version, patch_hash);
-            return basename;
+            const include_version_number = true;
+            return cachedNPMPackageFolderPrintBasename(buf, name, version, patch_hash, include_version_number);
         }
+
+        const include_version_number = false;
+        const basename = cachedNPMPackageFolderPrintBasename(buf, name, version, null, include_version_number);
 
         const spanned = bun.span(basename);
         const available = buf[spanned.len..];
         var end: []u8 = undefined;
         if (scope.url.hostname.len > 32 or available.len < 64) {
             const visible_hostname = scope.url.hostname[0..@min(scope.url.hostname.len, 12)];
-            end = std.fmt.bufPrint(available, "@@{s}__{any}{}", .{ visible_hostname, bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)), PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+            end = std.fmt.bufPrint(available, "@@{s}__{any}{}{}", .{
+                visible_hostname,
+                bun.fmt.hexIntLower(String.Builder.stringHash(scope.url.href)),
+                CacheVersion.Formatter{ .version_number = CacheVersion.current },
+                PatchHashFmt{ .hash = patch_hash },
+            }) catch unreachable;
         } else {
-            end = std.fmt.bufPrint(available, "@@{s}{}", .{ scope.url.hostname, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+            end = std.fmt.bufPrint(available, "@@{s}{}{}", .{
+                scope.url.hostname,
+                CacheVersion.Formatter{ .version_number = CacheVersion.current },
+                PatchHashFmt{ .hash = patch_hash },
+            }) catch unreachable;
         }
 
         buf[spanned.len + end.len] = 0;
@@ -3700,21 +3691,23 @@ pub const PackageManager = struct {
         return result;
     }
 
-    pub fn cachedNPMPackageFolderBasename(name: string, version: Semver.Version) stringZ {
-        return cachedNPMPackageFolderPrintBasename(&cached_package_folder_name_buf, name, version);
-    }
-
     pub fn cachedNPMPackageFolderName(this: *const PackageManager, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
         return this.cachedNPMPackageFolderNamePrint(&cached_package_folder_name_buf, name, version, patch_hash);
     }
 
     // TODO: normalize to alphanumeric
-    pub fn cachedNPMPackageFolderPrintBasename(buf: []u8, name: string, version: Semver.Version, patch_hash: ?u64) stringZ {
+    pub fn cachedNPMPackageFolderPrintBasename(
+        buf: []u8,
+        name: string,
+        version: Semver.Version,
+        patch_hash: ?u64,
+        include_cache_version: bool,
+    ) stringZ {
         if (version.tag.hasPre()) {
             if (version.tag.hasBuild()) {
                 return std.fmt.bufPrintZ(
                     buf,
-                    "{s}@{d}.{d}.{d}-{any}+{any}{}",
+                    "{s}@{d}.{d}.{d}-{any}+{any}{}{}",
                     .{
                         name,
                         version.major,
@@ -3722,19 +3715,21 @@ pub const PackageManager = struct {
                         version.patch,
                         bun.fmt.hexIntLower(version.tag.pre.hash),
                         bun.fmt.hexIntUpper(version.tag.build.hash),
+                        CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
                         PatchHashFmt{ .hash = patch_hash },
                     },
                 ) catch unreachable;
             }
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}-{any}{}",
+                "{s}@{d}.{d}.{d}-{any}{}{}",
                 .{
                     name,
                     version.major,
                     version.minor,
                     version.patch,
                     bun.fmt.hexIntLower(version.tag.pre.hash),
+                    CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
                     PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
@@ -3742,28 +3737,34 @@ pub const PackageManager = struct {
         if (version.tag.hasBuild()) {
             return std.fmt.bufPrintZ(
                 buf,
-                "{s}@{d}.{d}.{d}+{any}{}",
+                "{s}@{d}.{d}.{d}+{any}{}{}",
                 .{
                     name,
                     version.major,
                     version.minor,
                     version.patch,
                     bun.fmt.hexIntUpper(version.tag.build.hash),
+                    CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
                     PatchHashFmt{ .hash = patch_hash },
                 },
             ) catch unreachable;
         }
-        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}", .{
+        return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}{}", .{
             name,
             version.major,
             version.minor,
             version.patch,
+            CacheVersion.Formatter{ .version_number = if (include_cache_version) CacheVersion.current else null },
             PatchHashFmt{ .hash = patch_hash },
         }) catch unreachable;
     }
 
     pub fn cachedTarballFolderNamePrint(buf: []u8, url: string, patch_hash: ?u64) stringZ {
-        return std.fmt.bufPrintZ(buf, "@T@{any}{}", .{ bun.fmt.hexIntLower(String.Builder.stringHash(url)), PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+        return std.fmt.bufPrintZ(buf, "@T@{any}{}{}", .{
+            bun.fmt.hexIntLower(String.Builder.stringHash(url)),
+            CacheVersion.Formatter{ .version_number = CacheVersion.current },
+            PatchHashFmt{ .hash = patch_hash },
+        }) catch unreachable;
     }
 
     pub fn cachedTarballFolderName(this: *const PackageManager, url: String, patch_hash: ?u64) stringZ {
@@ -3778,25 +3779,25 @@ pub const PackageManager = struct {
         this: *PackageManager,
         buf: *bun.PathBuffer,
         package_name: []const u8,
-        npm: Semver.Version,
+        version: Semver.Version,
     ) ![]u8 {
-        var package_name_version_buf: bun.PathBuffer = undefined;
+        var cache_path_buf: bun.PathBuffer = undefined;
 
-        const subpath = std.fmt.bufPrintZ(
-            &package_name_version_buf,
-            "{s}" ++ std.fs.path.sep_str ++ "{any}",
-            .{
-                package_name,
-                npm.fmt(this.lockfile.buffers.string_bytes.items),
-            },
-        ) catch unreachable;
+        const cache_path = this.cachedNPMPackageFolderNamePrint(&cache_path_buf, package_name, version, null);
+
+        if (comptime Environment.allow_assert) {
+            bun.assertWithLocation(cache_path[package_name.len] == '@', @src());
+        }
+
+        cache_path_buf[package_name.len] = std.fs.path.sep;
+
         return this.getCacheDirectory().readLink(
-            subpath,
+            cache_path,
             buf,
         ) catch |err| {
             // if we run into an error, delete the symlink
             // so that we don't repeatedly try to read it
-            std.os.unlinkat(this.getCacheDirectory().fd, subpath, 0) catch {};
+            std.os.unlinkat(this.getCacheDirectory().fd, cache_path, 0) catch {};
             return err;
         };
     }

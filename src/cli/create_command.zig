@@ -433,9 +433,9 @@ pub const CreateCommand = struct {
                     &archive_context,
                     void,
                     {},
-                    1,
-                    false,
-                    false,
+                    .{
+                        .depth_to_skip = 1,
+                    },
                 );
 
                 if (!create_options.skip_package_json) {

@@ -989,7 +989,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     int required = bindings.count;
     if (count != required) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, makeString("Expected "_s, required, " values, got "_s, count)));
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, makeString("SQLite query expected "_s, required, " values, received "_s, count)));
         return jsUndefined();
     }
 

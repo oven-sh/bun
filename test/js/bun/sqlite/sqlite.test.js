@@ -561,7 +561,7 @@ it("db.query()", () => {
   try {
     db.query("SELECT * FROM test where (name = ? OR name = ?)").all("Hello");
   } catch (e) {
-    expect(e.message).toBe("Expected 2 values, got 1");
+    expect(e.message).toBe("SQLite query expected 2 values, received 1");
   }
 
   // named parameters

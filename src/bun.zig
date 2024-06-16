@@ -1043,6 +1043,10 @@ pub fn U32HashMap(comptime Type: type) type {
     return std.HashMap(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
 }
 
+pub fn U32HashMapUnmanaged(comptime Type: type) type {
+    return std.HashMapUnmanaged(u32, Type, U32HashMapContext, std.hash_map.default_max_load_percentage);
+}
+
 const CopyFile = @import("./copy_file.zig");
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;

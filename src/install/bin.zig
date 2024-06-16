@@ -184,7 +184,7 @@ pub const Bin = extern struct {
         done: bool = false,
         dir_iterator: ?std.fs.Dir.Iterator = null,
         package_name: String,
-        package_installed_node_modules: std.fs.Dir = bun.invalid_fd.asDir(),
+        destination_node_modules: std.fs.Dir = bun.invalid_fd.asDir(),
         buf: bun.PathBuffer = undefined,
         string_buffer: []const u8,
         extern_string_buf: []const ExternalString,
@@ -198,7 +198,7 @@ pub const Bin = extern struct {
                 }
                 var parts = [_][]const u8{ this.package_name.slice(this.string_buffer), target };
 
-                const dir = this.package_installed_node_modules;
+                const dir = this.destination_node_modules;
 
                 const joined = Path.joinStringBuf(&this.buf, &parts, .auto);
                 this.buf[joined.len] = 0;
@@ -268,9 +268,10 @@ pub const Bin = extern struct {
 
     pub const Linker = struct {
         bin: Bin,
+        clobber: bool,
 
-        package_installed_node_modules: bun.FileDescriptor = bun.invalid_fd,
-        root_node_modules_folder: bun.FileDescriptor = bun.invalid_fd,
+        destination_node_modules: bun.FileDescriptor,
+        root_node_modules_folder: bun.FileDescriptor,
 
         /// Used for generating relative paths
         package_name: strings.StringOrTinyString,
@@ -313,41 +314,57 @@ pub const Bin = extern struct {
         }
 
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8, link_global: bool) void {
+            const destination_dir = if (comptime Environment.isWindows)
+                if (link_global)
+                    this.global_bin_dir
+                else
+                    this.destination_node_modules.asDir()
+            else
+                this.destination_node_modules.asDir();
+
+            const target_path_trim = if (strings.hasPrefixComptime(target_path, ".." ++ std.fs.path.sep_str))
+                target_path[3..]
+            else
+                target_path;
+
+            // skip targets that don't exist
+            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L1
+            if (!bun.sys.existsAt(bun.toFD(destination_dir.fd), target_path_trim)) {
+                return;
+            }
+
             if (comptime !Environment.isWindows) {
-                const node_modules = this.package_installed_node_modules.asDir();
-                std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
+                if (this.clobber) {
+                    destination_dir.deleteFileZ(dest_path) catch {};
+                }
+                std.os.symlinkatZ(target_path, destination_dir.fd, dest_path) catch |err| {
                     // Silently ignore PathAlreadyExists if the symlink is valid.
                     // Most likely, the symlink was already created by another package
                     if (err == error.PathAlreadyExists) {
                         if (PackageInstall.isDanglingSymlink(dest_path)) {
                             // this case is hit if the package was previously and the bin is located in a different directory
-                            node_modules.deleteFileZ(dest_path) catch |err2| {
+                            destination_dir.deleteFileZ(dest_path) catch |err2| {
                                 this.err = err2;
                                 return;
                             };
 
-                            std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err2| {
+                            std.os.symlinkatZ(target_path, destination_dir.fd, dest_path) catch |err2| {
                                 this.err = err2;
                                 return;
                             };
 
-                            setPermissions(node_modules.fd, dest_path);
+                            setPermissions(destination_dir.fd, dest_path);
                             return;
                         }
 
-                        setPermissions(node_modules.fd, dest_path);
-                        var target_path_trim = target_path;
-                        if (strings.hasPrefix(target_path_trim, "../")) {
-                            target_path_trim = target_path_trim[3..];
-                        }
-                        setPermissions(node_modules.fd, target_path_trim);
+                        setPermissions(destination_dir.fd, target_path_trim);
                         return;
                     }
 
                     this.err = err;
                     return;
                 };
-                setPermissions(node_modules.fd, dest_path);
+                setPermissions(destination_dir.fd, dest_path);
                 return;
             } else {
                 const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
@@ -355,7 +372,7 @@ pub const Bin = extern struct {
                 const node_modules = if (link_global)
                     this.global_bin_dir
                 else
-                    this.package_installed_node_modules.asDir();
+                    this.destination_node_modules.asDir();
 
                 var shim_buf: [65536]u8 = undefined;
                 var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;
@@ -399,7 +416,7 @@ pub const Bin = extern struct {
                     const shebang = shebang: {
                         const first_content_chunk = contents: {
                             const fd = bun.sys.openatWindows(
-                                this.package_installed_node_modules,
+                                this.destination_node_modules,
                                 if (link_global)
                                     bun.strings.toWPathNormalized(
                                         &filename3_buf,
@@ -480,7 +497,7 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                const root_dir = this.package_installed_node_modules.asDir();
+                const root_dir = this.destination_node_modules.asDir();
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
                     if (realpath_err == error.FileNotFound) {
                         if (comptime Environment.isWindows) {
@@ -504,7 +521,7 @@ pub const Bin = extern struct {
                     this.err = realpath_err;
                     return;
                 };
-                const to = bun.getFdPath(this.package_installed_node_modules, &dest_buf) catch |err| {
+                const to = bun.getFdPath(this.destination_node_modules, &dest_buf) catch |err| {
                     this.err = err;
                     return;
                 };
@@ -523,7 +540,7 @@ pub const Bin = extern struct {
 
                 if (comptime Environment.isWindows) {
                     const from = this.global_bin_path;
-                    const to = bun.getFdPath(this.package_installed_node_modules, &dest_buf) catch |err| {
+                    const to = bun.getFdPath(this.destination_node_modules, &dest_buf) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -653,7 +670,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    const dir = this.package_installed_node_modules.asDir();
+                    const dir = this.destination_node_modules.asDir();
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;
@@ -801,7 +818,7 @@ pub const Bin = extern struct {
                     bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
-                    const dir = this.package_installed_node_modules.asDir();
+                    const dir = this.destination_node_modules.asDir();
 
                     var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
                     @as([*]u8, @ptrFromInt(@intFromPtr(joined.ptr)))[joined.len] = 0;

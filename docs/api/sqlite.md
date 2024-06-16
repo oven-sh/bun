@@ -283,13 +283,13 @@ Since Bun v1.1.14, `.run()` returns an object with two properties: `lastInsertRo
 
 The `lastInsertRowid` property returns the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
 
-### `.as(Class)` - attach methods & getters/setters to results
+### `.as(Class)` - World's smallest ORM
 
 {% callout %}
 Added in Bun v1.1.14
 {% /callout %}
 
-Use `.as(Class)` to run a query and get back the results as instances of a class.
+Use `.as(Class)` to run a query and get back the results as instances of a class. This lets you attach methods & getters/setters to results.
 
 ```ts
 class Movie {

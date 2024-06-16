@@ -267,7 +267,10 @@ pub const CommandLineReporter = struct {
         const tests = this.summary.fail + this.summary.pass + this.summary.skip + this.summary.todo;
         const files = this.summary.files;
 
-        Output.prettyError("Ran {d} tests across {d} files. ", .{ tests, files });
+        const pluralizedTests = if (tests === 1) "test" else "tests";
+        const pluralizedFiles = if (files === 1) "file" else "files";
+
+        Output.prettyError("Ran {d} {s} across {d} {s}. ", .{ tests, pluralizedTests, files, pluralizedFiles });
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 

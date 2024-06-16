@@ -88,8 +88,9 @@ pub fn main() anyerror!void {
         null,
         void,
         void{},
-        1,
-        false,
-        false,
+        .{
+            .depth_to_skip = 1,
+            .close_handles = false,
+        },
     );
 }

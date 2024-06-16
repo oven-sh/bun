@@ -12,8 +12,8 @@ import {
   runBunInstall,
   runBunUpdate,
 } from "harness";
-import { join, sep } from "path";
-import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
+import { join, sep, resolve } from "path";
+import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
@@ -2621,6 +2621,521 @@ describe("workspaces", async () => {
       });
     });
   }
+});
+
+describe("transitive file dependencies", () => {
+  async function checkHoistedFiles() {
+    const aliasedFileDepFilesPackageJson = join(
+      packageDir,
+      "node_modules",
+      "aliased-file-dep",
+      "node_modules",
+      "files",
+      "the-files",
+      "package.json",
+    );
+    const results = await Promise.all([
+      exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
+      readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules")),
+      exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json")),
+      isWindows
+        ? file(await readlink(aliasedFileDepFilesPackageJson)).json()
+        : file(aliasedFileDepFilesPackageJson).json(),
+      exists(
+        join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
+      ),
+      exists(
+        join(
+          packageDir,
+          "node_modules",
+          "@another-scope",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ),
+      exists(join(packageDir, "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json")),
+    ]);
+
+    expect(results).toEqual([
+      true,
+      [],
+      true,
+      {
+        "name": "files",
+        "version": "1.1.1",
+        "dependencies": {
+          "no-deps": "2.0.0",
+        },
+      },
+      true,
+      true,
+      true,
+    ]);
+  }
+
+  async function checkUnhoistedFiles() {
+    const results = await Promise.all([
+      file(join(packageDir, "node_modules", "dep-file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "missing-file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "aliased-file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "@scoped", "file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "@another-scope", "file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "self-file-dep", "package.json")).json(),
+
+      exists(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json")), // true
+      readdirSorted(join(packageDir, "pkg1", "node_modules", "missing-file-dep", "node_modules")), // []
+      exists(join(packageDir, "pkg1", "node_modules", "aliased-file-dep")), // false
+      exists(
+        join(
+          packageDir,
+          "pkg1",
+          "node_modules",
+          "@scoped",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ),
+      exists(
+        join(
+          packageDir,
+          "pkg1",
+          "node_modules",
+          "@another-scope",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ),
+      exists(
+        join(packageDir, "pkg1", "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
+      ),
+      readdirSorted(join(packageDir, "pkg1", "node_modules")),
+    ]);
+
+    const expected = [
+      ...(Array(7).fill({ name: "a-dep", version: "1.0.1" }) as any),
+      true,
+      [] as string[],
+      false,
+      true,
+      true,
+      true,
+      ["@another-scope", "@scoped", "dep-file-dep", "file-dep", "missing-file-dep", "self-file-dep"],
+    ];
+
+    // @ts-ignore
+    expect(results).toEqual(expected);
+  }
+
+  test("from hoisted workspace dependencies", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkg1"],
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            // hoisted
+            "dep-file-dep": "1.0.0",
+            // root
+            "file-dep": "1.0.0",
+            // dangling symlink
+            "missing-file-dep": "1.0.0",
+            // aliased. has `"file-dep": "file:."`
+            "aliased-file-dep": "npm:file-dep@1.0.1",
+            // scoped
+            "@scoped/file-dep": "1.0.0",
+            // scoped with different names
+            "@another-scope/file-dep": "1.0.0",
+            // file dependency on itself
+            "self-file-dep": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { out } = await runBunInstall(env, packageDir);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
+
+    await checkHoistedFiles();
+    expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // reinstall
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
+
+    await checkHoistedFiles();
+
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await checkHoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+
+    // install from workspace
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1")));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "14 packages installed",
+    ]);
+
+    await checkHoistedFiles();
+    expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "14 packages installed",
+    ]);
+  });
+
+  test("from non-hoisted workspace dependencies", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkg1"],
+          // these dependencies exist to make the workspace
+          // dependencies non-hoisted
+          dependencies: {
+            "dep-file-dep": "npm:a-dep@1.0.1",
+            "file-dep": "npm:a-dep@1.0.1",
+            "missing-file-dep": "npm:a-dep@1.0.1",
+            "aliased-file-dep": "npm:a-dep@1.0.1",
+            "@scoped/file-dep": "npm:a-dep@1.0.1",
+            "@another-scope/file-dep": "npm:a-dep@1.0.1",
+            "self-file-dep": "npm:a-dep@1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            // hoisted
+            "dep-file-dep": "1.0.0",
+            // root
+            "file-dep": "1.0.0",
+            // dangling symlink
+            "missing-file-dep": "1.0.0",
+            // aliased. has `"file-dep": "file:."`
+            "aliased-file-dep": "npm:file-dep@1.0.1",
+            // scoped
+            "@scoped/file-dep": "1.0.0",
+            // scoped with different names
+            "@another-scope/file-dep": "1.0.0",
+            // file dependency on itself
+            "self-file-dep": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { out } = await runBunInstall(env, packageDir);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.1",
+      "+ @scoped/file-dep@1.0.1",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.1",
+      "+ file-dep@1.0.1",
+      "+ missing-file-dep@1.0.1",
+      "+ self-file-dep@1.0.1",
+      "",
+      "13 packages installed",
+    ]);
+
+    await checkUnhoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
+
+    // reinstall
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.1",
+      "+ @scoped/file-dep@1.0.1",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.1",
+      "+ file-dep@1.0.1",
+      "+ missing-file-dep@1.0.1",
+      "+ self-file-dep@1.0.1",
+      "",
+      "13 packages installed",
+    ]);
+
+    await checkUnhoistedFiles();
+
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await checkUnhoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+
+    // install from workspace
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1")));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
+
+    await checkUnhoistedFiles();
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
+  });
+
+  test("from root dependencies", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          // hoisted
+          "dep-file-dep": "1.0.0",
+          // root
+          "file-dep": "1.0.0",
+          // dangling symlink
+          "missing-file-dep": "1.0.0",
+          // aliased. has `"file-dep": "file:."`
+          "aliased-file-dep": "npm:file-dep@1.0.1",
+          // scoped
+          "@scoped/file-dep": "1.0.0",
+          // scoped with different names
+          "@another-scope/file-dep": "1.0.0",
+          // file dependency on itself
+          "self-file-dep": "1.0.0",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await Bun.readableStreamToText(stderr);
+    var out = await Bun.readableStreamToText(stdout);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@another-scope",
+      "@scoped",
+      "aliased-file-dep",
+      "dep-file-dep",
+      "file-dep",
+      "missing-file-dep",
+      "self-file-dep",
+    ]);
+
+    await checkHoistedFiles();
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    out = await Bun.readableStreamToText(stdout);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+    expect(await exited).toBe(0);
+
+    await checkHoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    out = await Bun.readableStreamToText(stdout);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@another-scope",
+      "@scoped",
+      "aliased-file-dep",
+      "dep-file-dep",
+      "file-dep",
+      "missing-file-dep",
+      "self-file-dep",
+    ]);
+    expect(await exited).toBe(0);
+
+    await checkHoistedFiles();
+  });
+  test("it should install folder dependencies with absolute paths", async () => {
+    async function writePackages(num: number) {
+      await rm(join(packageDir, `pkg0`), { recursive: true, force: true });
+      for (let i = 0; i < num; i++) {
+        await mkdir(join(packageDir, `pkg${i}`));
+        await writeFile(
+          join(packageDir, `pkg${i}`, "package.json"),
+          JSON.stringify({
+            name: `pkg${i}`,
+            version: "1.1.1",
+          }),
+        );
+      }
+    }
+
+    await writePackages(2);
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          // without and without file protocol
+          "pkg0": `file:${resolve(packageDir, "pkg0").replace(/\\/g, "\\\\")}`,
+          "pkg1": `${resolve(packageDir, "pkg1").replace(/\\/g, "\\\\")}`,
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      env,
+    });
+
+    var err = await Bun.readableStreamToText(stderr);
+    var out = await Bun.readableStreamToText(stdout);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ pkg0@pkg0",
+      "+ pkg1@pkg1",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "pkg0", "pkg1"]);
+    expect(await file(join(packageDir, "node_modules", "pkg0", "package.json")).json()).toEqual({
+      name: "pkg0",
+      version: "1.1.1",
+    });
+    expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+      name: "pkg1",
+      version: "1.1.1",
+    });
+  });
 });
 
 test("name from manifest is scoped and url encoded", async () => {
@@ -8135,4 +8650,78 @@ describe("yarn tests", () => {
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);
   });
+});
+
+test("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "tarball-without-package-prefix": "1.0.0",
+      },
+    }),
+  );
+
+  // Entries in this tarball:
+  //
+  //  ./
+  //  ./package1000.js
+  //  ./package2/
+  //  ./package3/
+  //  ./package4/
+  //  ./package.json
+  //  ./package/
+  //  ./package1000/
+  //  ./package/index.js
+  //  ./package4/package5/
+  //  ./package4/package.json
+  //  ./package3/package6/
+  //  ./package3/package6/index.js
+  //  ./package2/index.js
+  //  package3/
+  //  package3/package6/
+  //  package3/package6/index.js
+  //
+  // The directory `package3` is added twice, but because one doesn't start
+  // with `./`, it is stripped from the path and a copy of `package6` is placed
+  // at the root of the output directory. Also `package1000` is not included in
+  // the output because it is an empty directory.
+
+  await runBunInstall(env, packageDir);
+  const prefix = join(packageDir, "node_modules", "tarball-without-package-prefix");
+  const results = await Promise.all([
+    file(join(prefix, "package.json")).json(),
+    file(join(prefix, "package1000.js")).text(),
+    file(join(prefix, "package", "index.js")).text(),
+    file(join(prefix, "package2", "index.js")).text(),
+    file(join(prefix, "package3", "package6", "index.js")).text(),
+    file(join(prefix, "package4", "package.json")).json(),
+    exists(join(prefix, "package4", "package5")),
+    exists(join(prefix, "package1000")),
+    file(join(prefix, "package6", "index.js")).text(),
+  ]);
+  expect(results).toEqual([
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+    "hi",
+    "ooops",
+    "ooooops",
+    "oooooops",
+    {
+      "name": "tarball-without-package-prefix",
+      "version": "2.0.0",
+    },
+    false,
+    false,
+    "oooooops",
+  ]);
+  expect(await file(join(packageDir, "node_modules", "tarball-without-package-prefix", "package.json")).json()).toEqual(
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+  );
 });

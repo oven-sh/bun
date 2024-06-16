@@ -269,10 +269,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                     null,
                     void,
                     {},
-                    // "package/bin"
-                    2,
-                    true,
-                    false,
+                    .{
+                        // "package/bin"
+                        .depth_to_skip = 2,
+                    },
                 ) catch |err| {
                     node.end();
                     Output.err(err,

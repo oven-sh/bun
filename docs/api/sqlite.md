@@ -16,7 +16,10 @@ Features include:
 - Parameters (named & positional)
 - Prepared statements
 - Datatype conversions (`BLOB` becomes `Uint8Array`)
+- World's Tiniest ORM (`query.as(MyClass)`)
 - The fastest performance of any SQLite driver for JavaScript
+- `bigint` support
+- Multi-query statements (e.g. `SELECT 1; SELECT 2;`) in a single call to database.run(query)
 
 The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](https://github.com/oven-sh/bun/tree/main/bench/sqlite).
 

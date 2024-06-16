@@ -80,12 +80,20 @@ pub const Loader = struct {
         return null;
     }
 
+    pub const CI_ENVS = .{
+        "CI",
+        "TDDIUM",
+        "GITHUB_ACTIONS",
+        "JENKINS_URL",
+        "bamboo.buildKey",
+    };
+
     pub fn isCI(this: *const Loader) bool {
-        return (this.get("CI") orelse
-            this.get("TDDIUM") orelse
-            this.get("GITHUB_ACTIONS") orelse
-            this.get("JENKINS_URL") orelse
-            this.get("bamboo.buildKey")) != null;
+        inline for (CI_ENVS) |env| {
+            if (this.has(env)) return true;
+        }
+
+        return false;
     }
 
     pub fn loadTracy(this: *const Loader) void {

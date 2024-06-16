@@ -2111,36 +2111,40 @@ comptime {
 ]);
 if (!process.env.ONLY_ZIG) {
   const allHeaders = classes.map(a => generateHeader(a.name, a));
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
-    GENERATED_CLASSES_HEADER[0],
-    ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
-    GENERATED_CLASSES_HEADER[1],
-    ...allHeaders,
-    GENERATED_CLASSES_FOOTER,
+  await Promise.all([
+    writeIfNotChanged(`${outBase}/ZigGeneratedClasses.h`, [
+      GENERATED_CLASSES_HEADER[0],
+      ...[...new Set(extraIncludes.map(a => `#include "${a}";` + "\n"))],
+      GENERATED_CLASSES_HEADER[1],
+      ...allHeaders,
+      GENERATED_CLASSES_FOOTER,
+    ]),
+
+    writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
+      GENERATED_CLASSES_IMPL_HEADER,
+      ...classes.map(a => generateImpl(a.name, a)),
+      writeCppSerializers(classes),
+      GENERATED_CLASSES_IMPL_FOOTER,
+    ]),
+
+    writeIfNotChanged(
+      `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
+      classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
+    ), 
+
+    writeIfNotChanged(
+      `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
+      classes.map(a => [`std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`].join("\n")),
+    ),
+
+    writeIfNotChanged(
+      `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
+      classes.map(a => [`std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`].join("\n")),
+    ),
+
+    writeIfNotChanged(
+      `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
+      initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
+    )
   ]);
-  await writeIfNotChanged(`${outBase}/ZigGeneratedClasses.cpp`, [
-    GENERATED_CLASSES_IMPL_HEADER,
-    ...classes.map(a => generateImpl(a.name, a)),
-    writeCppSerializers(classes),
-    GENERATED_CLASSES_IMPL_FOOTER,
-  ]);
-  await writeIfNotChanged(
-    `${outBase}/ZigGeneratedClasses+lazyStructureHeader.h`,
-    classes.map(a => generateLazyClassStructureHeader(a.name, a)).join("\n"),
-  );
-
-  await writeIfNotChanged(
-    `${outBase}/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
-    classes.map(a => [`std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`].join("\n")),
-  );
-
-  await writeIfNotChanged(
-    `${outBase}/ZigGeneratedClasses+DOMIsoSubspaces.h`,
-    classes.map(a => [`std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`].join("\n")),
-  );
-
-  await writeIfNotChanged(
-    `${outBase}/ZigGeneratedClasses+lazyStructureImpl.h`,
-    initLazyClasses(classes.map(a => generateLazyClassStructureImpl(a.name, a))) + "\n" + visitLazyClasses(classes),
-  );
 }

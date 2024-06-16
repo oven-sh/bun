@@ -954,7 +954,7 @@ pub const UpgradeCommand = struct {
                     \\
                     \\What's new:
                     \\
-                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
+                    \\    <cyan>https://bun.sh/blog/{s}<r>
                     \\
                     \\Changelog:
                     \\

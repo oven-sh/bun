@@ -8,6 +8,19 @@ var toStringTag = Symbol.toStringTag;
 var isArray = Array.isArray;
 var isTypedArray = ArrayBuffer.isView;
 
+let internalFieldTuple;
+
+function initializeSQL() {
+  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
+}
+
+function createChangesObject() {
+  return {
+    changes: $getInternalField(internalFieldTuple, 0),
+    lastInsertRowId: $getInternalField(internalFieldTuple, 1),
+  };
+}
+
 const constants = {
   SQLITE_OPEN_READONLY: 0x00000001 /* Ok for sqlite3_open_v2() */,
   SQLITE_OPEN_READWRITE: 0x00000002 /* Ok for sqlite3_open_v2() */,
@@ -146,7 +159,12 @@ class Statement {
   }
 
   #runNoArgs() {
-    this.#raw.run();
+    this.#raw.run(internalFieldTuple);
+
+    return {
+      changes: $getInternalField(internalFieldTuple, 0),
+      lastInsertRowId: $getInternalField(internalFieldTuple, 1),
+    };
   }
 
   safeIntegers(updatedValue?: boolean) {
@@ -201,12 +219,17 @@ class Statement {
   }
 
   #run(...args) {
-    if (args.length === 0) return this.#runNoArgs();
+    if (args.length === 0) {
+      this.#runNoArgs();
+      return createChangesObject();
+    }
     var arg0 = args[0];
 
     !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.run(args)
-      : this.#raw.run(...args);
+      ? this.#raw.run(internalFieldTuple, args)
+      : this.#raw.run(internalFieldTuple, ...args);
+
+    return createChangesObject();
   }
 
   get columnNames() {
@@ -302,7 +325,7 @@ class Database {
     }
 
     if (!SQL) {
-      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+      initializeSQL();
     }
 
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags, this);
@@ -338,7 +361,7 @@ class Database {
 
   static #deserialize(serialized, isReadOnly = false) {
     if (!SQL) {
-      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+      initializeSQL();
     }
 
     return SQL.deserialize(serialized, isReadOnly);
@@ -356,7 +379,7 @@ class Database {
 
   static setCustomSQLite(path) {
     if (!SQL) {
-      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+      initializeSQL();
     }
 
     return SQL.setCustomSQLite(path);
@@ -388,14 +411,16 @@ class Database {
 
   run(query, ...params) {
     if (params.length === 0) {
-      SQL.run(this.#handle, this.#internalFlags, query);
-      return;
+      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query);
+      return createChangesObject();
     }
 
     var arg0 = params[0];
-    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? SQL.run(this.#handle, this.#internalFlags, query, params)
-      : SQL.run(this.#handle, this.#internalFlags, query, ...params);
+    !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, params)
+      : SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, ...params);
+
+    return createChangesObject();
   }
 
   prepare(query, params, flags) {

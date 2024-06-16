@@ -269,10 +269,19 @@ Use `.run()` to run a query and get back `undefined`. This is useful for schema-
 ```ts
 const query = db.query(`create table foo;`);
 query.run();
-// => undefined
+// {
+//   lastInsertRowid: 0,
+//   changes: 0,
+// }
 ```
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
+
+{% callout %}
+Since Bun v1.1.14, `.run()` returns an object with two properties: `lastInsertRowid` and `changes`.
+{% /callout %}
+
+The `lastInsertRowid` property returns the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
 
 ### `.as(Class)` - attach methods & getters/setters to results
 
@@ -599,12 +608,20 @@ class Database {
   );
 
   query<Params, ReturnType>(sql: string): Statement<Params, ReturnType>;
+  run(
+    sql: string,
+    params?: SQLQueryBindings,
+  ): { lastInsertRowid: number; changes: number };
+  exec = this.run;
 }
 
 class Statement<Params, ReturnType> {
   all(params: Params): ReturnType[];
   get(params: Params): ReturnType | undefined;
-  run(params: Params): void;
+  run(params: Params): {
+    lastInsertRowid: number;
+    changes: number;
+  };
   values(params: Params): unknown[][];
 
   finalize(): void; // destroy statement and clean up resources
@@ -613,6 +630,8 @@ class Statement<Params, ReturnType> {
   columnNames: string[]; // the column names of the result set
   paramsCount: number; // the number of parameters expected by the statement
   native: any; // the native object representing the statement
+
+  as(Class: new () => ReturnType): this;
 }
 
 type SQLQueryBindings =

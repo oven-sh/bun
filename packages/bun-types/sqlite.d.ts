@@ -199,11 +199,11 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
     /**
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -609,7 +609,7 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run(...params: ParamsType): void;
+    run(...params: ParamsType): Changes;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -1111,5 +1111,22 @@ declare module "bun:sqlite" {
      * @since v1.0.21
      */
     readonly byteOffset: number;
+  }
+
+  /**
+   * An object representing the changes made to the database since the last `run` or `exec` call.
+   *
+   * @since Bun v1.1.14
+   */
+  interface Changes {
+    /**
+     * The number of rows changed by the last `run` or `exec` call.
+     */
+    changes: number;
+
+    /**
+     * If `safeIntegers` is `true`, this is a `bigint`. Otherwise, it is a `number`.
+     */
+    lastInsertRowId: number | bigint;
   }
 }

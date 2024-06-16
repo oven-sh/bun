@@ -131,7 +131,10 @@ describe("safeIntegers", () => {
           db.exec(
             "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
           );
-          db.run(`INSERT INTO cats (name, age) VALUES (${query})`, input);
+          const { changes, lastInsertRowId } = db.run(`INSERT INTO cats (name, age) VALUES (${query})`, input);
+          expect(changes).toBe(1);
+          expect(lastInsertRowId).toBe(1);
+
           expect(db.query("SELECT * FROM cats").all()).toStrictEqual([{ id: 1, name: "myname", age: 42 }]);
           expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).all(input)).toStrictEqual([
             { id: 1, name: "myname", age: 42 },
@@ -344,7 +347,10 @@ it("creates", () => {
       },
     ]),
   );
-  expect(stmt2.run()).toBe(undefined);
+  expect(stmt2.run()).toStrictEqual({
+    changes: 0,
+    lastInsertRowId: 3,
+  });
 
   // not necessary to run but it's a good practice
   stmt2.finalize();
@@ -659,7 +665,7 @@ describe("does not throw missing parameter error in", () => {
               expect(result).toStrictEqual([["Joey"]]);
               break;
             case "run":
-              expect(result).toBeUndefined();
+              expect(result).toEqual({ changes: 1, lastInsertRowId: 1 });
               break;
           }
         }).not.toThrow();

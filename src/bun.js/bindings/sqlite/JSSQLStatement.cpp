@@ -49,6 +49,7 @@
 #include <atomic>
 #include "wtf/LazyRef.h"
 #include "wtf/text/StringToIntegerConversion.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
 
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
@@ -1270,14 +1271,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     JSC::JSValue internalFlagsValue = callFrame->argument(1);
+    JSC::JSValue diffValue = callFrame->argument(2);
 
-    JSC::JSValue sqlValue = callFrame->argument(2);
+    JSC::JSValue sqlValue = callFrame->argument(3);
     if (UNLIKELY(!sqlValue.isString())) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL string"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    EnsureStillAliveScope bindingsAliveScope = callFrame->argument(3);
+    EnsureStillAliveScope bindingsAliveScope = callFrame->argument(4);
 
     auto sqlString = sqlValue.toWTFString(lexicalGlobalObject);
     if (UNLIKELY(sqlString.length() == 0)) {
@@ -1312,6 +1314,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     int maxSqlStringBytes = end - sqlStringHead;
 #endif
 
+    bool strict = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kStrictFlag) != 0;
+    bool safeIntegers = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kSafeIntegersFlag) != 0;
+
+    const int total_changes_before = sqlite3_total_changes(db);
+
     while (sqlStringHead && sqlStringHead < end) {
         if (UNLIKELY(isSkippedInSQLiteQuery(*sqlStringHead))) {
             sqlStringHead++;
@@ -1343,8 +1350,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         if (!didSetBindings && !bindingsAliveScope.value().isUndefinedOrNull()) {
             if (bindingsAliveScope.value().isObject()) {
                 int count = sqlite3_bind_parameter_count(sql.stmt);
-                bool strict = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kStrictFlag) != 0;
-                bool safeIntegers = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kSafeIntegersFlag) != 0;
+
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
                 JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, false, bindings, safeIntegers);
                 RETURN_IF_EXCEPTION(scope, {});
@@ -1375,6 +1381,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     if (!didExecuteAny) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Query contained no valid SQL statement; likely empty query."_s));
         return JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (auto* diff = JSC::jsDynamicCast<JSC::InternalFieldTuple*>(diffValue)) {
+        const int total_changes_after = sqlite3_total_changes(db);
+        int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
+        diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
+        if (safeIntegers) {
+            diff->putInternalField(vm, 1, JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid));
+        } else {
+            diff->putInternalField(vm, 1, JSC::jsNumber(last_insert_rowid));
+        }
     }
 
     return JSValue::encode(jsUndefined());
@@ -2193,8 +2210,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         return JSValue::encode(jsUndefined());
     }
 
-    if (callFrame->argumentCount() > 0) {
-        auto arg0 = callFrame->argument(0);
+    JSValue diffValue = callFrame->argument(0);
+
+    if (callFrame->argumentCount() > 1) {
+        auto arg0 = callFrame->argument(1);
         DO_REBIND(arg0);
     }
 
@@ -2207,6 +2226,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
 
+    int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);
+
     while (status == SQLITE_ROW) {
         status = sqlite3_step(stmt);
     }
@@ -2215,6 +2236,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
         sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
+    }
+
+    if (auto* diff = JSC::jsDynamicCast<JSC::InternalFieldTuple*>(diffValue)) {
+        auto* db = castedThis->version_db->db;
+        const int total_changes_after = sqlite3_total_changes(db);
+        int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
+        diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
+        if (castedThis->useBigInt64) {
+            diff->putInternalField(vm, 1, JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid));
+        } else {
+            diff->putInternalField(vm, 1, JSC::jsNumber(last_insert_rowid));
+        }
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
@@ -2419,10 +2452,18 @@ template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    return JSSQLStatementConstructor::create(
+    JSObject* object = JSC::constructEmptyObject(globalObject);
+    auto* diff = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsUndefined(), jsUndefined());
+
+    auto* constructor = JSSQLStatementConstructor::create(
         vm,
         globalObject,
         JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get()));
+
+    object->putDirectIndex(globalObject, 0, constructor);
+    object->putDirectIndex(globalObject, 1, diff);
+
+    return object;
 }
 
 } // namespace WebCore

@@ -84,24 +84,38 @@ declare module "bun:sqlite" {
             readwrite?: boolean;
 
             /**
-             * When binding parameters, remove the leading `$`, `@`, or `:` prefix from the parameter name.
+             * When set to `true`, integers are returned as `bigint` types.
              *
-             * @default false (prefix is not removed, e.g. `$bar` in SQL is `$bar: string` in JavaScript)
+             * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
              *
-             * For example, `$bar` becomes `bar`.
-             * @example
-             * ```ts
-             * const db = new Database(":memory:");
-             * db.run("CREATE TABLE foo (bar TEXT)");
-             * // pretty: true
-             * db.run("INSERT INTO foo VALUES ($bar)", { bar: "hiiiiii" });
-             * // pretty: false
-             * db.run("INSERT INTO foo VALUES ($bar)", { $bar: "hiiiiii" });
-             * ```
-             *
+             * @default false
              * @since v1.1.14
              */
-            pretty?: boolean;
+            safeInteger?: boolean;
+
+            /**
+             * When set to `false` or `undefined`:
+             * - Queries missing bound parameters will NOT throw an error
+             * - Bound named parameters in JavaScript need to exactly match the SQL query.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: false });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
+             * ```
+             *
+             * When set to `true`:
+             * - Queries missing bound parameters will throw an error
+             * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: true });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
+             * ```
+             * @since v1.1.14
+             */
+            strict?: boolean;
           },
     );
 
@@ -699,6 +713,44 @@ declare module "bun:sqlite" {
      * ```
      */
     toString(): string;
+
+    /**
+     *
+     * Make {@link get} and {@link all} return an instance of the provided
+     * `Class` instead of the default `Object`.
+     *
+     * @param Class A class to use
+     * @returns The same statement instance, modified to return an instance of `Class`
+     *
+     * This lets you attach methods, getters, and setters to the returned
+     * objects.
+     *
+     * For performance reasons, constructors for classes are not called, which means
+     * initializers will not be called and private fields will not be
+     * accessible.
+     *
+     * @example
+     *
+     * ## Custom class
+     * ```ts
+     * class User {
+     *    rawBirthdate: string;
+     *    get birthdate() {
+     *      return new Date(this.rawBirthdate);
+     *    }
+     * }
+     *
+     * const db = new Database(":memory:");
+     * db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+     * db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
+     * const query = db.query("SELECT * FROM users");
+     * query.as(User);
+     * const user = query.get();
+     * console.log(user.birthdate);
+     * // => Date(1995, 11, 19)
+     * ```
+     */
+    as<T = unknown>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;
 
     /**
      * Native object representing the underlying `sqlite3_stmt`

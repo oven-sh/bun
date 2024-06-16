@@ -1,6 +1,9 @@
 // Hardcoded module "sqlite"
-var defineProperties = Object.defineProperties;
 
+const kSafeIntegersFlag = 1 << 1;
+const kStrictFlag = 1 << 2;
+
+var defineProperties = Object.defineProperties;
 var toStringTag = Symbol.toStringTag;
 var isArray = Array.isArray;
 var isTypedArray = ArrayBuffer.isView;
@@ -146,6 +149,21 @@ class Statement {
     this.#raw.run();
   }
 
+  safeIntegers(updatedValue?: boolean) {
+    if (updatedValue !== undefined) {
+      this.#raw.safeIntegers = !!updatedValue;
+      return this;
+    }
+
+    return this.#raw.safeIntegers;
+  }
+
+  as(ClassType: any) {
+    this.#raw.as(ClassType);
+
+    return this;
+  }
+
   #get(...args) {
     if (args.length === 0) return this.#getNoArgs();
     var arg0 = args[0];
@@ -217,6 +235,16 @@ class Database {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
+        if (options && typeof options === "object") {
+          if (options.strict) {
+            this.#internalFlags |= kStrictFlag;
+          }
+
+          if (options.safeIntegers) {
+            this.#internalFlags |= kSafeIntegersFlag;
+          }
+        }
+
         this.#handle = Database.#deserialize(
           filenameGiven,
           typeof options === "object" && options
@@ -224,9 +252,7 @@ class Database {
             : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
         );
         this.filename = ":memory:";
-        if (options?.pretty) {
-          this.#prettyNames = true;
-        }
+
         return;
       }
 
@@ -252,10 +278,16 @@ class Database {
         flags |= constants.SQLITE_OPEN_READWRITE;
       }
 
-      if ("pretty" in options) {
-        this.#prettyNames = !!options.pretty;
+      if ("strict" in options || "safeIntegers" in options) {
+        if (options.safeIntegers) {
+          this.#internalFlags |= kSafeIntegersFlag;
+        }
 
-        // If they only set pretty: true, reset it back.
+        if (options.strict) {
+          this.#internalFlags |= kStrictFlag;
+        }
+
+        // If they only set strict: true, reset it back.
         if (flags === 0) {
           flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
         }
@@ -277,7 +309,7 @@ class Database {
     this.filename = filename;
   }
 
-  #prettyNames = false;
+  #internalFlags = 0;
   #handle;
   #cachedQueriesKeys = [];
   #cachedQueriesLengths = [];
@@ -356,18 +388,18 @@ class Database {
 
   run(query, ...params) {
     if (params.length === 0) {
-      SQL.run(this.#handle, query);
+      SQL.run(this.#handle, this.#internalFlags, query);
       return;
     }
 
     var arg0 = params[0];
     return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? SQL.run(this.#handle, query, params)
-      : SQL.run(this.#handle, query, ...params);
+      ? SQL.run(this.#handle, this.#internalFlags, query, params)
+      : SQL.run(this.#handle, this.#internalFlags, query, ...params);
   }
 
   prepare(query, params, flags) {
-    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#prettyNames));
+    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;

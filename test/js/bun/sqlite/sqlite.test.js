@@ -1,12 +1,174 @@
 import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { spawnSync } from "bun";
+import { $, spawnSync } from "bun";
 import { BREAKING_CHANGES_BUN_1_2, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
 const tmpbase = tmpdir() + path.sep;
+
+describe("as", () => {
+  it("should return an implementation of the class", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO test (name) VALUES ('Hello')");
+    db.run("INSERT INTO test (name) VALUES ('World')");
+
+    const q = db.query("SELECT * FROM test WHERE name = ?");
+    class MyTest {
+      name;
+
+      get isHello() {
+        return this.name === "Hello";
+      }
+    }
+
+    expect(q.get("Hello")).not.toBeInstanceOf(MyTest);
+    q.as(MyTest);
+    expect(q.get("Hello")).toBeInstanceOf(MyTest);
+    expect(q.get("Hello").isHello).toBe(true);
+
+    const list = db.query("SELECT * FROM test");
+    list.as(MyTest);
+    const all = list.all();
+    expect(all[0]).toBeInstanceOf(MyTest);
+    expect(all[0].isHello).toBe(true);
+    expect(all[1]).toBeInstanceOf(MyTest);
+    expect(all[1].isHello).toBe(false);
+  });
+
+  it("should work with more complicated getters", () => {
+    class User {
+      rawBirthdate;
+      get birthdate() {
+        return new Date(this.rawBirthdate);
+      }
+    }
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+    db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
+    const query = db.query("SELECT * FROM users");
+    query.as(User);
+    const user = query.get();
+    expect(user.birthdate.getTime()).toBe(new Date("1995-12-19").getTime());
+  });
+
+  it("validates the class", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO test (name) VALUES ('Hello')");
+    expect(() => db.query("SELECT * FROM test").as(null)).toThrow("Expected class to be a constructor or undefined");
+    expect(() => db.query("SELECT * FROM test").as(() => {})).toThrow("Expected a constructor");
+    function BadClass() {}
+    BadClass.prototype = 123;
+    expect(() => db.query("SELECT * FROM test").as(BadClass)).toThrow(
+      "Expected a constructor prototype to be an object",
+    );
+  });
+});
+
+describe("safeIntegers", () => {
+  it("should default to false", () => {
+    const db = Database.open(":memory:");
+    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
+    db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+    const query = db.query("SELECT * FROM foo");
+    expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
+    query.safeIntegers(true);
+    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+  });
+
+  it("should allow overwriting default", () => {
+    const db = Database.open(":memory:", { safeIntegers: true });
+    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
+    db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+    const query = db.query("SELECT * FROM foo");
+    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+    query.safeIntegers(false);
+    query.as;
+    expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
+  });
+
+  it("should throw range error if value is out of range", () => {
+    const db = new Database(":memory:", { safeIntegers: true });
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+
+    const query = db.query("INSERT INTO test (value) VALUES ($value)");
+
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+    query.safeIntegers(false);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).not.toThrow(RangeError);
+  });
+});
+
+{
+  const strictInputs = [
+    { name: "myname", age: 42 },
+    { age: 42, name: "myname" },
+    ["myname", 42],
+    { 0: "myname", 1: 42 },
+    { 1: "myname", 0: 42 },
+  ];
+  const queries = ["$name, $age", "$name, $age", "?, ?", "?1, ?2", "?2, ?1"];
+  const uglyInputs = [
+    { $name: "myname", $age: 42 },
+    { $age: 42, $name: "myname" },
+    ["myname", 42],
+    { "?1": "myname", "?2": 42 },
+    { "?2": "myname", "?1": 42 },
+  ];
+
+  for (const strict of [true, false]) {
+    describe(strict ? "strict" : "default", () => {
+      const inputs = strict ? strictInputs : uglyInputs;
+      for (let i = 0; i < strictInputs.length; i++) {
+        const input = inputs[i];
+        const query = queries[i];
+        it(`${JSON.stringify(input)} -> ${query}`, () => {
+          const db = Database.open(":memory:", { strict });
+          db.exec(
+            "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
+          );
+          db.run(`INSERT INTO cats (name, age) VALUES (${query})`, input);
+          expect(db.query("SELECT * FROM cats").all()).toStrictEqual([{ id: 1, name: "myname", age: 42 }]);
+          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).all(input)).toStrictEqual([
+            { id: 1, name: "myname", age: 42 },
+          ]);
+          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).get(input)).toStrictEqual({
+            id: 1,
+            name: "myname",
+            age: 42,
+          });
+          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).values(input)).toStrictEqual([
+            [1, "myname", 42],
+          ]);
+        });
+      }
+
+      if (strict) {
+        describe("throws missing parameter error in", () => {
+          for (let method of ["all", "get", "values", "run"]) {
+            it(`${method}()`, () => {
+              const db = Database.open(":memory:", { strict: true });
+
+              db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+
+              expect(() => {
+                const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
+
+                query[method]({
+                  "name": "Joey",
+                });
+              }).toThrow('Missing parameter "age"');
+            });
+          }
+        });
+      }
+    });
+  }
+}
 
 var encode = text => new TextEncoder().encode(text);
 
@@ -448,21 +610,21 @@ it("db.run()", () => {
   });
 });
 
-for (let pretty of [false, true]) {
-  it(`pretty: ${pretty}`, () => {
-    const db = Database.open(":memory:", { pretty });
+for (let strict of [false, true]) {
+  it(`strict: ${strict}`, () => {
+    const db = Database.open(":memory:", { strict });
 
     db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
 
     const result = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
-      [(!pretty ? "@" : "") + "name"]: "Joey",
-      [(!pretty ? "@" : "") + "age"]: 2,
+      [(!strict ? "@" : "") + "name"]: "Joey",
+      [(!strict ? "@" : "") + "age"]: 2,
     });
     expect(result).toStrictEqual([{ name: "Joey" }]);
   });
 }
-it("pretty: true", () => {
-  const db = Database.open(":memory:", { pretty: true });
+it("strict: true", () => {
+  const db = Database.open(":memory:", { strict: true });
 
   db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
 
@@ -472,28 +634,10 @@ it("pretty: true", () => {
   });
 });
 
-describe("throws missing parameter error in", () => {
-  for (let method of ["all", "get", "values", "run"]) {
-    it.todoIf(!BREAKING_CHANGES_BUN_1_2)(`${method}()`, () => {
-      const db = Database.open(":memory:");
-
-      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
-
-      expect(() => {
-        const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
-
-        query[method]({
-          "@name": "Joey",
-        });
-      }).toThrow('Missing parameter "@age"');
-    });
-  }
-});
-
 describe("does not throw missing parameter error in", () => {
   for (let method of ["all", "get", "values", "run"]) {
     it(`${method}()`, () => {
-      it.skipIf(BREAKING_CHANGES_BUN_1_2)(`${method}()`, () => {
+      it(`${method}()`, () => {
         const db = Database.open(":memory:");
 
         db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
@@ -580,46 +724,46 @@ it("inlineCapacity #987", async () => {
 
   const db = new Database(path);
 
-  const query = `SELECT 
-  media.mid, 
-  UPPER(media.name) as name, 
-  media.url, 
-  media.duration, 
-  time(media.duration, 'unixepoch') AS durationStr, 
-  sum(totalDurations) AS totalDurations, 
-  sum(logs.views) AS views, 
-  total.venues, 
-  total.devices, 
+  const query = `SELECT
+  media.mid,
+  UPPER(media.name) as name,
+  media.url,
+  media.duration,
+  time(media.duration, 'unixepoch') AS durationStr,
+  sum(totalDurations) AS totalDurations,
+  sum(logs.views) AS views,
+  total.venues,
+  total.devices,
   SUM(CASE WHEN day = '01' THEN logs.views ELSE 0 END) as 'vi01', SUM(CASE WHEN day = '02' THEN logs.views ELSE 0 END) as 'vi02', SUM(CASE WHEN day = '03' THEN logs.views ELSE 0 END) as 'vi03', SUM(CASE WHEN day = '04' THEN logs.views ELSE 0 END) as 'vi04', SUM(CASE WHEN day = '05' THEN logs.views ELSE 0 END) as 'vi05', SUM(CASE WHEN day = '06' THEN logs.views ELSE 0 END) as 'vi06', SUM(CASE WHEN day = '07' THEN logs.views ELSE 0 END) as 'vi07', SUM(CASE WHEN day = '08' THEN logs.views ELSE 0 END) as 'vi08', SUM(CASE WHEN day = '09' THEN logs.views ELSE 0 END) as 'vi09', SUM(CASE WHEN day = '10' THEN logs.views ELSE 0 END) as 'vi10', SUM(CASE WHEN day = '11' THEN logs.views ELSE 0 END) as 'vi11', SUM(CASE WHEN day = '12' THEN logs.views ELSE 0 END) as 'vi12', SUM(CASE WHEN day = '13' THEN logs.views ELSE 0 END) as 'vi13', SUM(CASE WHEN day = '14' THEN logs.views ELSE 0 END) as 'vi14', SUM(CASE WHEN day = '15' THEN logs.views ELSE 0 END) as 'vi15', SUM(CASE WHEN day = '16' THEN logs.views ELSE 0 END) as 'vi16', SUM(CASE WHEN day = '17' THEN logs.views ELSE 0 END) as 'vi17', SUM(CASE WHEN day = '18' THEN logs.views ELSE 0 END) as 'vi18', SUM(CASE WHEN day = '19' THEN logs.views ELSE 0 END) as 'vi19', SUM(CASE WHEN day = '20' THEN logs.views ELSE 0 END) as 'vi20', SUM(CASE WHEN day = '21' THEN logs.views ELSE 0 END) as 'vi21', SUM(CASE WHEN day = '22' THEN logs.views ELSE 0 END) as 'vi22', SUM(CASE WHEN day = '23' THEN logs.views ELSE 0 END) as 'vi23', SUM(CASE WHEN day = '24' THEN logs.views ELSE 0 END) as 'vi24', SUM(CASE WHEN day = '25' THEN logs.views ELSE 0 END) as 'vi25', SUM(CASE WHEN day = '26' THEN logs.views ELSE 0 END) as 'vi26', SUM(CASE WHEN day = '27' THEN logs.views ELSE 0 END) as 'vi27', SUM(CASE WHEN day = '28' THEN logs.views ELSE 0 END) as 'vi28', SUM(CASE WHEN day = '29' THEN logs.views ELSE 0 END) as 'vi29', SUM(CASE WHEN day = '30' THEN logs.views ELSE 0 END) as 'vi30', MAX(CASE WHEN day = '01' THEN logs.venues ELSE 0 END) as 've01', MAX(CASE WHEN day = '02' THEN logs.venues ELSE 0 END) as 've02', MAX(CASE WHEN day = '03' THEN logs.venues ELSE 0 END) as 've03', MAX(CASE WHEN day = '04' THEN logs.venues ELSE 0 END) as 've04', MAX(CASE WHEN day = '05' THEN logs.venues ELSE 0 END) as 've05', MAX(CASE WHEN day = '06' THEN logs.venues ELSE 0 END) as 've06', MAX(CASE WHEN day = '07' THEN logs.venues ELSE 0 END) as 've07', MAX(CASE WHEN day = '08' THEN logs.venues ELSE 0 END) as 've08', MAX(CASE WHEN day = '09' THEN logs.venues ELSE 0 END) as 've09', MAX(CASE WHEN day = '10' THEN logs.venues ELSE 0 END) as 've10', MAX(CASE WHEN day = '11' THEN logs.venues ELSE 0 END) as 've11', MAX(CASE WHEN day = '12' THEN logs.venues ELSE 0 END) as 've12', MAX(CASE WHEN day = '13' THEN logs.venues ELSE 0 END) as 've13', MAX(CASE WHEN day = '14' THEN logs.venues ELSE 0 END) as 've14', MAX(CASE WHEN day = '15' THEN logs.venues ELSE 0 END) as 've15', MAX(CASE WHEN day = '16' THEN logs.venues ELSE 0 END) as 've16', MAX(CASE WHEN day = '17' THEN logs.venues ELSE 0 END) as 've17', MAX(CASE WHEN day = '18' THEN logs.venues ELSE 0 END) as 've18', MAX(CASE WHEN day = '19' THEN logs.venues ELSE 0 END) as 've19', MAX(CASE WHEN day = '20' THEN logs.venues ELSE 0 END) as 've20', MAX(CASE WHEN day = '21' THEN logs.venues ELSE 0 END) as 've21', MAX(CASE WHEN day = '22' THEN logs.venues ELSE 0 END) as 've22', MAX(CASE WHEN day = '23' THEN logs.venues ELSE 0 END) as 've23', MAX(CASE WHEN day = '24' THEN logs.venues ELSE 0 END) as 've24', MAX(CASE WHEN day = '25' THEN logs.venues ELSE 0 END) as 've25', MAX(CASE WHEN day = '26' THEN logs.venues ELSE 0 END) as 've26', MAX(CASE WHEN day = '27' THEN logs.venues ELSE 0 END) as 've27', MAX(CASE WHEN day = '28' THEN logs.venues ELSE 0 END) as 've28', MAX(CASE WHEN day = '29' THEN logs.venues ELSE 0 END) as 've29', MAX(CASE WHEN day = '30' THEN logs.venues ELSE 0 END) as 've30', MAX(CASE WHEN day = '01' THEN logs.devices ELSE 0 END) as 'de01', MAX(CASE WHEN day = '02' THEN logs.devices ELSE 0 END) as 'de02', MAX(CASE WHEN day = '03' THEN logs.devices ELSE 0 END) as 'de03', MAX(CASE WHEN day = '04' THEN logs.devices ELSE 0 END) as 'de04', MAX(CASE WHEN day = '05' THEN logs.devices ELSE 0 END) as 'de05', MAX(CASE WHEN day = '06' THEN logs.devices ELSE 0 END) as 'de06', MAX(CASE WHEN day = '07' THEN logs.devices ELSE 0 END) as 'de07', MAX(CASE WHEN day = '08' THEN logs.devices ELSE 0 END) as 'de08', MAX(CASE WHEN day = '09' THEN logs.devices ELSE 0 END) as 'de09', MAX(CASE WHEN day = '10' THEN logs.devices ELSE 0 END) as 'de10', MAX(CASE WHEN day = '11' THEN logs.devices ELSE 0 END) as 'de11', MAX(CASE WHEN day = '12' THEN logs.devices ELSE 0 END) as 'de12', MAX(CASE WHEN day = '13' THEN logs.devices ELSE 0 END) as 'de13', MAX(CASE WHEN day = '14' THEN logs.devices ELSE 0 END) as 'de14', MAX(CASE WHEN day = '15' THEN logs.devices ELSE 0 END) as 'de15', MAX(CASE WHEN day = '16' THEN logs.devices ELSE 0 END) as 'de16', MAX(CASE WHEN day = '17' THEN logs.devices ELSE 0 END) as 'de17', MAX(CASE WHEN day = '18' THEN logs.devices ELSE 0 END) as 'de18', MAX(CASE WHEN day = '19' THEN logs.devices ELSE 0 END) as 'de19', MAX(CASE WHEN day = '20' THEN logs.devices ELSE 0 END) as 'de20', MAX(CASE WHEN day = '21' THEN logs.devices ELSE 0 END) as 'de21', MAX(CASE WHEN day = '22' THEN logs.devices ELSE 0 END) as 'de22', MAX(CASE WHEN day = '23' THEN logs.devices ELSE 0 END) as 'de23', MAX(CASE WHEN day = '24' THEN logs.devices ELSE 0 END) as 'de24', MAX(CASE WHEN day = '25' THEN logs.devices ELSE 0 END) as 'de25', MAX(CASE WHEN day = '26' THEN logs.devices ELSE 0 END) as 'de26', MAX(CASE WHEN day = '27' THEN logs.devices ELSE 0 END) as 'de27', MAX(CASE WHEN day = '28' THEN logs.devices ELSE 0 END) as 'de28', MAX(CASE WHEN day = '29' THEN logs.devices ELSE 0 END) as 'de29', MAX(CASE WHEN day = '30' THEN logs.devices ELSE 0 END) as 'de30'
-  FROM 
+  FROM
   (
-    SELECT 
-      logs.mid, 
-      sum(logs.duration) AS totalDurations, 
-      strftime ('%d', START, 'unixepoch', 'localtime') AS day, 
-      count(*) AS views, 
-      count(DISTINCT did) AS devices, 
-      count(DISTINCT vid) AS venues 
-    FROM 
-      logs 
+    SELECT
+      logs.mid,
+      sum(logs.duration) AS totalDurations,
+      strftime ('%d', START, 'unixepoch', 'localtime') AS day,
+      count(*) AS views,
+      count(DISTINCT did) AS devices,
+      count(DISTINCT vid) AS venues
+    FROM
+      logs
     WHERE strftime('%m-%Y', start, 'unixepoch', 'localtime')='06-2022'
-    GROUP BY 
-      day, 
+    GROUP BY
+      day,
       logs.mid
-  ) logs 
-  INNER JOIN media ON media.id = logs.mid 
+  ) logs
+  INNER JOIN media ON media.id = logs.mid
   INNER JOIN (
-    SELECT 
-      mid, 
-      count(DISTINCT vid) as venues, 
-      count(DISTINCT did) as devices 
-    FROM 
-      logs 
+    SELECT
+      mid,
+      count(DISTINCT vid) as venues,
+      count(DISTINCT did) as devices
+    FROM
+      logs
     WHERE strftime('%m-%Y', start, 'unixepoch', 'localtime')='06-2022'
-    GROUP by 
+    GROUP by
       mid
-  ) total ON logs.mid = total.mid 
-  ORDER BY 
+  ) total ON logs.mid = total.mid
+  ORDER BY
   name`;
 
   expect(Object.keys(db.query(query).all()[0]).length).toBe(99);
@@ -819,7 +963,7 @@ it("multiple statements with a schema change", () => {
   const db = new Database(":memory:");
   db.run(
     `
-    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT); 
+    CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
     CREATE TABLE bar (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
 
     INSERT INTO foo (name) VALUES ('foo');
@@ -1055,6 +1199,7 @@ it("can continue to use existing statements after database has been GC'd", async
   });
   function leakTheStatement() {
     const db = new Database(":memory:");
+    console.log("---");
     db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
     db.exec("INSERT INTO foo (name) VALUES ('foo')");
     const prepared = db.prepare("SELECT * FROM foo");
@@ -1063,6 +1208,7 @@ it("can continue to use existing statements after database has been GC'd", async
   }
 
   const stmt = leakTheStatement();
+
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);

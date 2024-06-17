@@ -2,7 +2,7 @@ import { postgres, sql } from "bun:sql";
 import { expect, test as t, describe } from "bun:test";
 import { isCI } from "harness";
 
-describe.skipIf(isCI)("bun:sql", () => {
+if (!isCI) {
   require("./bootstrap.js");
 
   // macOS location: /opt/homebrew/var/postgresql@14/pg_hba.conf
@@ -2572,4 +2572,4 @@ describe.skipIf(isCI)("bun:sql", () => {
   //     xs.map(x => x.x).join('')
   //   ]
   // })
-});
+}

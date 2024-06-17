@@ -717,12 +717,13 @@ pub fn maybeCloneFilteringRootPackages(
     const old_packages = old.packages.slice();
     const old_dependencies_lists = old_packages.items(.dependencies);
     const old_resolutions_lists = old_packages.items(.resolutions);
+    const old_resolutions = old_packages.items(.resolution);
     var any_changes = false;
     const end: PackageID = @truncate(old.packages.len);
 
     // set all disabled dependencies of workspaces to `invalid_package_id`
     for (0..end) |package_id| {
-        if (!old.isWorkspacePackageId(@intCast(package_id))) continue;
+        if (package_id != 0 and old_resolutions[package_id].tag != .workspace) continue;
 
         const old_workspace_dependencies_list = old_dependencies_lists[package_id];
         var old_workspace_resolutions_list = old_resolutions_lists[package_id];
@@ -855,11 +856,6 @@ pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
     }
 
     return false;
-}
-
-/// Is this package id a workspace package (including workspace root)?
-pub fn isWorkspacePackageId(this: *const Lockfile, id: PackageID) bool {
-    return id == 0 or this.packages.items(.resolution)[id].tag == .workspace;
 }
 
 /// Does this tree id belong to a workspace (including workspace root)?

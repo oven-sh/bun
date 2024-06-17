@@ -1035,3 +1035,5 @@ export function rejectUnauthorizedScope(value: boolean) {
     },
   };
 }
+
+export const BREAKING_CHANGES_BUN_1_2 = false;

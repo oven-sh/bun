@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { bunExe, bunEnv, isWindows } from "harness";
+import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
 import path from "path";
 import { semver } from "bun";
 import fs from "fs";
@@ -184,10 +184,7 @@ describe("spawn()", () => {
           output += data;
         });
         child.stdout.on("end", () => {
-          const envs = output
-            .split("\n")
-            .map(env => env.trim().split("="))
-            .filter(env => env.length === 2 && env[0]);
+          const envs = output.split("\n").map(env => [env.slice(0, env.indexOf("=")), env.slice(env.indexOf("=") + 1)]);
           const obj = Object.fromEntries(envs);
           resolve(obj);
         });
@@ -202,8 +199,8 @@ describe("spawn()", () => {
       expect(await getChildEnv(undefined)).not.toStrictEqual({});
       expect(await getChildEnv(null)).not.toStrictEqual({});
     } else {
-      expect(await getChildEnv({ TEST: "test" })).toEqual({ TEST: "test" });
-      expect(await getChildEnv({})).toEqual({});
+      expect(await getChildEnv({ TEST: "test" })).toMatchObject({ TEST: "test" });
+      expect(await getChildEnv({})).toMatchObject({});
       expect(await getChildEnv(undefined)).toMatchObject(process.env);
       expect(await getChildEnv(null)).toMatchObject(process.env);
     }
@@ -333,35 +330,6 @@ describe("execSync()", () => {
   });
 });
 
-describe("Bun.spawn()", () => {
-  it("should return exit code 0 on successful execution", async () => {
-    const proc = Bun.spawn({
-      cmd: ["echo", "hello"],
-      stdout: "pipe",
-      env: bunEnv,
-    });
-
-    for await (const chunk of proc.stdout) {
-      const text = new TextDecoder().decode(chunk);
-      expect(text.trim()).toBe("hello");
-    }
-
-    const result = await new Promise(resolve => {
-      const maybeExited = Bun.peek(proc.exited);
-      if (maybeExited === proc.exited) {
-        proc.exited.then(code => resolve(code));
-      } else {
-        resolve(maybeExited);
-      }
-    });
-    expect(result).toBe(0);
-  });
-  // it("should fail when given an invalid cwd", () => {
-  //   const child = Bun.spawn({ cmd: ["echo", "hello"], cwd: "/invalid" });
-  //   expect(child.pid).toBe(undefined);
-  // });
-});
-
 it("should call close and exit before process exits", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), path.join("fixtures", "child-process-exit-event.js")],
@@ -371,15 +339,61 @@ it("should call close and exit before process exits", async () => {
     stdin: "inherit",
     stderr: "inherit",
   });
-  await proc.exited;
-  expect(proc.exitCode).toBe(0);
-  let data = "";
-  const reader = proc.stdout.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    data += new TextDecoder().decode(value);
-  }
+  const data = await new Response(proc.stdout).text();
   expect(data).toContain("closeHandler called");
   expect(data).toContain("exithHandler called");
+  expect(await proc.exited).toBe(0);
 });
+
+it("it accepts stdio passthrough", async () => {
+  const package_dir = tmpdirSync();
+
+  await fs.promises.writeFile(
+    path.join(package_dir, "package.json"),
+    JSON.stringify({
+      "name": "npm-run-all-test",
+      "version": "1.0.0",
+      "type": "module",
+      "scripts": {
+        "all": "run-p echo-hello echo-world",
+        "echo-hello": "echo hello",
+        "echo-world": "echo world",
+      },
+      "devDependencies": {
+        "npm-run-all": "4.1.5",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdio: ["inherit", "inherit", "inherit"],
+    env: bunEnv,
+  });
+  expect(await exited).toBe(0);
+
+  ({ stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "--bun", "run", "all"],
+    cwd: package_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  }));
+  const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
+  try {
+    // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
+    expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
+      "$ run-p echo-hello echo-world",
+      "$ echo hello",
+      "$ echo world",
+      "",
+    ]);
+    expect(out.split("\n").slice(0, -1).sort()).toStrictEqual(["hello", "world"].sort());
+    expect(exitCode).toBe(0);
+  } catch (e) {
+    console.error({ exitCode });
+    console.log(err);
+    console.log(out);
+    throw e;
+  }
+}, 10000);

@@ -239,14 +239,13 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                         if (!rejectUnauthorizedValue.isUndefinedOrNull() && rejectUnauthorizedValue.isBoolean()) {
                             rejectUnauthorized = rejectUnauthorizedValue.asBoolean() ? 1 : 0;
                         }
-                    }       
+                    }
                 }
             }
-
         }
     }
 
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());     
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = (rejectUnauthorized == -1) ? WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit)) : WebSocket::create(*context, WTFMove(url), protocols, WTFMove(headersInit), rejectUnauthorized ? true : false);
 
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -905,18 +904,18 @@ void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsWebSocket = jsCast<JSWebSocket*>(handle.slot()->asCell());
     auto& wrapped = jsWebSocket->wrapped();
     if (wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
-            *reason = "ActiveDOMObject with pending activity";
+            *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }
     if (jsWebSocket->wrapped().isFiringEventListeners()) {
         if (UNLIKELY(reason))
-            *reason = "EventTarget firing event listeners";
+            *reason = "EventTarget firing event listeners"_s;
         return true;
     }
     UNUSED_PARAM(visitor);
@@ -977,4 +976,11 @@ WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
+
+// https://github.com/oven-sh/bun/issues/11866
+JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
+{
+    return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
+}
+
 }

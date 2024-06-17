@@ -124,9 +124,10 @@ function fakeParentPort() {
     },
   });
 
+  const postMessage = $newCppFunction("ZigGlobalObject.cpp", "jsFunctionPostMessage", 1);
   Object.defineProperty(fake, "postMessage", {
     value(...args: [any, any]) {
-      return self.postMessage(...args);
+      return postMessage(...args);
     },
   });
 
@@ -194,7 +195,7 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = ["eval", "stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
+const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
 
 class Worker extends EventEmitter {
   #worker: WebWorker;
@@ -203,6 +204,7 @@ class Worker extends EventEmitter {
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
+  #urlToRevoke = "";
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -211,12 +213,33 @@ class Worker extends EventEmitter {
         warnNotImplementedOnce(`worker_threads.Worker option "${key}"`);
       }
     }
-    this.#worker = new WebWorker(filename, options);
+
+    const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
+    if (options && builtinsGeneratorHatesEval in options) {
+      delete options[builtinsGeneratorHatesEval];
+      const blob = new Blob([filename], { type: "" });
+      this.#urlToRevoke = filename = URL.createObjectURL(blob);
+    }
+    try {
+      this.#worker = new WebWorker(filename, options);
+    } catch (e) {
+      if (this.#urlToRevoke) {
+        URL.revokeObjectURL(this.#urlToRevoke);
+      }
+      throw e;
+    }
     this.#worker.addEventListener("close", this.#onClose.bind(this));
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#worker.addEventListener("open", this.#onOpen.bind(this));
+
+    if (this.#urlToRevoke) {
+      const url = this.#urlToRevoke;
+      new FinalizationRegistry(url => {
+        URL.revokeObjectURL(url);
+      }).register(this.#worker, url);
+    }
   }
 
   get threadId() {

@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid` `proc.uid`. IPC cannot send socket handles and only works with other `bun` processes.
+🟡 Missing `proc.gid` `proc.uid`. `Stream` class not exported. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -36,7 +36,8 @@ Some methods are not optimized yet.
 
 ### [`node:dgram`](https://nodejs.org/api/dgram.html)
 
-🔴 Not implemented.
+🟡 Missing `setBroadcast` `setTTL` `setMulticastTTL` `setMulticastLoopback` `setMulticastInterface` `addMembership` `dropMembership`
+`addSourceSpecificMembership` `dropSourceSpecificMembership`
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
@@ -52,7 +53,7 @@ Some methods are not optimized yet.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `addAbortListener` `events.getMaxListeners`
+🟡 `events.addAbortListener` & `events.getMaxListeners` do not support (web api) `EventTarget`
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
@@ -60,7 +61,7 @@ Some methods are not optimized yet.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
@@ -68,7 +69,7 @@ Some methods are not optimized yet.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟢 Fully implemented.
+🟢 APIs are implemented, but `Agent` is not always used yet.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
@@ -80,7 +81,7 @@ Some methods are not optimized yet.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `BlockList` `SocketAddress` `Stream` `getDefaultAutoSelectFamily` `getDefaultAutoSelectFamilyAttemptTimeout` `setDefaultAutoSelectFamily` `setDefaultAutoSelectFamilyAttemptTimeout`
+🟡 Missing `SocketAddress` `Stream`. `BlockList` exists but is a no-op.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -168,11 +169,11 @@ Some methods are not optimized yet.
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` doesn't support the following options: `eval` `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
+🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Missing `BrotliCompress` `BrotliDecompress` `brotliCompressSync` `brotliDecompress` `brotliDecompressSync` `createBrotliCompress` `createBrotliDecompress`. Unoptimized.
+🟡 Unoptimized.
 
 ## Globals
 
@@ -340,7 +341,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `domain` `hasUncaughtExceptionCaptureCallback` `initgroups` `resourceUsage` `setUncaughtExceptionCaptureCallback` `setegid` `seteuid` `setgid` `setgroups` `setuid` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled` `channel`. `process.binding` is partially implemented.
+🟡 Missing `domain` `initgroups` `setegid` `seteuid` `setgid` `setgroups` `setuid` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled` `channel`. `process.binding` is partially implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 
@@ -432,7 +433,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL)
 
-🟡 `URL.createObjectURL` is missing. See [Issue #3925](https://github.com/oven-sh/bun/issues/3925)
+🟢 Fully implemented.
 
 ### [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
 

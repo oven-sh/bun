@@ -47,22 +47,6 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn init(
-        buf: string,
-        in: string,
-    ) String {
-        if (comptime Environment.isDebug) {
-            const out = realInit(buf, in);
-            if (!out.isInline()) {
-                assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
-            }
-
-            return out;
-        } else {
-            return realInit(buf, in);
-        }
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -150,7 +134,7 @@ pub const String = extern struct {
         }
     };
 
-    fn realInit(
+    pub fn init(
         buf: string,
         in: string,
     ) String {
@@ -621,6 +605,10 @@ pub const Version = extern struct {
         return lhs.order(rhs, ctx, ctx);
     }
 
+    pub fn isZero(this: Version) bool {
+        return this.patch == 0 and this.minor == 0 and this.major == 0;
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,
@@ -643,7 +631,7 @@ pub const Version = extern struct {
         if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
+    pub fn append(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this.*;
 
         if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
@@ -732,6 +720,170 @@ pub const Version = extern struct {
             return lhs.eql(rhs);
         }
     };
+
+    pub const PinnedVersion = enum {
+        major, // ^
+        minor, // ~
+        patch, // =
+    };
+
+    /// Modified version of pnpm's `whichVersionIsPinned`
+    /// https://github.com/pnpm/pnpm/blob/bc0618cf192a9cafd0ab171a3673e23ed0869bbd/packages/which-version-is-pinned/src/index.ts#L9
+    ///
+    /// Differences:
+    /// - It's not used for workspaces
+    /// - `npm:` is assumed already removed from aliased versions
+    /// - Invalid input is considered major pinned (important because these strings are coming
+    ///    from package.json)
+    ///
+    /// The goal of this function is to avoid a complete parse of semver that's unused
+    pub fn whichVersionIsPinned(input: string) PinnedVersion {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        var i: usize = 0;
+
+        const pinned: PinnedVersion = pinned: {
+            for (0..version.len) |j| {
+                switch (version[j]) {
+                    // newlines & whitespace
+                    ' ',
+                    '\t',
+                    '\n',
+                    '\r',
+                    std.ascii.control_code.vt,
+                    std.ascii.control_code.ff,
+
+                    // version separators
+                    'v',
+                    '=',
+                    => {},
+
+                    else => |c| {
+                        i = j;
+
+                        switch (c) {
+                            '~', '^' => {
+                                i += 1;
+
+                                for (i..version.len) |k| {
+                                    switch (version[k]) {
+                                        ' ',
+                                        '\t',
+                                        '\n',
+                                        '\r',
+                                        std.ascii.control_code.vt,
+                                        std.ascii.control_code.ff,
+                                        => {
+                                            // `v` and `=` not included.
+                                            // `~v==1` would update to `^1.1.0` if versions `1.0.0`, `1.0.1`, `1.1.0`, and `2.0.0` are available
+                                            // note that `~` changes to `^`
+                                        },
+
+                                        else => {
+                                            i = k;
+                                            break :pinned if (c == '~') .minor else .major;
+                                        },
+                                    }
+                                }
+
+                                // entire version after `~` is whitespace. invalid
+                                return .major;
+                            },
+
+                            '0'...'9' => break :pinned .patch,
+
+                            // could be invalid, could also be valid range syntax (>=, ...)
+                            // either way, pin major
+                            else => return .major,
+                        }
+                    },
+                }
+            }
+
+            // entire semver is whitespace, `v`, and `=`. Invalid
+            return .major;
+        };
+
+        // `pinned` is `.major`, `.minor`, or `.patch`. Check for each version core number:
+        // - if major is missing, return `if (pinned == .patch) .major else pinned`
+        // - if minor is missing, return `if (pinned == .patch) .minor else pinned`
+        // - if patch is missing, return `pinned`
+        // - if there's whitespace or non-digit characters between core numbers, return `.major`
+        // - if the end is reached, return `pinned`
+
+        // major
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        var d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .major else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // minor
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .minor else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // patch
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+
+            // patch is done and at input end, valid
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // Skip remaining valid pre/build tag characters and whitespace.
+        // Does not validate whitespace used inside pre/build tags.
+        if (!validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) return .major;
+        i += 1;
+
+        // at this point the semver is valid so we can return true if it ends
+        if (i >= version.len) return pinned;
+        d = version[i];
+        while (validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) {
+            i += 1;
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // We've come across a character that is not valid for tags or is whitespace.
+        // Trailing whitespace was trimmed so we can assume there's another range
+        return .major;
+    }
+
+    fn validPreOrBuildTagCharacter(c: u8) bool {
+        return switch (c) {
+            '-', '+', '.', 'A'...'Z', 'a'...'z', '0'...'9' => true,
+            else => false,
+        };
+    }
+
+    pub fn isTaggedVersionOnly(input: []const u8) bool {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        // first needs to be a-z
+        if (version.len == 0 or !std.ascii.isAlphabetic(version[0])) return false;
+
+        for (1..version.len) |i| {
+            if (!std.ascii.isAlphanumeric(version[i])) return false;
+        }
+
+        return true;
+    }
 
     pub fn orderWithoutTag(
         lhs: Version,
@@ -955,27 +1107,6 @@ pub const Version = extern struct {
             while (i < input.len) : (i += 1) {
                 const c = input[i];
                 switch (c) {
-                    ' ' => {
-                        switch (state) {
-                            .none => {},
-                            .pre => {
-                                result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                            .build => {
-                                result.tag.build = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                        }
-                        result.len = @as(u32, @truncate(i));
-                        break;
-                    },
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
@@ -993,7 +1124,32 @@ pub const Version = extern struct {
                             start = i + 1;
                         }
                     },
-                    else => {},
+
+                    // only continue if character is a valid pre/build tag character
+                    // https://semver.org/#spec-item-9
+                    'a'...'z', 'A'...'Z', '0'...'9', '.' => {},
+
+                    else => {
+                        switch (state) {
+                            .none => {},
+                            .pre => {
+                                result.tag.pre = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                            .build => {
+                                result.tag.build = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                        }
+                        result.len = @truncate(i);
+                        break;
+                    },
                 }
             }
 
@@ -1120,7 +1276,8 @@ pub const Version = extern struct {
                     }
 
                     if (i < input.len and switch (input[i]) {
-                        '.' => true,
+                        // `.` is expected only if there are remaining core version numbers
+                        '.' => part_i != 3,
                         else => false,
                     }) {
                         i += 1;
@@ -1133,8 +1290,7 @@ pub const Version = extern struct {
                 },
                 '-', '+' => {
                     // Just a plain tag with no version is invalid.
-
-                    if (part_i < 2) {
+                    if (part_i < 2 and result.wildcard == .none) {
                         result.valid = false;
                         is_done = true;
                         break;
@@ -1195,7 +1351,7 @@ pub const Version = extern struct {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
                     if (result.wildcard == .none and part_i >= 2 and switch (c) {
-                        'a'...'z', 'A'...'Z', '_' => true,
+                        'a'...'z', 'A'...'Z' => true,
                         else => false,
                     }) {
                         part_start_i = i;
@@ -1292,6 +1448,18 @@ pub const Range = struct {
     left: Comparator = .{},
     right: Comparator = .{},
 
+    pub fn format(this: Range, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.left.op == .unset and this.right.op == .unset) {
+            return;
+        }
+
+        if (this.right.op == .unset) {
+            try std.fmt.format(writer, "{}", .{this.left});
+        } else {
+            try std.fmt.format(writer, "{} {}", .{ this.left, this.right });
+        }
+    }
+
     /// *
     /// >= 0.0.0
     /// >= 0
@@ -1382,12 +1550,59 @@ pub const Range = struct {
         return lhs.left.eql(rhs.left) and lhs.right.eql(rhs.right);
     }
 
+    pub const Formatter = struct {
+        buffer: []const u8,
+        range: *const Range,
+
+        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.range.left.op == Op.unset and this.range.right.op == Op.unset) {
+                return;
+            }
+
+            if (this.range.right.op == .unset) {
+                try std.fmt.format(writer, "{}", .{this.range.left.fmt(this.buffer)});
+            } else {
+                try std.fmt.format(writer, "{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            }
+        }
+    };
+
+    pub fn fmt(this: *const Range, buf: []const u8) @This().Formatter {
+        return .{ .buffer = buf, .range = this };
+    }
+
     pub const Comparator = struct {
         op: Op = .unset,
         version: Version = .{},
 
         pub inline fn eql(lhs: Comparator, rhs: Comparator) bool {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
+        }
+
+        pub const Formatter = struct {
+            buffer: []const u8,
+            comparator: *const Comparator,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.comparator.op == Op.unset) {
+                    return;
+                }
+
+                switch (this.comparator.op) {
+                    .unset => unreachable, // see above,
+                    .eql => try writer.writeAll("=="),
+                    .lt => try writer.writeAll("<"),
+                    .lte => try writer.writeAll("<="),
+                    .gt => try writer.writeAll(">"),
+                    .gte => try writer.writeAll(">="),
+                }
+
+                try std.fmt.format(writer, "{}", .{this.comparator.version.fmt(this.buffer)});
+            }
+        };
+
+        pub fn fmt(this: *const Comparator, buf: []const u8) @This().Formatter {
+            return .{ .buffer = buf, .comparator = this };
         }
 
         pub fn satisfies(
@@ -1486,6 +1701,27 @@ pub const Query = struct {
     // AND
     next: ?*Query = null,
 
+    const Formatter = struct {
+        query: *const Query,
+        buffer: []const u8,
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const this = formatter.query;
+
+            if (this.next) |ptr| {
+                if (ptr.range.hasLeft() or ptr.range.hasRight()) {
+                    try std.fmt.format(writer, "{} && {}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
+                    return;
+                }
+            }
+
+            try std.fmt.format(writer, "{}", .{this.range.fmt(formatter.buffer)});
+        }
+    };
+
+    pub fn fmt(this: *const Query, buf: []const u8) @This().Formatter {
+        return .{ .query = this, .buffer = buf };
+    }
+
     /// Linked-list of Queries OR'd together
     /// "^1 || ^2"
     /// ----|-----
@@ -1496,6 +1732,24 @@ pub const Query = struct {
 
         // OR
         next: ?*List = null,
+
+        const Formatter = struct {
+            list: *const List,
+            buffer: []const u8,
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.list;
+
+                if (this.next) |ptr| {
+                    try std.fmt.format(writer, "{} || {}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
+                } else {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buffer)});
+                }
+            }
+        };
+
+        pub fn fmt(this: *const List, buf: []const u8) @This().Formatter {
+            return .{ .list = this, .buffer = buf };
+        }
 
         pub fn satisfies(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
             return list.head.satisfies(
@@ -1571,6 +1825,45 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        const Formatter = struct {
+            group: *const Group,
+            buf: string,
+
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.group;
+
+                if (this.tail == null and this.head.tail == null and !this.head.head.range.hasLeft()) {
+                    return;
+                }
+
+                if (this.tail == null and this.head.tail == null) {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buf)});
+                    return;
+                }
+
+                var list = &this.head;
+                while (list.next) |next| {
+                    try std.fmt.format(writer, "{} && ", .{list.fmt(formatter.buf)});
+                    list = next;
+                }
+
+                try std.fmt.format(writer, "{}", .{list.fmt(formatter.buf)});
+            }
+        };
+
+        pub fn fmt(this: *const Group, buf: string) @This().Formatter {
+            return .{
+                .group = this,
+                .buf = buf,
+            };
+        }
+
+        pub fn jsonStringify(this: *const Group, writer: anytype) !void {
+            const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
+            defer bun.default_allocator.free(temp);
+            try std.json.encodeJsonString(temp, .{}, writer);
+        }
+
         pub fn deinit(this: *Group) void {
             var list = this.head;
             var allocator = this.allocator;
@@ -1623,6 +1916,16 @@ pub const Query = struct {
 
         pub fn isExact(this: *const Group) bool {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
+        }
+
+        pub fn @"is *"(this: *const Group) bool {
+            const left = this.head.head.range.left;
+            return this.head.head.range.right.op == .unset and
+                left.op == .gte and
+                this.head.next == null and
+                this.head.head.next == null and
+                left.version.isZero() and
+                !this.flags.isSet(Flags.build);
         }
 
         pub inline fn eql(lhs: Group, rhs: Group) bool {
@@ -2294,384 +2597,5 @@ pub const SemverObject = struct {
         return JSC.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
     }
 };
-
-const expect = if (Environment.isTest) struct {
-    pub var counter: usize = 0;
-    pub fn isRangeMatch(input: string, version_str: string) bool {
-        var parsed = Version.parse(SlicedString.init(version_str, version_str));
-        assert(parsed.valid);
-        // assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
-
-        var list = Query.parse(
-            default_allocator,
-            input,
-            SlicedString.init(input, input),
-        ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
-
-        return list.satisfies(parsed.version.min());
-    }
-
-    pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        if (!isRangeMatch(input, version_str)) {
-            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> to match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                version_str,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-    pub fn notRange(input: string, version_str: string, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        if (isRangeMatch(input, version_str)) {
-            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> NOT match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                version_str,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-
-    pub fn done(src: std.builtin.SourceLocation) void {
-        Output.prettyErrorln("<r><green>{d} passed expectations <d>in {s}<r>", .{ counter, src.fn_name });
-        Output.flush();
-        counter = 0;
-    }
-
-    pub fn version(input: string, v: [3]?u32, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        const result = Version.parse(SlicedString.init(input, input));
-        assert(result.valid);
-
-        if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
-            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                v[0],
-                v[1],
-                v[2],
-                result.version.major,
-                result.version.minor,
-                result.version.patch,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-
-    pub fn versionT(input: string, v: Version, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-
-        var result = Version.parse(SlicedString.init(input, input));
-        if (!v.eql(result.version.min())) {
-            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                v.major,
-                v.minor,
-                v.patch,
-                result.version.major,
-                result.version.minor,
-                result.version.patch,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-} else {};
-
-test "Version parsing" {
-    defer expect.done(@src());
-    const X: ?u32 = null;
-
-    expect.version("1.0.0", .{ 1, 0, 0 }, @src());
-    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
-    expect.version("1.1.1", .{ 1, 1, 1 }, @src());
-    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
-    expect.version("0.1.1", .{ 0, 1, 1 }, @src());
-    expect.version("0.0.1", .{ 0, 0, 1 }, @src());
-    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
-
-    expect.version("*", .{ X, X, X }, @src());
-    expect.version("x", .{ X, X, X }, @src());
-    expect.version("0", .{ 0, X, X }, @src());
-    expect.version("0.0", .{ 0, 0, X }, @src());
-    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
-
-    expect.version("1.x", .{ 1, X, X }, @src());
-    expect.version("2.2.x", .{ 2, 2, X }, @src());
-    expect.version("2.x.2", .{ 2, X, 2 }, @src());
-
-    expect.version("1.X", .{ 1, X, X }, @src());
-    expect.version("2.2.X", .{ 2, 2, X }, @src());
-    expect.version("2.X.2", .{ 2, X, 2 }, @src());
-
-    expect.version("1.*", .{ 1, X, X }, @src());
-    expect.version("2.2.*", .{ 2, 2, X }, @src());
-    expect.version("2.*.2", .{ 2, X, 2 }, @src());
-    expect.version("3", .{ 3, X, X }, @src());
-    expect.version("3.x", .{ 3, X, X }, @src());
-    expect.version("3.x.x", .{ 3, X, X }, @src());
-    expect.version("3.*.*", .{ 3, X, X }, @src());
-    expect.version("3.X.x", .{ 3, X, X }, @src());
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-beta";
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0beta";
-        v.tag.pre = SlicedString.init(input, input["1.0.0".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-build101";
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 0,
-            .minor = 21,
-            .patch = 0,
-        };
-        var input: string = "0.21.0-beta-96ca8d915-20211115";
-        v.tag.pre = SlicedString.init(input, input["0.21.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-beta+build101";
-        v.tag.build = SlicedString.init(input, input["1.0.0-beta+".len..]).external();
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..][0..4]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    var buf: [1024]u8 = undefined;
-
-    var triplet = [3]?u32{ null, null, null };
-    var x: u32 = 0;
-    var y: u32 = 0;
-    var z: u32 = 0;
-
-    while (x < 32) : (x += 1) {
-        while (y < 32) : (y += 1) {
-            while (z < 32) : (z += 1) {
-                triplet[0] = x;
-                triplet[1] = y;
-                triplet[2] = z;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ x, y, z }), triplet, @src());
-                triplet[0] = z;
-                triplet[1] = x;
-                triplet[2] = y;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ z, x, y }), triplet, @src());
-
-                triplet[0] = y;
-                triplet[1] = x;
-                triplet[2] = z;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ y, x, z }), triplet, @src());
-            }
-        }
-    }
-}
-
-test "Range parsing" {
-    defer expect.done(@src());
-
-    expect.range("~1.2.3", "1.2.3", @src());
-    expect.range("~1.2", "1.2.0", @src());
-    expect.range("~1", "1.0.0", @src());
-    expect.range("~1", "1.2.0", @src());
-    expect.range("~1", "1.2.999", @src());
-    expect.range("~0.2.3", "0.2.3", @src());
-    expect.range("~0.2", "0.2.0", @src());
-    expect.range("~0.2", "0.2.1", @src());
-
-    expect.range("~0 ", "0.0.0", @src());
-
-    expect.notRange("~1.2.3", "1.3.0", @src());
-    expect.notRange("~1.2", "1.3.0", @src());
-    expect.notRange("~1", "2.0.0", @src());
-    expect.notRange("~0.2.3", "0.3.0", @src());
-    expect.notRange("~0.2.3", "1.0.0", @src());
-    expect.notRange("~0 ", "1.0.0", @src());
-    expect.notRange("~0.2", "0.1.0", @src());
-    expect.notRange("~0.2", "0.3.0", @src());
-
-    expect.notRange("~3.0.5", "3.3.0", @src());
-
-    expect.range("^1.1.4", "1.1.4", @src());
-
-    expect.range(">=3", "3.5.0", @src());
-    expect.notRange(">=3", "2.999.999", @src());
-    expect.range(">=3", "3.5.1", @src());
-    expect.range(">=3", "4", @src());
-
-    expect.range("<6 >= 5", "5.0.0", @src());
-    expect.notRange("<6 >= 5", "4.0.0", @src());
-    expect.notRange("<6 >= 5", "6.0.0", @src());
-    expect.notRange("<6 >= 5", "6.0.1", @src());
-
-    expect.range(">2", "3", @src());
-    expect.notRange(">2", "2.1", @src());
-    expect.notRange(">2", "2", @src());
-    expect.notRange(">2", "1.0", @src());
-    expect.notRange(">1.3", "1.3.1", @src());
-    expect.range(">1.3", "2.0.0", @src());
-    expect.range(">2.1.0", "2.2.0", @src());
-    expect.range("<=2.2.99999", "2.2.0", @src());
-    expect.range(">=2.1.99999", "2.2.0", @src());
-    expect.range("<2.2.99999", "2.2.0", @src());
-    expect.range(">2.1.99999", "2.2.0", @src());
-    expect.range(">1.0.0", "2.0.0", @src());
-    expect.range("1.0.0", "1.0.0", @src());
-    expect.notRange("1.0.0", "2.0.0", @src());
-
-    expect.range("1.0.0 || 2.0.0", "1.0.0", @src());
-    expect.range("2.0.0 || 1.0.0", "1.0.0", @src());
-    expect.range("1.0.0 || 2.0.0", "2.0.0", @src());
-    expect.range("2.0.0 || 1.0.0", "2.0.0", @src());
-    expect.range("2.0.0 || >1.0.0", "2.0.0", @src());
-
-    expect.range(">1.0.0 <2.0.0 <2.0.1 >1.0.1", "1.0.2", @src());
-
-    expect.range("2.x", "2.0.0", @src());
-    expect.range("2.x", "2.1.0", @src());
-    expect.range("2.x", "2.2.0", @src());
-    expect.range("2.x", "2.3.0", @src());
-    expect.range("2.x", "2.1.1", @src());
-    expect.range("2.x", "2.2.2", @src());
-    expect.range("2.x", "2.3.3", @src());
-
-    expect.range("<2.0.1 >1.0.0", "2.0.0", @src());
-    expect.range("<=2.0.1 >=1.0.0", "2.0.0", @src());
-
-    expect.range("^2", "2.0.0", @src());
-    expect.range("^2", "2.9.9", @src());
-    expect.range("~2", "2.0.0", @src());
-    expect.range("~2", "2.1.0", @src());
-    expect.range("~2.2", "2.2.1", @src());
-
-    {
-        const passing = [_]string{ "2.4.0", "2.4.1", "3.0.0", "3.0.1", "3.1.0", "3.2.0", "3.3.0", "3.3.1", "3.4.0", "3.5.0", "3.6.0", "3.7.0", "2.4.2", "3.8.0", "3.9.0", "3.9.1", "3.9.2", "3.9.3", "3.10.0", "3.10.1", "4.0.0", "4.0.1", "4.1.0", "4.2.0", "4.2.1", "4.3.0", "4.4.0", "4.5.0", "4.5.1", "4.6.0", "4.6.1", "4.7.0", "4.8.0", "4.8.1", "4.8.2", "4.9.0", "4.10.0", "4.11.0", "4.11.1", "4.11.2", "4.12.0", "4.13.0", "4.13.1", "4.14.0", "4.14.1", "4.14.2", "4.15.0", "4.16.0", "4.16.1", "4.16.2", "4.16.3", "4.16.4", "4.16.5", "4.16.6", "4.17.0", "4.17.1", "4.17.2", "4.17.3", "4.17.4", "4.17.5", "4.17.9", "4.17.10", "4.17.11", "2.0.0", "2.1.0" };
-
-        for (passing) |item| {
-            expect.range("^2 <2.2 || > 2.3", item, @src());
-            expect.range("> 2.3 || ^2 <2.2", item, @src());
-        }
-
-        const not_passing = [_]string{
-            "0.1.0",
-            "0.10.0",
-            "0.2.0",
-            "0.2.1",
-            "0.2.2",
-            "0.3.0",
-            "0.3.1",
-            "0.3.2",
-            "0.4.0",
-            "0.4.1",
-            "0.4.2",
-            "0.5.0",
-            // "0.5.0-rc.1",
-            "0.5.1",
-            "0.5.2",
-            "0.6.0",
-            "0.6.1",
-            "0.7.0",
-            "0.8.0",
-            "0.8.1",
-            "0.8.2",
-            "0.9.0",
-            "0.9.1",
-            "0.9.2",
-            "1.0.0",
-            "1.0.1",
-            "1.0.2",
-            "1.1.0",
-            "1.1.1",
-            "1.2.0",
-            "1.2.1",
-            "1.3.0",
-            "1.3.1",
-            "2.2.0",
-            "2.2.1",
-            "2.3.0",
-            // "1.0.0-rc.1",
-            // "1.0.0-rc.2",
-            // "1.0.0-rc.3",
-        };
-
-        for (not_passing) |item| {
-            expect.notRange("^2 <2.2 || > 2.3", item, @src());
-            expect.notRange("> 2.3 || ^2 <2.2", item, @src());
-        }
-    }
-    expect.range("2.1.0 || > 2.2 || >3", "2.1.0", @src());
-    expect.range(" > 2.2 || >3 || 2.1.0", "2.1.0", @src());
-    expect.range(" > 2.2 || 2.1.0 || >3", "2.1.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
-    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.1", @src());
-    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "3.0.1", @src());
-    expect.range("~2", "2.0.0", @src());
-    expect.range("~2", "2.1.0", @src());
-
-    expect.range("1.2.0 - 1.3.0", "1.2.2", @src());
-    expect.range("1.2 - 1.3", "1.2.2", @src());
-    expect.range("1 - 1.3", "1.2.2", @src());
-    expect.range("1 - 1.3", "1.3.0", @src());
-    expect.range("1.2 - 1.3", "1.3.1", @src());
-    expect.notRange("1.2 - 1.3", "1.4.0", @src());
-    expect.range("1 - 1.3", "1.3.1", @src());
-
-    expect.notRange("1.2 - 1.3 || 5.0", "6.4.0", @src());
-    expect.range("1.2 - 1.3 || 5.0", "1.2.1", @src());
-    expect.range("5.0 || 1.2 - 1.3", "1.2.1", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3 || >8", "9.0.2", @src());
-}
 
 const assert = bun.assert;

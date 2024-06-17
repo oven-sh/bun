@@ -37,6 +37,7 @@ const Npm = @This();
 
 pub const Registry = struct {
     pub const default_url = "https://registry.npmjs.org/";
+    pub const default_url_hash = bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_url));
     pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
 
     pub const Scope = struct {
@@ -50,10 +51,11 @@ pub const Registry = struct {
         //  :_password
         //  :_auth
         url: URL,
+        url_hash: u64,
         token: string = "",
 
-        pub fn hash(name: string) u64 {
-            return String.Builder.stringHash(name);
+        pub fn hash(str: string) u64 {
+            return String.Builder.stringHash(str);
         }
 
         pub fn getName(name: string) string {
@@ -198,7 +200,15 @@ pub const Registry = struct {
                 );
             }
 
-            return Scope{ .name = name, .url = url, .token = registry.token, .auth = auth };
+            const url_hash = hash(strings.withoutTrailingSlash(url.href));
+
+            return Scope{
+                .name = name,
+                .url = url,
+                .url_hash = url_hash,
+                .token = registry.token,
+                .auth = auth,
+            };
         }
     };
 
@@ -219,6 +229,7 @@ pub const Registry = struct {
     const Pico = bun.picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
+        scope: *const Registry.Scope,
         response: Pico.Response,
         body: []const u8,
         log: *logger.Log,
@@ -272,7 +283,12 @@ pub const Registry = struct {
             @as(u32, @truncate(@as(u64, @intCast(@max(0, std.time.timestamp()))))) + 300,
         )) |package| {
             if (package_manager.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
+                PackageManifest.Serializer.saveAsync(
+                    &package,
+                    scope,
+                    package_manager.getTemporaryDirectory(),
+                    package_manager.getCacheDirectory(),
+                );
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -566,11 +582,23 @@ pub const PackageManifest = struct {
         return this.pkg.name.slice(this.string_buf);
     }
 
+    pub fn byteLength(this: *const PackageManifest, scope: *const Registry.Scope) usize {
+        var counter = std.io.countingWriter(std.io.null_writer);
+        const writer = counter.writer();
+
+        Serializer.write(this, scope, @TypeOf(writer), writer) catch return 0;
+        return counter.bytes_written;
+    }
+
     pub const Serializer = struct {
-        pub const version = "bun-npm-manifest-cache-v0.0.2\n";
+        // - version 3: added serialization of registry url. it's used to invalidate when it changes
+        pub const version = "bun-npm-manifest-cache-v0.0.3\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {
+            if (header_bytes.len != 49)
+                @compileError("header bytes must be exactly 49 bytes long, length is not serialized");
+
             // skip name
             const fields = std.meta.fields(Npm.PackageManifest);
 
@@ -637,10 +665,15 @@ pub const PackageManifest = struct {
             return result;
         }
 
-        pub fn write(this: *const PackageManifest, comptime Writer: type, writer: Writer) !void {
+        pub fn write(this: *const PackageManifest, scope: *const Registry.Scope, comptime Writer: type, writer: Writer) !void {
             var pos: u64 = 0;
             try writer.writeAll(header_bytes);
             pos += header_bytes.len;
+
+            try writer.writeInt(u64, scope.url_hash, .little);
+            try writer.writeInt(u64, strings.withoutTrailingSlash(scope.url.href).len, .little);
+
+            pos += 128 / 8;
 
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
@@ -657,45 +690,215 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
-                .truncate = true,
-            });
-            defer tmpfile.close();
-            const writer = tmpfile.writer();
-            try Serializer.write(this, @TypeOf(writer), writer);
+        fn writeFile(
+            this: *const PackageManifest,
+            scope: *const Registry.Scope,
+            tmp_path: [:0]const u8,
+            tmpdir: std.fs.Dir,
+            cache_dir: std.fs.Dir,
+            outpath: [:0]const u8,
+        ) !void {
+            // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
+            var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
+
+            const allocator = stack_fallback.get();
+            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);
+            defer buffer.deinit();
+            const writer = &buffer.writer();
+            try Serializer.write(this, scope, @TypeOf(writer), writer);
+            // --- Perf Improvement #1 ----
+            // Do not forget to buffer writes!
+            //
+            // PS C:\bun> hyperfine "bun-debug install --ignore-scripts" "bun install --ignore-scripts" --prepare="del /s /q bun.lockb && del /s /q C:\Users\window\.bun\install\cache"
+            // Benchmark 1: bun-debug install --ignore-scripts
+            //   Time (mean ± σ):      1.266 s ±  0.284 s    [User: 1.631 s, System: 0.205 s]
+            //   Range (min … max):    1.071 s …  1.804 s    10 runs
+            //
+            //   Warning: Statistical outliers were detected. Consider re-running this benchmark on a quiet system without any interferences from other programs. It might help to use the '--warmup' or '--prepare' options.
+            //
+            // Benchmark 2: bun install --ignore-scripts
+            //   Time (mean ± σ):      3.202 s ±  0.095 s    [User: 0.255 s, System: 0.172 s]
+            //   Range (min … max):    3.058 s …  3.371 s    10 runs
+            //
+            // Summary
+            //   bun-debug install --ignore-scripts ran
+            //     2.53 ± 0.57 times faster than bun install --ignore-scripts
+            // --- Perf Improvement #2 ----
+            // GetFinalPathnameByHandle is very expensive if called many times
+            // We skip calling it when we are giving an absolute file path.
+            // This needs many more call sites, doesn't have much impact on this location.
+            var realpath_buf: bun.PathBuffer = undefined;
+            const path_to_use_for_opening_file = if (Environment.isWindows)
+                bun.path.joinAbsStringBufZ(PackageManager.instance.temp_dir_path, &realpath_buf, &.{ PackageManager.instance.temp_dir_path, tmp_path }, .auto)
+            else
+                tmp_path;
+
+            var is_using_o_tmpfile = if (Environment.isLinux) false else {};
+            const file = brk: {
+                const flags = std.os.O.WRONLY;
+                const mask = if (Environment.isPosix) 0o664 else 0;
+
+                // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
+                // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
+                // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
+                if (Environment.isLinux) {
+                    switch (bun.sys.File.openat(cache_dir, ".", flags | std.os.linux.O.TMPFILE, mask)) {
+                        .err => {
+                            const warner = struct {
+                                var did_warn = std.atomic.Value(bool).init(false);
+
+                                pub fn warnOnce() void {
+                                    if (!did_warn.swap(true, .Monotonic)) {
+                                        // This is not an error. Nor is it really a warning.
+                                        Output.note("Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.", .{});
+                                        Output.flush();
+                                    }
+                                }
+                            };
+                            if (PackageManager.verbose_install)
+                                warner.warnOnce();
+                        },
+                        .result => |f| {
+                            is_using_o_tmpfile = true;
+                            break :brk f;
+                        },
+                    }
+                }
+
+                break :brk try bun.sys.File.openat(tmpdir, path_to_use_for_opening_file, flags | std.os.O.CREAT | std.os.O.TRUNC, if (Environment.isPosix) 0o664 else 0).unwrap();
+            };
+
+            {
+                errdefer file.close();
+                try file.writeAll(buffer.items).unwrap();
+            }
+            if (comptime Environment.isWindows) {
+                var realpath2_buf: bun.PathBuffer = undefined;
+                var did_close = false;
+                errdefer if (!did_close) file.close();
+
+                const cache_dir_abs = PackageManager.instance.cache_directory_path;
+                const cache_path_abs = bun.path.joinAbsStringBufZ(cache_dir_abs, &realpath2_buf, &.{ cache_dir_abs, outpath }, .auto);
+                file.close();
+                did_close = true;
+                try bun.sys.renameat(bun.FD.cwd(), path_to_use_for_opening_file, bun.FD.cwd(), cache_path_abs).unwrap();
+            } else if (Environment.isLinux and is_using_o_tmpfile) {
+                defer file.close();
+                // Attempt #1.
+                bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap() catch {
+                    // Attempt #2: the file may already exist. Let's unlink and try again.
+                    bun.sys.unlinkat(bun.toFD(cache_dir), outpath).unwrap() catch {};
+                    try bun.sys.linkatTmpfile(file.handle, bun.toFD(cache_dir), outpath).unwrap();
+
+                    // There is no attempt #3. This is a cache, so it's not essential.
+                };
+            } else {
+                defer file.close();
+                // Attempt #1. Rename the file.
+                const rc = bun.sys.renameat(bun.toFD(tmpdir), tmp_path, bun.toFD(cache_dir), outpath);
+
+                switch (rc) {
+                    .err => |err| {
+                        // Fallback path: atomically swap from <tmp>/*.npm -> <cache>/*.npm, then unlink the temporary file.
+                        defer {
+                            // If atomically swapping fails, then we should still unlink the temporary file as a courtesy.
+                            bun.sys.unlinkat(bun.toFD(tmpdir), tmp_path).unwrap() catch {};
+                        }
+
+                        if (switch (err.getErrno()) {
+                            .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                            else => false,
+                        }) {
+
+                            // Atomically swap the old file with the new file.
+                            try bun.sys.renameat2(bun.toFD(tmpdir.fd), tmp_path, bun.toFD(cache_dir.fd), outpath, .{
+                                .exchange = true,
+                            }).unwrap();
+
+                            // Success.
+                            return;
+                        }
+                    },
+                    .result => {},
+                }
+
+                try rc.unwrap();
+            }
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        /// We save into a temporary directory and then move the file to the cache directory.
+        /// Saving the files to the manifest cache doesn't need to prevent application exit.
+        /// It's an optional cache.
+        /// Therefore, we choose to not increment the pending task count or wake up the main thread.
+        ///
+        /// This might leave temporary files in the temporary directory that will never be moved to the cache directory. We'll see if anyone asks about that.
+        pub fn saveAsync(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) void {
+            const SaveTask = struct {
+                manifest: PackageManifest,
+                scope: *const Registry.Scope,
+                tmpdir: std.fs.Dir,
+                cache_dir: std.fs.Dir,
+
+                task: bun.ThreadPool.Task = .{ .callback = &run },
+                pub usingnamespace bun.New(@This());
+
+                pub fn run(task: *bun.ThreadPool.Task) void {
+                    const save_task: *@This() = @fieldParentPtr(@This(), "task", task);
+                    defer {
+                        save_task.destroy();
+                    }
+
+                    Serializer.save(&save_task.manifest, save_task.scope, save_task.tmpdir, save_task.cache_dir) catch |err| {
+                        if (PackageManager.verbose_install) {
+                            Output.warn("Error caching manifest for {s}: {s}", .{ save_task.manifest.name(), @errorName(err) });
+                            Output.flush();
+                        }
+                    };
+                }
+            };
+
+            const task = SaveTask.new(.{
+                .manifest = this.*,
+                .scope = scope,
+                .tmpdir = tmpdir,
+                .cache_dir = cache_dir,
+            });
+
+            const batch = bun.ThreadPool.Batch.from(&task.task);
+            PackageManager.instance.thread_pool.schedule(batch);
+        }
+
+        fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
+            const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
+            return if (scope.url_hash == Registry.default_url_hash)
+                try std.fmt.bufPrintZ(buf, "{any}.npm", .{file_id_hex_fmt})
+            else
+                try std.fmt.bufPrintZ(buf, "{any}-{any}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
+        }
+
+        pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
             const file_id = bun.Wyhash11.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
-            var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
+            var out_path_buf: [("18446744073709551615".len * 2) + "_".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
-            const hex_fmt = bun.fmt.hexIntLower(file_id);
-            const hex_timestamp = @as(usize, @intCast(@max(std.time.milliTimestamp(), 0)));
+            const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
+            const hex_timestamp: usize = @intCast(@max(std.time.milliTimestamp(), 0));
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
-            try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
+            try dest_path_stream_writer.print("{any}.npm-{any}", .{ file_id_hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
-            try writeFile(this, tmp_path, tmpdir);
-            const out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            const out_path = try manifestFileName(&out_path_buf, file_id, scope);
+            try writeFile(this, scope, tmp_path, tmpdir, cache_dir, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
-            const file_id = bun.Wyhash11.hash(0, package_name);
+        pub fn loadByFileID(allocator: std.mem.Allocator, scope: *const Registry.Scope, cache_dir: std.fs.Dir, file_id: u64) !?PackageManifest {
             var file_path_buf: [512 + 64]u8 = undefined;
-            const hex_fmt = bun.fmt.hexIntLower(file_id);
-            const file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
+            const file_name = try manifestFileName(&file_path_buf, file_id, scope);
             var cache_file = cache_dir.openFileZ(
-                file_path,
+                file_name,
                 .{ .mode = .read_only },
             ) catch return null;
-            var timer: std.time.Timer = undefined;
-            if (PackageManager.verbose_install) {
-                timer = std.time.Timer.start() catch @panic("timer fail");
-            }
             defer cache_file.close();
             const bytes = try cache_file.readToEndAllocOptions(
                 allocator,
@@ -706,28 +909,35 @@ pub const PackageManifest = struct {
             );
 
             errdefer allocator.free(bytes);
-            if (bytes.len < header_bytes.len) return null;
-            const result = try readAll(bytes);
-            if (PackageManager.verbose_install) {
-                Output.prettyError("\n ", .{});
-                Output.printTimer(&timer);
-                Output.prettyErrorln("<d> [cache hit] {s}<r>", .{package_name});
+            if (bytes.len < header_bytes.len) {
+                return null;
             }
-            return result;
+            return try readAll(bytes, scope);
         }
 
-        pub fn readAll(bytes: []const u8) !PackageManifest {
+        fn readAll(bytes: []const u8, scope: *const Registry.Scope) !?PackageManifest {
             if (!strings.eqlComptime(bytes[0..header_bytes.len], header_bytes)) {
-                return error.InvalidPackageManifest;
+                return null;
             }
             var pkg_stream = std.io.fixedBufferStream(bytes);
             pkg_stream.pos = header_bytes.len;
+
+            var reader = pkg_stream.reader();
             var package_manifest = PackageManifest{};
+
+            const registry_hash = try reader.readInt(u64, .little);
+            if (scope.url_hash != registry_hash) {
+                return null;
+            }
+
+            const registry_length = try reader.readInt(u64, .little);
+            if (strings.withoutTrailingSlash(scope.url.href).len != registry_length) {
+                return null;
+            }
 
             inline for (sizes.fields) |field_name| {
                 if (comptime strings.eqlComptime(field_name, "pkg")) {
                     pkg_stream.pos = std.mem.alignForward(usize, pkg_stream.pos, @alignOf(Npm.NpmPackage));
-                    var reader = pkg_stream.reader();
                     package_manifest.pkg = try reader.readStruct(NpmPackage);
                 } else {
                     @field(package_manifest, field_name) = try readArray(
@@ -779,22 +989,6 @@ pub const PackageManifest = struct {
         version: Semver.Version,
         package: *const PackageVersion,
     };
-
-    pub fn findByString(this: *const PackageManifest, version: string) ?FindResult {
-        switch (Dependency.Version.Tag.infer(version)) {
-            .npm => {
-                const group = Semver.Query.parse(default_allocator, version, SlicedString.init(
-                    version,
-                    version,
-                )) catch return null;
-                return this.findBestVersion(group, version);
-            },
-            .dist_tag => {
-                return this.findByDistTag(version);
-            },
-            else => return null,
-        }
-    }
 
     pub fn findByVersion(this: *const PackageManifest, version: Semver.Version) ?FindResult {
         const list = if (!version.tag.hasPre()) this.pkg.releases else this.pkg.prereleases;
@@ -911,8 +1105,10 @@ pub const PackageManifest = struct {
 
         var string_pool = String.Builder.StringPool.init(default_allocator);
         defer string_pool.deinit();
-        var external_string_maps = ExternalStringMapDeduper.initContext(default_allocator, .{});
-        defer external_string_maps.deinit();
+        var all_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        defer all_extern_strings_dedupe_map.deinit();
+        var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
+        defer version_extern_strings_dedupe_map.deinit();
         var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
@@ -921,14 +1117,66 @@ pub const PackageManifest = struct {
         };
 
         if (json.asProperty("name")) |name_q| {
-            const field = name_q.expr.asString(allocator) orelse return null;
+            const received_name = name_q.expr.asString(allocator) orelse return null;
 
-            if (!strings.eql(field, expected_name)) {
-                Output.panic("<r>internal: <red>package name mismatch<r> expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, field });
+            // This is intentionally a case insensitive comparision. If the registry is running on a system
+            // with a case insensitive filesystem, you'll be able to install dependencies with casing that doesn't match.
+            //
+            // e.g.
+            // {
+            //   "dependencies": {
+            //     // will install successfully, even though the package name in the registry is `jquery`
+            //     "jQuery": "3.7.1"
+            //   }
+            // }
+            //
+            // https://github.com/oven-sh/bun/issues/5189
+            const equal = if (expected_name.len == 0 or expected_name[0] != '@')
+                // Unscoped package, just normal case insensitive comparison
+                strings.eqlCaseInsensitiveASCII(expected_name, received_name, true)
+            else brk: {
+                // Scoped package. The registry might url encode the package name changing either or both `@` and `/` into `%40` and `%2F`.
+                // e.g. "name": "@std%2fsemver" // real world example from crash report
+
+                // Expected name `@` exists, check received has either `@` or `%40`
+                var received_remain = received_name;
+                if (received_remain.len > 0 and received_remain[0] == '@') {
+                    received_remain = received_remain[1..];
+                } else if (received_remain.len > 2 and strings.eqlComptime(received_remain[0..3], "%40")) {
+                    received_remain = received_remain[3..];
+                } else {
+                    break :brk false;
+                }
+
+                var expected_remain = expected_name[1..];
+
+                // orelse is invalid because scoped package is missing `/`, but we allow just in case
+                const slash_index = strings.indexOfChar(expected_remain, '/') orelse break :brk strings.eqlCaseInsensitiveASCII(expected_remain, received_remain, true);
+
+                if (slash_index >= received_remain.len) break :brk false;
+
+                if (!strings.eqlCaseInsensitiveASCIIIgnoreLength(expected_remain[0..slash_index], received_remain[0..slash_index])) break :brk false;
+                expected_remain = expected_remain[slash_index + 1 ..];
+
+                // Expected name `/` exists, check that received is either `/`, `%2f`, or `%2F`
+                received_remain = received_remain[slash_index..];
+                if (received_remain.len > 0 and received_remain[0] == '/') {
+                    received_remain = received_remain[1..];
+                } else if (received_remain.len > 2 and strings.eqlCaseInsensitiveASCIIIgnoreLength(received_remain[0..3], "%2f")) {
+                    received_remain = received_remain[3..];
+                } else {
+                    break :brk false;
+                }
+
+                break :brk strings.eqlCaseInsensitiveASCII(expected_remain, received_remain, true);
+            };
+
+            if (!equal) {
+                Output.panic("<r>internal: <red>Package name mismatch.<r> Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
                 return null;
             }
 
-            string_builder.count(field);
+            string_builder.count(expected_name);
         }
 
         if (json.asProperty("modified")) |name_q| {
@@ -1122,10 +1370,10 @@ pub const PackageManifest = struct {
             string_buf = ptr[0..string_builder.cap];
         }
 
-        if (json.asProperty("name")) |name_q| {
-            const field = name_q.expr.asString(allocator) orelse return null;
-            result.pkg.name = string_builder.append(ExternalString, field);
-        }
+        // Using `expected_name` instead of the name from the manifest. We've already
+        // checked that they are equal above, but `expected_name` will not have `@`
+        // or `/` changed to `%40` or `%2f`, ensuring lookups will work later
+        result.pkg.name = string_builder.append(ExternalString, expected_name);
 
         get_versions: {
             if (json.asProperty("versions")) |versions_q| {
@@ -1488,7 +1736,7 @@ pub const PackageManifest = struct {
                                     const name_map_hash = name_hasher.final();
                                     const version_map_hash = version_hasher.final();
 
-                                    const name_entry = try external_string_maps.getOrPut(name_map_hash);
+                                    const name_entry = try all_extern_strings_dedupe_map.getOrPut(name_map_hash);
                                     if (name_entry.found_existing) {
                                         name_list = name_entry.value_ptr.*;
                                         this_names = name_list.mut(all_extern_strings);
@@ -1497,7 +1745,7 @@ pub const PackageManifest = struct {
                                         dependency_names = dependency_names[count..];
                                     }
 
-                                    const version_entry = try external_string_maps.getOrPut(version_map_hash);
+                                    const version_entry = try version_extern_strings_dedupe_map.getOrPut(version_map_hash);
                                     if (version_entry.found_existing) {
                                         version_list = version_entry.value_ptr.*;
                                         this_versions = version_list.mut(version_extern_strings);

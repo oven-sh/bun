@@ -131,8 +131,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
         // Using same approach as node, `arguments` in the entry point isn't defined
         // https://github.com/nodejs/node/blob/592c6907bfe1922f36240e9df076be1864c3d1bd/lib/internal/process/execution.js#L92
-        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "exports"_s), moduleObject->exportsObject(), 0);
-        globalObject->putDirect(vm, Identifier::fromLatin1(vm, "require"_s), requireFunction, 0);
+        globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), moduleObject->exportsObject(), 0);
+        globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
         globalObject->putDirect(vm, Identifier::fromLatin1(vm, "module"_s), moduleObject, 0);
         globalObject->putDirect(vm, Identifier::fromLatin1(vm, "__filename"_s), filename, 0);
         globalObject->putDirect(vm, Identifier::fromLatin1(vm, "__dirname"_s), dirname, 0);
@@ -489,7 +489,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
 
-    String filenameString = callframe->argument(1).toWTFString(globalObject);
+    JSValue filenameValue = callframe->argument(1);
+    String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
 
     String wrappedString = makeString(
@@ -505,16 +506,15 @@ JSC_DEFINE_HOST_FUNCTION(functionCommonJSModuleRecord_compile, (JSGlobalObject *
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    auto index = filenameString.reverseFind(PLATFORM_SEP, filenameString.length());
-    // filenameString is coming from js, any separator could be used
-    if (index == WTF::notFound)
-        index = filenameString.reverseFind(NOT_PLATFORM_SEP, filenameString.length());
-    String dirnameString;
-    if (index != WTF::notFound) {
-        dirnameString = filenameString.substring(0, index);
-    } else {
-        dirnameString = "/"_s;
-    }
+    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
+#if OS(WINDOWS)
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
+#else
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
+#endif
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode({}));
+
+    String dirnameString = dirnameValue.toWTFString(globalObject);
 
     WTF::NakedPtr<JSC::Exception> exception;
     evaluateCommonJSModuleOnce(
@@ -873,7 +873,7 @@ void populateESMExports(
 }
 
 void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,
-    JSC::Identifier moduleKey,
+    const JSC::Identifier& moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
@@ -1082,7 +1082,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return JSC::SourceCode(
         JSC::SyntheticSourceProvider::create(
             [](JSC::JSGlobalObject* lexicalGlobalObject,
-                JSC::Identifier moduleKey,
+                const JSC::Identifier& moduleKey,
                 Vector<JSC::Identifier, 4>& exportNames,
                 JSC::MarkedArgumentBuffer& exportValues) -> void {
                 auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);

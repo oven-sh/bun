@@ -2,11 +2,23 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.3")
-set(WEBKIT_TAG e3a2d89a0b1644cc8d5c245bd2ffee4d4bd6c1d5)
+set(Bun_VERSION "1.1.14")
+set(WEBKIT_TAG 64d04ec1a65d91326c5f2298b9c7d05b56125252)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
+
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# WebKit uses -std=gnu++20 on non-macOS non-Windows
+# If we do not set this, it will crash at startup on the first memory allocation.
+if(NOT WIN32 AND NOT APPLE)
+    set(CMAKE_CXX_EXTENSIONS ON)
+endif()
 
 # --- Build Type ---
 if(NOT CMAKE_BUILD_TYPE)
@@ -51,11 +63,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    if(ARCH STREQUAL "x86_64")
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
-    else()
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
-    endif()
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -93,7 +101,7 @@ endif()
 # any case possible. Sorry for the complexity...
 #
 # Bun and WebKit must be compiled with the same compiler, so we do as much as we can to ensure that
-# the compiler used for the prebuilt WebKit, LLVM 16, is the one that we detect in this process.
+# the compiler used for the prebuilt WebKit is the same as we install as a dependency.
 #
 # It has to be done before project() is called, so that CMake doesnt pick a compiler for us, but even then
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
@@ -214,12 +222,6 @@ else()
     )
 endif()
 
-set(CMAKE_COLOR_DIAGNOSTICS ON)
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-
 project(Bun VERSION "${Bun_VERSION}")
 
 # if(MSVC)
@@ -305,6 +307,7 @@ option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
+option(USE_SYSTEM_ICU "Use the system-provided libicu. May fix startup crashes when building WebKit yourself." OFF)
 
 option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
 
@@ -314,6 +317,9 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
+option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
 
 if(NOT ZIG_LIB_DIR)
     cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
@@ -332,6 +338,10 @@ endif()
 
 if(NOT CANARY)
     set(CANARY 0)
+endif()
+
+if(NOT ENABLE_LOGS)
+    set(ENABLE_LOGS false)
 endif()
 
 if(NOT ZIG_OPTIMIZE)
@@ -411,7 +421,7 @@ if(ZIG_COMPILER)
     find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
     set(ZIG_COMPILER "${ZIG_COMPILER_}")
     message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
-elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_ONLY_EXTRA)
     execute_process(
         COMMAND "${SHELL}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
@@ -555,6 +565,7 @@ else()
             add_compile_definitions("BUN_DEBUG=1")
             set(ASSERT_ENABLED "1")
         endif()
+
         message(STATUS "Using WebKit from ${WEBKIT_DIR}")
     else()
         if(NOT EXISTS "${WEBKIT_DIR}/lib/${libWTF}.${STATIC_LIB_EXT}" OR NOT EXISTS "${WEBKIT_DIR}/lib/${libJavaScriptCore}.${STATIC_LIB_EXT}")
@@ -737,7 +748,7 @@ if(NOT NO_CODEGEN)
         OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
         MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
         DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-        COMMAND ${ZIG_COMPILER} run "${BUN_SRC}/js_lexer/identifier_data.zig"
+        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
     )
@@ -762,6 +773,7 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/thirdparty/*.js"
         "${BUN_SRC}/js/thirdparty/*.ts"
+        "${BUN_SRC}/js/internal-for-testing.ts"
     )
 
     file(GLOB CODEGEN_FILES ${CONFIGURE_DEPENDS} "${BUN_CODEGEN_SRC}/*.ts")
@@ -866,6 +878,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
+        "-Denable_logs=${ENABLE_LOGS}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
@@ -911,7 +924,9 @@ if(WIN32)
 endif()
 
 # -- The Buntime™️ ---
-if(NOT BUN_CPP_ONLY)
+if(BUN_TIDY_ONLY OR BUN_TIDY_ONLY_EXTRA)
+    add_library(${bun} OBJECT "${BUN_SOURCES}")
+elseif(NOT BUN_CPP_ONLY)
     add_executable(${bun} "${BUN_SOURCES}" "${BUN_ZIG_OBJ}")
 else()
     add_executable(${bun} "${BUN_SOURCES}")
@@ -1013,7 +1028,7 @@ endif()
 # --- clang and linker flags ---
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(NOT WIN32)
-        target_compile_options(${bun} PUBLIC -g3 -O0 -gdwarf-4
+        target_compile_options(${bun} PUBLIC -O0 -g -g3 -ggdb -gdwarf-4
             -Werror=return-type
             -Werror=return-stack-address
             -Werror=implicit-function-declaration
@@ -1060,8 +1075,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "/LTCG")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG /Z7)
-        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG)
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL)
+        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG:FULL)
     endif()
 endif()
 
@@ -1101,15 +1116,15 @@ else()
     target_compile_options(${bun} PUBLIC
         -fPIC
         -mtune=${CPU_TARGET}
-        -fconstexpr-steps=1271242
-        -fconstexpr-depth=27
+        -fconstexpr-steps=2542484
+        -fconstexpr-depth=54
         -fno-exceptions
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
+        -mno-omit-leaf-frame-pointer
     )
-    string(APPEND CMAKE_CXX_FLAGS " -std=c++2a")
 endif()
 
 if(APPLE)
@@ -1128,7 +1143,6 @@ if(UNIX AND NOT APPLE)
         "-fuse-ld=lld"
         "-static-libstdc++"
         "-static-libgcc"
-        "-fuse-ld=lld"
         "-Wl,-z,now"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
@@ -1138,19 +1152,21 @@ if(UNIX AND NOT APPLE)
         "-Wl,--wrap=stat64"
         "-Wl,--wrap=pow"
         "-Wl,--wrap=exp"
+        "-Wl,--wrap=expf"
         "-Wl,--wrap=log"
         "-Wl,--wrap=log2"
         "-Wl,--wrap=lstat"
+        "-Wl,--wrap=stat64"
         "-Wl,--wrap=stat"
         "-Wl,--wrap=fstat"
         "-Wl,--wrap=fstatat"
         "-Wl,--wrap=lstat64"
-        "-Wl,--wrap=stat64"
         "-Wl,--wrap=fstat64"
         "-Wl,--wrap=fstatat64"
         "-Wl,--wrap=mknod"
         "-Wl,--wrap=mknodat"
         "-Wl,--wrap=statx"
+        "-Wl,--wrap=fmod"
         "-Wl,--compress-debug-sections=zlib"
         "-Bsymbolics-functions"
         "-rdynamic"
@@ -1168,9 +1184,15 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(${bun} PRIVATE "libatomic.a")
     endif()
 
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+    if(USE_SYSTEM_ICU)
+        target_link_libraries(${bun} PRIVATE "libicudata.a")
+        target_link_libraries(${bun} PRIVATE "libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "libicuuc.a")
+    else()
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+    endif()
 
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/linker.lds")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
@@ -1266,11 +1288,11 @@ if(USE_CUSTOM_MIMALLOC)
     elseif(APPLE)
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "Using debug mimalloc")
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.o")
         else()
-            # https://github.com/microsoft/mimalloc/issues/512
-            # Linking mimalloc via object file on macOS x64 can cause heap corruption
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+            # Note: https://github.com/microsoft/mimalloc/issues/512
+            # It may have been a bug in our code at the time.
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
         endif()
     else()
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -1427,4 +1449,16 @@ endif()
 
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
+endif()
+
+if(BUN_TIDY_ONLY)
+    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
+endif()
+
+if(BUN_TIDY_ONLY_EXTRA)
+    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

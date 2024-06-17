@@ -674,3 +674,6 @@ pub extern "C" fn sys_pwritev2(
 pub const RENAME_NOREPLACE = 1 << 0;
 pub const RENAME_EXCHANGE = 1 << 1;
 pub const RENAME_WHITEOUT = 1 << 2;
+
+pub extern "C" fn quick_exit(code: c_int) noreturn;
+pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;

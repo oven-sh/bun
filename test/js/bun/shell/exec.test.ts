@@ -1,10 +1,12 @@
 import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
-import { TestBuilder } from "./test_builder";
+import { createTestBuilder } from "./test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 import { bunEnv } from "harness";
 
 const BUN = process.argv0;
 
+$.nothrow();
 describe("bun exec", () => {
   TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").runAsTest("it works");
   TestBuilder.command`${BUN} exec sldkfjslkdjflksdjflj`

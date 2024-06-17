@@ -25,7 +25,6 @@ const Exception = JSC.Exception;
 const JSModuleLoader = JSC.JSModuleLoader;
 const Microtask = JSC.Microtask;
 
-const Backtrace = @import("../../crash_reporter.zig");
 const JSPrinter = bun.js_printer;
 const JSLexer = bun.js_lexer;
 const typeBaseName = @import("../../meta.zig").typeBaseName;
@@ -49,7 +48,6 @@ pub const ZigGlobalObject = extern struct {
         worker_ptr: ?*anyopaque,
     ) *JSGlobalObject {
         const global = shim.cppFn("create", .{ console, context_id, mini_mode, eval_mode, worker_ptr });
-        Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
 
@@ -116,6 +114,10 @@ pub const ErrorCode = enum(ErrorCodeInt) {
         return @as(ErrorCode, @enumFromInt(@intFromError(code)));
     }
 
+    pub inline fn toError(self: ErrorCode) anyerror {
+        return @errorFromInt(@intFromEnum(self));
+    }
+
     pub const ParserError = @intFromEnum(ErrorCode.from(error.ParserError));
     pub const JSErrorObject = @intFromEnum(ErrorCode.from(error.JSErrorObject));
 
@@ -155,6 +157,14 @@ pub fn Errorable(comptime Type: type) type {
             value: Type,
             err: ZigErrorType,
         };
+
+        pub fn unwrap(errorable: @This()) !Type {
+            if (errorable.success) {
+                return errorable.result.value;
+            } else {
+                return errorable.result.err.code.toError();
+            }
+        }
 
         pub fn value(val: Type) @This() {
             return @This(){ .result = .{ .value = val }, .success = true };
@@ -202,10 +212,13 @@ pub const ResolvedSource = extern struct {
 
     allocator: ?*anyopaque = null,
 
+    jsvalue_for_export: JSC.JSValue = .zero,
+
     tag: Tag = Tag.javascript,
 
     /// This is for source_code
     source_code_needs_deref: bool = true,
+    already_bundled: bool = false,
 
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
@@ -540,20 +553,10 @@ pub const ZigStackFrame = extern struct {
         }
 
         if (!this.source_url.isEmpty()) {
-            frame.file = try std.fmt.allocPrint(allocator, "{any}", .{this.sourceURLFormatter(root_path, origin, true, false)});
+            frame.file = try std.fmt.allocPrint(allocator, "{}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
-        frame.position.source_offset = this.position.source_offset;
-
-        // For remapped code, we add 1 to the line number
-        frame.position.line = this.position.line + @as(i32, @intFromBool(this.remapped));
-
-        frame.position.line_start = this.position.line_start;
-        frame.position.line_stop = this.position.line_stop;
-        frame.position.column_start = this.position.column_start;
-        frame.position.column_stop = this.position.column_stop;
-        frame.position.expression_start = this.position.expression_start;
-        frame.position.expression_stop = this.position.expression_stop;
+        frame.position = this.position;
         frame.scope = @as(Api.StackFrameScope, @enumFromInt(@intFromEnum(this.code_type)));
 
         return frame;
@@ -567,6 +570,7 @@ pub const ZigStackFrame = extern struct {
         exclude_line_column: bool = false,
         remapped: bool = false,
         root_path: string = "",
+
         pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             if (this.enable_color) {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
@@ -594,7 +598,7 @@ pub const ZigStackFrame = extern struct {
             try writer.writeAll(source_slice);
 
             if (this.enable_color) {
-                if (this.position.line > -1) {
+                if (this.position.line.isValid()) {
                     try writer.writeAll(comptime Output.prettyFmt("<r>", true));
                 } else {
                     try writer.writeAll(comptime Output.prettyFmt("<r>", true));
@@ -602,29 +606,31 @@ pub const ZigStackFrame = extern struct {
             }
 
             if (!this.exclude_line_column) {
-                if (this.position.line > -1 and this.position.column_start > -1) {
+                if (this.position.line.isValid() and this.position.column.isValid()) {
                     if (this.enable_color) {
                         try std.fmt.format(
                             writer,
-                            // :
                             comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<yellow>{d}<r>", true),
-                            .{ this.position.line + 1, this.position.column_start + 1 },
+                            .{ this.position.line.oneBased(), this.position.column.oneBased() },
                         );
                     } else {
-                        try std.fmt.format(writer, ":{d}:{d}", .{ this.position.line + 1, this.position.column_start + 1 });
+                        try std.fmt.format(writer, ":{d}:{d}", .{
+                            this.position.line.oneBased(),
+                            this.position.column.oneBased(),
+                        });
                     }
-                } else if (this.position.line > -1) {
+                } else if (this.position.line.isValid()) {
                     if (this.enable_color) {
                         try std.fmt.format(
                             writer,
                             comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", true),
                             .{
-                                this.position.line + 1,
+                                this.position.line.oneBased(),
                             },
                         );
                     } else {
                         try std.fmt.format(writer, ":{d}", .{
-                            this.position.line + 1,
+                            this.position.line.oneBased(),
                         });
                     }
                 }
@@ -703,27 +709,31 @@ pub const ZigStackFrame = extern struct {
 };
 
 pub const ZigStackFramePosition = extern struct {
-    source_offset: i32,
-    line: i32,
-    line_start: i32,
-    line_stop: i32,
-    column_start: i32,
-    column_stop: i32,
-    expression_start: i32,
-    expression_stop: i32,
+    line: bun.Ordinal,
+    column: bun.Ordinal,
+    /// -1 if not present
+    line_start_byte: c_int,
 
     pub const Invalid = ZigStackFramePosition{
-        .source_offset = -1,
-        .line = -1,
-        .line_start = -1,
-        .line_stop = -1,
-        .column_start = -1,
-        .column_stop = -1,
-        .expression_start = -1,
-        .expression_stop = -1,
+        .line = .invalid,
+        .column = .invalid,
+        .line_start_byte = -1,
     };
+
     pub fn isInvalid(this: *const ZigStackFramePosition) bool {
         return std.mem.eql(u8, std.mem.asBytes(this), std.mem.asBytes(&Invalid));
+    }
+
+    pub fn decode(reader: anytype) !@This() {
+        return .{
+            .line = bun.Ordinal.fromZeroBased(try reader.readValue(i32)),
+            .column = bun.Ordinal.fromZeroBased(try reader.readValue(i32)),
+        };
+    }
+
+    pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
+        try writer.writeInt(this.line.zeroBased());
+        try writer.writeInt(this.column.zeroBased());
     }
 };
 
@@ -922,7 +932,6 @@ comptime {
 
         _ = Process.getTitle;
         _ = Process.setTitle;
-        Bun.Timer.shim.ref();
         NodePath.shim.ref();
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
@@ -960,4 +969,61 @@ pub export fn Bun__LoadLibraryBunString(str: *bun.String) ?*anyopaque {
     buf[data.len] = 0;
     const LOAD_WITH_ALTERED_SEARCH_PATH = 0x00000008;
     return bun.windows.LoadLibraryExW(buf[0..data.len :0].ptr, null, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+
+// https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
+pub export fn NodeModuleModule__findPath(
+    global: *JSGlobalObject,
+    request_bun_str: bun.String,
+    paths_maybe: ?*JSC.JSArray,
+) JSValue {
+    var stack_buf = std.heap.stackFallback(8192, default_allocator);
+    const alloc = stack_buf.get();
+
+    const request_slice = request_bun_str.toUTF8(alloc);
+    defer request_slice.deinit();
+    const request = request_slice.slice();
+
+    const absolute_request = std.fs.path.isAbsolute(request);
+    if (!absolute_request and paths_maybe == null) {
+        return .false;
+    }
+
+    // for each path
+    const found = if (paths_maybe) |paths| found: {
+        var iter = paths.iterator(global);
+        while (iter.next()) |path| {
+            const cur_path = bun.String.tryFromJS(path, global) orelse continue;
+            defer cur_path.deref();
+
+            if (findPathInner(request_bun_str, cur_path, global)) |found| {
+                break :found found;
+            }
+        }
+
+        break :found null;
+    } else findPathInner(request_bun_str, bun.String.static(""), global);
+
+    if (found) |str| {
+        return str.toJS(global);
+    }
+
+    return .false;
+}
+
+fn findPathInner(
+    request: bun.String,
+    cur_path: bun.String,
+    global: *JSGlobalObject,
+) ?bun.String {
+    var errorable: ErrorableString = undefined;
+    JSC.VirtualMachine.resolve(
+        &errorable,
+        global,
+        request,
+        cur_path,
+        null,
+        false,
+    );
+    return errorable.unwrap() catch null;
 }

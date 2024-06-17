@@ -1,10 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, afterAll, mock } from "bun:test";
+import { spawn } from "bun";
 import { bunExe, bunEnv } from "harness";
-import path from "path";
 
 describe("Streaming body via", () => {
   test("async generator function", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -25,35 +25,39 @@ describe("Streaming body via", () => {
 
     expect(Buffer.concat(chunks).toString()).toBe("Hello, world!!");
     expect(chunks).toHaveLength(2);
-    server.stop(true);
   });
 
   test("async generator function throws an error but continues to send the headers", async () => {
-    const server = Bun.serve({
-      port: 0,
+    let subprocess;
 
-      async fetch(req) {
-        return new Response(
-          async function* () {
-            throw new Error("Oops");
-          },
-          {
-            headers: {
-              "X-Hey": "123",
-            },
-          },
-        );
-      },
+    afterAll(() => {
+      subprocess?.kill();
     });
 
-    const res = await fetch(server.url);
-    expect(res.headers.get("X-Hey")).toBe("123");
-    server.stop(true);
+    const onMessage = mock(async url => {
+      const response = await fetch(url);
+      expect(response.headers.get("X-Hey")).toBe("123");
+      subprocess?.kill();
+    });
+
+    subprocess = spawn({
+      cwd: import.meta.dirname,
+      cmd: [bunExe(), "async-iterator-throws.fixture.js"],
+      env: bunEnv,
+      ipc: onMessage,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+
+    let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+    expect(exitCode).toBeInteger();
+    expect(stderr).toContain("error: Oops");
+    expect(onMessage).toHaveBeenCalledTimes(1);
   });
 
   test("async generator aborted doesn't crash", async () => {
     var aborter = new AbortController();
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -76,13 +80,11 @@ describe("Streaming body via", () => {
     } catch (e) {
       expect(e).toBeInstanceOf(DOMException);
       expect(e.name).toBe("AbortError");
-    } finally {
-      server.stop(true);
     }
   });
 
   test("[Symbol.asyncIterator]", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -109,11 +111,10 @@ describe("Streaming body via", () => {
 
     expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n!");
     expect(chunks).toHaveLength(2);
-    server.stop(true);
   });
 
   test("[Symbol.asyncIterator] with a custom iterator", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
@@ -146,7 +147,6 @@ describe("Streaming body via", () => {
     expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
     // TODO:
     // expect(chunks).toHaveLength(2);
-    server.stop(true);
   });
 
   test("yield", async () => {
@@ -204,7 +204,7 @@ describe("Streaming body via", () => {
           ["Response", () => new Response(bodyInit)],
           ["Request", () => new Request({ "url": "https://example.com", body: bodyInit })],
         ]) {
-          for (let method of ["arrayBuffer", "text"]) {
+          for (let method of ["arrayBuffer", "bytes", "text"]) {
             test(`${label}(${method})`, async () => {
               const result = await constructFn()[method]();
               expect(Buffer.from(result)).toEqual(Buffer.from(expected));

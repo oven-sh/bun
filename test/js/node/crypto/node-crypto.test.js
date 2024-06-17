@@ -1,6 +1,7 @@
 import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";
+import util from "node:util";
 import { PassThrough, Readable } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
@@ -16,10 +17,7 @@ it("crypto.randomInt should return a number", () => {
 });
 
 it("crypto.randomInt with no arguments", () => {
-  const result = crypto.randomInt();
-  expect(typeof result).toBe("number");
-  expect(result).toBeGreaterThanOrEqual(0);
-  expect(result).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(() => crypto.randomInt()).toThrow(TypeError);
 });
 
 it("crypto.randomInt with one argument", () => {
@@ -29,8 +27,304 @@ it("crypto.randomInt with one argument", () => {
   expect(result).toBeLessThanOrEqual(100);
 });
 
+it("crypto.randomInt with a callback", async () => {
+  const result = await util.promisify(crypto.randomInt)(0, 10);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(10);
+});
+
 // https://github.com/oven-sh/bun/issues/1839
 describe("createHash", () => {
+  const nodeValues = {
+    "RSA-MD5": {
+      "value": "b10a8db164e0754105b7a99be72e3fe5",
+      "input": "Hello World",
+    },
+    "RSA-RIPEMD160": {
+      "value": "a830d7beb04eb7549ce990fb7dc962e499a27230",
+      "input": "Hello World",
+    },
+    "RSA-SHA1": {
+      "value": "0a4d55a8d778e5022fab701977c5d840bbc486d0",
+      "input": "Hello World",
+    },
+    "RSA-SHA1-2": {
+      "value": "0a4d55a8d778e5022fab701977c5d840bbc486d0",
+      "input": "Hello World",
+    },
+    "RSA-SHA224": {
+      "value": "c4890faffdb0105d991a461e668e276685401b02eab1ef4372795047",
+      "input": "Hello World",
+    },
+    "RSA-SHA256": {
+      "value": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+      "input": "Hello World",
+    },
+    "RSA-SHA3-224": {
+      "value": "8e800079a0b311788bf29353f400eff969b650a3597c91efd9aa5b38",
+      "input": "Hello World",
+    },
+    "RSA-SHA3-256": {
+      "value": "e167f68d6563d75bb25f3aa49c29ef612d41352dc00606de7cbd630bb2665f51",
+      "input": "Hello World",
+    },
+    "RSA-SHA3-384": {
+      "value": "a78ec2851e991638ce505d4a44efa606dd4056d3ab274ec6fdbac00cde16478263ef7213bad5a7db7044f58d637afdeb",
+      "input": "Hello World",
+    },
+    "RSA-SHA3-512": {
+      "value":
+        "3d58a719c6866b0214f96b0a67b37e51a91e233ce0be126a08f35fdf4c043c6126f40139bfbc338d44eb2a03de9f7bb8eff0ac260b3629811e389a5fbee8a894",
+      "input": "Hello World",
+    },
+    "RSA-SHA384": {
+      "value": "99514329186b2f6ae4a1329e7ee6c610a729636335174ac6b740f9028396fcc803d0e93863a7c3d90f86beee782f4f3f",
+      "input": "Hello World",
+    },
+    "RSA-SHA512": {
+      "value":
+        "2c74fd17edafd80e8447b0d46741ee243b7eb74dd2149a0ab1b9246fb30382f27e853d8585719e0e67cbda0daa8f51671064615d645ae27acb15bfb1447f459b",
+      "input": "Hello World",
+    },
+    "RSA-SHA512/224": {
+      "value": "feca41095c80a571ae782f96bcef9ab81bdf0182509a6844f32c4c17",
+      "input": "Hello World",
+    },
+    "RSA-SHA512/256": {
+      "value": "ff20018851481c25bfc2e5d0c1e1fa57dac2a237a1a96192f99a10da47aa5442",
+      "input": "Hello World",
+    },
+    "RSA-SM3": {
+      "value": "77015816143ee627f4fa410b6dad2bdb9fcbdf1e061a452a686b8711a484c5d7",
+      "input": "Hello World",
+    },
+    "blake2b512": {
+      "value":
+        "4386a08a265111c9896f56456e2cb61a64239115c4784cf438e36cc851221972da3fb0115f73cd02486254001f878ab1fd126aac69844ef1c1ca152379d0a9bd",
+      "input": "Hello World",
+    },
+    "blake2s256": {
+      "value": "7706af019148849e516f95ba630307a2018bb7bf03803eca5ed7ed2c3c013513",
+      "input": "Hello World",
+    },
+    "id-rsassa-pkcs1-v1_5-with-sha3-224": {
+      "value": "8e800079a0b311788bf29353f400eff969b650a3597c91efd9aa5b38",
+      "input": "Hello World",
+    },
+    "id-rsassa-pkcs1-v1_5-with-sha3-256": {
+      "value": "e167f68d6563d75bb25f3aa49c29ef612d41352dc00606de7cbd630bb2665f51",
+      "input": "Hello World",
+    },
+    "id-rsassa-pkcs1-v1_5-with-sha3-384": {
+      "value": "a78ec2851e991638ce505d4a44efa606dd4056d3ab274ec6fdbac00cde16478263ef7213bad5a7db7044f58d637afdeb",
+      "input": "Hello World",
+    },
+    "id-rsassa-pkcs1-v1_5-with-sha3-512": {
+      "value":
+        "3d58a719c6866b0214f96b0a67b37e51a91e233ce0be126a08f35fdf4c043c6126f40139bfbc338d44eb2a03de9f7bb8eff0ac260b3629811e389a5fbee8a894",
+      "input": "Hello World",
+    },
+    "md5": {
+      "value": "b10a8db164e0754105b7a99be72e3fe5",
+      "input": "Hello World",
+    },
+    "md5-sha1": {
+      "value": "b10a8db164e0754105b7a99be72e3fe50a4d55a8d778e5022fab701977c5d840bbc486d0",
+      "input": "Hello World",
+    },
+    "md5WithRSAEncryption": {
+      "value": "b10a8db164e0754105b7a99be72e3fe5",
+      "input": "Hello World",
+    },
+    "ripemd": {
+      "value": "a830d7beb04eb7549ce990fb7dc962e499a27230",
+      "input": "Hello World",
+    },
+    "ripemd160": {
+      "value": "a830d7beb04eb7549ce990fb7dc962e499a27230",
+      "input": "Hello World",
+    },
+    "ripemd160WithRSA": {
+      "value": "a830d7beb04eb7549ce990fb7dc962e499a27230",
+      "input": "Hello World",
+    },
+    "rmd160": {
+      "value": "a830d7beb04eb7549ce990fb7dc962e499a27230",
+      "input": "Hello World",
+    },
+    "sha1": {
+      "value": "0a4d55a8d778e5022fab701977c5d840bbc486d0",
+      "input": "Hello World",
+    },
+    "sha1WithRSAEncryption": {
+      "value": "0a4d55a8d778e5022fab701977c5d840bbc486d0",
+      "input": "Hello World",
+    },
+    "sha224": {
+      "value": "c4890faffdb0105d991a461e668e276685401b02eab1ef4372795047",
+      "input": "Hello World",
+    },
+    "sha224WithRSAEncryption": {
+      "value": "c4890faffdb0105d991a461e668e276685401b02eab1ef4372795047",
+      "input": "Hello World",
+    },
+    "sha256": {
+      "value": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+      "input": "Hello World",
+    },
+    "sha256WithRSAEncryption": {
+      "value": "a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+      "input": "Hello World",
+    },
+    "sha3-224": {
+      "value": "8e800079a0b311788bf29353f400eff969b650a3597c91efd9aa5b38",
+      "input": "Hello World",
+    },
+    "sha3-256": {
+      "value": "e167f68d6563d75bb25f3aa49c29ef612d41352dc00606de7cbd630bb2665f51",
+      "input": "Hello World",
+    },
+    "sha3-384": {
+      "value": "a78ec2851e991638ce505d4a44efa606dd4056d3ab274ec6fdbac00cde16478263ef7213bad5a7db7044f58d637afdeb",
+      "input": "Hello World",
+    },
+    "sha3-512": {
+      "value":
+        "3d58a719c6866b0214f96b0a67b37e51a91e233ce0be126a08f35fdf4c043c6126f40139bfbc338d44eb2a03de9f7bb8eff0ac260b3629811e389a5fbee8a894",
+      "input": "Hello World",
+    },
+    "sha384": {
+      "value": "99514329186b2f6ae4a1329e7ee6c610a729636335174ac6b740f9028396fcc803d0e93863a7c3d90f86beee782f4f3f",
+      "input": "Hello World",
+    },
+    "sha384WithRSAEncryption": {
+      "value": "99514329186b2f6ae4a1329e7ee6c610a729636335174ac6b740f9028396fcc803d0e93863a7c3d90f86beee782f4f3f",
+      "input": "Hello World",
+    },
+    "sha512": {
+      "value":
+        "2c74fd17edafd80e8447b0d46741ee243b7eb74dd2149a0ab1b9246fb30382f27e853d8585719e0e67cbda0daa8f51671064615d645ae27acb15bfb1447f459b",
+      "input": "Hello World",
+    },
+    "sha512-224": {
+      "value": "feca41095c80a571ae782f96bcef9ab81bdf0182509a6844f32c4c17",
+      "input": "Hello World",
+    },
+    "sha512-224WithRSAEncryption": {
+      "value": "feca41095c80a571ae782f96bcef9ab81bdf0182509a6844f32c4c17",
+      "input": "Hello World",
+    },
+    "sha512-256": {
+      "value": "ff20018851481c25bfc2e5d0c1e1fa57dac2a237a1a96192f99a10da47aa5442",
+      "input": "Hello World",
+    },
+    "sha512-256WithRSAEncryption": {
+      "value": "ff20018851481c25bfc2e5d0c1e1fa57dac2a237a1a96192f99a10da47aa5442",
+      "input": "Hello World",
+    },
+    "sha512WithRSAEncryption": {
+      "value":
+        "2c74fd17edafd80e8447b0d46741ee243b7eb74dd2149a0ab1b9246fb30382f27e853d8585719e0e67cbda0daa8f51671064615d645ae27acb15bfb1447f459b",
+      "input": "Hello World",
+    },
+    "shake128": {
+      "value": "1227c5f882f9c57bf2e3e48d2c87eb20",
+      "input": "Hello World",
+    },
+    "shake256": {
+      "value": "840d1ce81a4327840b54cb1d419907fd1f62359bad33656e058653d2e4172a43",
+      "input": "Hello World",
+    },
+    "sm3": {
+      "value": "77015816143ee627f4fa410b6dad2bdb9fcbdf1e061a452a686b8711a484c5d7",
+      "input": "Hello World",
+    },
+    "sm3WithRSAEncryption": {
+      "value": "77015816143ee627f4fa410b6dad2bdb9fcbdf1e061a452a686b8711a484c5d7",
+      "input": "Hello World",
+    },
+    "ssl3-md5": {
+      "value": "b10a8db164e0754105b7a99be72e3fe5",
+      "input": "Hello World",
+    },
+    "ssl3-sha1": {
+      "value": "0a4d55a8d778e5022fab701977c5d840bbc486d0",
+      "input": "Hello World",
+    },
+  };
+
+  const unsupported = [
+    "blake2s256",
+    "id-rsassa-pkcs1-v1_5-with-sha3-224",
+    "id-rsassa-pkcs1-v1_5-with-sha3-256",
+    "id-rsassa-pkcs1-v1_5-with-sha3-384",
+    "id-rsassa-pkcs1-v1_5-with-sha3-512",
+    "md5-sha1",
+    "md5withrsaencryption",
+    "ripemd",
+    "ripemd160withrsa",
+    "rsa-md5",
+    "rsa-ripemd160",
+    "rsa-sha1",
+    "rsa-sha1-2",
+    "rsa-sha224",
+    "rsa-sha256",
+    "rsa-sha3-224",
+    "rsa-sha3-256",
+    "rsa-sha3-384",
+    "rsa-sha3-512",
+    "rsa-sha384",
+    "rsa-sha512",
+    "rsa-sha512/224",
+    "rsa-sha512/256",
+    "rsa-sm3",
+    "sha1withrsaencryption",
+    "sha224withrsaencryption",
+    "sha256withrsaencryption",
+    "sha384withrsaencryption",
+    "sha512withrsaencryption",
+    "sha512-224withrsaencryption",
+    "sha512-256withrsaencryption",
+    "sm3",
+    "sm3withrsaencryption",
+    "ssl3-md5",
+    "ssl3-sha1",
+  ];
+
+  for (const name_ in nodeValues) {
+    const name = name_.toLowerCase();
+    const is_unsupported = unsupported.includes(name);
+
+    it(`${name} - "Hello World"`, () => {
+      if (is_unsupported) {
+        expect(() => {
+          const hash = crypto.createHash(name);
+          hash.update("Hello World");
+          expect(hash.digest("hex")).toBe(nodeValues[name].value);
+        }).toThrow(Error(`Unsupported algorithm ${name}`));
+      } else {
+        const hash = crypto.createHash(name);
+        hash.update("Hello World");
+        expect(hash.digest("hex")).toBe(nodeValues[name].value);
+      }
+    });
+
+    it(`${name} - "Hello World" -> binary`, () => {
+      if (is_unsupported) {
+        expect(() => {
+          const hash = crypto.createHash(name);
+          hash.update("Hello World");
+          expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
+        }).toThrow(Error(`Unsupported algorithm ${name}`));
+      } else {
+        const hash = crypto.createHash(name);
+        hash.update("Hello World");
+        expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
+      }
+    });
+  }
+
   it("update & digest", () => {
     const hash = crypto.createHash("sha256");
     hash.update("some data to hash");

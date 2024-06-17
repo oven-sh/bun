@@ -1,15 +1,15 @@
 import { describe, test, expect } from "bun:test";
 import { file, serve } from "bun";
 import type { NetworkInterfaceInfo } from "node:os";
-import { tmpdir, networkInterfaces } from "node:os";
-import { mkdtempSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { isWindows, tmpdirSync } from "harness";
 
 const networks = Object.values(networkInterfaces()).flat() as NetworkInterfaceInfo[];
 const hasIPv4 = networks.some(({ family }) => family === "IPv4");
 const hasIPv6 = networks.some(({ family }) => family === "IPv6");
 
-const unix = join(mkdtempSync(join(tmpdir(), "bun-serve-")), "unix.sock");
+const unix = join(tmpdirSync(), "unix.sock").replaceAll("\\", "/");
 const tls = {
   cert: file(new URL("./fixtures/cert.pem", import.meta.url)),
   key: file(new URL("./fixtures/cert.key", import.meta.url)),
@@ -109,14 +109,20 @@ describe.each([
     },
   },
   {
-    if: process.platform !== "win32",
     options: {
-      unix,
+      unix: unix,
     },
-    url: {
-      protocol: "unix:",
-      pathname: unix,
-    },
+    url: isWindows
+      ? {
+          protocol: "unix:",
+          pathname: unix.substring(unix.indexOf(":") + 1),
+          hostname: unix.substring(0, unix.indexOf(":")),
+          port: "",
+        }
+      : {
+          protocol: "unix:",
+          pathname: unix,
+        },
   },
 ])("Bun.serve()", ({ if: enabled = true, options, hostname, url }) => {
   const title = Bun.inspect(options).replaceAll("\n", " ");

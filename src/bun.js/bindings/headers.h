@@ -251,7 +251,6 @@ CPP_DECL void JSC__JSPromise__rejectAsHandledException(JSC__JSPromise* arg0, JSC
 CPP_DECL JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, bool arg3);
-CPP_DECL void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2);
 CPP_DECL void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
@@ -268,7 +267,6 @@ CPP_DECL void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandled(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__Exception* arg2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-CPP_DECL void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2);
 CPP_DECL void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSInternalPromise__result(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);
@@ -389,7 +387,7 @@ CPP_DECL JSC__JSValue JSC__JSValue__jsTDZValue();
 CPP_DECL unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsUndefined();
 CPP_DECL JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* arg0, JSC__JSValue arg1);
-CPP_DECL JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* arg0, void* arg1, void* arg2, const ZigString* arg3);
+CPP_DECL JSC__JSValue JSC__JSValue__values(JSC__JSGlobalObject* arg0, JSC__JSValue arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const ZigString* arg2, JSC__JSValue JSValue3);

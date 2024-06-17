@@ -1,24 +1,19 @@
 const bun = @import("root").bun;
 const JSC = bun.JSC;
-const std = @import("std");
 
-/// This value must be kept in sync with Weak.cpp
-pub const WeakRefFinalizerTag = *const fn (*anyopaque) callconv(.C) void;
-
+pub const WeakRefType = enum(u32) {
+    None = 0,
+    FetchResponse = 1,
+};
 const WeakImpl = opaque {
-    pub fn init(ptr: *anyopaque, comptime tag: ?WeakRefFinalizerTag, value: JSC.JSValue) *WeakImpl {
+    pub fn init(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue, refType: WeakRefType, ctx: ?*anyopaque) *WeakImpl {
         JSC.markBinding(@src());
-        return Bun__WeakRef__new(value, tag, ptr);
+        return Bun__WeakRef__new(globalThis, value, refType, ctx);
     }
 
     pub fn get(this: *WeakImpl) JSC.JSValue {
         JSC.markBinding(@src());
         return Bun__WeakRef__get(this);
-    }
-
-    pub fn set(this: *WeakImpl, ptr: *anyopaque, comptime tag: ?WeakRefFinalizerTag, value: JSC.JSValue) void {
-        JSC.markBinding(@src());
-        Bun__WeakRef__set(this, value, tag, ptr);
     }
 
     pub fn clear(this: *WeakImpl) void {
@@ -34,40 +29,43 @@ const WeakImpl = opaque {
     }
 
     extern fn Bun__WeakRef__delete(this: *WeakImpl) void;
-    extern fn Bun__WeakRef__new(JSC.JSValue, ?WeakRefFinalizerTag, *anyopaque) *WeakImpl;
+    extern fn Bun__WeakRef__new(*JSC.JSGlobalObject, JSC.JSValue, refType: WeakRefType, ctx: ?*anyopaque) *WeakImpl;
     extern fn Bun__WeakRef__get(this: *WeakImpl) JSC.JSValue;
-    extern fn Bun__WeakRef__set(this: *WeakImpl, JSC.JSValue, ?WeakRefFinalizerTag, *anyopaque) void;
     extern fn Bun__WeakRef__clear(this: *WeakImpl) void;
 };
 
-pub fn NewWeakFinalizer(comptime Context: type, comptime FinalizerFn: *const fn (*Context) callconv(.C) void) type {
+pub fn Weak(comptime T: type) type {
     return struct {
         ref: ?*WeakImpl = null,
+        globalThis: ?*JSC.JSGlobalObject = null,
+        const WeakType = @This();
 
-        const finalizer: WeakRefFinalizerTag = @ptrCast(FinalizerFn);
-
-        pub const WeakFinalizer = @This();
-
-        pub fn init() WeakFinalizer {
+        pub fn init() WeakType {
             return .{};
+        }
+
+        pub fn call(
+            this: *WeakType,
+            args: []const JSC.JSValue,
+        ) JSC.JSValue {
+            const function = this.trySwap() orelse return .zero;
+            return function.call(this.globalThis.?, args);
         }
 
         pub fn create(
-            ptr: *Context,
             value: JSC.JSValue,
-        ) WeakFinalizer {
+            globalThis: *JSC.JSGlobalObject,
+            refType: WeakRefType,
+            ctx: *T,
+        ) WeakType {
             if (value != .zero) {
-                return .{ .ref = WeakImpl.init(
-                    ptr,
-                    finalizer,
-                    value,
-                ) };
+                return .{ .ref = WeakImpl.init(globalThis, value, refType, ctx), .globalThis = globalThis };
             }
 
-            return .{};
+            return .{ .globalThis = globalThis };
         }
 
-        pub fn get(this: *WeakFinalizer) ?JSC.JSValue {
+        pub fn get(this: *const WeakType) ?JSC.JSValue {
             var ref = this.ref orelse return null;
             const result = ref.get();
             if (result == .zero) {
@@ -77,7 +75,7 @@ pub fn NewWeakFinalizer(comptime Context: type, comptime FinalizerFn: *const fn 
             return result;
         }
 
-        pub fn swap(this: *WeakFinalizer) JSC.JSValue {
+        pub fn swap(this: *WeakType) JSC.JSValue {
             var ref = this.ref orelse return .zero;
             const result = ref.get();
             if (result == .zero) {
@@ -88,12 +86,12 @@ pub fn NewWeakFinalizer(comptime Context: type, comptime FinalizerFn: *const fn 
             return result;
         }
 
-        pub fn has(this: *WeakFinalizer) bool {
+        pub fn has(this: *WeakType) bool {
             var ref = this.ref orelse return false;
             return ref.get() != .zero;
         }
 
-        pub fn trySwap(this: *WeakFinalizer) ?JSC.JSValue {
+        pub fn trySwap(this: *WeakType) ?JSC.JSValue {
             const result = this.swap();
             if (result == .zero) {
                 return null;
@@ -102,98 +100,15 @@ pub fn NewWeakFinalizer(comptime Context: type, comptime FinalizerFn: *const fn 
             return result;
         }
 
-        pub fn set(this: *WeakFinalizer, ptr: *Context, value: JSC.JSValue) void {
-            var ref: *WeakImpl = this.ref orelse {
-                if (value == .zero) return;
-                this.ref = WeakImpl.init(ptr, finalizer, value);
-                return;
-            };
-            ref.set(ptr, finalizer, value);
-        }
-
-        pub fn clear(this: *WeakFinalizer) void {
+        pub fn clear(this: *WeakType) void {
             var ref: *WeakImpl = this.ref orelse return;
             ref.clear();
         }
 
-        pub fn deinit(this: *WeakFinalizer) void {
+        pub fn deinit(this: *WeakType) void {
             var ref: *WeakImpl = this.ref orelse return;
             this.ref = null;
             ref.deinit();
         }
     };
 }
-
-pub const Weak = struct {
-    ref: ?*WeakImpl = null,
-
-    pub fn init() Weak {
-        return .{};
-    }
-
-    pub fn create(
-        ptr: *anyopaque,
-        value: JSC.JSValue,
-    ) Weak {
-        if (value != .zero) {
-            return .{ .ref = WeakImpl.init(ptr, value, null) };
-        }
-
-        return .{};
-    }
-
-    pub fn get(this: *Weak) ?JSC.JSValue {
-        var ref = this.ref orelse return null;
-        const result = ref.get();
-        if (result == .zero) {
-            return null;
-        }
-
-        return result;
-    }
-
-    pub fn swap(this: *Weak) JSC.JSValue {
-        var ref = this.ref orelse return .zero;
-        const result = ref.get();
-        if (result == .zero) {
-            return .zero;
-        }
-
-        ref.clear();
-        return result;
-    }
-
-    pub fn has(this: *Weak) bool {
-        var ref = this.ref orelse return false;
-        return ref.get() != .zero;
-    }
-
-    pub fn trySwap(this: *Weak) ?JSC.JSValue {
-        const result = this.swap();
-        if (result == .zero) {
-            return null;
-        }
-
-        return result;
-    }
-
-    pub fn set(this: *Weak, ptr: *anyopaque, value: JSC.JSValue) void {
-        var ref: *WeakImpl = this.ref orelse {
-            if (value == .zero) return;
-            this.ref = WeakImpl.init(ptr, null, value);
-            return;
-        };
-        ref.set(ptr, null, value);
-    }
-
-    pub fn clear(this: *Weak) void {
-        var ref: *WeakImpl = this.ref orelse return;
-        ref.clear();
-    }
-
-    pub fn deinit(this: *Weak) void {
-        var ref: *WeakImpl = this.ref orelse return;
-        this.ref = null;
-        ref.deinit();
-    }
-};

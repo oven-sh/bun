@@ -8,6 +8,10 @@ const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const TaggedPointerUnion = @import("../../tagged_pointer.zig").TaggedPointerUnion;
 const string = bun.string;
 
+const PathWatcher = @import("./path_watcher.zig").PathWatcher;
+const EventType = PathWatcher.EventType;
+const Event = bun.JSC.Node.FSWatcher.Event;
+
 pub const CFAbsoluteTime = f64;
 pub const CFTimeInterval = f64;
 pub const CFArrayCallBacks = anyopaque;
@@ -370,23 +374,19 @@ pub const FSEventsLoop = struct {
                         path = path[handle_path.len..];
 
                         // Ignore events with path equal to directory itself
-                        if (path.len <= 1 and is_file) {
+                        if (path.len <= 1 and !is_file) {
                             continue;
                         }
-                        if (path.len == 0) {
-                            // Since we're using fsevents to watch the file itself, path == handle_path, and we now need to get the basename of the file back
-                            while (path.len > 0) {
-                                if (bun.strings.startsWithChar(path, '/')) {
-                                    path = path[1..];
-                                    break;
-                                } else {
-                                    path = path[1..];
-                                }
-                            }
 
+                        if (path.len == 0) {
+                            // Since we're using fsevents to watch the file itself handle_path == path, and we now need to get the basename of the file back
+                            const basename = bun.strings.lastIndexOfChar(handle_path, '/') orelse handle_path.len;
+                            path = handle_path[basename..];
                             // Created and Removed seem to be always set, but don't make sense
                             flags &= ~kFSEventsRenamed;
-                        } else {
+                        }
+
+                        if (bun.strings.startsWithChar(path, '/')) {
                             // Skip forward slash
                             path = path[1..];
                         }
@@ -405,7 +405,8 @@ pub const FSEventsLoop = struct {
                         }
                     }
 
-                    handle.emit(path, is_file, if (is_rename) .rename else .change);
+                    const event_type: EventType = if (is_rename) .rename else .change;
+                    handle.emit(event_type.toEvent(path), is_file);
                 }
                 handle.flush();
             }
@@ -580,13 +581,7 @@ pub const FSEventsWatcher = struct {
     recursive: bool,
     ctx: ?*anyopaque,
 
-    pub const EventType = enum {
-        rename,
-        change,
-        @"error",
-    };
-
-    pub const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
+    pub const Callback = PathWatcher.Callback;
     pub const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(loop: *FSEventsLoop, path: string, recursive: bool, callback: Callback, updateEnd: UpdateEndCallback, ctx: ?*anyopaque) *FSEventsWatcher {
@@ -605,8 +600,8 @@ pub const FSEventsWatcher = struct {
         return this;
     }
 
-    pub fn emit(this: *FSEventsWatcher, path: string, is_file: bool, event_type: EventType) void {
-        this.callback(this.ctx, path, is_file, event_type);
+    pub fn emit(this: *FSEventsWatcher, event: Event, is_file: bool) void {
+        this.callback(this.ctx, event, is_file);
     }
 
     pub fn flush(this: *FSEventsWatcher) void {

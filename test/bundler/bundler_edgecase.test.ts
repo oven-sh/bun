@@ -381,13 +381,13 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
       `,
       "/x.aaaa": `x`,
     },
+    outdir: "/out",
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
@@ -574,7 +574,7 @@ describe("bundler", () => {
             break;
         }
         console.log(a);
-    
+
         var x = 123, y = 45;
         switch (console) {
           case 456:
@@ -582,14 +582,14 @@ describe("bundler", () => {
         }
         var y = 67;
         console.log(x, y);
-    
+
         var z = 123;
         switch (console) {
           default:
             var z = typeof z;
         }
         console.log(z);
-    
+
         var A = 1, B = 2;
         switch (A) {
           case A:
@@ -1036,6 +1036,139 @@ describe("bundler", () => {
           yield+1
         }
       `,
+    },
+  });
+  itBundled("edgecase/UsingWithSixImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Database } from 'bun:sqlite';
+
+        import 'bun';
+        import 'bun:ffi';
+        import 'bun:jsc';
+        import 'node:assert';
+        import 'bun:test';
+
+        using a = new Database();
+
+        export { a };
+      `,
+    },
+    target: "bun",
+  });
+  itBundled("edgecase/EmitInvalidSourceMap1", {
+    files: {
+      "/src/index.ts": /* ts */ `
+        const y = await import("./second.mts");
+        import * as z from "./third.mts";
+        const v = await import("./third.mts");
+        console.log(z, v, y);
+      `,
+      "/src/second.mts": /* ts */ `
+        export default "swag";
+      `,
+      "/src/third.mts": /* ts */ `
+        export default "bun";
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    splitting: true,
+  });
+  // chunk-concat weaved mappings together incorrectly causing the `console`
+  // token to be -2, thus breaking the rest of the mappings in the file
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        import * as react from "react";
+        console.log(react);
+      `,
+      "/node_modules/react/index.js": `
+        var _ = module;
+        sideEffect(() =>   {});
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../node_modules/react/index.js", "../entry.js"],
+        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+      },
+    },
+  });
+  // chunk-concat forgets to de-duplicate source indicies
+  // chunk-concat ignores all but the first instance of a chunk
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        const a = new TextEncoder();
+        console.log('hey!')
+        const d = new TextEncoder();
+
+        const b = { hello: 'world' };
+
+        const c = new Set([
+        ]);
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../entry.js"],
+        mappingsExactMatch:
+          "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
+      },
+    },
+  });
+  itBundled("edgecase/NoUselessConstructorTS", {
+    files: {
+      "/entry.ts": `
+        class A {
+          constructor(...args) {
+            console.log(JSON.stringify({ args, self: this }));
+          }
+          field = 1;
+        }
+        class B extends A {}
+        class C extends A { field = 2 }
+        class D extends A { public field = 3 }
+        class E extends A { constructor(public y: number, a) { super(a); }; public field = 4 }
+        new A("arg1", "arg2");
+        new B("arg1", "arg2");
+        new C("arg1", "arg2");
+        new D("arg1", "arg2");
+        new E("arg1", "arg2");
+      `,
+    },
+    run: {
+      stdout: `
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg2"],"self":{"field":1}}
+      `,
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("out.js");
+      const count = content.split("constructor").length - 1;
+      expect(count, "should only emit two constructors: " + content).toBe(2);
     },
   });
 

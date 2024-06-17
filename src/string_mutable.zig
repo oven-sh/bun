@@ -228,7 +228,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
+        return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
@@ -255,7 +255,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
+        return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -447,29 +447,3 @@ pub const MutableString = struct {
         return bytes.len;
     }
 };
-
-test "MutableString" {
-    const alloc = std.heap.page_allocator;
-
-    var str = try MutableString.initCopy(alloc, "hello");
-    try expect(str.eql("hello"));
-}
-
-test "MutableString.ensureValidIdentifier" {
-    const alloc = std.heap.page_allocator;
-
-    try std.testing.expectEqualStrings("jquery", try MutableString.ensureValidIdentifier("jquery", alloc));
-    try std.testing.expectEqualStrings("jquery_foo", try MutableString.ensureValidIdentifier("jquery😋foo", alloc));
-}
-
-test "MutableString BufferedWriter" {
-    const alloc = std.heap.page_allocator;
-
-    var str = try MutableString.init(alloc, 0);
-    var buffered_writer = str.bufferedWriter();
-    var writer = buffered_writer.writer();
-    try writer.writeAll("hello world hello world hello world hello world hello world hello world");
-    try writer.context.flush();
-    str = writer.context.context.*;
-    try std.testing.expectEqualStrings("hello world hello world hello world hello world hello world hello world", str.toOwnedSlice());
-}

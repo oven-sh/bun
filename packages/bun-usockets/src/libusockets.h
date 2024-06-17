@@ -38,12 +38,18 @@
 
 /* 512kb shared receive buffer */
 #define LIBUS_RECV_BUFFER_LENGTH 524288
+
+/* Small 16KB shared send buffer for UDP packet metadata */
+#define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
 /* 32 byte padding of receive buffer ends */
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
+#define ALLOW_SERVER_RENEGOTIATION 0
+
+#define LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET 1
 
 /* Define what a socket descriptor is based on platform */
 #ifdef _WIN32
@@ -72,6 +78,7 @@ enum {
 
 /* Library types publicly available */
 struct us_socket_t;
+struct us_connecting_socket_t;
 struct us_timer_t;
 struct us_socket_context_t;
 struct us_loop_t;
@@ -101,14 +108,14 @@ int us_udp_socket_bound_port(struct us_udp_socket_t *s);
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Peeks ECN of received packet */
-int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
+// int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
 
 /* Receives a set of packets into specified packet buffer */
 int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);
 
 void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
 
-int us_udp_socket_send(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf, int num);
+int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num);
 
 /* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
 struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
@@ -120,7 +127,9 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, struct us_udp_packet_buffer_t *buf, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+struct us_udp_socket_t *us_create_udp_socket(struct us_loop_t *loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+
+void us_udp_socket_close(struct us_udp_socket_t *s);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -173,7 +182,8 @@ struct us_socket_events_t {
     struct us_socket_t *(*on_timeout)(struct us_socket_t *);
     struct us_socket_t *(*on_long_timeout)(struct us_socket_t *);
     struct us_socket_t *(*on_end)(struct us_socket_t *);
-    struct us_socket_t *(*on_connect_error)(struct us_socket_t *, int code);
+    struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
+    struct us_socket_t *(*on_connecting_socket_error)(struct us_socket_t *, int code);
     void (*on_handshake)(struct us_socket_t*, int success, struct us_bun_verify_error_t verify_error, void* custom_data);
 };
 
@@ -195,6 +205,8 @@ struct us_bun_socket_context_options_t {
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;
+    unsigned int client_renegotiation_limit;
+    unsigned int client_renegotiation_window;
 };
 
 /* Return 15-bit timestamp for this context */
@@ -235,6 +247,8 @@ void us_socket_context_on_long_timeout(int ssl, struct us_socket_context_t *cont
     struct us_socket_t *(*on_timeout)(struct us_socket_t *s));
 /* This one is only used for when a connecting socket fails in a late stage. */
 void us_socket_context_on_connect_error(int ssl, struct us_socket_context_t *context,
+    struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *s, int code));
+void us_socket_context_on_socket_connect_error(int ssl, struct us_socket_context_t *context,
     struct us_socket_t *(*on_connect_error)(struct us_socket_t *s, int code));
 
 void us_socket_context_on_handshake(int ssl, struct us_socket_context_t *context, void (*on_handshake)(struct us_socket_t *, int success, struct us_bun_verify_error_t verify_error, void* custom_data), void* custom_data);
@@ -258,9 +272,17 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
 /* listen_socket.c/.h */
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls);
 
-/* Land in on_open or on_connection_error or return null or return socket */
-struct us_socket_t *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
-    const char *host, int port, const char *source_host, int options, int socket_ext_size);
+/*
+    Returns one of 
+    - struct us_socket_t * - indicated by the value at on_connecting being set to 1
+      This is the fast path where the DNS result is available immediately and only a single remote
+      address is available
+    - struct us_connecting_socket_t * - indicated by the value at on_connecting being set to 0
+      This is the slow path where we must either go through DNS resolution or create multiple sockets
+      per the happy eyeballs algorithm
+*/
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context,
+    const char *host, int port, int options, int socket_ext_size, int *is_connecting);
 
 struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_context_t *context,
     const char *server_path, size_t pathlen, int options, int socket_ext_size);
@@ -269,10 +291,12 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */
 int us_socket_is_established(int ssl, struct us_socket_t *s);
 
+void us_connecting_socket_free(struct us_connecting_socket_t *c);
+
 /* Cancel a connecting socket. Can be used together with us_socket_timeout to limit connection times.
  * Entirely destroys the socket - this function works like us_socket_close but does not trigger on_close event since
  * you never got the on_open event first. */
-struct us_socket_t *us_socket_close_connecting(int ssl, struct us_socket_t *s);
+void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c);
 
 /* Returns the loop for this socket context. */
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context);
@@ -362,6 +386,7 @@ void us_socket_long_timeout(int ssl, struct us_socket_t *s, unsigned int minutes
 
 /* Return the user data extension of this socket */
 void *us_socket_ext(int ssl, struct us_socket_t *s);
+void *us_connecting_socket_ext(int ssl, struct us_connecting_socket_t *c);
 
 /* Return the socket context of this socket */
 struct us_socket_context_t *us_socket_context(int ssl, struct us_socket_t *s);

@@ -903,12 +903,15 @@ public:
             return true;
         }
         writeLittleEndian<uint8_t>(out, StringTag);
+        const auto length = string.length();
         if (string.is8Bit()) {
-            writeLittleEndian(out, string.length() | StringDataIs8BitFlag);
-            return writeLittleEndian(out, string.characters8(), string.length());
+            const auto span = string.span8();
+            writeLittleEndian(out, length | StringDataIs8BitFlag);
+            return writeLittleEndian(out, span.data(), length);
         }
-        writeLittleEndian(out, string.length());
-        return writeLittleEndian(out, string.characters16(), string.length());
+        const auto span = string.span16();
+        writeLittleEndian(out, length);
+        return writeLittleEndian(out, span.data(), length);
     }
 
 private:
@@ -2063,11 +2066,11 @@ private:
         if (!length)
             return;
         if (str.is8Bit()) {
-            if (!writeLittleEndian(m_buffer, str.characters8(), length))
+            if (!writeLittleEndian(m_buffer, str.span8().data(), length))
                 fail();
             return;
         }
-        if (!writeLittleEndian(m_buffer, str.characters16(), length))
+        if (!writeLittleEndian(m_buffer, str.span16().data(), length))
             fail();
     }
 
@@ -3241,7 +3244,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = Identifier::fromString(vm, reinterpret_cast<const LChar*>(ptr), length);
+            str = Identifier::fromString(vm, { reinterpret_cast<const LChar*>(ptr), length });
             ptr += length;
             return true;
         }
@@ -3251,7 +3254,7 @@ private:
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = Identifier::fromString(vm, reinterpret_cast<const UChar*>(ptr), length);
+        str = Identifier::fromString(vm, { reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
         UChar* characters;

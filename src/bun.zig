@@ -28,6 +28,7 @@ else
 pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
 
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
@@ -46,6 +47,10 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 
+pub const patch = @import("./patch.zig");
+
+pub const glob = @import("./glob.zig");
+
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
     pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
@@ -53,7 +58,7 @@ pub const shell = struct {
 };
 
 pub const Output = @import("./output.zig");
-pub const Global = @import("./__global.zig");
+pub const Global = @import("./Global.zig");
 
 // make this non-pub after https://github.com/ziglang/zig/issues/18462 is resolved
 pub const FileDescriptorInt = if (Environment.isBrowser)
@@ -65,6 +70,7 @@ else if (Environment.isWindows)
 else
     std.os.fd_t;
 
+pub const FD = FileDescriptor;
 pub const FileDescriptor = enum(FileDescriptorInt) {
     /// Zero is used in old filesystem code to indicate "no file descriptor"
     /// This is problematic because on POSIX, this is ambiguous with stdin being 0.
@@ -134,6 +140,23 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn cwd() FileDescriptor {
         return toFD(std.fs.cwd().fd);
+    }
+
+    pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
+        if (Environment.isPosix) return this.int() == that.int();
+
+        const this_ = FDImpl.decode(this);
+        const that_ = FDImpl.decode(that);
+        return switch (this_.kind) {
+            .system => switch (that_.kind) {
+                .system => this_.value.as_system == that_.value.as_system,
+                .uv => false,
+            },
+            .uv => switch (that_.kind) {
+                .system => false,
+                .uv => this_.value.as_uv == that_.value.as_uv,
+            },
+        };
     }
 
     pub fn isStdio(fd: FileDescriptor) bool {
@@ -225,20 +248,6 @@ pub inline fn cast(comptime To: type, value: anytype) To {
     return @ptrCast(@alignCast(value));
 }
 
-extern fn strlen(ptr: [*c]const u8) usize;
-
-pub fn indexOfSentinel(comptime Elem: type, comptime sentinel: Elem, ptr: [*:sentinel]const Elem) usize {
-    if (Elem == u8 and sentinel == 0) {
-        return strlen(ptr);
-    } else {
-        var i: usize = 0;
-        while (ptr[i] != sentinel) {
-            i += 1;
-        }
-        return i;
-    }
-}
-
 pub fn len(value: anytype) usize {
     return switch (@typeInfo(@TypeOf(value))) {
         .Array => |info| info.len,
@@ -259,11 +268,11 @@ pub fn len(value: anytype) usize {
                     @compileError("length of pointer with no sentinel");
                 const sentinel = @as(*align(1) const info.child, @ptrCast(sentinel_ptr)).*;
 
-                return indexOfSentinel(info.child, sentinel, value);
+                return std.mem.indexOfSentinel(info.child, sentinel, value);
             },
             .C => {
                 assert(value != null);
-                return indexOfSentinel(info.child, 0, value);
+                return std.mem.indexOfSentinel(info.child, 0, value);
             },
             .Slice => value.len,
         },
@@ -741,7 +750,8 @@ pub const uws = @import("./deps/uws.zig");
 pub const BoringSSL = @import("./boringssl.zig");
 pub const LOLHTML = @import("./deps/lol-html.zig");
 pub const clap = @import("./deps/zig-clap/clap.zig");
-pub const analytics = @import("./analytics.zig");
+pub const analytics = @import("./analytics/analytics_thread.zig");
+pub const zlib = @import("./zlib.zig");
 
 pub var start_time: i128 = 0;
 
@@ -783,6 +793,12 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     }
 }
 
+pub fn openDirNoRenamingOrDeletingWindows(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
+    if (comptime !Environment.isWindows) @compileError("use openDir!");
+    const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+    return res.asDir();
+}
+
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
     if (comptime Environment.isWindows) {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
@@ -813,10 +829,28 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
+pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+    return struct {
+        const flag_ = flag;
+        const state = enum(u8) { idk, disabled, enabled };
+        var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
+        pub fn get() bool {
+            return switch (is_enabled.load(.SeqCst)) {
+                .enabled => true,
+                .disabled => false,
+                .idk => {
+                    const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
+                    is_enabled.store(if (enabled) .enabled else .disabled, .SeqCst);
+                    return enabled;
+                },
+            };
+        }
+    }.get();
+}
 
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
-pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
+pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     if (comptime !Environment.isNative) {
         return null;
     }
@@ -826,8 +860,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            const key = line[0..key_end];
-            if (strings.eqlInsensitive(key, path_)) {
+            if (strings.eqlInsensitive(line[0..key_end], key)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -835,7 +868,7 @@ pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
         return null;
     }
 
-    const ptr = std.c.getenv(path_.ptr) orelse return null;
+    const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
 }
 
@@ -1296,7 +1329,7 @@ fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
 pub const getcwd = std.os.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
-    var temp: [MAX_PATH_BYTES]u8 = undefined;
+    var temp: PathBuffer = undefined;
     const temp_slice = try getcwd(&temp);
     return allocator.dupe(u8, temp_slice);
 }
@@ -1342,6 +1375,12 @@ pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
     };
 }
 
+pub fn getFdPathZ(fd_: anytype, buf: *PathBuffer) ![:0]u8 {
+    const path_ = try getFdPath(fd_, buf);
+    buf[path_.len] = 0;
+    return buf[0..path_.len :0];
+}
+
 pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     const fd = toFD(fd_).cast();
 
@@ -1362,7 +1401,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
                     if (array_info.sentinel) |sentinel_ptr| {
                         const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
-                            return indexOfSentinel(array_info.child, end, ptr);
+                            return std.mem.indexOfSentinel(array_info.child, end, ptr);
                         }
                     }
                     return std.mem.indexOfScalar(array_info.child, ptr, end) orelse array_info.len;
@@ -1380,13 +1419,13 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
             },
             .C => {
                 assert(ptr != null);
-                return indexOfSentinel(ptr_info.child, end, ptr);
+                return std.mem.indexOfSentinel(ptr_info.child, end, ptr);
             },
             .Slice => {
                 if (ptr_info.sentinel) |sentinel_ptr| {
                     const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                     if (sentinel == end) {
-                        return indexOfSentinel(ptr_info.child, sentinel, ptr);
+                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, ptr);
                     }
                 }
                 return std.mem.indexOfScalar(ptr_info.child, ptr, end) orelse ptr.len;
@@ -1496,8 +1535,9 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
+pub const StringJoiner = @import("./StringJoiner.zig");
+pub const NullableAllocator = @import("./NullableAllocator.zig");
 
-pub const Joiner = @import("./string_joiner.zig");
 pub const renamer = @import("./renamer.zig");
 pub const sourcemap = struct {
     pub usingnamespace @import("./sourcemap/sourcemap.zig");
@@ -1578,7 +1618,7 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
-fn isProcessReloadInProgressOnAnotherThread() bool {
+pub fn isProcessReloadInProgressOnAnotherThread() bool {
     @fence(.Acquire);
     return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
 }
@@ -1606,18 +1646,26 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
-/// Reload Bun's process
+/// Reload Bun's process. This clones envp, argv, and gets the current
+/// executable path.
 ///
-/// This clones envp, argv, and gets the current executable path
+/// On posix, this overwrites the current process with the new process using
+/// `execve`. On Windows, we dont have this API, instead relying on a dummy
+/// parent process that we can signal via a special exit code.
 ///
-/// Overwrites the current process with the new process
-///
-/// Must be able to allocate memory. malloc is not signal safe, but it's
+/// Must be able to allocate memory. `malloc` is not signal safe, but it's
 /// best-effort. Not much we can do if it fails.
+///
+/// Note that this function is called during the crash handler, in which it is
+/// passed true to `may_return`. If failure occurs, one line of standard error
+/// is printed and then this returns void. If `may_return == false`, then a
+/// panic will occur on failure. The crash handler will not schedule two reloads
+/// at once.
 pub fn reloadProcess(
     allocator: std.mem.Allocator,
     clear_terminal: bool,
-) noreturn {
+    comptime may_return: bool,
+) if (may_return) void else noreturn {
     __reload_in_progress__.store(true, .Monotonic);
     __reload_in_progress__on_current_thread = true;
 
@@ -1626,23 +1674,33 @@ pub fn reloadProcess(
         Output.disableBuffering();
         Output.resetTerminalAll();
     }
+
     Output.Source.Stdio.restore();
     const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
         // see becomeWatcherManager
-        const rc = bun.windows.TerminateProcess(@ptrFromInt(std.math.maxInt(usize)), win32.watcher_reload_exit);
+        const rc = bun.windows.TerminateProcess(bun.windows.GetCurrentProcess(), win32.watcher_reload_exit);
         if (rc == 0) {
             const err = bun.windows.GetLastError();
+            if (may_return) {
+                Output.errGeneric("Failed to reload process: {s}", .{@tagName(err)});
+                return;
+            }
             Output.panic("Error while reloading process: {s}", .{@tagName(err)});
         } else {
+            if (may_return) {
+                Output.errGeneric("Failed to reload process", .{});
+                return;
+            }
             Output.panic("Unexpected error while reloading process\n", .{});
         }
     }
+
     const PosixSpawn = posix.spawn;
-    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv().len, null) catch unreachable;
-    for (bun.argv(), dupe_argv) |src, *dest| {
+    const dupe_argv = allocator.allocSentinel(?[*:0]const u8, bun.argv.len, null) catch unreachable;
+    for (bun.argv, dupe_argv) |src, *dest| {
         dest.* = (allocator.dupeZ(u8, src) catch unreachable).ptr;
     }
 
@@ -1686,9 +1744,17 @@ pub fn reloadProcess(
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process: {s}", .{@tagName(err.getErrno())});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: {d} {s}", .{ err.errno, @tagName(err.getErrno()) });
             },
             .result => |_| {
+                if (may_return) {
+                    Output.errGeneric("Failed to reload process", .{});
+                    return;
+                }
                 Output.panic("Unexpected error while reloading: posix_spawn returned a result", .{});
             },
         }
@@ -1703,6 +1769,10 @@ pub fn reloadProcess(
             newargv,
             envp,
         );
+        if (may_return) {
+            Output.errGeneric("Failed to reload process: {s}", .{@errorName(err)});
+            return;
+        }
         Output.panic("Unexpected error while reloading: {s}", .{@errorName(err)});
     } else {
         @compileError("unsupported platform for reloadProcess");
@@ -2103,14 +2173,62 @@ const WindowsStat = extern struct {
 
 pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
 
-var _argv: [][:0]const u8 = &[_][:0]const u8{};
-
-pub inline fn argv() [][:0]const u8 {
-    return _argv;
-}
+pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
 pub fn initArgv(allocator: std.mem.Allocator) !void {
-    _argv = try std.process.argsAlloc(allocator);
+    if (comptime !Environment.isWindows) {
+        argv = try std.process.argsAlloc(allocator);
+    } else {
+        // Zig's implementation of `std.process.argsAlloc()`on Windows platforms
+        // is not reliable, specifically the way it splits the command line string.
+        //
+        // For example, an arg like "foo\nbar" will be
+        // erroneously split into two arguments: "foo" and "bar".
+        //
+        // To work around this, we can simply call the Windows API functions
+        // that do this for us.
+        //
+        // Updates in Zig v0.12 related to Windows cmd line parsing may fix this,
+        // see (here: https://ziglang.org/download/0.12.0/release-notes.html#Windows-Command-Line-Argument-Parsing),
+        // so this may only need to be a temporary workaround.
+        const cmdline_ptr = std.os.windows.kernel32.GetCommandLineW();
+        var length: c_int = 0;
+
+        // As per the documentation:
+        // > The lifetime of the returned value is managed by the system,
+        //   applications should not free or modify this value.
+        const argvu16_ptr = windows.CommandLineToArgvW(cmdline_ptr, &length) orelse {
+            switch (sys.getErrno({})) {
+                // may be returned if can't alloc enough space for the str
+                .NOMEM => return error.OutOfMemory,
+                // may be returned if it's invalid
+                .INVAL => return error.InvalidArgument,
+                // TODO: anything else?
+                else => return error.Unknown,
+            }
+        };
+
+        const argvu16 = argvu16_ptr[0..@intCast(length)];
+        const out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        var string_builder = StringBuilder{};
+
+        for (argvu16) |argraw| {
+            const arg = std.mem.span(argraw);
+            string_builder.count16Z(arg);
+        }
+
+        try string_builder.allocate(allocator);
+
+        for (argvu16, out_argv) |argraw, *out| {
+            const arg = std.mem.span(argraw);
+
+            // Command line is expected to be valid UTF-16le
+            // ...but sometimes, it's not valid. https://github.com/oven-sh/bun/issues/11610
+            out.* = string_builder.append16(arg, default_allocator) orelse @panic("Failed to allocate memory for argv");
+        }
+
+        argv = out_argv;
+    }
 }
 
 pub const posix = struct {
@@ -2186,8 +2304,34 @@ pub const win32 = struct {
         // this process will be the parent of the child process that actually runs the script
         var procinfo: std.os.windows.PROCESS_INFORMATION = undefined;
         C.windows_enable_stdio_inheritance();
+        const job = windows.CreateJobObjectA(null, null) orelse Output.panic(
+            "Could not create watcher Job Object: {s}",
+            .{@tagName(std.os.windows.kernel32.GetLastError())},
+        );
+        var jeli = std.mem.zeroes(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION);
+        jeli.BasicLimitInformation.LimitFlags =
+            windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+            windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK |
+            windows.JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK |
+            windows.JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+        if (windows.SetInformationJobObject(
+            job,
+            windows.JobObjectExtendedLimitInformation,
+            &jeli,
+            @sizeOf(windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION),
+        ) == 0) {
+            Output.panic(
+                "Could not configure watcher Job Object: {s}",
+                .{@tagName(std.os.windows.kernel32.GetLastError())},
+            );
+        }
+
         while (true) {
-            spawnWatcherChild(allocator, &procinfo) catch |err| {
+            spawnWatcherChild(allocator, &procinfo, job) catch |err| {
+                handleErrorReturnTrace(err, @errorReturnTrace());
+                if (err == error.Win32Error) {
+                    Output.panic("Failed to spawn process: {s}\n", .{@tagName(std.os.windows.kernel32.GetLastError())});
+                }
                 Output.panic("Failed to spawn process: {s}\n", .{@errorName(err)});
             };
             w.WaitForSingleObject(procinfo.hProcess, w.INFINITE) catch |err| {
@@ -2213,8 +2357,29 @@ pub const win32 = struct {
     pub fn spawnWatcherChild(
         allocator: std.mem.Allocator,
         procinfo: *std.os.windows.PROCESS_INFORMATION,
+        job: w.HANDLE,
     ) !void {
-        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT;
+        // https://devblogs.microsoft.com/oldnewthing/20230209-00/?p=107812
+        var attr_size: usize = undefined;
+        _ = windows.InitializeProcThreadAttributeList(null, 1, 0, &attr_size);
+        const p = try allocator.alloc(u8, attr_size);
+        defer allocator.free(p);
+        if (windows.InitializeProcThreadAttributeList(p.ptr, 1, 0, &attr_size) == 0) {
+            return error.Win32Error;
+        }
+        if (windows.UpdateProcThreadAttribute(
+            p.ptr,
+            0,
+            windows.PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            @ptrCast(&job),
+            @sizeOf(w.HANDLE),
+            null,
+            null,
+        ) == 0) {
+            return error.Win32Error;
+        }
+
+        const flags: std.os.windows.DWORD = w.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT;
 
         const image_path = windows.exePathW();
         var wbuf: WPathBuffer = undefined;
@@ -2252,25 +2417,28 @@ pub const win32 = struct {
         envbuf[size + watcherChildEnv.len + 2] = 0;
         envbuf[size + watcherChildEnv.len + 3] = 0;
 
-        var startupinfo = w.STARTUPINFOW{
-            .cb = @sizeOf(w.STARTUPINFOW),
-            .lpReserved = null,
-            .lpDesktop = null,
-            .lpTitle = null,
-            .dwX = 0,
-            .dwY = 0,
-            .dwXSize = 0,
-            .dwYSize = 0,
-            .dwXCountChars = 0,
-            .dwYCountChars = 0,
-            .dwFillAttribute = 0,
-            .dwFlags = w.STARTF_USESTDHANDLES,
-            .wShowWindow = 0,
-            .cbReserved2 = 0,
-            .lpReserved2 = null,
-            .hStdInput = std.io.getStdIn().handle,
-            .hStdOutput = std.io.getStdOut().handle,
-            .hStdError = std.io.getStdErr().handle,
+        var startupinfo = windows.STARTUPINFOEXW{
+            .StartupInfo = .{
+                .cb = @sizeOf(windows.STARTUPINFOEXW),
+                .lpReserved = null,
+                .lpDesktop = null,
+                .lpTitle = null,
+                .dwX = 0,
+                .dwY = 0,
+                .dwXSize = 0,
+                .dwYSize = 0,
+                .dwXCountChars = 0,
+                .dwYCountChars = 0,
+                .dwFillAttribute = 0,
+                .dwFlags = w.STARTF_USESTDHANDLES,
+                .wShowWindow = 0,
+                .cbReserved2 = 0,
+                .lpReserved2 = null,
+                .hStdInput = std.io.getStdIn().handle,
+                .hStdOutput = std.io.getStdOut().handle,
+                .hStdError = std.io.getStdErr().handle,
+            },
+            .lpAttributeList = p.ptr,
         };
         @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
@@ -2282,12 +2450,15 @@ pub const win32 = struct {
             flags,
             envbuf.ptr,
             null,
-            &startupinfo,
+            @ptrCast(&startupinfo),
             procinfo,
         );
         if (rc == 0) {
-            Output.panic("Unexpected error while reloading process\n", .{});
+            return error.Win32Error;
         }
+        var is_in_job: w.BOOL = 0;
+        _ = windows.IsProcessInJob(procinfo.hProcess, job, &is_in_job);
+        assert(is_in_job != 0);
         _ = std.os.windows.ntdll.NtClose(procinfo.hThread);
     }
 };
@@ -2437,6 +2608,16 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
         };
         component = it.next() orelse return;
     }
+}
+
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePathW(dir: std.fs.Dir, sub_path: []const u16) !void {
+    // was going to copy/paste makePath and use all W versions but they didn't all exist
+    // and this buffer was needed anyway
+    var buf: PathBuffer = undefined;
+    const buf_len = simdutf.convert.utf16.to.utf8.le(sub_path, &buf);
+    return makePath(dir, buf[0..buf_len]);
 }
 
 pub const Async = @import("async");
@@ -2746,9 +2927,13 @@ pub const Dirname = struct {
 
 pub noinline fn outOfMemory() noreturn {
     @setCold(true);
+    crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
+}
 
-    // TODO: In the future, we should print jsc + mimalloc heap statistics
-    @panic("Bun ran out of memory!");
+pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
+    const ptr = allocator.create(T) catch outOfMemory();
+    ptr.* = t;
+    return ptr;
 }
 
 pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
@@ -2763,6 +2948,10 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, t: T) *T {
+    if (comptime @hasDecl(T, "is_bun.New()")) {
+        // You will get weird memory bugs in debug builds if you use the wrong allocator.
+        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
+    }
     if (comptime is_heap_breakdown_enabled) {
         const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
         ptr.* = t;
@@ -2774,24 +2963,25 @@ pub inline fn new(comptime T: type, t: T) *T {
     return ptr;
 }
 
-/// Free a globally-allocated a value
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
+pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+
+pub inline fn dupe(comptime T: type, t: *T) *T {
     if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            destroy(t);
-            return;
-        }
+        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
+        ptr.* = t.*;
+        return ptr;
     }
 
-    allocator.destroy(t);
+    const ptr = default_allocator.create(T) catch outOfMemory();
+    ptr.* = t.*;
+    return ptr;
 }
 
 pub fn New(comptime T: type) type {
     return struct {
         const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        pub const @"is_bun.New()" = true;
 
         pub inline fn destroy(self: *T) void {
             if (comptime Environment.allow_assert) {
@@ -2922,18 +3112,6 @@ pub inline fn destroy(t: anytype) void {
     }
 }
 
-pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            return new(T, t);
-        }
-    }
-
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
-}
-
 pub fn exitThread() noreturn {
     const exiter = struct {
         pub extern "C" fn pthread_exit(?*anyopaque) noreturn;
@@ -3058,7 +3236,7 @@ pub inline fn markPosixOnly() if (Environment.isPosix) void else noreturn {
 
 pub fn linuxKernelVersion() Semver.Version {
     if (comptime !Environment.isLinux) @compileError("linuxKernelVersion() is only available on Linux");
-    return @import("./analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+    return analytics.GenerateHeader.GeneratePlatform.kernelVersion();
 }
 
 pub fn selfExePath() ![:0]u8 {
@@ -3115,13 +3293,29 @@ pub fn SliceIterator(comptime T: type) type {
 
 pub const Futex = @import("./futex.zig");
 
+pub const crash_handler = @import("crash_handler.zig");
+pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
+
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     }
 
     @setCold(true);
-    Output.panic("Internal assertion failure. This is a bug in Bun.", .{});
+    Output.panic("Internal assertion failure", .{});
+}
+
+noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure {s}:{d}:{d}", .{
+        src.file,
+        src.line,
+        src.column,
+    });
 }
 
 pub inline fn debugAssert(cheap_value_only_plz: bool) void {
@@ -3134,7 +3328,7 @@ pub inline fn debugAssert(cheap_value_only_plz: bool) void {
     }
 }
 
-pub inline fn assert(value: bool) void {
+pub fn assert(value: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
@@ -3145,8 +3339,263 @@ pub inline fn assert(value: bool) void {
     }
 }
 
+pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailureWithLocation(src);
+    }
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_eql(a: anytype, b: anytype) void {
+    return assert(a == b);
+}
+
+/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+pub inline fn assert_neql(a: anytype, b: anytype) void {
+    return assert(a != b);
+}
+
 pub inline fn unsafeAssert(condition: bool) void {
     if (!condition) {
         unreachable;
     }
 }
+
+pub const dns = @import("./dns.zig");
+
+pub fn getRoughTickCount() timespec {
+    if (comptime Environment.isMac) {
+        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
+        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.c.clock_getres(C.CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = C.CLOCK_MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = C.CLOCK_MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+
+        // We use this one because we can avoid reading the mach timebase info ourselves.
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isLinux) {
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                } else {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isWindows) {
+        const ms = getRoughTickCountMs();
+        return timespec{
+            .sec = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * 1_000_000),
+        };
+    }
+
+    return 0;
+}
+
+/// When you don't need a super accurate timestamp, this is a fast way to get one.
+///
+/// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
+///
+/// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
+pub fn getRoughTickCountMs() u64 {
+    if (Environment.isWindows) {
+        const GetTickCount64 = struct {
+            pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
+        }.GetTickCount64;
+        return GetTickCount64();
+    }
+
+    const spec = getRoughTickCount();
+    return spec.ns() / std.time.ns_per_ms;
+}
+
+pub const timespec = extern struct {
+    sec: isize = 0,
+    nsec: isize = 0,
+
+    pub fn eql(this: *const timespec, other: *const timespec) bool {
+        return this.sec == other.sec and this.nsec == other.nsec;
+    }
+
+    pub fn toInstant(this: *const timespec) std.time.Instant {
+        if (comptime Environment.isPosix) {
+            return std.time.Instant{
+                .timestamp = @bitCast(this.*),
+            };
+        }
+
+        if (comptime Environment.isWindows) {
+            return std.time.Instant{
+                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
+            };
+        }
+    }
+
+    // TODO: this is wrong!
+    pub fn duration(this: *const timespec, other: *const timespec) timespec {
+        var sec_diff = this.sec - other.sec;
+        var nsec_diff = this.nsec - other.nsec;
+
+        if (nsec_diff < 0) {
+            sec_diff -= 1;
+            nsec_diff += std.time.ns_per_s;
+        }
+
+        return timespec{
+            .sec = sec_diff,
+            .nsec = nsec_diff,
+        };
+    }
+
+    pub fn order(a: *const timespec, b: *const timespec) std.math.Order {
+        const sec_order = std.math.order(a.sec, b.sec);
+        if (sec_order != .eq) return sec_order;
+        return std.math.order(a.nsec, b.nsec);
+    }
+
+    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
+    /// 584 years so if we get any overflows we just use maxInt(u64). If
+    /// any software is running in 584 years waiting on this timer...
+    /// shame on me I guess... but I'll be dead.
+    pub fn ns(this: *const timespec) u64 {
+        if (this.sec <= 0) {
+            return @max(this.nsec, 0);
+        }
+
+        assert(this.sec >= 0);
+        assert(this.nsec >= 0);
+
+        const max = std.math.maxInt(u64);
+        const s_ns = std.math.mul(
+            u64,
+            @as(u64, @intCast(this.sec)),
+            std.time.ns_per_s,
+        ) catch return max;
+
+        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+            return max;
+    }
+
+    pub fn ms(this: *const timespec) u64 {
+        return this.ns() / std.time.ns_per_ms;
+    }
+
+    pub fn greater(a: *const timespec, b: *const timespec) bool {
+        return a.order(b) == .gt;
+    }
+
+    pub fn now() timespec {
+        return getRoughTickCount();
+    }
+
+    pub fn sinceNow(start: *const timespec) u64 {
+        return now().duration(start).ns();
+    }
+
+    pub fn addMs(this: *const timespec, interval: i64) timespec {
+        const sec_inc = @divTrunc(interval, std.time.ms_per_s);
+        const nsec_inc = @rem(interval, std.time.ms_per_s) * std.time.ns_per_ms;
+
+        var new_timespec = this.*;
+
+        new_timespec.sec += sec_inc;
+        new_timespec.nsec += nsec_inc;
+
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec += 1;
+            new_timespec.nsec -= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
+
+    pub fn msFromNow(interval: i64) timespec {
+        return now().addMs(interval);
+    }
+};
+
+pub const UUID = @import("./bun.js/uuid.zig");
+
+/// An abstract number of element in a sequence. The sequence has a first element.
+/// This type should be used instead of integer because 2 contradicting traditions can
+/// call a first element '0' or '1' which makes integer type ambiguous.
+pub fn OrdinalT(comptime Int: type) type {
+    return enum(Int) {
+        invalid = switch (@typeInfo(Int).Int.signedness) {
+            .unsigned => std.math.maxInt(Int),
+            .signed => -1,
+        },
+        start = 0,
+        _,
+
+        pub fn fromZeroBased(int: Int) @This() {
+            assert(int >= 0);
+            assert(int != std.math.maxInt(Int));
+            return @enumFromInt(int);
+        }
+
+        pub fn fromOneBased(int: Int) @This() {
+            assert(int > 0);
+            return @enumFromInt(int - 1);
+        }
+
+        pub fn zeroBased(ord: @This()) Int {
+            return @intFromEnum(ord);
+        }
+
+        pub fn oneBased(ord: @This()) Int {
+            return @intFromEnum(ord) + 1;
+        }
+
+        pub fn add(ord: @This(), inc: Int) @This() {
+            return fromZeroBased(ord.zeroBased() + inc);
+        }
+
+        pub fn isValid(ord: @This()) bool {
+            return ord.zeroBased() >= 0;
+        }
+    };
+}
+
+/// ABI-equivalent of WTF::OrdinalNumber
+pub const Ordinal = OrdinalT(c_int);

@@ -20,7 +20,7 @@ $ bun add @neondatabase/serverless
 Create a `.env.local` file and add your [Neon Postgres connection string](https://neon.tech/docs/connect/connect-from-any-app) to it.
 
 ```sh
-DATBASE_URL=postgresql://username:password@ep-adj-noun-guid.us-east-1.aws.neon.tech/neondb?sslmode=require
+DATABASE_URL=postgresql://username:password@ep-adj-noun-guid.us-east-1.aws.neon.tech/neondb?sslmode=require
 ```
 
 ---
@@ -41,10 +41,10 @@ console.log(rows[0].version);
 
 ---
 
-Start the program using `bun run`. The Postgres version should be printed to the console.
+Start the program using `bun ./index.ts`. The Postgres version should be printed to the console.
 
 ```sh
-$ bun run index.ts
+$ bun ./index.ts
 PostgreSQL 16.2 on x86_64-pc-linux-gnu, compiled by gcc (Debian 10.2.1-6) 10.2.1 20210110, 64-bit
 ```
 

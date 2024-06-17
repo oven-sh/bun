@@ -161,7 +161,6 @@ pub extern fn JSC__JSPromise__rejectAsHandledException(arg0: ?*bindings.JSPromis
 pub extern fn JSC__JSPromise__rejectedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__rejectedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSPromise__rejectOnNextTickWithHandled(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, arg3: bool) void;
-pub extern fn JSC__JSPromise__rejectWithCaughtException(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, arg2: bJSC__ThrowScope) void;
 pub extern fn JSC__JSPromise__resolve(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__resolvedPromiseValue(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) JSC__JSValue;
@@ -175,7 +174,6 @@ pub extern fn JSC__JSInternalPromise__reject(arg0: [*c]bindings.JSInternalPromis
 pub extern fn JSC__JSInternalPromise__rejectAsHandled(arg0: [*c]bindings.JSInternalPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSInternalPromise__rejectAsHandledException(arg0: [*c]bindings.JSInternalPromise, arg1: *bindings.JSGlobalObject, arg2: [*c]bindings.Exception) void;
 pub extern fn JSC__JSInternalPromise__rejectedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) [*c]bindings.JSInternalPromise;
-pub extern fn JSC__JSInternalPromise__rejectWithCaughtException(arg0: [*c]bindings.JSInternalPromise, arg1: *bindings.JSGlobalObject, arg2: bJSC__ThrowScope) void;
 pub extern fn JSC__JSInternalPromise__resolve(arg0: [*c]bindings.JSInternalPromise, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSInternalPromise__resolvedPromise(arg0: *bindings.JSGlobalObject, JSValue1: JSC__JSValue) [*c]bindings.JSInternalPromise;
 pub extern fn JSC__JSInternalPromise__result(arg0: [*c]const JSC__JSInternalPromise, arg1: *bindings.VM) JSC__JSValue;
@@ -286,7 +284,7 @@ pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__keys(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSValue__makeWithNameAndPrototype(arg0: *bindings.JSGlobalObject, arg1: ?*anyopaque, arg2: ?*anyopaque, arg3: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSValue__values(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__push(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSValue__put(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;

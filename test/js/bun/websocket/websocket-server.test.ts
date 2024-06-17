@@ -19,7 +19,7 @@ const strings = [
   {
     label: "string (utf-8)",
     message: "utf8-😶",
-    bytes: [0x75, 0x74, 0x66, 0x38, 0x2d, 0xf0, 0x9f, 0x98, 0xb6],
+    bytes: Buffer.from("utf8-😶"),
   },
 ] as const;
 
@@ -42,6 +42,7 @@ const buffers = [
 ] as const;
 
 const messages = [...strings, ...buffers] as const;
+let topicI = 0;
 
 const binaryTypes = [
   {
@@ -71,6 +72,20 @@ afterEach(() => {
 });
 
 describe("Server", () => {
+  test("subscribe", done => ({
+    open(ws) {
+      expect(() => ws.subscribe("")).toThrow("subscribe requires a non-empty topic name");
+      ws.subscribe("topic");
+      expect(ws.isSubscribed("topic")).toBeTrue();
+      ws.unsubscribe("topic");
+      expect(ws.isSubscribed("topic")).toBeFalse();
+      ws.close();
+    },
+    close(ws, code, reason) {
+      done();
+    },
+  }));
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {
@@ -185,29 +200,28 @@ describe("Server", () => {
     // FIXME: close() callback is called, but only after timeout?
     it.todo("closeOnBackpressureLimit");
     /*
-    test("closeOnBackpressureLimit", done => ({
-      closeOnBackpressureLimit: true,
-      backpressureLimit: 1,
-      open(ws) {
-        const data = new Uint8Array(1 * 1024 * 1024);
-        // send data until backpressure is triggered
-        for (let i = 0; i < 10; i++) {
-          if (ws.send(data) < 1) {
-            return;
+      test("closeOnBackpressureLimit", done => ({
+        closeOnBackpressureLimit: true,
+        backpressureLimit: 1,
+        open(ws) {
+          const data = new Uint8Array(1 * 1024 * 1024);
+          // send data until backpressure is triggered
+          for (let i = 0; i < 10; i++) {
+            if (ws.send(data) < 1) {
+              return;
+            }
           }
-        }
-        done(new Error("backpressure not triggered"));
-      },
-      close(_, code) {
-        expect(code).toBe(1006);
-        done();
-      },
-    }));
-    */
+          done(new Error("backpressure not triggered"));
+        },
+        close(_, code) {
+          expect(code).toBe(1006);
+          done();
+        },
+      }));
+      */
     it.todo("perMessageDeflate");
   });
 });
-
 describe("ServerWebSocket", () => {
   test("readyState", done => ({
     open(ws) {
@@ -308,6 +322,17 @@ describe("ServerWebSocket", () => {
       30_000,
     );
   });
+  test("send/sendText/sendBinary error on invalid arguments", done => ({
+    open(ws) {
+      // @ts-expect-error
+      expect(() => ws.send("hello", "world")).toThrow("send expects compress to be a boolean");
+      // @ts-expect-error
+      expect(() => ws.sendText("hello", "world")).toThrow("sendText expects compress to be a boolean");
+      // @ts-expect-error
+      expect(() => ws.sendBinary(Buffer.from("hello"), "world")).toThrow("sendBinary expects compress to be a boolean");
+      done();
+    },
+  }));
   describe("sendBinary()", () => {
     for (const { label, message, bytes } of buffers) {
       test(label, done => ({
@@ -336,54 +361,100 @@ describe("ServerWebSocket", () => {
   });
   describe("subscribe()", () => {
     for (const { label, message } of strings) {
+      const topic = label + topicI++;
       test(label, done => ({
         open(ws) {
-          expect(ws.isSubscribed(message)).toBeFalse();
-          ws.subscribe(message);
-          expect(ws.isSubscribed(message)).toBeTrue();
-          ws.unsubscribe(message);
-          expect(ws.isSubscribed(message)).toBeFalse();
+          expect(ws.isSubscribed(topic)).toBeFalse();
+          ws.subscribe(topic);
+          expect(ws.isSubscribed(topic)).toBeTrue();
+          ws.unsubscribe(topic);
+          expect(ws.isSubscribed(topic)).toBeFalse();
           done();
         },
       }));
     }
   });
   describe("publish()", () => {
-    for (const { label, message, bytes } of messages) {
-      const topic = typeof message === "string" ? message : label;
+    for (const [group, messages] of [
+      ["strings", strings],
+      ["buffers", buffers],
+    ] as const) {
+      describe(group, () => {
+        for (const { label, message, bytes } of messages) {
+          const topic = label + topicI++;
+          let didSend = false;
+          const send = ws => {
+            if (ws.data.id === 1 && !didSend) {
+              if (ws.publish(topic, message)) {
+                didSend = true;
+              }
+            }
+          };
+          test(label, (done, connect) => ({
+            async open(ws) {
+              ws.subscribe(topic);
+              if (ws.data.id === 0) {
+                await connect();
+              } else {
+                send(ws);
+              }
+            },
+            drain(ws) {
+              send(ws);
+            },
+            message(ws, received) {
+              if (ws.data.id === 1) {
+                throw new Error("Expected publish() to not send to self");
+              }
+              if (typeof message === "string") {
+                expect(received).toBe(message);
+              } else {
+                expect(received).toEqual(Buffer.from(bytes));
+              }
+              done();
+            },
+          }));
+        }
+      });
+    }
+  });
+  test("publish/publishText/publishBinary error on invalid arguments", done => ({
+    async open(ws) {
+      // @ts-expect-error
+      expect(() => ws.publish("hello", Buffer.from("hi"), "invalid")).toThrow(
+        "publish expects compress to be a boolean",
+      );
+      // @ts-expect-error
+      expect(() => ws.publishText("hello", "hi", "invalid")).toThrow("publishText expects compress to be a boolean");
+      // @ts-expect-error
+      expect(() => ws.publishBinary("hello", Buffer.from("hi"), "invalid")).toThrow(
+        "publishBinary expects compress to be a boolean",
+      );
+      done();
+    },
+  }));
+  describe("publishBinary()", () => {
+    for (const { label, message, bytes } of buffers) {
+      const topic = label + topicI++;
+      let didSend = false;
+      const send = ws => {
+        if (ws.data.id === 1 && !didSend) {
+          if (ws.publishBinary(topic, message)) {
+            didSend = true;
+          }
+        }
+      };
       test(label, (done, connect) => ({
         async open(ws) {
           ws.subscribe(topic);
           if (ws.data.id === 0) {
-            connect();
-          } else if (ws.data.id === 1) {
-            ws.publish(topic, message);
-          }
-        },
-        message(ws, received) {
-          if (ws.data.id === 1) {
-            throw new Error("Expected publish() to not send to self");
-          }
-          if (typeof message === "string") {
-            expect(received).toBe(message);
+            await connect();
           } else {
-            expect(received).toEqual(Buffer.from(bytes));
+            send(ws);
           }
-          done();
         },
-      }));
-    }
-  });
-  describe("publishBinary()", () => {
-    for (const { label, message, bytes } of buffers) {
-      test(label, (done, connect) => ({
-        async open(ws) {
-          ws.subscribe(label);
-          if (ws.data.id === 0) {
-            connect();
-          } else if (ws.data.id === 1) {
-            ws.publishBinary(label, message);
-          }
+        drain(ws) {
+          send(ws);
         },
         message(ws, received) {
           if (ws.data.id === 1) {
@@ -396,15 +467,27 @@ describe("ServerWebSocket", () => {
     }
   });
   describe("publishText()", () => {
-    for (const { label, message } of strings) {
+    for (let { label, message } of strings) {
+      const topic = label + topicI++;
+      let didSend = false;
+      const send = ws => {
+        if (ws.data.id === 1 && !didSend) {
+          if (ws.publishText(topic, message)) {
+            didSend = true;
+          }
+        }
+      };
       test(label, (done, connect) => ({
         async open(ws) {
-          ws.subscribe(label);
+          ws.subscribe(topic);
           if (ws.data.id === 0) {
-            connect();
+            await connect();
           } else if (ws.data.id === 1) {
-            ws.publishText(label, message);
+            send(ws);
           }
+        },
+        drain(ws) {
+          send(ws);
         },
         message(ws, received) {
           if (ws.data.id === 1) {
@@ -418,12 +501,23 @@ describe("ServerWebSocket", () => {
   });
   describe("publish() with { publishToSelf: true }", () => {
     for (const { label, message, bytes } of messages) {
-      const topic = typeof message === "string" ? message : label;
+      const topic = label + topicI++;
+      let didSend = false;
+      const send = ws => {
+        if (!didSend) {
+          if (ws.publish(topic, message)) {
+            didSend = true;
+          }
+        }
+      };
       test(label, done => ({
         publishToSelf: true,
         async open(ws) {
           ws.subscribe(topic);
-          ws.publish(topic, message);
+          send(ws);
+        },
+        drain(ws) {
+          send(ws);
         },
         message(_, received) {
           if (typeof message === "string") {
@@ -538,9 +632,11 @@ describe("ServerWebSocket", () => {
       }));
     }
   });
-  test("terminate()", done => ({
+  test("terminate() on next tick", done => ({
     open(ws) {
-      ws.terminate();
+      setTimeout(() => {
+        ws.terminate();
+      });
     },
     close(_, code, reason) {
       expect(code).toBe(1006);
@@ -548,6 +644,24 @@ describe("ServerWebSocket", () => {
       done();
     },
   }));
+  // TODO: terminate() inside open() doesn't call close().
+  it.todo("terminate() inside open() calls close()");
+  // test("terminate() immediately", done => ({
+  //   open(ws) {
+  //     ws.terminate();
+  //   },
+  //   close(_, code, reason) {
+  //     console.log(code, reason);
+  //     try {
+  //       expect(code).toBe(1006);
+  //       expect(reason).toBeEmpty();
+  //     } catch (e) {
+  //       done(e);
+  //       return;
+  //     }
+  //     done();
+  //   },
+  // }));
 });
 
 function test(
@@ -557,7 +671,7 @@ function test(
 ) {
   it(
     label,
-    testDone => {
+    async testDone => {
       let isDone = false;
       const done = (err?: unknown) => {
         if (!isDone) {
@@ -582,8 +696,7 @@ function test(
           ...fn(done, () => connect(server)),
         },
       });
-      servers.push(server);
-      connect(server);
+      await connect(server);
     },
     { timeout: timeout ?? 1000 },
   );
@@ -592,17 +705,19 @@ function test(
 async function connect(server: Server): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
   const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
-  // @ts-ignore
+  const { promise, resolve } = Promise.withResolvers();
   const client = spawn({
-    cmd: [nodeExe() ?? bunExe(), pathname, url],
+    cmd: [bunExe(), pathname, url.href],
     cwd: import.meta.dir,
     env: { ...bunEnv, "LOG_MESSAGES": "0" },
-    stdio: ["inherit", "pipe", "inherit"],
+    stdio: ["inherit", "inherit", "inherit"],
+    ipc(message) {
+      if (message === "connected") {
+        resolve();
+      }
+    },
+    serialization: "json",
   });
   clients.push(client);
-  for await (const chunk of client.stdout) {
-    if (new TextDecoder().decode(chunk).includes("Connected")) {
-      return;
-    }
-  }
+  await promise;
 }

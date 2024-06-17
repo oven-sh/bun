@@ -1,13 +1,15 @@
 import { $, spawn } from "bun";
 import { describe, test, expect } from "bun:test";
-import { TestBuilder } from "./test_builder";
+import { createTestBuilder } from "./test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 import { bunEnv, bunExe } from "harness";
 import * as path from "node:path";
 
+$.nothrow();
 describe("$ argv", async () => {
   for (let i = 0; i < process.argv.length; i++) {
     const element = process.argv[i];
-    TestBuilder.command`echo $${i}`
+    TestBuilder.command`echo $${{ raw: i }}`
       .exitCode(0)
       .stdout(process.argv[i] + "\n")
       .runAsTest(`$${i} should equal process.argv[${i}]`);

@@ -828,19 +828,3 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
     .{ "zwj", @as(CodePoint, 0x200D) },
     .{ "zwnj", @as(CodePoint, 0x200C) },
 });
-
-test "tokenToString" {
-    try expectString(tokenToString.get(T.t_end_of_file), "end of file");
-}
-
-// test "jsxEntity" {
-//     try alloc.setup(std.heap.page_allocator);
-
-//     initJSXEntityMap() catch |err| {
-//         @panic(@errorName(err));
-//     };
-
-//     if (jsxEntity.get("sim")) |v| {
-//         expect(v == 0x223C);
-//     }
-// }

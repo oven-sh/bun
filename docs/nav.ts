@@ -309,6 +309,9 @@ export default {
     page("api/tcp", "TCP sockets", {
       description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
     }), // "`Bun.{listen|connect}`")
+    page("api/udp", "UDP sockets", {
+      description: `Bun's native API implements fast and flexible UDP sockets.`,
+    }), // "`Bun.udpSocket`")
     page("api/globals", "Globals", {
       description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
@@ -339,9 +342,6 @@ export default {
     page("api/utils", "Utils", {
       description: `Bun implements a set of utilities that are commonly required by developers.`,
     }), // "`Bun.peek`"),
-    // page("api/dns", "DNS", {
-    //   description: `Resolve domain names to IP addresses.`,
-    // }), // "`bun:dns`"),
     page("api/node-api", "Node-API", {
       description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),
@@ -349,6 +349,10 @@ export default {
     page("api/glob", "Glob", {
       description: `Bun includes a fast native Glob implementation for matching file paths.`,
     }), // "`Glob`"),
+
+    page("api/dns", "DNS", {
+      description: `Resolve domain names to IP addresses.`,
+    }), // "`bun:dns`"),
 
     page("api/semver", "Semver", {
       description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,

@@ -4,7 +4,7 @@ pub usingnamespace @import("./webcore/streams.zig");
 pub usingnamespace @import("./webcore/blob.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
-
+pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
 const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
@@ -122,6 +122,15 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
 
     switch (first_byte) {
         '\n' => return .false,
+        '\r' => {
+            const next_byte = reader.readByte() catch {
+                // They may have said yes, but the stdin is invalid.
+                return .false;
+            };
+            if (next_byte == '\n') {
+                return .false;
+            }
+        },
         'y', 'Y' => {
             const next_byte = reader.readByte() catch {
                 // They may have said yes, but the stdin is invalid.
@@ -133,13 +142,21 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
                 return .true;
+            } else if (next_byte == '\r') {
+                //Check Windows style
+                const second_byte = reader.readByte() catch {
+                    return .false;
+                };
+                if (second_byte == '\n') {
+                    return .true;
+                }
             }
         },
         else => {},
     }
 
     while (reader.readByte()) |b| {
-        if (b == '\n') break;
+        if (b == '\n' or b == '\r') break;
     } else |_| {}
 
     // 8. If the user responded positively, return true; otherwise, the user
@@ -657,27 +674,6 @@ pub const Crypto = struct {
 
         uuid.print(bytes[0..36]);
         return str.toJS(globalThis);
-    }
-
-    pub fn randomInt(_: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        const arguments = callframe.arguments(2).slice();
-
-        const min_value: ?JSValue = if (arguments.len > 0 and !arguments[0].isEmptyOrUndefinedOrNull()) arguments[0] else null;
-        const max_value: ?JSValue = if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) arguments[1] else null;
-
-        var at_least: u52 = 0;
-        var at_most: u52 = std.math.maxInt(u52);
-
-        if (min_value) |min| {
-            if (max_value) |max| {
-                if (min.isNumber()) at_least = min.to(u52);
-                if (max.isNumber()) at_most = max.to(u52);
-            } else {
-                if (min.isNumber()) at_most = min.to(u52);
-            }
-        }
-
-        return JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
     }
 
     pub fn randomUUIDWithoutTypeChecks(

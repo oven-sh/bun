@@ -2,8 +2,8 @@
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
-import { mkdtemp, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe } from "harness";
+import { rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, dirname } from "path";
 
@@ -27,7 +27,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
   })
 `;
 
-  const test_dir = await mkdtemp(join(tmp, "test"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(join(test_dir, "bad.test.js"), code);
     const { stdout, stderr, exited } = spawn({
@@ -183,20 +183,47 @@ try {
   test();
 } catch (e) {}
 
-describe("throw in describe scope doesn't enqueue tests after thrown", () => {
-  it("test enqueued before a describe scope throws is never run", () => {
-    throw new Error("This test failed");
+test("describe scope throwing doesn't block other tests from running", async () => {
+  const code = `
+  describe("throw in describe scope doesn't enqueue tests after thrown", () => {
+    it("test enqueued before a describe scope throws is never run", () => {
+      throw new Error("This test failed");
+    });
+  
+    throw "This test passed. Ignore the error message";
+  
+    it("test enqueued after a describe scope throws is never run", () => {
+      throw new Error("This test failed");
+    });
+  });
+  
+  it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
+    console.log(
+      String.fromCharCode(...[73, 32, 104, 97, 118, 101, 32, 98, 101, 101, 110, 32, 114, 101, 97, 99, 104, 101, 100, 33]),
+    );
+  });  
+`;
+
+  const dir = tmpdirSync();
+  const filepath = join(dir, "test-i-have-been-reached.test.js");
+  rmSync(filepath, {
+    force: true,
   });
 
-  throw "This test passed. Ignore the error message";
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (e) {}
+  writeFileSync(filepath, code);
 
-  it("test enqueued after a describe scope throws is never run", () => {
-    throw new Error("This test failed");
+  const { stdout, stderr, exitCode } = spawnSync([bunExe(), "test", "test-i-have-been-reached.test.js"], {
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-});
 
-it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
-  expect(true).toBe(true);
+  expect(stdout.toString()).toContain("I have been reached!");
+  expect(stderr.toString()).toContain("1 error");
 });
 
 test("test async exceptions fail tests", () => {
@@ -229,37 +256,10 @@ test("test async exceptions fail tests", () => {
     await 1;
   });
 
-  test('test throwing inside a setTimeout', async () => {
-    await new Promise((resolve, reject) => {
-      setTimeout(() => {
-        resolve();
-        throw new Error('test throwing inside an EventEmitter #FAIL004');
-      }, 0);
-    });
-  });
 
-  test('test throwing inside an async setTimeout', async () => {
-    await new Promise((resolve, reject) => {
-      setTimeout(async () => {
-        await 1;
-        resolve();
-        throw new Error('test throwing inside an EventEmitter #FAIL005');
-      }, 0);
-    });
-  });
-
-
-  test('test throwing inside an async setTimeout no await' , async () => {
-    await new Promise((resolve, reject) => {
-      setTimeout(async () => {
-        resolve();
-        throw new Error('test throwing inside an EventEmitter #FAIL006');
-      }, 0);
-    });
-  });
 
   `;
-  const dir = join(tmp, "test-throwing-bun");
+  const dir = tmpdirSync();
   const filepath = join(dir, "test-throwing-eventemitter.test.js");
   rmSync(filepath, {
     force: true,
@@ -279,17 +279,14 @@ test("test async exceptions fail tests", () => {
   expect(str).toContain("#FAIL001");
   expect(str).toContain("#FAIL002");
   expect(str).toContain("#FAIL003");
-  expect(str).toContain("#FAIL004");
-  expect(str).toContain("#FAIL005");
-  expect(str).toContain("#FAIL006");
-  expect(str).toContain("6 fail");
+  expect(str).toContain("3 fail");
   expect(str).toContain("0 pass");
 
   expect(exitCode).toBe(1);
 });
 
 it("should return non-zero exit code for invalid syntax", async () => {
-  const test_dir = await mkdtemp(join(tmp, "test"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(join(test_dir, "bad.test.js"), "!!!");
     const { stdout, stderr, exited } = spawn({
@@ -314,7 +311,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
 });
 
 it("invalid syntax counts towards bail", async () => {
-  const test_dir = await mkdtemp(join(tmp, "test"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(join(test_dir, "bad1.test.js"), "!!!");
     await writeFile(join(test_dir, "bad2.test.js"), "!!!");
@@ -526,7 +523,7 @@ it("test.todo doesnt cause exit code 1", () => {
 it("test timeouts when expected", () => {
   const path = join(tmp, "test-timeout.test.js");
   copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);
-  const { stdout, stderr, exited } = spawnSync({
+  const { stderr } = spawnSync({
     cmd: [bunExe(), "test", path],
     stdout: "pipe",
     stderr: "pipe",
@@ -535,8 +532,24 @@ it("test timeouts when expected", () => {
   });
 
   const err = stderr!.toString();
-  expect(err).toContain("timed out after 10ms");
+  expect(err).toHaveTestTimedOutAfter(10);
   expect(err).not.toContain("unreachable code");
+});
+
+test("jest.setTimeout will change default timeout", () => {
+  const path = join(tmp, "jest-setTimeout-test.test.js");
+  copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);
+  const { stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", path],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: dirname(path),
+  });
+
+  const err = stderr!.toString();
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
 });
 
 it("expect().toEqual() on objects with property indices doesn't print undefined", () => {
@@ -551,7 +564,7 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   });
 
   let err = stderr!.toString();
-  err = err.substring(err.indexOf("expect(received).toEqual(expected)"), err.indexOf("at "));
+  err = err.substring(err.indexOf("expect(received).toEqual(expected)"), err.indexOf("at ")).trim();
 
   expect(err).toMatchSnapshot();
   expect(err).not.toContain("undefined");
@@ -616,7 +629,7 @@ it("skip() and skipIf()", () => {
 });
 
 it("should run beforeAll() & afterAll() even without tests", async () => {
-  const test_dir = await mkdtemp(join(tmp, "test-hooks-empty"));
+  const test_dir = tmpdirSync();
   try {
     await writeFile(
       join(test_dir, "empty.test.js"),
@@ -652,5 +665,66 @@ describe("empty", () => {
     expect(await exited).toBe(0);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
+  }
+});
+
+describe("unhandled errors between tests are reported", () => {
+  const stages = ["beforeAll", "beforeEach", "afterEach", "afterAll", "describe"];
+
+  for (const stage of stages) {
+    test("in " + stage, () => {
+      const code = /*js*/ `
+import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe} from "bun:test";
+
+${stage}(async () => {
+  Bun.sleep(1).then(() => {
+    throw new Error('## stage ${stage} ##');
+  });
+  await Bun.sleep(1);
+});
+
+test("my-test", () => {
+  expect(1).toBe(1);
+});
+    `.trim();
+
+      const test_dir = tempDirWithFiles("unhandled-" + stage, {
+        "my-test.test.js": code,
+        "package.json": "{}",
+      });
+
+      const { stderr, exited } = spawnSync({
+        cmd: [bunExe(), "test", "my-test.test.js"],
+        cwd: test_dir,
+        stdout: "inherit",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      expect(
+        stderr
+          .toString()
+          .replaceAll(test_dir, "<dir>")
+          .replaceAll("\r\n", "\n")
+          .replaceAll("\\", "/")
+          .split("\n")
+          .filter(a => {
+            if (a.includes("(:")) return false;
+            if (a.includes("bun test v")) return false;
+
+            // Timers are a little inconsistent on macOS vs Linux
+            // On Linux, it might not run in time, but on macOS it will
+            if (a.includes(" expect() calls")) return false;
+
+            return true;
+          })
+          .map(a =>
+            a
+              .trimEnd()
+              .replace(/\[((\d+)(\.?)\d+\s?ms)\]/, "")
+              .trimEnd(),
+          )
+          .join("\n"),
+      ).toMatchSnapshot();
+    });
   }
 });

@@ -66,7 +66,7 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         };
         defer allocator.free(json_source.contents);
 
-        const json = try json_parser.ParseJSONUTF8(&json_source, log, allocator);
+        const json = try json_parser.ParsePackageJSONUTF8(&json_source, log, allocator);
 
         const prop = json.asProperty("workspaces") orelse continue;
 
@@ -110,8 +110,28 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
 
 pub const FilterSet = struct {
     allocator: std.mem.Allocator,
+
+    // TODO: Pattern should be
+    //  union (enum) { name: []const u32, path: []const u32, any_name: void }
     filters: []Pattern,
     has_name_filters: bool = false,
+    match_all: bool = false,
+
+    pub fn matches(this: *const FilterSet, path: []const u8, name: []const u8) bool {
+        if (this.match_all) {
+            // allow empty name if there are any filters which are a relative path
+            // --filter="*" --filter="./bar" script
+            if (name.len > 0) {
+                return true;
+            }
+        }
+
+        if (this.has_name_filters) {
+            return this.matchesPathName(path, name);
+        }
+
+        return this.matchesPath(path);
+    }
 
     const Pattern = struct {
         codepoints: []u32,
@@ -125,8 +145,14 @@ pub const FilterSet = struct {
     pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd: []const u8) !FilterSet {
         var buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
-        var self = FilterSet{ .allocator = allocator, .filters = try allocator.alloc(Pattern, filters.len) };
-        for (self.filters, filters) |*pattern, filter_utf8_| {
+        var list = try std.ArrayList(Pattern).initCapacity(allocator, filters.len);
+        var self = FilterSet{ .allocator = allocator, .filters = &.{} };
+        for (filters) |filter_utf8_| {
+            if (strings.eqlComptime(filter_utf8_, "*") or strings.eqlComptime(filter_utf8_, "**")) {
+                self.match_all = true;
+                continue;
+            }
+
             var filter_utf8 = filter_utf8_;
             const is_path = filter_utf8.len > 0 and filter_utf8[0] == '.';
             if (is_path) {
@@ -143,11 +169,12 @@ pub const FilterSet = struct {
                 try filter_utf32.append(self.allocator, cursor.c);
             }
             self.has_name_filters = self.has_name_filters or !is_path;
-            pattern.* = Pattern{
+            try list.append(.{
                 .codepoints = filter_utf32.items,
                 .kind = if (is_path) .path else .name,
-            };
+            });
         }
+        self.filters = list.items;
         return self;
     }
 
@@ -159,7 +186,7 @@ pub const FilterSet = struct {
         self.allocator.free(self.filters);
     }
 
-    pub fn matchesPath(self: *FilterSet, path: []const u8) bool {
+    pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
             if (Glob.matchImpl(filter.codepoints, path)) {
                 return true;
@@ -168,7 +195,7 @@ pub const FilterSet = struct {
         return false;
     }
 
-    pub fn matchesPathName(self: *FilterSet, path: []const u8, name: []const u8) bool {
+    pub fn matchesPathName(self: *const FilterSet, path: []const u8, name: []const u8) bool {
         for (self.filters) |filter| {
             const target = switch (filter.kind) {
                 .name => name,

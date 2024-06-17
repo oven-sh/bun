@@ -54,16 +54,42 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 /* Poll type and what it polls for */
 enum {
-  /* Two first bits */
+  /* Three first bits */
   POLL_TYPE_SOCKET = 0,
   POLL_TYPE_SOCKET_SHUT_DOWN = 1,
   POLL_TYPE_SEMI_SOCKET = 2,
   POLL_TYPE_CALLBACK = 3,
+  POLL_TYPE_UDP = 4,
 
   /* Two last bits */
-  POLL_TYPE_POLLING_OUT = 4,
-  POLL_TYPE_POLLING_IN = 8
+  POLL_TYPE_POLLING_OUT = 8,
+  POLL_TYPE_POLLING_IN = 16,
 };
+
+#define POLL_TYPE_BITSIZE 5 // make sure to update epoll_kqueue.h if you change this
+#define POLL_TYPE_KIND_MASK 0b111
+#define POLL_TYPE_POLLING_MASK 0b11000
+#define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
+
+/* Bun APIs implemented in Zig */
+void Bun__lock(uint32_t *lock);
+void Bun__unlock(uint32_t *lock);
+
+struct addrinfo_request;
+struct addrinfo_result_entry {
+    struct addrinfo info;
+    struct sockaddr_storage _storage;
+};
+struct addrinfo_result {
+    struct addrinfo_result_entry* entries;
+    int error;
+};
+
+extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
+extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
+extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
+extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+
 
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error,
@@ -106,6 +132,10 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
 void us_internal_socket_context_unlink_socket(
     struct us_socket_context_t *context, struct us_socket_t *s);
 
+void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
+void us_internal_socket_after_open(struct us_socket_t *s, int error);
+int us_internal_handle_dns_results(struct us_loop_t *loop);
+
 /* Sockets are polls */
 struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p; // 4 bytes
@@ -116,11 +146,44 @@ struct us_socket_t {
                          = was in low-prio queue in this iteration */
   struct us_socket_context_t *context;
   struct us_socket_t *prev, *next;
+  struct us_socket_t *connect_next;
+  struct us_connecting_socket_t *connect_state;
+};
+
+struct us_connecting_socket_t {
+    alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
+    struct us_socket_context_t *context;
+    struct us_connecting_socket_t *next;
+    struct us_socket_t *connecting_head;
+    int options;
+    int socket_ext_size;
+    unsigned int closed : 1, shutdown : 1, ssl : 1, shutdown_read : 1, pending_resolve_callback : 1;
+    unsigned char timeout;
+    unsigned char long_timeout;
+    uint16_t port;
+    int error;
+    struct addrinfo *addrinfo_head;
 };
 
 struct us_wrapped_socket_context_t {
   struct us_socket_events_t events;
   struct us_socket_events_t old_events;
+};
+
+struct us_udp_socket_t {
+    alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
+    void (*on_data)(struct us_udp_socket_t *, void *, int);
+    void (*on_drain)(struct us_udp_socket_t *);
+    void (*on_close)(struct us_udp_socket_t *);
+    void *user;
+    struct us_loop_t *loop;
+    /* An UDP socket can only ever be bound to one single port regardless of how
+     * many interfaces it may listen to. Therefore we cache the port after creation
+     * and use it to build a proper and full sockaddr_in or sockaddr_in6 for every received packet */
+    uint16_t port;
+    uint16_t closed : 1;
+    uint16_t connected : 1;
+    struct us_udp_socket_t *next;
 };
 
 #if defined(LIBUS_USE_KQUEUE)
@@ -188,8 +251,10 @@ struct us_socket_context_t {
   struct us_socket_t *(*on_socket_timeout)(struct us_socket_t *);
   struct us_socket_t *(*on_socket_long_timeout)(struct us_socket_t *);
   struct us_socket_t *(*on_end)(struct us_socket_t *);
-  struct us_socket_t *(*on_connect_error)(struct us_socket_t *, int code);
+  struct us_connecting_socket_t *(*on_connect_error)(struct us_connecting_socket_t *, int code);
+  struct us_socket_t *(*on_socket_connect_error)(struct us_socket_t *, int code);
   int (*is_low_prio)(struct us_socket_t *);
+  
 };
 
 /* Internal SSL interface */
@@ -254,7 +319,10 @@ void us_internal_ssl_socket_context_on_data(
     struct us_internal_ssl_socket_t *(*on_data)(
         struct us_internal_ssl_socket_t *s, char *data, int length));
 
-void us_internal_ssl_handshake(struct us_internal_ssl_socket_t *s);
+void us_internal_update_handshake(struct us_internal_ssl_socket_t *s);
+int us_internal_renegotiate(struct us_internal_ssl_socket_t *s);
+void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
+                                            int success);
 void us_internal_on_ssl_handshake(
     struct us_internal_ssl_socket_context_t *context,
     us_internal_on_handshake_t onhandshake, void *custom_data);
@@ -284,17 +352,22 @@ void us_internal_ssl_socket_context_on_connect_error(
     struct us_internal_ssl_socket_t *(*on_connect_error)(
         struct us_internal_ssl_socket_t *s, int code));
 
+void us_internal_ssl_socket_context_on_socket_connect_error(
+        struct us_internal_ssl_socket_context_t *context,
+    struct us_internal_ssl_socket_t *(*on_socket_connect_error)(
+        struct us_internal_ssl_socket_t *s, int code));
+
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     struct us_internal_ssl_socket_context_t *context, const char *host,
     int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path, 
+    struct us_internal_ssl_socket_context_t *context, const char *path,
     size_t pathlen, int options, int socket_ext_size);
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect(
+struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, const char *source_host, int options, int socket_ext_size);
+    int port, int options, int socket_ext_size, int* is_resolved);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
@@ -313,6 +386,7 @@ us_internal_ssl_socket_context_ext(struct us_internal_ssl_socket_context_t *s);
 struct us_internal_ssl_socket_context_t *
 us_internal_ssl_socket_get_context(struct us_internal_ssl_socket_t *s);
 void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s);
+void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *c);
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s);
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s);
 

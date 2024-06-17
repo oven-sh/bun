@@ -23,6 +23,7 @@ pub const FILE_BEGIN = windows.FILE_BEGIN;
 pub const FILE_END = windows.FILE_END;
 pub const FILE_CURRENT = windows.FILE_CURRENT;
 pub const ULONG = windows.ULONG;
+pub const ULONGLONG = windows.ULONGLONG;
 pub const UINT = windows.UINT;
 pub const LARGE_INTEGER = windows.LARGE_INTEGER;
 pub const UNICODE_STRING = windows.UNICODE_STRING;
@@ -77,6 +78,7 @@ pub const PathBuffer = if (Environment.isWindows) bun.PathBuffer else void;
 pub const WPathBuffer = if (Environment.isWindows) bun.WPathBuffer else void;
 
 pub const HANDLE = win32.HANDLE;
+pub const HMODULE = win32.HMODULE;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
 pub extern "kernel32" fn GetFileInformationByHandle(
@@ -90,10 +92,10 @@ pub extern "kernel32" fn SetFileValidData(
     validDataLength: c_longlong,
 ) callconv(windows.WINAPI) win32.BOOL;
 
-pub extern fn CommandLineToArgvW(
+pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
-) [*]win32.LPWSTR;
+) callconv(windows.WINAPI) ?[*]win32.LPWSTR;
 
 pub extern fn GetFileType(
     hFile: win32.HANDLE,
@@ -3046,6 +3048,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.C.E {
         .RETRY => .AGAIN,
         .DIRECTORY_NOT_EMPTY => .NOTEMPTY,
         .FILE_TOO_LARGE => .@"2BIG",
+        .NOT_SAME_DEVICE => .XDEV,
         .SHARING_VIOLATION => if (comptime Environment.isDebug) brk: {
             bun.Output.debugWarn("Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE", .{});
             break :brk .BUSY;
@@ -3079,7 +3082,7 @@ pub extern "kernel32" fn GetTempPathW(
 pub extern "kernel32" fn CreateJobObjectA(
     lpJobAttributes: ?*anyopaque, // [in, optional]
     lpName: ?LPCSTR, // [in, optional]
-) callconv(windows.WINAPI) HANDLE;
+) callconv(windows.WINAPI) ?HANDLE;
 
 pub extern "kernel32" fn AssignProcessToJobObject(
     hJob: HANDLE, // [in]
@@ -3095,7 +3098,39 @@ pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
     CompletionPort: HANDLE,
 };
 
+pub const JOBOBJECT_EXTENDED_LIMIT_INFORMATION = extern struct {
+    BasicLimitInformation: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    ///Reserved
+    IoInfo: IO_COUNTERS,
+    ProcessMemoryLimit: usize,
+    JobMemoryLimit: usize,
+    PeakProcessMemoryUsed: usize,
+    PeakJobMemoryUsed: usize,
+};
+
+pub const IO_COUNTERS = extern struct {
+    ReadOperationCount: ULONGLONG,
+    WriteOperationCount: ULONGLONG,
+    OtherOperationCount: ULONGLONG,
+    ReadTransferCount: ULONGLONG,
+    WriteTransferCount: ULONGLONG,
+    OtherTransferCount: ULONGLONG,
+};
+
+pub const JOBOBJECT_BASIC_LIMIT_INFORMATION = extern struct {
+    PerProcessUserTimeLimit: LARGE_INTEGER,
+    PerJobUserTimeLimit: LARGE_INTEGER,
+    LimitFlags: DWORD,
+    MinimumWorkingSetSize: usize,
+    MaximumWorkingSetSize: usize,
+    ActiveProcessLimit: DWORD,
+    Affinity: *ULONG,
+    PriorityClass: DWORD,
+    SchedulingClass: DWORD,
+};
+
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
+pub const JobObjectExtendedLimitInformation: DWORD = 9;
 
 pub extern "kernel32" fn SetInformationJobObject(
     hJob: HANDLE,
@@ -3367,6 +3402,42 @@ pub fn GetFinalPathNameByHandle(
     return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
 }
 
+extern "kernel32" fn GetModuleHandleExW(
+    dwFlags: u32, // [in]
+    lpModuleName: ?*anyopaque, // [in, optional]
+    phModule: *HMODULE, // [out]
+) BOOL;
+
+extern "kernel32" fn GetModuleFileNameW(
+    hModule: HMODULE, // [in]
+    lpFilename: LPWSTR, // [out]
+    nSize: DWORD, // [in]
+) BOOL;
+
+const GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
+
+pub fn getModuleHandleFromAddress(addr: usize) ?HMODULE {
+    var module: HMODULE = undefined;
+    const rc = GetModuleHandleExW(
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        @ptrFromInt(addr),
+        &module,
+    );
+    // If the function succeeds, the return value is nonzero.
+    return if (rc != 0) module else null;
+}
+
+pub fn getModuleNameW(module: HMODULE, buf: []u16) ?[]const u16 {
+    const rc = GetModuleFileNameW(module, @ptrCast(buf.ptr), @intCast(buf.len));
+    if (rc == 0) return null;
+    return buf[0..@intCast(rc)];
+}
+
+pub extern "kernel32" fn GetThreadDescription(
+    thread: ?*anyopaque, // [in]
+    *PWSTR, // [out]
+) std.os.windows.HRESULT;
+
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
@@ -3487,3 +3558,37 @@ pub fn DeleteFileBun(sub_path_w: []const u16, options: DeleteFileOptions) bun.JS
 
     return .{ .result = {} };
 }
+
+pub const EXCEPTION_CONTINUE_EXECUTION = -1;
+pub const MS_VC_EXCEPTION = 0x406d1388;
+
+pub const STARTUPINFOEXW = extern struct {
+    StartupInfo: std.os.windows.STARTUPINFOW,
+    lpAttributeList: [*]u8,
+};
+
+pub extern "kernel32" fn InitializeProcThreadAttributeList(
+    lpAttributeList: ?[*]u8,
+    dwAttributeCount: DWORD,
+    dwFlags: DWORD,
+    size: *usize,
+) BOOL;
+
+pub extern "kernel32" fn UpdateProcThreadAttribute(
+    lpAttributeList: [*]u8, // [in, out]
+    dwFlags: DWORD, // [in]
+    Attribute: windows.DWORD_PTR, // [in]
+    lpValue: *const anyopaque, // [in]
+    cbSize: usize, // [in]
+    lpPreviousValue: ?*anyopaque, // [out, optional]
+    lpReturnSize: ?*usize, // [in, optional]
+) BOOL;
+
+pub extern "kernel32" fn IsProcessInJob(process: HANDLE, job: HANDLE, result: *BOOL) BOOL;
+
+pub const EXTENDED_STARTUPINFO_PRESENT = 0x80000;
+pub const PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x2000D;
+pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000;
+pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION = 0x400;
+pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x800;
+pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK = 0x00001000;

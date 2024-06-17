@@ -39,7 +39,7 @@ _read_scripts_in_package_json() {
         [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
     done
 
-    [[ -f "${working_dir}/package.json" ]] && package_json=$(<${working_dir}/package.json);
+    [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
         local package_json_compreply;

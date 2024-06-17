@@ -97,6 +97,8 @@ const BuildMessage = JSC.BuildMessage;
 const ResolveMessage = JSC.ResolveMessage;
 const Async = bun.Async;
 
+const Ordinal = bun.Ordinal;
+
 pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
     return struct {
@@ -114,13 +116,18 @@ export var has_bun_garbage_collector_flag_enabled = false;
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
+const SourceProviderMap = SourceMap.SourceProviderMap;
 
 const uv = bun.windows.libuv;
 
 pub const SavedSourceMap = struct {
+    /// This is a pointer to the map located on the VirtualMachine struct
+    map: *HashTable,
+    mutex: bun.Lock = bun.Lock.init(),
+
     pub const vlq_offset = 24;
 
-    // For bun.js, we store the number of mappings and how many bytes the final list is at the beginning of the array
+    // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
     pub const SavedMappings = struct {
@@ -172,16 +179,57 @@ pub const SavedSourceMap = struct {
         }
     };
 
+    /// ParsedSourceMap is the canonical form for sourcemaps,
+    ///
+    /// but `SavedMappings` and `SourceProviderMap` are much cheaper to construct.
+    /// In `fn get`, this value gets converted to ParsedSourceMap always
     pub const Value = TaggedPointerUnion(.{
         ParsedSourceMap,
         SavedMappings,
+        SourceProviderMap,
     });
+
+    pub const MissingSourceMapNoteInfo = struct {
+        pub var storage: bun.PathBuffer = undefined;
+        pub var path: ?[]const u8 = null;
+        pub var seen_invalid = false;
+
+        pub fn print() void {
+            if (seen_invalid) return;
+            if (path) |note| {
+                Output.note("missing sourcemaps for {s}", .{note});
+                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+            }
+        }
+    };
+
+    pub fn putZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        const source_provider: *SourceProviderMap = @ptrCast(opaque_source_provider);
+        this.putValue(path, Value.init(source_provider)) catch bun.outOfMemory();
+    }
+
+    pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        const entry = this.map.getEntry(bun.hash(path)) orelse return;
+        const old_value = Value.from(entry.value_ptr.*);
+        if (old_value.get(SourceProviderMap)) |prov| {
+            if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                // there is nothing to unref or deinit
+                this.map.removeByPtr(entry.key_ptr);
+            }
+        } else if (old_value.get(ParsedSourceMap)) |map| {
+            if (map.underlying_provider.provider()) |prov| {
+                if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
+                    map.deinit(default_allocator);
+                    this.map.removeByPtr(entry.key_ptr);
+                }
+            }
+        }
+    }
+
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
-
-    /// This is a pointer to the map located on the VirtualMachine struct
-    map: *HashTable,
-
-    mutex: bun.Lock = bun.Lock.init(),
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
@@ -192,6 +240,8 @@ pub const SavedSourceMap = struct {
     pub fn deinit(this: *SavedSourceMap) void {
         {
             this.mutex.lock();
+            defer this.mutex.unlock();
+
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
                 var value = Value.from(val.*);
@@ -201,39 +251,48 @@ pub const SavedSourceMap = struct {
                 } else if (value.get(SavedMappings)) |saved_mappings| {
                     var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                     saved.deinit();
+                } else if (value.get(SourceProviderMap)) |provider| {
+                    _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
                 }
             }
-
-            this.mutex.unlock();
         }
 
         this.map.deinit();
     }
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-        const entry = try this.map.getOrPut(bun.hash(source.path.text));
-        if (entry.found_existing) {
-            var value = Value.from(entry.value_ptr.*);
-            if (value.get(ParsedSourceMap)) |source_map_| {
-                var source_map: *ParsedSourceMap = source_map_;
-                source_map.deinit(default_allocator);
-            } else if (value.get(SavedMappings)) |saved_mappings| {
-                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
-
-                saved.deinit();
-            }
-        }
-
-        entry.value_ptr.* = Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)).ptr();
+        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
     }
 
-    pub fn get(this: *SavedSourceMap, path: string) ?ParsedSourceMap {
-        const mapping = this.map.getEntry(bun.hash(path)) orelse return null;
+    fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        const entry = try this.map.getOrPut(bun.hash(path));
+        if (entry.found_existing) {
+            var old_value = Value.from(entry.value_ptr.*);
+            if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
+                var source_map: *ParsedSourceMap = parsed_source_map;
+                source_map.deinit(default_allocator);
+            } else if (old_value.get(SavedMappings)) |saved_mappings| {
+                var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
+                saved.deinit();
+            } else if (old_value.get(SourceProviderMap)) |provider| {
+                _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+            }
+        }
+        entry.value_ptr.* = value.ptr();
+    }
+
+    pub fn getWithContent(
+        this: *SavedSourceMap,
+        path: string,
+        hint: SourceMap.ParseUrlResultHint,
+    ) SourceMap.ParseUrl {
+        const hash = bun.hash(path);
+        const mapping = this.map.getEntry(hash) orelse return .{};
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return Value.from(mapping.value_ptr.*).as(ParsedSourceMap).*;
+                return .{ .map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap) };
             },
             Value.Tag.SavedMappings => {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
@@ -241,13 +300,40 @@ pub const SavedSourceMap = struct {
                 const result = default_allocator.create(ParsedSourceMap) catch unreachable;
                 result.* = saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
-                    return null;
+                    return .{};
                 };
                 mapping.value_ptr.* = Value.init(result).ptr();
-                return result.*;
+                return .{ .map = result };
             },
-            else => return null,
+            Value.Tag.SourceProviderMap => {
+                var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+
+                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                    if (parse.map) |map| {
+                        mapping.value_ptr.* = Value.init(map).ptr();
+                        return parse;
+                    };
+
+                // does not have a valid source map. let's not try again
+                _ = this.map.remove(hash);
+
+                // Store path for a user note.
+                const storage = MissingSourceMapNoteInfo.storage[0..path.len];
+                @memcpy(storage, path);
+                MissingSourceMapNoteInfo.path = storage;
+                return .{};
+            },
+            else => {
+                if (Environment.allow_assert) {
+                    @panic("Corrupt pointer tag");
+                }
+                return .{};
+            },
         }
+    }
+
+    pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
+        return this.getWithContent(path, .mappings_only).map;
     }
 
     pub fn resolveMapping(
@@ -255,12 +341,25 @@ pub const SavedSourceMap = struct {
         path: []const u8,
         line: i32,
         column: i32,
-    ) ?SourceMap.Mapping {
+        source_handling: SourceMap.SourceContentHandling,
+    ) ?SourceMap.Mapping.Lookup {
         this.mutex.lock();
         defer this.mutex.unlock();
 
-        const parsed_mappings = this.get(path) orelse return null;
-        return SourceMap.Mapping.find(parsed_mappings.mappings, line, column);
+        const parse = this.getWithContent(path, switch (source_handling) {
+            .no_source_contents => .mappings_only,
+            .source_contents => .{ .all = .{ .line = line, .column = column } },
+        });
+        const map = parse.map orelse return null;
+        const mapping = parse.mapping orelse
+            SourceMap.Mapping.find(map.mappings, line, column) orelse
+            return null;
+
+        return .{
+            .mapping = mapping,
+            .source_map = map,
+            .prefetched_source_code = parse.source_contents,
+        };
     }
 };
 const uws = bun.uws;
@@ -351,7 +450,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // This JSGlobalObject might not be the main script execution context
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
-    jsc_vm.onUnhandledError(globalObject, value);
+    _ = jsc_vm.uncaughtException(globalObject, value, false);
     return JSC.JSValue.jsUndefined();
 }
 
@@ -379,7 +478,7 @@ pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.
     if (result == .zero)
         return;
 
-    jsc_vm.onUnhandledError(global, result);
+    _ = jsc_vm.unhandledRejection(global, result, promise.asValue(global));
     jsc_vm.autoGarbageCollect();
 }
 
@@ -476,15 +575,43 @@ pub const ImportWatcher = union(enum) {
         dir_fd: StoredFileDescriptorType,
         package_json: ?*PackageJSON,
         comptime copy_file_path: bool,
-    ) !void {
-        switch (this) {
-            inline .hot, .watch => |wacher| try wacher.addFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path),
-            else => {},
-        }
+    ) bun.JSC.Maybe(void) {
+        return switch (this) {
+            inline .hot, .watch => |watcher| watcher.addFile(
+                fd,
+                file_path,
+                hash,
+                loader,
+                dir_fd,
+                package_json,
+                copy_file_path,
+            ),
+            .none => .{ .result = {} },
+        };
     }
 };
 
 pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
+
+export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
+    VirtualMachine.get().default_tls_reject_unauthorized = value != 0;
+}
+
+export fn Bun__getTLSRejectUnauthorizedValue() i32 {
+    return if (JSC.VirtualMachine.get().getTLSRejectUnauthorized()) 1 else 0;
+}
+
+export fn Bun__setVerboseFetchValue(value: i32) void {
+    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
+}
+
+export fn Bun__getVerboseFetchValue() i32 {
+    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
+        .none => 0,
+        .headers => 1,
+        .curl => 2,
+    };
+}
 
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
@@ -506,7 +633,7 @@ pub const VirtualMachine = struct {
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
-    timer: Bun.Timer = Bun.Timer{},
+    timer: Bun.Timer.All = .{},
     event_loop_handle: ?*PlatformEventLoop = null,
     pending_unref_counter: i32 = 0,
     preload: []const string = &[_][]const u8{},
@@ -528,12 +655,16 @@ pub const VirtualMachine = struct {
     last_reported_error_for_dedupe: JSValue = .zero,
     exit_handler: ExitHandler = .{},
 
+    default_tls_reject_unauthorized: ?bool = null,
+    default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
+
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
     /// we don't accidentally make a stack copy of it
     /// only use it through
     /// source_mappings
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
+    source_mappings: SavedSourceMap = undefined,
 
     arena: *Arena = undefined,
     has_loaded: bool = false,
@@ -583,8 +714,6 @@ pub const VirtualMachine = struct {
     ref_strings: JSC.RefString.Map = undefined,
     ref_strings_mutex: Lock = undefined,
 
-    source_mappings: SavedSourceMap = undefined,
-
     active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
@@ -599,7 +728,9 @@ pub const VirtualMachine = struct {
 
     onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
+    onUnhandledRejectionExceptionList: ?*ExceptionList = null,
     unhandled_error_counter: usize = 0,
+    is_handling_uncaught_exception: bool = false,
 
     modules: ModuleLoader.AsyncModule.Queue = .{},
     aggressive_garbage_collection: GCLevel = GCLevel.none,
@@ -646,8 +777,28 @@ pub const VirtualMachine = struct {
         return this.debugger != null;
     }
 
-    pub inline fn isShuttingDown(this: *const VirtualMachine) bool {
+    pub fn isShuttingDown(this: *const VirtualMachine) bool {
         return this.is_shutting_down;
+    }
+
+    pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
+        return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
+        return this.default_verbose_fetch orelse {
+            if (this.bundler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
+                if (strings.eqlComptime(verbose_fetch, "true") or strings.eqlComptime(verbose_fetch, "1")) {
+                    this.default_verbose_fetch = .headers;
+                    return .headers;
+                } else if (strings.eqlComptime(verbose_fetch, "curl")) {
+                    this.default_verbose_fetch = .curl;
+                    return .curl;
+                }
+            }
+            this.default_verbose_fetch = .none;
+            return .none;
+        };
     }
 
     const VMHolder = struct {
@@ -766,10 +917,6 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn resetUnhandledRejection(this: *VirtualMachine) void {
-        this.onUnhandledRejection = defaultOnUnhandledRejection;
-    }
-
     pub fn loadExtraEnv(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
 
@@ -817,13 +964,60 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn onUnhandledError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.unhandled_error_counter += 1;
-        this.onUnhandledRejection(this, globalObject, value);
+    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: c_int) c_int;
+    extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
+    extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
+
+    pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
+        if (this.isShuttingDown()) {
+            Output.debugWarn("unhandledRejection during shutdown.", .{});
+            return true;
+        }
+
+        if (isBunTest) {
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, reason);
+            return true;
+        }
+
+        const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
+        if (!handled) {
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, reason);
+        }
+        return handled;
+    }
+
+    pub fn uncaughtException(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool {
+        if (this.isShuttingDown()) {
+            Output.debugWarn("uncaughtException during shutdown.", .{});
+            return true;
+        }
+
+        if (isBunTest) {
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, err);
+            return true;
+        }
+
+        if (this.is_handling_uncaught_exception) {
+            this.runErrorHandler(err, null);
+            Bun__Process__exit(globalObject, 1);
+            @panic("Uncaught exception while handling uncaught exception");
+        }
+        this.is_handling_uncaught_exception = true;
+        defer this.is_handling_uncaught_exception = false;
+        const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
+        if (!handled) {
+            // TODO maybe we want a separate code path for uncaught exceptions
+            this.unhandled_error_counter += 1;
+            this.onUnhandledRejection(this, globalObject, err);
+        }
+        return handled;
     }
 
     pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.runErrorHandler(value, null);
+        this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
     }
 
     pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
@@ -848,12 +1042,17 @@ pub const VirtualMachine = struct {
 
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
+        const should_clear_terminal = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
         if (this.hot_reload == .watch) {
             Output.flush();
-            bun.reloadProcess(bun.default_allocator, !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true"));
+            bun.reloadProcess(
+                bun.default_allocator,
+                should_clear_terminal,
+                false,
+            );
         }
 
-        if (!strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true")) {
+        if (should_clear_terminal) {
             Output.flush();
             Output.disableBuffering();
             Output.resetTerminalAll();
@@ -922,9 +1121,13 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn scriptExecutionStatus(this: *VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+    pub fn scriptExecutionStatus(this: *const VirtualMachine) callconv(.C) JSC.ScriptExecutionStatus {
+        if (this.is_shutting_down) {
+            return .stopped;
+        }
+
         if (this.worker) |worker| {
-            if (worker.requested_terminate) {
+            if (worker.hasRequestedTerminate()) {
                 return .stopped;
             }
         }
@@ -1143,10 +1346,6 @@ pub const VirtualMachine = struct {
 
     pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
-    }
-
-    pub fn waitForPromiseWithTimeout(this: *VirtualMachine, promise: JSC.AnyPromise, timeout: u32) bool {
-        return this.eventLoop().waitForPromiseWithTimeout(promise, timeout);
     }
 
     pub fn waitForTasks(this: *VirtualMachine) void {
@@ -1656,7 +1855,17 @@ pub const VirtualMachine = struct {
         const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice(), &display_slice);
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        const path = Fs.Path.init(specifier_clone.slice());
+        var path = Fs.Path.init(specifier_clone.slice());
+
+        // For blobs.
+        var blob_source: ?JSC.WebCore.Blob = null;
+        var virtual_source_to_use: ?logger.Source = null;
+        defer {
+            if (blob_source) |*blob| {
+                blob.deinit();
+            }
+        }
+
         const loader, const virtual_source = brk: {
             if (jsc_vm.module_loader.eval_source) |eval_source| {
                 if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
@@ -1667,14 +1876,68 @@ pub const VirtualMachine = struct {
                 }
             }
 
+            var ext_for_loader = path.name.ext;
+
+            // Support errors within blob: URLs
+            // Be careful to handle Bun.file(), in addition to regular Blob/File objects
+            // Bun.file() should be treated the same as a file path.
+            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+                if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+                    blob_source = blob;
+
+                    if (blob.getFileName()) |filename| {
+                        const current_path = Fs.Path.init(filename);
+                        if (blob.needsToReadFile()) {
+                            path = current_path;
+                        }
+
+                        ext_for_loader = current_path.name.ext;
+                    } else if (blob.getMimeTypeOrContentType()) |mime_type| {
+                        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
+                            ext_for_loader = ".jsx";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
+                            ext_for_loader = ".tsx";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
+                            ext_for_loader = ".js";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
+                            ext_for_loader = ".ts";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
+                            ext_for_loader = ".json";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
+                            ext_for_loader = ".jsonc";
+                        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
+                            ext_for_loader = ".jsonc";
+                        } else if (mime_type.category == .text) {
+                            ext_for_loader = ".txt";
+                        } else {
+                            // Be maximally permissive.
+                            ext_for_loader = ".tsx";
+                        }
+                    } else {
+                        // Be maximally permissive.
+                        ext_for_loader = ".tsx";
+                    }
+
+                    if (!blob.needsToReadFile()) {
+                        virtual_source_to_use = logger.Source{
+                            .path = path,
+                            .key_path = path,
+                            .contents = blob.sharedView(),
+                        };
+                    }
+                } else {
+                    return error.ModuleNotFound;
+                }
+            }
+
             break :brk .{
-                jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk2: {
+                jsc_vm.bundler.options.loaders.get(ext_for_loader) orelse brk2: {
                     if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                         break :brk2 options.Loader.js;
                     }
                     break :brk2 options.Loader.file;
                 },
-                null,
+                if (virtual_source_to_use) |*src| src else null,
             };
         };
 
@@ -1718,7 +1981,7 @@ pub const VirtualMachine = struct {
         return specifier;
     }
 
-    threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    threadlocal var specifier_cache_resolver_buf: bun.PathBuffer = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
         specifier: string,
@@ -1758,6 +2021,14 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
+        } else if (strings.hasPrefixComptime(specifier, "blob:")) {
+            ret.result = null;
+            if (JSC.WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])) {
+                ret.path = specifier;
+                return;
+            } else {
+                return error.ModuleNotFound;
+            }
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
@@ -1841,7 +2112,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
@@ -1852,7 +2123,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
@@ -1863,7 +2134,7 @@ pub const VirtualMachine = struct {
         global: *JSGlobalObject,
         specifier: bun.String,
         source: bun.String,
-        query_string: *ZigString,
+        query_string: ?*ZigString,
         is_esm: bool,
     ) void {
         resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
@@ -1896,7 +2167,7 @@ pub const VirtualMachine = struct {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 error.NameTooLong,
-            ) catch @panic("Out of Memory");
+            ) catch bun.outOfMemory();
             const msg = logger.Msg{
                 .data = logger.rangeData(
                     null,
@@ -2061,9 +2332,11 @@ pub const VirtualMachine = struct {
             else => {
                 var errors_stack: [256]*anyopaque = undefined;
 
-                const errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
+                const len = @min(log.msgs.items.len, errors_stack.len);
+                const errors = errors_stack[0..len];
+                const logs = log.msgs.items[0..len];
 
-                for (log.msgs.items, errors) |msg, *current| {
+                for (logs, errors) |msg, *current| {
                     current.* = switch (msg.metadata) {
                         .build => BuildMessage.create(globalThis, globalThis.allocator(), msg).asVoid(),
                         .resolve => ResolveMessage.create(
@@ -2154,6 +2427,10 @@ pub const VirtualMachine = struct {
         } else {
             this.printErrorlikeObject(result, null, exception_list, @TypeOf(writer), writer, false, true);
         }
+    }
+
+    export fn Bun__logUnhandledException(exception: JSC.JSValue) void {
+        get().runErrorHandler(exception, null);
     }
 
     pub fn clearEntryPoint(
@@ -2317,7 +2594,7 @@ pub const VirtualMachine = struct {
             .Internal = promise,
         });
         if (this.worker) |worker| {
-            if (worker.requested_terminate) {
+            if (worker.hasRequestedTerminate()) {
                 return error.WorkerTerminated;
             }
         }
@@ -2386,8 +2663,6 @@ pub const VirtualMachine = struct {
                 .Internal = promise,
             });
         }
-
-        this.eventLoop().autoTick();
 
         return this.pending_internal_promise;
     }
@@ -2602,7 +2877,7 @@ pub const VirtualMachine = struct {
 
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
-        jsc_vm.onUnhandledError(globalObject, exception.value());
+        _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
         return JSC.JSValue.jsUndefined();
     }
 
@@ -2676,11 +2951,17 @@ pub const VirtualMachine = struct {
 
             if (this.source_mappings.resolveMapping(
                 sourceURL.slice(),
-                @max(frame.position.line, 0),
-                @max(frame.position.column_start, 0),
-            )) |mapping| {
-                frame.position.line = mapping.original.lines;
-                frame.position.column_start = mapping.original.columns;
+                @max(frame.position.line.zeroBased(), 0),
+                @max(frame.position.column.zeroBased(), 0),
+                .no_source_contents,
+            )) |lookup| {
+                if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
+                    frame.source_url.deref();
+                    frame.source_url = source_url;
+                }
+                const mapping = lookup.mapping;
+                frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
+                frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
                 frame.remapped = true;
             } else {
                 // we don't want it to be remapped again
@@ -2689,8 +2970,16 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn remapZigException(this: *VirtualMachine, exception: *ZigException, error_instance: JSValue, exception_list: ?*ExceptionList, must_reset_parser_arena_later: *bool) void {
+    pub fn remapZigException(
+        this: *VirtualMachine,
+        exception: *ZigException,
+        error_instance: JSValue,
+        exception_list: ?*ExceptionList,
+        must_reset_parser_arena_later: *bool,
+        source_code_slice: *?ZigString.Slice,
+    ) void {
         error_instance.toZigException(this.global, exception);
+
         // defer this so that it copies correctly
         defer {
             if (exception_list) |list| {
@@ -2767,41 +3056,60 @@ pub const VirtualMachine = struct {
         var top_source_url = top.source_url.toUTF8(bun.default_allocator);
         defer top_source_url.deinit();
 
-        const mapping_ = if (top.remapped)
-            SourceMap.Mapping{
-                .generated = .{},
-                .original = .{
-                    .lines = @max(top.position.line, 0),
-                    .columns = @max(top.position.column_start, 0),
+        const maybe_lookup = if (top.remapped)
+            SourceMap.Mapping.Lookup{
+                .mapping = .{
+                    .generated = .{},
+                    .original = .{
+                        .lines = @max(top.position.line.zeroBased(), 0),
+                        .columns = @max(top.position.column.zeroBased(), 0),
+                    },
+                    .source_index = 0,
                 },
-                .source_index = 0,
+                // undefined is fine, because these two values are never read if `top.remapped == true`
+                .source_map = undefined,
+                .prefetched_source_code = undefined,
             }
         else
             this.source_mappings.resolveMapping(
                 top_source_url.slice(),
-                @max(top.position.line, 0),
-                @max(top.position.column_start, 0),
+                @max(top.position.line.zeroBased(), 0),
+                @max(top.position.column.zeroBased(), 0),
+                .source_contents,
             );
 
-        if (mapping_) |mapping| {
-            var log = logger.Log.init(default_allocator);
-            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
-            must_reset_parser_arena_later.* = true;
-            const code = original_source.source_code.toUTF8(bun.default_allocator);
-            defer code.deinit();
+        if (maybe_lookup) |lookup| {
+            const mapping = lookup.mapping;
 
-            top.position.line = mapping.original.lines;
-            top.position.line_start = mapping.original.lines;
-            top.position.line_stop = mapping.original.lines + 1;
-            top.position.column_start = mapping.original.columns;
-            top.position.column_stop = mapping.original.columns + 1;
+            if (!top.remapped) {
+                if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
+                    top.source_url.deref();
+                    top.source_url = src;
+                }
+            }
+
+            const code = code: {
+                if (!top.remapped and lookup.source_map.isExternal()) {
+                    if (lookup.getSourceCode(top_source_url.slice())) |src| {
+                        break :code src;
+                    }
+                }
+
+                var log = logger.Log.init(bun.default_allocator);
+                defer log.deinit();
+                var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url, bun.String.empty, &log, .print_source) catch return;
+                must_reset_parser_arena_later.* = true;
+                break :code original_source.source_code.toUTF8(bun.default_allocator);
+            };
+            source_code_slice.* = code;
+
+            top.position.line = Ordinal.fromZeroBased(mapping.original.lines);
+            top.position.column = Ordinal.fromZeroBased(mapping.original.columns);
+
             exception.remapped = true;
             top.remapped = true;
-            // This expression range is no longer accurate
-            top.position.expression_start = mapping.original.columns;
-            top.position.expression_stop = mapping.original.columns + 1;
 
-            const last_line = @max(top.position.line, 0);
+            const last_line = @max(top.position.line.zeroBased(), 0);
             if (strings.getLinesInText(
                 code.slice(),
                 @intCast(last_line),
@@ -2824,13 +3132,6 @@ pub const VirtualMachine = struct {
                 }
 
                 exception.stack.source_lines_len = @as(u8, @truncate(lines.len));
-
-                top.position.column_stop = @as(i32, @intCast(source_lines[lines.len - 1].length()));
-                top.position.line_stop = top.position.column_stop;
-
-                // This expression range is no longer accurate
-                top.position.expression_start = mapping.original.columns;
-                top.position.expression_stop = top.position.column_stop;
             }
         }
 
@@ -2841,12 +3142,18 @@ pub const VirtualMachine = struct {
                 defer source_url.deinit();
                 if (this.source_mappings.resolveMapping(
                     source_url.slice(),
-                    @max(frame.position.line, 0),
-                    @max(frame.position.column_start, 0),
-                )) |mapping| {
-                    frame.position.line = mapping.original.lines;
+                    @max(frame.position.line.zeroBased(), 0),
+                    @max(frame.position.column.zeroBased(), 0),
+                    .no_source_contents,
+                )) |lookup| {
+                    if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
+                        frame.source_url.deref();
+                        frame.source_url = src;
+                    }
+                    const mapping = lookup.mapping;
                     frame.remapped = true;
-                    frame.position.column_start = mapping.original.columns;
+                    frame.position.line = Ordinal.fromZeroBased(mapping.original.lines);
+                    frame.position.column = Ordinal.fromZeroBased(mapping.original.columns);
                 }
             }
         }
@@ -2856,7 +3163,17 @@ pub const VirtualMachine = struct {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
-        this.remapZigException(exception, error_instance, exception_list, &exception_holder.need_to_clear_parser_arena_on_deinit);
+
+        var source_code_slice: ?ZigString.Slice = null;
+        defer if (source_code_slice) |slice| slice.deinit();
+
+        this.remapZigException(
+            exception,
+            error_instance,
+            exception_list,
+            &exception_holder.need_to_clear_parser_arena_on_deinit,
+            &source_code_slice,
+        );
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
@@ -2985,8 +3302,8 @@ pub const VirtualMachine = struct {
                         .{ display_line, bun.fmt.fmtJavaScript(clamped, allow_ansi_color) },
                     );
 
-                    if (clamped.len < max_line_length_with_divot or top.position.column_start > max_line_length_with_divot) {
-                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column_start));
+                    if (clamped.len < max_line_length_with_divot or top.position.column.zeroBased() > max_line_length_with_divot) {
+                        const indent = max_line_number_pad + " | ".len + @as(u64, @intCast(top.position.column.zeroBased()));
 
                         try writer.writeByteNTimes(' ', indent);
                         try writer.print(comptime Output.prettyFmt(
@@ -3168,8 +3485,8 @@ pub const VirtualMachine = struct {
                 const file = bun.path.relative(dir, source_url.slice());
                 writer.print("\n::error file={s},line={d},col={d},title=", .{
                     file,
-                    frame.position.line_start + 1,
-                    frame.position.column_start,
+                    frame.position.line.oneBased(),
+                    frame.position.column.oneBased(),
                 }) catch {};
                 has_location = true;
             }
@@ -3462,7 +3779,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     if (comptime Ctx == ImportWatcher) {
                         this.reloader.ctx.rareData().closeAllListenSocketsForWatchMode();
                     }
-                    bun.reloadProcess(bun.default_allocator, clear_screen);
+                    bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
 
@@ -3504,7 +3821,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     return;
             }
 
-            var reloader = bun.default_allocator.create(Reloader) catch @panic("OOM");
+            var reloader = bun.default_allocator.create(Reloader) catch bun.outOfMemory();
             reloader.* = .{
                 .ctx = this,
                 .verbose = if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false,
@@ -3538,7 +3855,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = Output.enable_ansi_colors and !strings.eqlComptime(this.bundler.env.get("BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD") orelse "0", "true");
+            clear_screen = !this.bundler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
@@ -3548,7 +3865,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             // - Directories outside the root directory
             // - Directories inside node_modules
             if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
-                watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false) catch {};
+                _ = watch.addDirectory(dir_fd, file_path, GenericWatcher.getHash(file_path), false);
             }
         }
 
@@ -3562,9 +3879,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
 
         pub fn onError(
             _: *@This(),
-            err: anyerror,
+            err: bun.sys.Error,
         ) void {
-            Output.prettyErrorln("<r>Watcher crashed: <red><b>{s}<r>", .{@errorName(err)});
+            Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {
@@ -3604,7 +3921,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             var fs: *Fs.FileSystem = bundler.fs;
             var rfs: *Fs.FileSystem.RealFS = &fs.fs;
             var resolver = &bundler.resolver;
-            var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
             var current_task: HotReloadTask = .{
                 .reloader = this,
@@ -3773,6 +4090,20 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
         }
     };
+}
+
+export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putZigSourceProvider(opaque_source_provider, slice.slice());
+}
+
+export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.removeZigSourceProvider(opaque_source_provider, slice.slice());
 }
 
 pub export var isBunTest: bool = false;

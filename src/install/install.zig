@@ -10132,6 +10132,21 @@ pub const PackageManager = struct {
         return .{ pkg_id, dependency_id };
     }
 
+    const PatchArgKind = enum {
+        path,
+        name_and_version,
+
+        pub fn fromArg(argument: []const u8) PatchArgKind {
+            if (bun.strings.hasPrefix(argument, "node_modules/")) return .path;
+            if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) return .path;
+            if (comptime bun.Environment.isWindows) {
+                if (bun.strings.hasPrefix(argument, "node_modules\\")) return .path;
+                if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules\\")) return .path;
+            }
+            return .name_and_version;
+        }
+    };
+
     /// 1. Arg is either:
     ///   - name and possibly version (e.g. "is-even" or "is-even@1.0.0")
     ///   - path to package in node_modules
@@ -10142,16 +10157,7 @@ pub const PackageManager = struct {
         const strbuf = manager.lockfile.buffers.string_bytes.items;
         const argument = manager.options.positionals[1];
 
-        const ArgKind = enum {
-            path,
-            name_and_version,
-        };
-
-        const arg_kind: ArgKind = brk: {
-            if (bun.strings.hasPrefix(argument, "node_modules/")) break :brk .path;
-            if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) break :brk .path;
-            break :brk .name_and_version;
-        };
+        const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
         var folder_path_buf: bun.PathBuffer = undefined;
         var iterator = Lockfile.Tree.Iterator.init(manager.lockfile);
@@ -10696,18 +10702,9 @@ pub const PackageManager = struct {
             .ok => {},
         }
 
-        const ArgKind = enum {
-            path,
-            name_and_version,
-        };
-
         const argument = manager.options.positionals[1];
 
-        const arg_kind: ArgKind = brk: {
-            if (bun.strings.hasPrefix(argument, "node_modules/")) break :brk .path;
-            if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) break :brk .path;
-            break :brk .name_and_version;
-        };
+        const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
         // Attempt to open the existing node_modules folder
         var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {

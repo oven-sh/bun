@@ -11,6 +11,11 @@ const server = Bun.serve({
   async fetch (req) {
     const path = new URL(req.url).pathname;
 
+    // parse query params
+    const { paramA, paramB } = Object.fromEntries(
+      new URL(req.url).searchParams.entries()
+    );
+
     // respond with text/html
     if (path === "/") return new Response("Welcome to Bun!");
 

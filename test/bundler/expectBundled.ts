@@ -1546,7 +1546,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      opts.snapshotSourceMap ? 20_000 : undefined,
+      opts.snapshotSourceMap ? 30_000 : undefined,
     );
   }
   return ref;

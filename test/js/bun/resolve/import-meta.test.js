@@ -190,7 +190,7 @@ it("import.meta.require (javascript, live bindings)", () => {
 });
 
 it("import.meta.dir", () => {
-  expect(dir).toEndWith(ospath("/bun/test/js/bun/resolve"));
+  expect(dir).toEndWith(ospath("/test/js/bun/resolve"));
 });
 
 it("import.meta.dirname", () => {

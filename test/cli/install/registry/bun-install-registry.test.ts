@@ -3771,7 +3771,8 @@ describe("update", () => {
       "+ uses-what-bin@1.5.0",
       "+ what-bin@1.5.0",
       "",
-      expect.stringContaining("20 packages installed"),
+      // Due to optional-native dependency, this can be either 20 or 19 packages
+      expect.stringMatching(/(?:20|19) packages installed/),
       "",
       "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
       "",

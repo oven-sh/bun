@@ -57,7 +57,9 @@ t("Result is array", async () => {
   expect(await sql`select 1`).toBeArray();
 });
 
-// t("Result has command", async () => expect((await sql`select 1`).command).toBe("SELECT"));
+t("Result has command", async () => {
+  expect((await sql`select 1`).command).toBe("SELECT");
+});
 
 t("Create table", async () => {
   await sql`create table test(int int)`;
@@ -123,9 +125,7 @@ t("string arg with ::int -> Array<int>", async () =>
   expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])),
 );
 
-// t('Array of Integer', async() =>
-//   ['3', (await sql`select ${ sql.array([1, 2, 3]) } as x`)[0].x[2]]
-// )
+// t("Array of Integer", async () => ["3", (await sql`select ${sql.array([1, 2, 3])} as x`)[0].x[2]]);
 
 // t('Array of String', async() =>
 //   ['c', (await sql`select ${ sql.array(['a', 'b', 'c']) } as x`)[0].x[2]]
@@ -293,11 +293,11 @@ t("string arg with ::int -> Array<int>", async () =>
 //   ])).map(x => x.count).join(''), await sql`drop table test`]
 // })
 
-// t('Many transactions at beginning of connection', async() => {
-//   const sql = postgres(options)
-//   const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)))
-//   return [100, xs.length]
-// })
+// t("Many transactions at beginning of connection", async () => {
+//   const sql = postgres(options);
+//   const xs = await Promise.all(Array.from({ length: 100 }, () => sql.begin(sql => sql`select 1`)));
+//   return [100, xs.length];
+// });
 
 // t('Transactions array', async() => {
 //   await sql`create table test (a int)`

@@ -5321,9 +5321,9 @@ extern "C" double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* s
     return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
 }
 
-extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const char* nullTerminatedChars)
+extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const LChar* nullTerminatedChars)
 {
-    double dateSeconds = WTF::parseDateFromNullTerminatedCharacters(nullTerminatedChars);
+    double dateSeconds = WTF::parseDate(std::span<const LChar>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
     JSC::DateInstance* date = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), dateSeconds);
 
     return JSValue::encode(date);

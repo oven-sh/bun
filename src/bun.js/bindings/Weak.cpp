@@ -38,7 +38,7 @@ public:
                 Bun__FetchResponse_finalize(context);
                 break;
             case WeakRefType::PostgreSQLQueryClient:
-                Bun__PostgreSQLQueryClient_finalize(context);
+                // Bun__PostgreSQLQueryClient_finalize(context);
                 break;
             default:
                 break;

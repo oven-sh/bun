@@ -115,6 +115,3 @@ pub const Codegen = struct {
 pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_list.zig").Classes;
 
 pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
-
-pub const Weak = @import("./bun.js/Weak.zig").Weak;
-pub const NewWeakFinalizer = @import("./bun.js/Weak.zig").NewWeakFinalizer;

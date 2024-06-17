@@ -124,12 +124,12 @@ class Query extends PublicPromise {
 
   catch() {
     this[_run]();
-    return super.$catch.$apply(this, arguments);
+    return super.catch.$apply(this, arguments);
   }
 
   finally() {
     this[_run]();
-    return super.$finally.$apply(this, arguments);
+    return super.finally.$apply(this, arguments);
   }
 }
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });

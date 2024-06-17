@@ -754,7 +754,7 @@ booga"
 
     test("cd -", async () => {
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
-      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd()}\n`);
+      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
   });
 

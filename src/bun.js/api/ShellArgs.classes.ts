@@ -9,7 +9,6 @@ export default [
     hasPendingActivity: false,
     configurable: false,
     klass: {},
-    JSType: "0b11101110",
     proto: {
       setCwd: {
         fn: "setCwd",

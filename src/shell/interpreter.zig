@@ -745,15 +745,13 @@ pub const ParsedShellScript = struct {
         var shargs = ShellArgs.init();
 
         const arguments_ = callframe.arguments(2);
-        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-        const string_args = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return .undefined;
-        };
-        const template_args_js = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return .undefined;
-        };
+        const arguments = arguments_.slice();
+        if (arguments.len < 2) {
+            globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
+            return .zero;
+        }
+        const string_args = arguments[0];
+        const template_args_js = arguments[1];
         var template_args = template_args_js.arrayIterator(globalThis);
 
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
@@ -1191,6 +1189,11 @@ pub const Interpreter = struct {
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
+
+        if (parsed_shell_script.args == null) {
+            globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
+            return .undefined;
+        }
 
         parsed_shell_script.take(
             globalThis,

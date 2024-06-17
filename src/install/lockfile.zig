@@ -714,17 +714,27 @@ pub fn maybeCloneFilteringRootPackages(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    const old_root_dependencies_list = old.packages.items(.dependencies)[0];
-    var old_root_resolutions = old.packages.items(.resolutions)[0];
-    const root_dependencies = old_root_dependencies_list.get(old.buffers.dependencies.items);
-    const resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
+    const old_packages = old.packages.slice();
+    const old_dependencies_lists = old_packages.items(.dependencies);
+    const old_resolutions_lists = old_packages.items(.resolutions);
     var any_changes = false;
-    const end = @as(PackageID, @truncate(old.packages.len));
+    const end: PackageID = @truncate(old.packages.len);
 
-    for (root_dependencies, resolutions) |dependency, *resolution| {
-        if (!dependency.behavior.isEnabled(features) and resolution.* < end) {
-            resolution.* = invalid_package_id;
-            any_changes = true;
+    // set all disabled dependencies of workspaces to `invalid_package_id`
+    for (0..end) |package_id| {
+        if (!old.isWorkspacePackageId(@intCast(package_id))) continue;
+
+        const old_workspace_dependencies_list = old_dependencies_lists[package_id];
+        var old_workspace_resolutions_list = old_resolutions_lists[package_id];
+
+        const old_workspace_dependencies = old_workspace_dependencies_list.get(old.buffers.dependencies.items);
+        const old_workspace_resolutions = old_workspace_resolutions_list.mut(old.buffers.resolutions.items);
+
+        for (old_workspace_dependencies, old_workspace_resolutions) |dependency, *resolution| {
+            if (!dependency.behavior.isEnabled(features) and resolution.* < end) {
+                resolution.* = invalid_package_id;
+                any_changes = true;
+            }
         }
     }
 
@@ -845,6 +855,11 @@ pub fn isWorkspaceDependency(this: *const Lockfile, id: DependencyID) bool {
     }
 
     return false;
+}
+
+/// Is this package id a workspace package (including workspace root)?
+pub fn isWorkspacePackageId(this: *const Lockfile, id: PackageID) bool {
+    return id == 0 or this.packages.items(.resolution)[id].tag == .workspace;
 }
 
 /// Does this tree id belong to a workspace (including workspace root)?

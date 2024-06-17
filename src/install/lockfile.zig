@@ -863,6 +863,7 @@ pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
     return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
 }
 
+/// Returns the package id of the workspace the install is taking place in.
 pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
     return if (workspace_name_hash) |workspace_name_hash_| brk: {
         const packages = this.packages.slice();

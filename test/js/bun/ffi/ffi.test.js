@@ -957,7 +957,7 @@ const libSymbols = {
 };
 
 describe.if(!!libPath)("can open more than 63 symbols via", () => {
-  for (const [libPath, description] of [
+  for (const [libInput, description] of [
     // For file: URLs since one might do import.meta.resolve()
     [Bun.pathToFileURL(libPath), "URL"],
 
@@ -971,7 +971,7 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
     [libPath, "string"],
   ]) {
     it(description, () => {
-      const lib = dlopen(libPath, libSymbols);
+      const lib = dlopen(libInput, libSymbols);
       expect(Object.keys(lib.symbols).length).toBe(Object.keys(libSymbols).length);
       expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);

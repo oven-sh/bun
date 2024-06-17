@@ -202,7 +202,7 @@ it("import.meta.filename", () => {
 });
 
 it("import.meta.path", () => {
-  expect(path).toEndWith(ospath("/bun/test/js/bun/resolve/import-meta.test.js"));
+  expect(path).toEndWith(ospath("/test/js/bun/resolve/import-meta.test.js"));
 });
 
 it('require("bun") works', () => {

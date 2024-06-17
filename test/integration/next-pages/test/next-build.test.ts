@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
+import { bunEnv, bunExe, tmpdirSync, toMatchNodeModulesAt, isDebug } from "../../../harness";
 import { copyFileSync, cpSync, readFileSync, rmSync, promises as fs } from "fs";
 import { join } from "path";
 import { cp } from "fs/promises";
@@ -82,107 +82,111 @@ function normalizeOutput(stdout: string) {
   );
 }
 
-test("next build works", async () => {
-  rmSync(join(root, ".next"), { recursive: true, force: true });
-  copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
+test(
+  "next build works",
+  async () => {
+    rmSync(join(root, ".next"), { recursive: true, force: true });
+    copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-  const bunDir = await tempDirToBuildIn();
-  let lockfile = parseLockfile(bunDir);
-  expect(lockfile).toMatchNodeModulesAt(bunDir);
-  expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
+    const bunDir = await tempDirToBuildIn();
+    let lockfile = parseLockfile(bunDir);
+    expect(lockfile).toMatchNodeModulesAt(bunDir);
+    expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
 
-  const nodeDir = await tempDirToBuildIn();
-  lockfile = parseLockfile(nodeDir);
-  expect(lockfile).toMatchNodeModulesAt(nodeDir);
-  expect(lockfile).toMatchSnapshot("node");
+    const nodeDir = await tempDirToBuildIn();
+    lockfile = parseLockfile(nodeDir);
+    expect(lockfile).toMatchNodeModulesAt(nodeDir);
+    expect(lockfile).toMatchSnapshot("node");
 
-  console.log("Bun Dir: " + bunDir);
-  console.log("Node Dir: " + nodeDir);
+    console.log("Bun Dir: " + bunDir);
+    console.log("Node Dir: " + nodeDir);
 
-  const nextPath = "node_modules/next/dist/bin/next";
+    const nextPath = "node_modules/next/dist/bin/next";
 
-  console.time("[bun] next build");
-  const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
-    cwd: bunDir,
-    stdio: ["ignore", "pipe", "inherit"],
-    env: {
-      ...bunEnv,
-      NODE_ENV: "production",
-    },
-  });
+    console.time("[bun] next build");
+    const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
+      cwd: bunDir,
+      stdio: ["ignore", "pipe", "inherit"],
+      env: {
+        ...bunEnv,
+        NODE_ENV: "production",
+      },
+    });
 
-  console.time("[node] next build");
-  const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
-    cwd: nodeDir,
-    env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  await Promise.all([
-    bunBuild.exited.then(a => {
-      console.timeEnd("[bun] next build");
-      return a;
-    }),
-    nodeBuild.exited.then(a => {
-      console.timeEnd("[node] next build");
-      return a;
-    }),
-  ]);
-  expect(nodeBuild.exitCode).toBe(0);
-  expect(bunBuild.exitCode).toBe(0);
+    console.time("[node] next build");
+    const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
+      cwd: nodeDir,
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    await Promise.all([
+      bunBuild.exited.then(a => {
+        console.timeEnd("[bun] next build");
+        return a;
+      }),
+      nodeBuild.exited.then(a => {
+        console.timeEnd("[node] next build");
+        return a;
+      }),
+    ]);
+    expect(nodeBuild.exitCode).toBe(0);
+    expect(bunBuild.exitCode).toBe(0);
 
-  const bunCliOutput = normalizeOutput(await new Response(bunBuild.stdout).text());
-  const nodeCliOutput = normalizeOutput(await new Response(nodeBuild.stdout).text());
+    const bunCliOutput = normalizeOutput(await new Response(bunBuild.stdout).text());
+    const nodeCliOutput = normalizeOutput(await new Response(nodeBuild.stdout).text());
 
-  console.log("bun", bunCliOutput);
-  console.log("node", nodeCliOutput);
+    console.log("bun", bunCliOutput);
+    console.log("node", nodeCliOutput);
 
-  expect(bunCliOutput).toBe(nodeCliOutput);
+    expect(bunCliOutput).toBe(nodeCliOutput);
 
-  const bunBuildDir = join(bunDir, ".next");
-  const nodeBuildDir = join(nodeDir, ".next");
+    const bunBuildDir = join(bunDir, ".next");
+    const nodeBuildDir = join(nodeDir, ".next");
 
-  // Remove some build files that Next.js does not make deterministic.
-  const toRemove = [
-    // these have timestamps and absolute paths in them
-    "trace",
-    "cache",
-    "required-server-files.json",
-    // these have "signing keys", not sure what they are tbh
-    "prerender-manifest.json",
-    "prerender-manifest.js",
-    // these are similar but i feel like there might be something we can fix to make them the same
-    "next-minimal-server.js.nft.json",
-    "next-server.js.nft.json",
-    // this file is not deterministically sorted
-    "server/pages-manifest.json",
-  ];
-  for (const key of toRemove) {
-    rmSync(join(bunBuildDir, key), { recursive: true });
-    rmSync(join(nodeBuildDir, key), { recursive: true });
-  }
+    // Remove some build files that Next.js does not make deterministic.
+    const toRemove = [
+      // these have timestamps and absolute paths in them
+      "trace",
+      "cache",
+      "required-server-files.json",
+      // these have "signing keys", not sure what they are tbh
+      "prerender-manifest.json",
+      "prerender-manifest.js",
+      // these are similar but i feel like there might be something we can fix to make them the same
+      "next-minimal-server.js.nft.json",
+      "next-server.js.nft.json",
+      // this file is not deterministically sorted
+      "server/pages-manifest.json",
+    ];
+    for (const key of toRemove) {
+      rmSync(join(bunBuildDir, key), { recursive: true });
+      rmSync(join(nodeBuildDir, key), { recursive: true });
+    }
 
-  console.log("Hashing files...");
-  const [bunBuildHash, nodeBuildHash] = await Promise.all([hashAllFiles(bunBuildDir), hashAllFiles(nodeBuildDir)]);
+    console.log("Hashing files...");
+    const [bunBuildHash, nodeBuildHash] = await Promise.all([hashAllFiles(bunBuildDir), hashAllFiles(nodeBuildDir)]);
 
-  try {
-    expect(bunBuildHash).toEqual(nodeBuildHash);
-  } catch (error) {
-    console.log("bunBuildDir", bunBuildDir);
-    console.log("nodeBuildDir", nodeBuildDir);
+    try {
+      expect(bunBuildHash).toEqual(nodeBuildHash);
+    } catch (error) {
+      console.log("bunBuildDir", bunBuildDir);
+      console.log("nodeBuildDir", nodeBuildDir);
 
-    // print diffs for every file if not the same
-    for (const key in bunBuildHash) {
-      if (bunBuildHash[key] !== nodeBuildHash[key]) {
-        console.log(key + ":");
-        try {
-          expect(readFileSync(join(bunBuildDir, key)).toString()).toBe(
-            readFileSync(join(nodeBuildDir, key)).toString(),
-          );
-        } catch (error) {
-          console.error(error);
+      // print diffs for every file if not the same
+      for (const key in bunBuildHash) {
+        if (bunBuildHash[key] !== nodeBuildHash[key]) {
+          console.log(key + ":");
+          try {
+            expect(readFileSync(join(bunBuildDir, key)).toString()).toBe(
+              readFileSync(join(nodeBuildDir, key)).toString(),
+            );
+          } catch (error) {
+            console.error(error);
+          }
         }
       }
+      throw error;
     }
-    throw error;
-  }
-}, 60_0000);
+  },
+  isDebug ? Infinity : 60_0000,
+);

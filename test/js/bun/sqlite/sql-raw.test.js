@@ -1,13 +1,20 @@
 import { expect, it } from "bun:test";
-import { SQL } from "bun:internal-for-testing";
+import { Database } from "bun:sqlite";
 
 const dbPath = import.meta.dir + "/northwind.testdb";
 
-it("works", () => {
-  const handle = SQL.open(dbPath);
+it("works with datetime", () => {
+  using db = Database.open(dbPath);
 
-  const stmt = SQL.prepare(handle, 'SELECT * FROM "Orders" WHERE OrderDate > datetime($date, "gmt")');
+  using stmt = db.prepare('SELECT * FROM "Orders" WHERE OrderDate > datetime($date, "gmt")');
   expect(stmt.toString()).toBe(`SELECT * FROM "Orders" WHERE OrderDate > datetime(NULL, "gmt")`);
+
+  expect(
+    stmt.all({
+      // do the conversion this way so that this test runs in multiple timezones
+      $date: "1996-09-01T07:00:00.000Z",
+    }),
+  ).toHaveLength(0);
 
   expect(
     Array.isArray(
@@ -22,34 +29,45 @@ it("works", () => {
   var ran = stmt.run({
     $date: "1997-09-01T07:00:00.000Z",
   });
-  expect(Array.isArray(ran)).toBe(false);
-  expect(ran === undefined).toBe(true);
+  expect(ran).toEqual({
+    changes: 0,
+    lastInsertRowid: 0,
+  });
   expect(stmt.toString()).toBe(`SELECT * FROM "Orders" WHERE OrderDate > datetime('1997-09-01T07:00:00.000Z', "gmt")`);
 
   expect(
-    Array.isArray(
-      stmt.get({
-        $date: "1998-09-01T07:00:00.000Z",
-      }),
-    ),
-  ).toBe(false);
+    stmt.get({
+      $date: "1998-09-01T07:00:00.000Z",
+    }),
+  ).toBe(null);
   expect(stmt.toString()).toBe(`SELECT * FROM "Orders" WHERE OrderDate > datetime('1998-09-01T07:00:00.000Z', "gmt")`);
   expect(stmt.paramsCount).toBe(1);
-  expect(stmt.columnsCount).toBe(14);
-  expect(stmt.columns.length).toBe(14);
-  stmt.finalize();
-  SQL.close(handle);
+  expect(stmt.columnNames).toStrictEqual([
+    "OrderID",
+    "CustomerID",
+    "EmployeeID",
+    "OrderDate",
+    "RequiredDate",
+    "ShippedDate",
+    "ShipVia",
+    "Freight",
+    "ShipName",
+    "ShipAddress",
+    "ShipCity",
+    "ShipRegion",
+    "ShipPostalCode",
+    "ShipCountry",
+  ]);
 });
 
-it("SQL.run works", () => {
-  const handle = SQL.open(dbPath);
-  expect(typeof handle).toBe("number");
-
+it("works with datetime string", () => {
+  using handle = new Database(dbPath);
   expect(
-    SQL.run(handle, 'SELECT * FROM "Orders" WHERE OrderDate > datetime($date, "gmt")', {
+    handle.run('SELECT * FROM "Orders" WHERE OrderDate > datetime($date, "gmt")', {
       $date: new Date(1996, 8, 1).toISOString(),
     }),
-  ).toBe(undefined);
-
-  SQL.close(handle);
+  ).toEqual({
+    changes: 0,
+    lastInsertRowid: 0,
+  });
 });

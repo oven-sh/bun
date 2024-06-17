@@ -339,21 +339,21 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
   }
   // Use Linux namespaces to isolate the child process
   // https://man7.org/linux/man-pages/man1/unshare.1.html
-  if (isLinux) {
-    const { uid, gid } = userInfo();
-    args = [
-      `--wd=${cwd}`,
-      "--user",
-      `--map-user=${uid}`,
-      `--map-group=${gid}`,
-      "--fork",
-      "--kill-child",
-      "--pid",
-      execPath,
-      ...args,
-    ];
-    execPath = "unshare";
-  }
+  // if (isLinux) {
+  //   const { uid, gid } = userInfo();
+  //   args = [
+  //     `--wd=${cwd}`,
+  //     "--user",
+  //     `--map-user=${uid}`,
+  //     `--map-group=${gid}`,
+  //     "--fork",
+  //     "--kill-child",
+  //     "--pid",
+  //     execPath,
+  //     ...args,
+  //   ];
+  //   execPath = "unshare";
+  // }
   if (isWindows) {
     delete bunEnv["PATH"];
     bunEnv["Path"] = path;

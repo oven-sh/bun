@@ -2835,7 +2835,7 @@ pub const PostgresSQLConnection = struct {
             defer hostname.deinit();
             if (tls_object.isEmptyOrUndefinedOrNull()) {
                 const ctx = vm.rareData().postgresql_context.tcp orelse brk: {
-                    const ctx_ = uws.us_create_bun_socket_context(0, vm.event_loop_handle, @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}).?;
+                    const ctx_ = uws.us_create_bun_socket_context(0, vm.uwsLoop(), @sizeOf(*PostgresSQLConnection), uws.us_bun_socket_context_options_t{}).?;
                     uws.NewSocketHandler(false).configure(ctx_, true, *PostgresSQLConnection, SocketHandler(false));
                     vm.rareData().postgresql_context.tcp = ctx_;
                     break :brk ctx_;

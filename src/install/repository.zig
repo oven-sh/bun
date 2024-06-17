@@ -45,6 +45,7 @@ pub const Repository = extern struct {
         const version_literal = dep.version.literal.slice(buf);
         const repo_name = repository.repo;
         const repo_name_str = lockfile.str(&repo_name);
+
         if (repo_name_str.len == 0) {
             const name_buf = allocator.alloc(u8, bun.sha.EVP.SHA1.digest) catch bun.outOfMemory();
             var sha1 = bun.sha.SHA1.init();
@@ -175,13 +176,19 @@ pub const Repository = extern struct {
     }
 
     pub fn tryHTTPS(url: string) ?string {
+        // Do not convert ssh://... urls to https://... urls
+        // to use system ssh keys for private repos
         if (strings.hasPrefixComptime(url, "ssh://")) {
-            final_path_buf[0.."https".len].* = "https".*;
-            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
-            return final_path_buf[0 .. url.len - "ssh".len + "https".len];
+            return null;
         }
 
         if (Dependency.isSCPLikePath(url)) {
+            // Use git@<host>:<repo> urls as-is so that the git clone can
+            // use the system's ssh keys for private repos
+            if (strings.hasPrefixComptime(url, "git@")) {
+                return null;
+            }
+
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
 

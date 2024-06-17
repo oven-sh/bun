@@ -577,7 +577,9 @@ pub const Version = struct {
                                 }
                             }
 
+
                             if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url["git@".len..dot])) return .git;
                                 if (Repository.Hosts.has(url[0..dot])) return .git;
                             }
                         }

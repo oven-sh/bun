@@ -1452,6 +1452,29 @@ pub const Crypto = struct {
 
         pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
 
+        /// For usage in Zig
+        pub fn pbkdf2(
+            output: []u8,
+            password: []const u8,
+            salt: []const u8,
+            iteration_count: u32,
+            algorithm: Algorithm,
+        ) ?[]const u8 {
+            var pbk = PBKDF2{
+                .algorithm = algorithm,
+                .password = JSC.Node.StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(password) },
+                .salt = JSC.Node.StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(salt) },
+                .iteration_count = iteration_count,
+                .length = @intCast(output.len),
+            };
+
+            if (!pbk.run(output)) {
+                return null;
+            }
+
+            return output;
+        }
+
         pub const PBKDF2 = struct {
             password: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
             salt: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,

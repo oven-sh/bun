@@ -8,6 +8,8 @@ const int32 = u32;
 const PostgresInt32 = int32;
 const short = u16;
 const PostgresShort = u16;
+const Crypto = JSC.API.Bun.Crypto;
+
 const Data = union(enum) {
     owned: bun.ByteList,
     temporary: []const u8,
@@ -24,6 +26,22 @@ const Data = union(enum) {
     pub fn deinit(this: *@This()) void {
         switch (this.*) {
             .owned => this.owned.deinitWithAllocator(bun.default_allocator),
+            .temporary => {},
+            .empty => {},
+        }
+    }
+
+    /// Zero bytes before deinit
+    /// Generally, for security reasons.
+    pub fn zdeinit(this: *@This()) void {
+        switch (this.*) {
+            .owned => {
+
+                // Zero bytes before deinit
+                @memset(this.owned.slice(), 0);
+
+                this.owned.deinitWithAllocator(bun.default_allocator);
+            },
             .temporary => {},
             .empty => {},
         }
@@ -319,6 +337,14 @@ pub const protocol = struct {
         L: String,
         R: String,
 
+        pub fn format(this: FieldMessage, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (this) {
+                inline else => |str| {
+                    try std.fmt.format(writer, "{}", .{str});
+                },
+            }
+        }
+
         pub fn deinit(this: *FieldMessage) void {
             switch (this.*) {
                 inline else => |*message| {
@@ -436,10 +462,10 @@ pub const protocol = struct {
 
             pub fn peekInt(this: @This(), comptime Int: type) ?Int {
                 const remain = this.peek();
-                if (remain.len < @sizeOf((Int))) {
+                if (remain.len < @sizeOf(Int)) {
                     return null;
                 }
-                return @byteSwap(@as(Int, remain.slice()[0..@sizeOf(Int)].*));
+                return @byteSwap(@as(Int, @bitCast(remain[0..@sizeOf(Int)].*)));
             }
 
             pub fn expectInt(this: @This(), comptime Int: type, comptime value: comptime_int) !bool {
@@ -513,17 +539,35 @@ pub const protocol = struct {
             data: Data,
         },
         SSPI: struct {},
-        SASL: struct {
-            mechanisms: Data,
-            data: Data = .{ .empty = {} },
-        },
+        SASL: struct {},
         SASLContinue: struct {
             data: Data,
+            r: []const u8,
+            s: []const u8,
+            i: []const u8,
+
+            pub fn iterationCount(this: *const @This()) !u32 {
+                return try std.fmt.parseInt(u32, this.i, 0);
+            }
         },
         SASLFinal: struct {
             data: Data,
         },
         Unknown: void,
+
+        pub fn deinit(this: *@This()) void {
+            switch (this.*) {
+                .MD5Password => {},
+                .SASL => {},
+                .SASLContinue => {
+                    this.SASLContinue.data.zdeinit();
+                },
+                .SASLFinal => {
+                    this.SASLFinal.data.zdeinit();
+                },
+                else => {},
+            }
+        }
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             const message_length = try reader.length();
@@ -567,8 +611,7 @@ pub const protocol = struct {
 
                 8 => {
                     if (message_length < 9) return error.InvalidMessageLength;
-                    const remaining: usize = @intCast(@max(message_length -| (8 - 1), 0));
-                    const bytes = try reader.read(@intCast(remaining));
+                    const bytes = try reader.read(message_length - 8);
                     this.* = .{
                         .GSSContinue = .{
                             .data = bytes,
@@ -584,30 +627,63 @@ pub const protocol = struct {
 
                 10 => {
                     if (message_length < 9) return error.InvalidMessageLength;
-                    const remaining: usize = @intCast(@max(message_length -| (8 - 1), 0));
-                    const bytes = try reader.read(remaining);
+                    try reader.skip(message_length - 8);
                     this.* = .{
-                        .SASL = .{
-                            .mechanisms = bytes,
-                        },
+                        .SASL = .{},
                     };
                 },
 
                 11 => {
                     if (message_length < 9) return error.InvalidMessageLength;
-                    const remaining: usize = @intCast(@max(message_length -| (8 - 1), 0));
+                    var bytes = try reader.bytes(message_length - 8);
+                    errdefer {
+                        bytes.deinit();
+                    }
 
-                    const bytes = try reader.read(remaining);
+                    var iter = bun.strings.split(bytes.slice(), ",");
+                    var r: ?[]const u8 = null;
+                    var i: ?[]const u8 = null;
+                    var s: ?[]const u8 = null;
+
+                    while (iter.next()) |item| {
+                        if (item.len > 2) {
+                            const key = item[0];
+                            const after_equals = item[2..];
+                            if (key == 'r') {
+                                r = after_equals;
+                            } else if (key == 's') {
+                                s = after_equals;
+                            } else if (key == 'i') {
+                                i = after_equals;
+                            }
+                        }
+                    }
+
+                    if (r == null) {
+                        debug("Missing r", .{});
+                    }
+
+                    if (s == null) {
+                        debug("Missing s", .{});
+                    }
+
+                    if (i == null) {
+                        debug("Missing i", .{});
+                    }
+
                     this.* = .{
                         .SASLContinue = .{
                             .data = bytes,
+                            .r = r orelse return error.InvalidMessage,
+                            .s = s orelse return error.InvalidMessage,
+                            .i = i orelse return error.InvalidMessage,
                         },
                     };
                 },
 
                 12 => {
                     if (message_length < 9) return error.InvalidMessageLength;
-                    const remaining: usize = @intCast(@max(message_length -| (8 - 1), 0));
+                    const remaining: usize = message_length - 8;
 
                     const bytes = try reader.read(remaining);
                     this.* = .{
@@ -667,6 +743,12 @@ pub const protocol = struct {
 
     pub const ErrorResponse = struct {
         messages: std.ArrayListUnmanaged(FieldMessage) = .{},
+
+        pub fn format(formatter: ErrorResponse, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            for (formatter.messages.items) |message| {
+                try std.fmt.format(writer, "{}\n", .{message});
+            }
+        }
 
         pub fn deinit(this: *ErrorResponse) void {
             for (this.messages.items) |*message| {
@@ -1108,13 +1190,14 @@ pub const protocol = struct {
         ) !void {
             const mechanism = this.mechanism.slice();
             const data = this.data.slice();
-            const count: usize = @sizeOf((u32)) + mechanism.len + 1 + data.len + 1;
+            const count: usize = @sizeOf(u32) + mechanism.len + 1 + data.len + @sizeOf(u32);
             const header = [_]u8{
                 'p',
             } ++ toBytes(Int32(count));
             try writer.write(&header);
             try writer.string(mechanism);
-            try writer.string(data);
+            try writer.int32(@truncate(data.len));
+            try writer.write(data);
         }
 
         pub const write = writeWrap(@This(), writeInternal).write;
@@ -1133,12 +1216,12 @@ pub const protocol = struct {
             writer: NewWriter(Context),
         ) !void {
             const data = this.data.slice();
-            const count: usize = @sizeOf((u32)) + data.len + 1;
+            const count: usize = @sizeOf(u32) + data.len;
             const header = [_]u8{
                 'p',
             } ++ toBytes(Int32(count));
             try writer.write(&header);
-            try writer.string(data);
+            try writer.write(data);
         }
 
         pub const write = writeWrap(@This(), writeInternal).write;
@@ -1786,7 +1869,7 @@ pub const PostgresSQLQuery = struct {
     target: JSC.Strong = JSC.Strong.init(),
     status: Status = Status.pending,
     is_done: bool = false,
-    ref_count: u32 = 1,
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     binary: bool = false,
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
@@ -1805,7 +1888,7 @@ pub const PostgresSQLQuery = struct {
     };
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
-        return !this.is_done or this.status.isRunning();
+        return this.ref_count.load(.Monotonic) > 1;
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1826,8 +1909,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn deref(this: *@This()) void {
-        const ref_count = this.ref_count;
-        this.ref_count -= 1;
+        const ref_count = this.ref_count.fetchSub(1, .Monotonic);
 
         if (ref_count == 1) {
             this.deinit();
@@ -1835,8 +1917,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn ref(this: *@This()) void {
-        bun.assert(this.ref_count > 0);
-        this.ref_count += 1;
+        bun.assert(this.ref_count.fetchAdd(1, .Monotonic) > 0);
     }
 
     pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject) void {
@@ -2374,6 +2455,106 @@ pub const PostgresSQLConnection = struct {
     options: []const u8 = "",
     options_buf: []const u8 = "",
 
+    authentication_state: AuthenticationState = .{ .pending = {} },
+
+    pub const AuthenticationState = union(enum) {
+        pending: void,
+        SASL: SASL,
+        ok: void,
+
+        pub fn zero(this: *AuthenticationState) void {
+            const bytes = std.mem.asBytes(this);
+            @memset(bytes, 0);
+        }
+
+        pub const SASL = struct {
+            const nonce_byte_len = 18;
+            const nonce_base64_len = bun.base64.encodeLenFromSize(nonce_byte_len);
+
+            const server_signature_byte_len = 32;
+            const server_signature_base64_len = bun.base64.encodeLenFromSize(server_signature_byte_len);
+
+            const salted_password_byte_len = 32;
+
+            nonce_base64_bytes: [nonce_base64_len]u8 = .{0} ** nonce_base64_len,
+            nonce_len: u8 = 0,
+
+            server_signature_base64_bytes: [server_signature_base64_len]u8 = .{0} ** server_signature_base64_len,
+            server_signature_len: u8 = 0,
+
+            salted_password_bytes: [salted_password_byte_len]u8 = .{0} ** salted_password_byte_len,
+            salted_password_created: bool = false,
+
+            status: SASLStatus = .init,
+
+            pub const SASLStatus = enum {
+                init,
+                @"continue",
+            };
+
+            fn hmac(password: []const u8, data: []const u8) ?[32]u8 {
+                var buf = std.mem.zeroes([bun.BoringSSL.EVP_MAX_MD_SIZE]u8);
+
+                // TODO: I don't think this is failable.
+                const result = bun.hmac.generate(password, data, .sha256, &buf) orelse return null;
+
+                assert(result.len == 32);
+                return buf[0..32].*;
+            }
+
+            pub fn computeSaltedPassword(this: *SASL, salt_bytes: []const u8, iteration_count: u32, connection: *PostgresSQLConnection) !void {
+                this.salted_password_created = true;
+                if (Crypto.EVP.pbkdf2(&this.salted_password_bytes, connection.password, salt_bytes, iteration_count, .sha256) == null) {
+                    return error.PBKDF2Failed;
+                }
+            }
+
+            pub fn saltedPassword(this: *const SASL) []const u8 {
+                assert(this.salted_password_created);
+                return this.salted_password_bytes[0..salted_password_byte_len];
+            }
+
+            pub fn serverSignature(this: *const SASL) []const u8 {
+                assert(this.server_signature_len > 0);
+                return this.server_signature_base64_bytes[0..this.server_signature_len];
+            }
+
+            pub fn computeServerSignature(this: *SASL, auth_string: []const u8) !void {
+                assert(this.server_signature_len == 0);
+
+                const server_key = hmac(this.saltedPassword(), "Server Key") orelse return error.InvalidServerKey;
+                const server_signature_bytes = hmac(&server_key, auth_string) orelse return error.InvalidServerSignature;
+                this.server_signature_len = @intCast(bun.base64.encode(&this.server_signature_base64_bytes, &server_signature_bytes));
+            }
+
+            pub fn clientKey(this: *const SASL) [32]u8 {
+                return hmac(this.saltedPassword(), "Client Key").?;
+            }
+
+            pub fn clientKeySignature(_: *const SASL, client_key: []const u8, auth_string: []const u8) [32]u8 {
+                var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
+                bun.sha.SHA256.hash(client_key, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
+                return hmac(&sha_digest, auth_string).?;
+            }
+
+            pub fn nonce(this: *SASL) []const u8 {
+                if (this.nonce_len == 0) {
+                    var bytes: [nonce_byte_len]u8 = .{0} ** nonce_byte_len;
+                    bun.rand(&bytes);
+                    this.nonce_len = @intCast(bun.base64.encode(&this.nonce_base64_bytes, &bytes));
+                }
+                return this.nonce_base64_bytes[0..this.nonce_len];
+            }
+
+            pub fn deinit(this: *SASL) void {
+                this.nonce_len = 0;
+                this.salted_password_created = false;
+                this.server_signature_len = 0;
+                this.status = .init;
+            }
+        };
+    };
+
     pub const Status = enum {
         disconnected,
         connecting,
@@ -2384,14 +2565,16 @@ pub const PostgresSQLConnection = struct {
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) callconv(.C) bool {
+        _ = this; // autofix
         @fence(.Acquire);
-        return this.pending_activity_count.load(.Acquire) > 0;
+        // return this.pending_activity_count.load(.Acquire) > 0;
+        return true;
     }
 
     fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
         @fence(.Release);
         const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
-        const b: u32 = if (this.status == .connecting) 1 else 0;
+        const b: u32 = if (this.status != .disconnected) 1 else 0;
         this.pending_activity_count.store(a + b, .Release);
     }
 
@@ -2580,11 +2763,15 @@ pub const PostgresSQLConnection = struct {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(9).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
+        defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
 
         const username_str = arguments[2].toBunString(globalObject);
+        defer username_str.deref();
         const password_str = arguments[3].toBunString(globalObject);
+        defer password_str.deref();
         const database_str = arguments[4].toBunString(globalObject);
+        defer database_str.deref();
         const tls_object = arguments[5];
         var username: []const u8 = "";
         var password: []const u8 = "";
@@ -2592,6 +2779,7 @@ pub const PostgresSQLConnection = struct {
         var options: []const u8 = "";
 
         const options_str = arguments[6].toBunString(globalObject);
+        defer options_str.deref();
 
         const options_buf: []u8 = brk: {
             var b = bun.StringBuilder{};
@@ -3174,8 +3362,9 @@ pub const PostgresSQLConnection = struct {
         };
     };
 
-    fn advance(this: *PostgresSQLConnection) !void {
+    fn advance(this: *PostgresSQLConnection) !bool {
         defer this.updateRef();
+        var any = false;
 
         while (this.requests.readableLength() > 0) {
             var req: *PostgresSQLQuery = this.requests.peekItem(0);
@@ -3185,6 +3374,7 @@ pub const PostgresSQLConnection = struct {
                     if (stmt.status == .failed) {
                         req.onError(stmt.error_response, this.globalObject);
                         this.requests.discard(1);
+                        any = true;
                     } else {
                         break;
                     }
@@ -3192,6 +3382,7 @@ pub const PostgresSQLConnection = struct {
                 .success, .fail => {
                     this.requests.discard(1);
                     req.deref();
+                    any = true;
                 },
                 else => break,
             }
@@ -3213,6 +3404,7 @@ pub const PostgresSQLConnection = struct {
                         };
                         req.status = .binding;
                         req.binary = stmt.fields.len > 0;
+                        any = true;
                     } else {
                         break;
                     }
@@ -3220,6 +3412,8 @@ pub const PostgresSQLConnection = struct {
                 else => break,
             }
         }
+
+        return any;
     }
 
     pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.EnumLiteral), comptime Context: type, reader: protocol.NewReader(Context)) !void {
@@ -3233,8 +3427,6 @@ pub const PostgresSQLConnection = struct {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
 
-                var structure = statement.structure(this.js_value, this.globalObject);
-                bun.assert(!structure.isEmptyOrUndefinedOrNull());
                 var putter = DataCell.Putter{
                     .list = &.{},
                     .fields = statement.fields,
@@ -3266,7 +3458,8 @@ pub const PostgresSQLConnection = struct {
                 );
 
                 const pending_value = PostgresSQLQuery.pendingValueGetCached(request.thisValue) orelse .zero;
-                const result = putter.toJS(this.globalObject, pending_value, structure);
+                pending_value.ensureStillAlive();
+                const result = putter.toJS(this.globalObject, pending_value, statement.structure(this.js_value, this.globalObject));
 
                 if (pending_value == .zero) {
                     PostgresSQLQuery.pendingValueSetCached(request.thisValue, this.globalObject, result);
@@ -3298,9 +3491,9 @@ pub const PostgresSQLConnection = struct {
                 this.is_ready_for_query = true;
                 this.socket.setTimeout(300);
 
-                try this.advance();
-
-                this.flushData();
+                if (try this.advance()) {
+                    this.flushData();
+                }
             },
             .CommandComplete => {
                 var request = this.current() orelse return error.ExpectedRequest;
@@ -3348,8 +3541,133 @@ pub const PostgresSQLConnection = struct {
             .Authentication => {
                 var auth: protocol.Authentication = undefined;
                 try auth.decodeInternal(Context, reader);
+                defer auth.deinit();
 
-                debug("TODO auth: {s}", .{@tagName(std.meta.activeTag(auth))});
+                switch (auth) {
+                    .SASL => {
+                        if (this.authentication_state != .SASL) {
+                            this.authentication_state = .{ .SASL = .{} };
+                        }
+
+                        var mechanism_buf: [128]u8 = undefined;
+                        const mechanism = std.fmt.bufPrintZ(&mechanism_buf, "n,,n=*,r={s}", .{this.authentication_state.SASL.nonce()}) catch unreachable;
+                        var response = protocol.SASLInitialResponse{
+                            .mechanism = .{
+                                .temporary = "SCRAM-SHA-256",
+                            },
+                            .data = .{
+                                .temporary = mechanism,
+                            },
+                        };
+
+                        try response.writeInternal(PostgresSQLConnection.Writer, this.writer());
+                        debug("SASL", .{});
+                        this.flushData();
+                    },
+                    .SASLContinue => |*cont| {
+                        if (this.authentication_state != .SASL) {
+                            debug("Unexpected SASLContinue for authentiation state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
+                            return error.UnexpectedMessage;
+                        }
+                        var sasl = &this.authentication_state.SASL;
+
+                        if (sasl.status != .init) {
+                            debug("Unexpected SASLContinue for SASL state: {s}", .{@tagName(sasl.status)});
+                            return error.UnexpectedMessage;
+                        }
+                        debug("SASLContinue", .{});
+
+                        const iteration_count = try cont.iterationCount();
+
+                        const server_salt_decoded_base64 = try bun.base64.decodeAlloc(bun.z_allocator, cont.s);
+                        defer bun.z_allocator.free(server_salt_decoded_base64);
+                        try sasl.computeSaltedPassword(server_salt_decoded_base64, iteration_count, this);
+
+                        const auth_string = try std.fmt.allocPrint(
+                            bun.z_allocator,
+                            "n=*,r={s},r={s},s={s},i={s},c=biws,r={s}",
+                            .{
+                                sasl.nonce(),
+                                cont.r,
+                                cont.s,
+                                cont.i,
+                                cont.r,
+                            },
+                        );
+                        defer bun.z_allocator.free(auth_string);
+                        try sasl.computeServerSignature(auth_string);
+
+                        const client_key = sasl.clientKey();
+                        const client_key_signature = sasl.clientKeySignature(&client_key, auth_string);
+                        var client_key_xor_buffer: [32]u8 = undefined;
+                        for (&client_key_xor_buffer, client_key, client_key_signature) |*out, a, b| {
+                            out.* = a ^ b;
+                        }
+
+                        var client_key_xor_base64_buf = std.mem.zeroes([bun.base64.encodeLenFromSize(32)]u8);
+                        const xor_base64_len = bun.base64.encode(&client_key_xor_base64_buf, &client_key_xor_buffer);
+
+                        const payload = try std.fmt.allocPrint(
+                            bun.z_allocator,
+                            "c=biws,r={s},p={s}",
+                            .{ cont.r, client_key_xor_base64_buf[0..xor_base64_len] },
+                        );
+                        defer bun.z_allocator.free(payload);
+
+                        var response = protocol.SASLResponse{
+                            .data = .{
+                                .temporary = payload,
+                            },
+                        };
+
+                        try response.writeInternal(PostgresSQLConnection.Writer, this.writer());
+                        sasl.status = .@"continue";
+                        this.flushData();
+                    },
+                    .SASLFinal => |final| {
+                        if (this.authentication_state != .SASL) {
+                            debug("SASLFinal - Unexpected SASLContinue for authentiation state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
+                            return error.UnexpectedMessage;
+                        }
+                        var sasl = &this.authentication_state.SASL;
+
+                        if (sasl.status != .@"continue") {
+                            debug("SASLFinal - Unexpected SASLContinue for SASL state: {s}", .{@tagName(sasl.status)});
+                            return error.UnexpectedMessage;
+                        }
+
+                        if (sasl.server_signature_len == 0) {
+                            debug("SASLFinal - Server signature is empty", .{});
+                            return error.UnexpectedMessage;
+                        }
+
+                        const server_signature = sasl.serverSignature();
+
+                        // This will usually start with "v="
+                        const comparison_signature = final.data.slice();
+
+                        if (comparison_signature.len < 2 or !bun.strings.eqlLong(server_signature, comparison_signature[2..], true)) {
+                            debug("SASLFinal - SASL Server signature mismatch\nExpected: {s}\nActual: {s}", .{ server_signature, comparison_signature[2..] });
+                            this.fail("The server did not return the correct signature", error.SASL_SIGNATURE_MISMATCH);
+                        } else {
+                            debug("SASLFinal - SASL Server signature match", .{});
+                            this.authentication_state.zero();
+                        }
+                    },
+                    .Ok => {
+                        debug("Authentication OK", .{});
+                        this.authentication_state.zero();
+                        this.authentication_state = .{ .ok = {} };
+                    },
+
+                    .Unknown => {
+                        this.fail("Unknown authentication method", error.UNKNOWN_AUTHENTICATION_METHOD);
+                    },
+
+                    else => {
+                        debug("TODO auth: {s}", .{@tagName(std.meta.activeTag(auth))});
+                    },
+                }
             },
             .NoData => {
                 try reader.eatMessage(protocol.NoData);
@@ -3389,7 +3707,10 @@ pub const PostgresSQLConnection = struct {
                     return;
                 }
 
-                var request = this.current() orelse return error.ExpectedRequest;
+                var request = this.current() orelse {
+                    debug("ErrorResponse: {}", .{err});
+                    return error.ExpectedRequest;
+                };
                 var is_error_owned = true;
                 defer {
                     if (is_error_owned) {
@@ -3624,7 +3945,7 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     binding.put(
         globalObject,
         ZigString.static("createQuery"),
-        JSC.JSFunction.create(globalObject, "createConnection", PostgresSQLQuery.call, 2, .{}),
+        JSC.JSFunction.create(globalObject, "createQuery", PostgresSQLQuery.call, 2, .{}),
     );
 
     binding.put(
@@ -3637,3 +3958,5 @@ pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 const ZigString = JSC.ZigString;
+
+const assert = bun.assert;

@@ -5035,7 +5035,7 @@ pub extern fn d2i_PKCS8PrivateKey_bio(bp: [*c]BIO, x: [*c][*c]EVP_PKEY, cb: ?*co
 // pub extern fn d2i_PKCS8PrivateKey_fp(fp: [*c]FILE, x: [*c][*c]EVP_PKEY, cb: ?*const pem_password_cb, u: ?*anyopaque) [*c]EVP_PKEY;
 // pub extern fn PEM_write_PKCS8PrivateKey(fp: [*c]FILE, x: [*c]EVP_PKEY, enc: ?*const EVP_CIPHER, kstr: [*c]u8, klen: c_int, cd: ?*const pem_password_cb, u: ?*anyopaque) c_int;
 
-pub extern fn HMAC(evp_md: ?*const EVP_MD, key: ?*const anyopaque, key_len: usize, data: [*c]const u8, data_len: usize, out: [*c]u8, out_len: [*c]c_uint) [*c]u8;
+pub extern fn HMAC(evp_md: *const EVP_MD, key: *const anyopaque, key_len: usize, data: [*]const u8, data_len: usize, out: [*]u8, out_len: *c_uint) ?[*]u8;
 pub extern fn HMAC_CTX_init(ctx: [*c]HMAC_CTX) void;
 pub extern fn HMAC_CTX_new() [*c]HMAC_CTX;
 pub extern fn HMAC_CTX_cleanup(ctx: [*c]HMAC_CTX) void;

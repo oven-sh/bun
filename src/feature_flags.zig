@@ -181,3 +181,5 @@ pub const breaking_changes_1_2 = false;
 pub const nonblocking_stdout_and_stderr_on_posix = false;
 
 pub const is_patch_cmd_enabled = env.is_canary or env.isDebug;
+
+pub const postgresql = env.is_canary or env.isDebug;

@@ -187,7 +187,7 @@ function loadOptions(o) {
   var hostname, port, username, password, database, tls, url, query, adapter;
   const env = Bun.env;
 
-  if (typeof o === "undefined" || (typeof o === "string" && o.length === 0)) {
+  if (o === undefined || (typeof o === "string" && o.length === 0)) {
     const urlString = env.POSTGRES_URL || env.DATABASE_URL || env.PGURL || env.PG_URL;
     if (urlString) {
       url = new URL(urlString);
@@ -348,6 +348,8 @@ function SQL(o) {
     connection.close();
     return promise;
   };
+
+  sql[Symbol.asyncDispose] = () => sql.close();
 
   sql.flush = () => {
     if (closed || !connected) {

@@ -15,6 +15,12 @@ pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").c_allocator;
 
+/// Zeroing memory allocator
+pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
+    std.heap.c_allocator
+else
+    @import("./memory_allocator.zig").z_allocator;
+
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
@@ -3599,3 +3605,4 @@ pub fn OrdinalT(comptime Int: type) type {
 
 /// ABI-equivalent of WTF::OrdinalNumber
 pub const Ordinal = OrdinalT(c_int);
+pub const hmac = @import("./hmac.zig");

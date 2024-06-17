@@ -2509,7 +2509,14 @@ pub const ModuleLoader = struct {
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
-                .@"bun:sql" => return jsSyntheticModule(.@"bun:sql", specifier),
+                .@"bun:sql" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis and !bun.FeatureFlags.postgresql)
+                            return null;
+                    }
+
+                    return jsSyntheticModule(.@"bun:sql", specifier);
+                },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
                 .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),

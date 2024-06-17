@@ -46,6 +46,16 @@ pub fn decode(destination: []u8, source: []const u8) DecodeResult {
     return .{ .written = wrote, .fail = false };
 }
 
+pub fn decodeAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var dest = try allocator.alloc(u8, decodeLen(input));
+    const result = decode(dest, input);
+    if (result.fail) {
+        allocator.free(dest);
+        return error.DecodingFailed;
+    }
+    return dest[0..result.written];
+}
+
 pub fn encode(destination: []u8, source: []const u8) usize {
     var outlen: usize = destination.len;
     LibBase64.base64_encode(source.ptr, source.len, destination.ptr, &outlen, 0);
@@ -68,7 +78,11 @@ pub fn decodeLen(source: anytype) usize {
 }
 
 pub fn encodeLen(source: anytype) usize {
-    return zig_base64.standard.Encoder.calcSize(source.len);
+    return encodeLenFromSize(source.len);
+}
+
+pub fn encodeLenFromSize(source: usize) usize {
+    return zig_base64.standard.Encoder.calcSize(source);
 }
 
 pub fn urlSafeEncodeLen(source: anytype) usize {

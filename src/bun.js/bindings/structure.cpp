@@ -238,6 +238,8 @@ static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCel
     }
 
     auto* newArray = JSC::constructEmptyArray(globalObject, nullptr);
+    if (!newArray)
+        return {};
 
     newArray->putDirectIndex(globalObject, 0, toJS(structure, cells, count, globalObject));
     return newArray;
@@ -245,11 +247,13 @@ static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCel
 
 extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     JSC::JSGlobalObject* globalObject,
-    EncodedJSValue arrayValue,
-    EncodedJSValue structureValue, DataCell* cells, unsigned count)
+    EncodedJSValue encodedArrayValue,
+    EncodedJSValue encodedStructureValue, DataCell* cells, unsigned count)
 {
-    auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(JSC::JSValue::decode(arrayValue)) : nullptr;
-    auto* structure = jsDynamicCast<JSC::Structure*>(JSC::JSValue::decode(structureValue));
+    JSValue arrayValue = JSValue::decode(encodedArrayValue);
+    JSValue structureValue = JSValue::decode(encodedStructureValue);
+    auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(arrayValue) : nullptr;
+    auto* structure = jsDynamicCast<JSC::Structure*>(structureValue);
 
     return JSValue::encode(toJS(array, structure, cells, count, globalObject));
 }

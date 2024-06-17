@@ -356,6 +356,27 @@ function SQL(o) {
 
     connection.flush();
   };
+  sql.options = connectionInfo;
+
+  sql.then = () => {
+    if (closed) {
+      return Promise.reject(new Error("Connection closed"));
+    }
+
+    if (connected) {
+      return Promise.resolve(sql);
+    }
+
+    const { resolve, reject, promise } = Promise.withResolvers();
+    onConnect.push(err => (err ? reject(err) : resolve(sql)));
+    if (!connecting) {
+      connecting = true;
+      connection = createConnection(connectionInfo, onConnected, onClose);
+    }
+
+    return promise;
+  };
+
   return sql;
 }
 
@@ -374,6 +395,7 @@ var exportsObject = {
   default: defaultSQLObject,
   SQL,
   Query,
+  postgres: SQL,
 };
 
 export default exportsObject;

@@ -824,6 +824,93 @@ test("package added after install", async () => {
   expect(await exited).toBe(0);
 });
 
+test("--production excludes devDependencies in workspaces", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+        devDependencies: {
+          "a1": "npm:no-deps@1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "a-dep": "1.0.2",
+        },
+        devDependencies: {
+          "a2": "npm:a-dep@1.0.2",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        devDependencies: {
+          "a3": "npm:a-dep@1.0.3",
+          "a4": "npm:a-dep@1.0.4",
+          "a5": "npm:a-dep@1.0.5",
+        },
+      }),
+    ),
+  ]);
+
+  // without lockfile
+  const expectedResults = [
+    [".cache", "a-dep", "no-deps", "pkg1", "pkg2"],
+    { name: "no-deps", version: "1.0.0" },
+    { name: "a-dep", version: "1.0.2" },
+  ];
+  let { out } = await runBunInstall(env, packageDir, { production: true });
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "4 packages installed",
+  ]);
+  let results = await Promise.all([
+    readdirSorted(join(packageDir, "node_modules")),
+    file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+  ]);
+
+  expect(results).toMatchObject(expectedResults);
+
+  // create non-production lockfile, then install with --production
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out } = await runBunInstall(env, packageDir));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ a1@1.0.0",
+    "+ no-deps@1.0.0",
+    "",
+    "7 packages installed",
+  ]);
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out } = await runBunInstall(env, packageDir, { production: true }));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "4 packages installed",
+  ]);
+  results = await Promise.all([
+    readdirSorted(join(packageDir, "node_modules")),
+    file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+  ]);
+  expect(results).toMatchObject(expectedResults);
+});
+
 test("--production without a lockfile will install and not save lockfile", async () => {
   await writeFile(
     join(packageDir, "package.json"),

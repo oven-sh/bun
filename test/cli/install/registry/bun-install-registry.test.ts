@@ -38,11 +38,9 @@ beforeAll(async () => {
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
     {
-      silent: true,
-      // Prefer using Node.js if it's available,
-      // since the debug version of Bun may be slower
-      // and may have other bugs that make it harder to debug.
-      execPath: nodeExe() || bunExe(),
+      silent: false,
+      // Prefer using a release build of Bun since it's faster
+      execPath: Bun.which("bun") || bunExe(),
     },
   );
 

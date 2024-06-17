@@ -1127,6 +1127,6 @@ declare module "bun:sqlite" {
     /**
      * If `safeIntegers` is `true`, this is a `bigint`. Otherwise, it is a `number`.
      */
-    lastInsertRowId: number | bigint;
+    lastInsertRowid: number | bigint;
   }
 }

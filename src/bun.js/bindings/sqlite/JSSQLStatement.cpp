@@ -979,7 +979,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
         }
 
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected array"_s));
-        return jsUndefined();
+        return {};
     }
 
     int count = array->length();
@@ -991,13 +991,15 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
     int required = bindings.count;
     if (count != required) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, makeString("SQLite query expected "_s, required, " values, received "_s, count)));
-        return jsUndefined();
+        return {};
     }
 
     int i = 0;
     for (; i < count; i++) {
         JSC::JSValue value = array->getIndexQuickly(i);
-        rebindValue(lexicalGlobalObject, db, stmt, i + 1, value, scope, clone, safeIntegers);
+        if (!rebindValue(lexicalGlobalObject, db, stmt, i + 1, value, scope, clone, safeIntegers)) {
+            return {};
+        }
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -17,7 +17,7 @@ function initializeSQL() {
 function createChangesObject() {
   return {
     changes: $getInternalField(internalFieldTuple, 0),
-    lastInsertRowId: $getInternalField(internalFieldTuple, 1),
+    lastInsertRowid: $getInternalField(internalFieldTuple, 1),
   };
 }
 
@@ -161,10 +161,7 @@ class Statement {
   #runNoArgs() {
     this.#raw.run(internalFieldTuple);
 
-    return {
-      changes: $getInternalField(internalFieldTuple, 0),
-      lastInsertRowId: $getInternalField(internalFieldTuple, 1),
-    };
+    return createChangesObject();
   }
 
   safeIntegers(updatedValue?: boolean) {

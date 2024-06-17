@@ -2101,7 +2101,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                 const rc = Syscall.system.open(path, .{ .PATH = true }, @as(u32, 0));
                 switch (Syscall.getErrno(rc)) {
                     .SUCCESS => {
-                        _ = bun.sys.close(bun.toFD(rc));
+                        _ = bun.sys.close(bun.toFD(@as(i32, @intCast(rc))));
                         return false;
                     },
                     else => return true,

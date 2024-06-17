@@ -2152,3 +2152,48 @@ it("should error with faulty args", async () => {
   }
   server.close();
 });
+
+it("should mark complete true", async () => {
+  const { promise: serve, resolve: resolveServe } = Promise.withResolvers();
+  const server = createServer(async (req, res) => {
+    let count = 0;
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk.toString();
+    });
+    while (!req.complete) {
+      await Bun.sleep(100);
+      count++;
+      if (count > 10) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Request timeout");
+        return;
+      }
+    }
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(data);
+  });
+
+  server.listen(0, () => {
+    resolveServe(`http://localhost:${server.address().port}`);
+  });
+
+  const url = await serve;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Hotel 1",
+        price: 100,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('{"name":"Hotel 1","price":100}');
+  } finally {
+    server.close();
+  }
+});

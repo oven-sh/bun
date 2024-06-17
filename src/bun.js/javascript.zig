@@ -593,6 +593,26 @@ pub const ImportWatcher = union(enum) {
 
 pub const PlatformEventLoop = if (Environment.isPosix) uws.Loop else bun.Async.Loop;
 
+export fn Bun__setTLSRejectUnauthorizedValue(value: i32) void {
+    VirtualMachine.get().default_tls_reject_unauthorized = value != 0;
+}
+
+export fn Bun__getTLSRejectUnauthorizedValue() i32 {
+    return if (JSC.VirtualMachine.get().getTLSRejectUnauthorized()) 1 else 0;
+}
+
+export fn Bun__setVerboseFetchValue(value: i32) void {
+    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
+}
+
+export fn Bun__getVerboseFetchValue() i32 {
+    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
+        .none => 0,
+        .headers => 1,
+        .curl => 2,
+    };
+}
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -634,6 +654,9 @@ pub const VirtualMachine = struct {
     is_main_thread: bool = false,
     last_reported_error_for_dedupe: JSValue = .zero,
     exit_handler: ExitHandler = .{},
+
+    default_tls_reject_unauthorized: ?bool = null,
+    default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -756,6 +779,26 @@ pub const VirtualMachine = struct {
 
     pub fn isShuttingDown(this: *const VirtualMachine) bool {
         return this.is_shutting_down;
+    }
+
+    pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
+        return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
+    }
+
+    pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
+        return this.default_verbose_fetch orelse {
+            if (this.bundler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
+                if (strings.eqlComptime(verbose_fetch, "true") or strings.eqlComptime(verbose_fetch, "1")) {
+                    this.default_verbose_fetch = .headers;
+                    return .headers;
+                } else if (strings.eqlComptime(verbose_fetch, "curl")) {
+                    this.default_verbose_fetch = .curl;
+                    return .curl;
+                }
+            }
+            this.default_verbose_fetch = .none;
+            return .none;
+        };
     }
 
     const VMHolder = struct {

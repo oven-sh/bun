@@ -408,8 +408,9 @@ pub const ServerConfig = struct {
 
         pub const zero = SSLConfig{};
 
-        pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
+        pub fn inJS(vm: *JSC.VirtualMachine, global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;
+
             var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
 
@@ -419,6 +420,8 @@ pub const ServerConfig = struct {
             }
 
             var any = false;
+
+            result.reject_unauthorized = @intFromBool(vm.getTLSRejectUnauthorized());
 
             // Required
             if (obj.getTruthy(global, "keyFile")) |key_file_name| {
@@ -834,6 +837,7 @@ pub const ServerConfig = struct {
 
     pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
         var env = arguments.vm.bundler.env;
+        const vm = JSC.VirtualMachine.get();
 
         var args = ServerConfig{
             .address = .{
@@ -1034,7 +1038,7 @@ pub const ServerConfig = struct {
                         return args;
                     }
                     while (value_iter.next()) |item| {
-                        if (SSLConfig.inJS(global, item, exception)) |ssl_config| {
+                        if (SSLConfig.inJS(vm, global, item, exception)) |ssl_config| {
                             if (args.ssl_config == null) {
                                 args.ssl_config = ssl_config;
                             } else {
@@ -1061,7 +1065,7 @@ pub const ServerConfig = struct {
                         }
                     }
                 } else {
-                    if (SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+                    if (SSLConfig.inJS(vm, global, tls, exception)) |ssl_config| {
                         args.ssl_config = ssl_config;
                     }
 
@@ -1078,7 +1082,7 @@ pub const ServerConfig = struct {
             // @compatibility Bun v0.x - v0.2.1
             // this used to be top-level, now it's "tls" object
             if (args.ssl_config == null) {
-                if (SSLConfig.inJS(global, arg, exception)) |ssl_config| {
+                if (SSLConfig.inJS(vm, global, arg, exception)) |ssl_config| {
                     args.ssl_config = ssl_config;
                 }
 
@@ -3511,7 +3515,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         loop.enter();
                         defer loop.exit();
 
-                        old.resolve(&body.value, this.server.globalThis);
+                        old.resolve(&body.value, this.server.globalThis, null);
                     }
                     return;
                 }
@@ -3563,7 +3567,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     var old = body.value;
                     old.Locked.onReceiveValue = null;
                     var new_body = .{ .Null = {} };
-                    old.resolve(&new_body, this.server.globalThis);
+                    old.resolve(&new_body, this.server.globalThis, null);
                     body.value = new_body;
                 }
             } else {
@@ -5784,6 +5788,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
                             var ip = bun.String.createUTF8(slice);
+                            defer ip.deref();
                             return JSSocketAddress__create(
                                 this.globalThis,
                                 ip.toJS(this.globalThis),
@@ -5830,6 +5835,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer default_allocator.free(buf);
 
             var value = bun.String.createUTF8(buf);
+            defer value.deref();
             return value.toJSDOMURL(globalThis);
         }
 

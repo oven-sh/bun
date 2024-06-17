@@ -4,7 +4,7 @@ import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { readdirSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 import { readdirSorted } from "./dummy.registry";
 
 let x_dir: string;
@@ -361,5 +361,39 @@ it("should pass --version to the package if specified", async () => {
 
   expect(err).not.toContain("error:");
   expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+it('should set "npm_config_user_agent" to bun', async () => {
+  await writeFile(
+    join(x_dir, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "print-pm": resolve(import.meta.dir, "print-pm-1.0.0.tgz"),
+      },
+    }),
+  );
+
+  const { exited: installFinished } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: x_dir,
+  });
+  expect(await installFinished).toBe(0);
+
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "print-pm"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain(`bun/${Bun.version}`);
   expect(exited).toBe(0);
 });

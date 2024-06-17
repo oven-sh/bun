@@ -78,8 +78,8 @@
 
 namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
-extern "C" bool Bun__defaultRejectUnauthorized(JSGlobalObject* lexicalGlobalObject);
 static size_t getFramingOverhead(size_t payloadSize)
 {
     static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
@@ -164,7 +164,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
-    m_rejectUnauthorized = Bun__defaultRejectUnauthorized(context.jsGlobalObject());
+    m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
 }
 
 WebSocket::~WebSocket()
@@ -403,7 +403,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     auto headers = headersOrException.releaseReturnValue();
     headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
-    auto iterator = headers.get().createIterator();
+    // lowerCaseKeys = false so we dont touch the keys casing
+    auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
         headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
         headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));

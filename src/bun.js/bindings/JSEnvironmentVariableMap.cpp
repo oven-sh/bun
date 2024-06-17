@@ -11,6 +11,8 @@
 #include <JavaScriptCore/JSStringInlines.h>
 
 #include "BunClientData.h"
+#include "wtf/Compiler.h"
+#include "wtf/Forward.h"
 
 using namespace JSC;
 
@@ -121,6 +123,137 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
     return true;
 }
 
+extern "C" int Bun__getTLSRejectUnauthorizedValue();
+extern "C" int Bun__setTLSRejectUnauthorizedValue(int value);
+extern "C" int Bun__getVerboseFetchValue();
+extern "C" int Bun__setVerboseFetchValue(int value);
+
+ALWAYS_INLINE static Identifier NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(VM& vm)
+{
+    auto* clientData = WebCore::clientData(vm);
+    auto& builtinNames = clientData->builtinNames();
+    // We just pick one to reuse. This will never be exposed to a user. And we
+    // don't want to pay the cost of adding another one.
+    return builtinNames.textDecoderStreamDecoderPrivateName();
+}
+
+ALWAYS_INLINE static Identifier BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(VM& vm)
+{
+    auto* clientData = WebCore::clientData(vm);
+    auto& builtinNames = clientData->builtinNames();
+    // We just pick one to reuse. This will never be exposed to a user. And we
+    // don't want to pay the cost of adding another one.
+    return builtinNames.textEncoderStreamEncoderPrivateName();
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return JSValue::encode(jsUndefined());
+
+    const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
+    JSValue result = thisObject->getDirect(vm, privateName);
+    if (UNLIKELY(result)) {
+        return JSValue::encode(result);
+    }
+
+    ZigString name = toZigString(propertyName.publicName());
+    ZigString value = { nullptr, 0 };
+
+    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!object)
+        return false;
+
+    JSValue decodedValue = JSValue::decode(value);
+    WTF::String str = decodedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    // TODO: only check "0". Node doesn't check both. But we already did. So we
+    // should wait to do that until Bun v1.2.0.
+    if (str == "0"_s || str == "false"_s) {
+        Bun__setTLSRejectUnauthorizedValue(0);
+    } else {
+        Bun__setTLSRejectUnauthorizedValue(1);
+    }
+
+    const auto& privateName = NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(vm);
+    object->putDirect(vm, privateName, JSValue::decode(value), 0);
+
+    // TODO: this is an assertion failure
+    // Recreate this because the property visibility needs to be set correctly
+    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return JSValue::encode(jsUndefined());
+
+    const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
+    JSValue result = thisObject->getDirect(vm, privateName);
+    if (UNLIKELY(result)) {
+        return JSValue::encode(result);
+    }
+
+    ZigString name = toZigString(propertyName.publicName());
+    ZigString value = { nullptr, 0 };
+
+    if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!object)
+        return false;
+
+    JSValue decodedValue = JSValue::decode(value);
+    WTF::String str = decodedValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    if (str == "1"_s || str == "true"_s) {
+        Bun__setVerboseFetchValue(1);
+    } else if (str == "curl"_s) {
+        Bun__setVerboseFetchValue(2);
+    } else {
+        Bun__setVerboseFetchValue(0);
+    }
+
+    const auto& privateName = BUN_CONFIG_VERBOSE_FETCH_PRIVATE_PROPERTY(vm);
+    object->putDirect(vm, privateName, JSValue::decode(value), 0);
+
+    // TODO: this is an assertion failure
+    // Recreate this because the property visibility needs to be set correctly
+    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    return true;
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -140,7 +273,12 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
+    String NODE_TLS_REJECT_UNAUTHORIZED = String("NODE_TLS_REJECT_UNAUTHORIZED"_s);
+    String BUN_CONFIG_VERBOSE_FETCH = String("BUN_CONFIG_VERBOSE_FETCH"_s);
     bool hasTZ = false;
+    bool hasNodeTLSRejectUnauthorized = false;
+    bool hasBunConfigVerboseFetch = false;
+
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
@@ -150,6 +288,14 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 #endif
         if (name == TZ) {
             hasTZ = true;
+            continue;
+        }
+        if (name == NODE_TLS_REJECT_UNAUTHORIZED) {
+            hasNodeTLSRejectUnauthorized = true;
+            continue;
+        }
+        if (name == BUN_CONFIG_VERBOSE_FETCH) {
+            hasBunConfigVerboseFetch = true;
             continue;
         }
         ASSERT(len > 0);
@@ -184,6 +330,22 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     object->putDirectCustomAccessor(
         vm,
         Identifier::fromString(vm, TZ), JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), TZAttrs);
+
+    unsigned int NODE_TLS_REJECT_UNAUTHORIZED_Attrs = JSC::PropertyAttribute::CustomAccessor | 0;
+    if (!hasNodeTLSRejectUnauthorized) {
+        NODE_TLS_REJECT_UNAUTHORIZED_Attrs |= JSC::PropertyAttribute::DontEnum;
+    }
+    object->putDirectCustomAccessor(
+        vm,
+        Identifier::fromString(vm, NODE_TLS_REJECT_UNAUTHORIZED), JSC::CustomGetterSetter::create(vm, jsNodeTLSRejectUnauthorizedGetter, jsNodeTLSRejectUnauthorizedSetter), NODE_TLS_REJECT_UNAUTHORIZED_Attrs);
+
+    unsigned int BUN_CONFIG_VERBOSE_FETCH_Attrs = JSC::PropertyAttribute::CustomAccessor | 0;
+    if (!hasBunConfigVerboseFetch) {
+        BUN_CONFIG_VERBOSE_FETCH_Attrs |= JSC::PropertyAttribute::DontEnum;
+    }
+    object->putDirectCustomAccessor(
+        vm,
+        Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
 #if OS(WINDOWS)
     JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);

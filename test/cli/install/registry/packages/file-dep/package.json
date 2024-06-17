@@ -1,0 +1,62 @@
+{
+	"name": "file-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "file-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"files": "file:./the-files"
+			},
+			"_id": "file-dep@1.0.0",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-VOqsNo9AkY5FRDibW3Q3zVj3SQ/LF9KUy+QeT7e41NokEBywwIXAXF8cAxAyZEsnIPpkQiV3zZgya5dNUrYpHQ==",
+				"shasum": "a59518a5d7d00d302cc31316c5c704da996db1aa",
+				"tarball": "http://localhost:4873/file-dep/-/file-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.1": {
+			"name": "file-dep",
+			"version": "1.0.1",
+			"dependencies": {
+				"files": "file:."
+			},
+			"_id": "file-dep@1.0.1",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-aBHqN8phQxH8Vi93DN38cQhlttrGoahHlgABvZIAfo8JpVDv/KBg4K9ezNzprXXk3J8KVSez4m/YJT1kuj96DA==",
+				"shasum": "0d6960949f9410062bcce16e72e9ba234480ab3f",
+				"tarball": "http://localhost:4873/file-dep/-/file-dep-1.0.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-04-17T23:22:54.512Z",
+		"created": "2024-04-17T18:05:16.611Z",
+		"1.0.0": "2024-04-17T18:05:16.611Z",
+		"1.0.1": "2024-04-17T23:22:54.512Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"file-dep-1.0.0.tgz": {
+			"shasum": "a59518a5d7d00d302cc31316c5c704da996db1aa",
+			"version": "1.0.0"
+		},
+		"file-dep-1.0.1.tgz": {
+			"shasum": "0d6960949f9410062bcce16e72e9ba234480ab3f",
+			"version": "1.0.1"
+		}
+	},
+	"_rev": "",
+	"_id": "file-dep",
+	"readme": "ERROR: No README data found!"
+}

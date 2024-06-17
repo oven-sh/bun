@@ -38,6 +38,9 @@ function normalizeData(data, opts) {
   return data;
 }
 
+// https://github.com/oven-sh/bun/issues/11866
+let WebSocket;
+
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
  */
@@ -57,6 +60,10 @@ class BunWebSocket extends EventEmitter {
 
   constructor(url, protocols, options) {
     super();
+    // https://github.com/oven-sh/bun/issues/11866
+    if (!WebSocket) {
+      WebSocket = $cpp("JSWebSocket.cpp", "getWebSocketConstructor");
+    }
     let ws = (this.#ws = new WebSocket(url, protocols));
     ws.binaryType = "nodebuffer";
     // TODO: options

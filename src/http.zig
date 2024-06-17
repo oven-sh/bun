@@ -337,6 +337,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
             hostname_buf: [MAX_KEEPALIVE_HOSTNAME]u8 = undefined,
             hostname_len: u8 = 0,
             port: u16 = 0,
+            /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
+            did_have_handshaking_error_while_reject_unauthorized_is_false: bool = false,
         };
 
         pub fn markSocketAsDead(socket: HTTPSocket) void {
@@ -437,7 +439,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
-        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
+        ///
+        /// If `did_have_handshaking_error_while_reject_unauthorized_is_false`
+        /// is set, then we can only reuse the socket for HTTP Keep Alive if
+        /// `reject_unauthorized` is set to `false`.
+        pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16) void {
             // log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
@@ -456,6 +462,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     socket.setTimeoutMinutes(5);
 
                     pending.http_socket = socket;
+                    pending.did_have_handshaking_error_while_reject_unauthorized_is_false = did_have_handshaking_error_while_reject_unauthorized_is_false;
                     @memcpy(pending.hostname_buf[0..hostname.len], hostname);
                     pending.hostname_len = @as(u8, @truncate(hostname.len));
                     pending.port = port;
@@ -510,10 +517,15 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     }
                     // no handshake_error at this point
                     if (authorized) {
+                        client.did_have_handshaking_error = handshake_error.error_no != 0;
+
                         // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                         if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
+                            client.did_have_handshaking_error = true;
+
                             return;
                         }
+
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
@@ -649,7 +661,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             }
         };
 
-        fn existingSocket(this: *@This(), hostname: []const u8, port: u16) ?HTTPSocket {
+        fn existingSocket(this: *@This(), reject_unauthorized: bool, hostname: []const u8, port: u16) ?HTTPSocket {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
@@ -658,6 +670,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
                 if (socket.port != port) {
+                    continue;
+                }
+
+                if (socket.did_have_handshaking_error_while_reject_unauthorized_is_false and reject_unauthorized) {
                     continue;
                 }
 
@@ -704,7 +720,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url.hostname = hostname;
 
             if (client.isKeepAlivePossible()) {
-                if (this.existingSocket(hostname, port)) |sock| {
+                if (this.existingSocket(client.reject_unauthorized, hostname, port)) |sock| {
                     sock.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
@@ -1532,6 +1548,12 @@ pub const InternalState = struct {
 
 const default_redirect_count = 127;
 
+pub const HTTPVerboseLevel = enum {
+    none,
+    headers,
+    curl,
+};
+
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 method: Method,
@@ -1540,7 +1562,7 @@ header_buf: string,
 url: URL,
 connected_url: URL = URL{},
 allocator: std.mem.Allocator,
-verbose: bool = Environment.isTest,
+verbose: HTTPVerboseLevel = .none,
 remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
@@ -1552,6 +1574,7 @@ disable_keepalive: bool = false,
 disable_decompression: bool = false,
 state: InternalState = .{},
 
+did_have_handshaking_error: bool = false,
 tls_props: ?*SSLConfig = null,
 result_callback: HTTPClientResult.Callback = undefined,
 
@@ -1727,7 +1750,7 @@ pub const AsyncHTTP = struct {
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
-    verbose: bool = false,
+    verbose: HTTPVerboseLevel = .none,
 
     client: HTTPClient = undefined,
     err: ?anyerror = null,
@@ -1804,7 +1827,7 @@ pub const AsyncHTTP = struct {
         signals: ?Signals = null,
         unix_socket_path: ?JSC.ZigString.Slice = null,
         disable_timeout: ?bool = null,
-        verbose: ?bool = null,
+        verbose: ?HTTPVerboseLevel = null,
         disable_keepalive: ?bool = null,
         disable_decompression: ?bool = null,
         reject_unauthorized: ?bool = null,
@@ -2225,6 +2248,7 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
             socket,
+            this.did_have_handshaking_error and !this.reject_unauthorized,
             this.connected_url.hostname,
             this.connected_url.getPortAuto(),
         );
@@ -2325,15 +2349,23 @@ pub const HTTPResponseMetadata = struct {
     }
 };
 
-fn printRequest(request: picohttp.Request) void {
+fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, body: []const u8, curl: bool) void {
     @setCold(true);
-    Output.prettyErrorln("Request: {}", .{request});
+    var request_ = request;
+    request_.path = url;
+
+    if (curl) {
+        Output.prettyErrorln("{}", .{request_.curl(ignore_insecure, body)});
+    }
+
+    Output.prettyErrorln("{}", .{request_});
+
     Output.flush();
 }
 
 fn printResponse(response: picohttp.Response) void {
     @setCold(true);
-    Output.prettyErrorln("Response: {}", .{response});
+    Output.prettyErrorln("{}", .{response});
     Output.flush();
 }
 
@@ -2422,8 +2454,8 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             this.state.request_sent_len += @as(usize, @intCast(amount));
             const has_sent_headers = this.state.request_sent_len >= headers_len;
 
-            if (has_sent_headers and this.verbose) {
-                printRequest(request);
+            if (has_sent_headers and this.verbose != .none) {
+                printRequest(request, this.url.href, !this.reject_unauthorized, this.state.request_body, this.verbose == .curl);
             }
 
             if (has_sent_headers and this.state.request_body.len > 0) {
@@ -3039,6 +3071,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
             if (this.isKeepAlivePossible() and !socket.isClosedOrHasError()) {
                 ctx.releaseSocket(
                     socket,
+                    this.did_have_handshaking_error and !this.reject_unauthorized,
                     this.connected_url.hostname,
                     this.connected_url.getPortAuto(),
                 );
@@ -3505,7 +3538,7 @@ pub fn handleResponseMetadata(
         }
     }
 
-    if (this.verbose) {
+    if (this.verbose != .none) {
         printResponse(response.*);
     }
 

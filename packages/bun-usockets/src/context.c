@@ -598,12 +598,20 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
             us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
-            // there are no further attempting to connect
-            if (!c->connecting_head) {
+
+            // Since CONCURRENT_CONNECTIONS is 2, we know there is room for at least 1 more active connection
+            // now that we've closed the current socket.
+            //
+            // Three possible cases:
+            // 1. The list of addresses to try is now empty -> throw an error
+            // 2. There is a next address to try -> start the next one
+            // 3. There are 2 or more addresses to try -> start the next two.
+            if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 // start opening the next batch of connections
-                int opened = start_connections(c, CONCURRENT_CONNECTIONS);
+                int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
                 // we have run out of addresses to attempt, signal the connection error
-                if (opened == 0) {
+                // but only if there are no other sockets in the list
+                if (opened == 0 && c->connecting_head == NULL) {
                     c->error = ECONNREFUSED;
                     c->context->on_connect_error(c, error);
                     Bun__addrinfo_freeRequest(c->addrinfo_req, ECONNREFUSED);

@@ -2565,10 +2565,8 @@ pub const PostgresSQLConnection = struct {
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) callconv(.C) bool {
-        _ = this; // autofix
         @fence(.Acquire);
-        // return this.pending_activity_count.load(.Acquire) > 0;
-        return true;
+        return this.pending_activity_count.load(.Acquire) > 0;
     }
 
     fn updateHasPendingActivity(this: *PostgresSQLConnection) void {

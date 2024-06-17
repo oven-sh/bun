@@ -3049,7 +3049,7 @@ pub const PostgresSQLConnection = struct {
         tag: Tag,
 
         value: Value,
-        free_value: bool = false,
+        free_value: u8 = 0,
 
         pub const Tag = enum(u8) {
             null = 0,
@@ -3071,7 +3071,7 @@ pub const PostgresSQLConnection = struct {
             double: f64,
             int32: i32,
             int64: i64,
-            boolean: bool,
+            boolean: u8,
             date: f64,
             bytea: [2]usize,
             json: bun.WTF.StringImpl,
@@ -3107,7 +3107,7 @@ pub const PostgresSQLConnection = struct {
         };
 
         pub fn deinit(this: *DataCell) void {
-            if (!this.free_value) return;
+            if (this.free_value == 0) return;
 
             switch (this.tag) {
                 .string => {
@@ -3213,10 +3213,10 @@ pub const PostgresSQLConnection = struct {
                     }
                 },
                 .json => {
-                    return DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
+                    return DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = 1 };
                 },
                 .boolean => {
-                    return DataCell{ .tag = .boolean, .value = .{ .boolean = bytes.len > 0 and bytes[0] == 't' } };
+                    return DataCell{ .tag = .boolean, .value = .{ .boolean = @intFromBool(bytes.len > 0 and bytes[0] == 't') } };
                 },
                 .time, .timestamp, .timestamptz => {
                     var str = bun.String.init(bytes);
@@ -3241,7 +3241,7 @@ pub const PostgresSQLConnection = struct {
                                         try bun.strings.decodeHexToBytes(buf, u8, hex),
                                     },
                                 },
-                                .free_value = true,
+                                .free_value = 1,
                             };
                         } else {
                             return error.UnsupportedByteaFormat;
@@ -3249,7 +3249,7 @@ pub const PostgresSQLConnection = struct {
                     }
                 },
                 else => {
-                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(bytes).value.WTFStringImpl }, .free_value = true };
+                    return DataCell{ .tag = .string, .value = .{ .string = bun.String.createUTF8(bytes).value.WTFStringImpl }, .free_value = 1 };
                 },
             }
         }

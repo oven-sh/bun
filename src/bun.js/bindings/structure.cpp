@@ -45,7 +45,7 @@ typedef union DataCellValue {
     double number;
     int32_t integer;
     int64_t bigint;
-    bool boolean;
+    uint8_t boolean;
     double date;
     size_t bytea[2];
     WTF::StringImpl* json;
@@ -70,7 +70,7 @@ enum class DataCellTag : uint8_t {
 typedef struct DataCell {
     DataCellTag tag;
     DataCellValue value;
-    bool freeValue;
+    uint8_t freeValue;
 } DataCell;
 
 static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCell& cell)

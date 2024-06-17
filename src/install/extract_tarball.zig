@@ -240,10 +240,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         null,
                         *DirnameReader,
                         &dirname_reader,
-                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
-                        1,
-                        true,
-                        log,
+                        .{
+                            // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
+                            .depth_to_skip = 1,
+                            .log = log,
+                        },
                     ),
                 }
 
@@ -265,10 +266,13 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                     null,
                     void,
                     {},
-                    // for npm packages, the root dir is always "package"
-                    1,
-                    true,
-                    log,
+                    .{
+                        .log = log,
+                        // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
+                        // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
+                        .depth_to_skip = 1,
+                        .npm = true,
+                    },
                 ),
             },
         }

@@ -105,6 +105,7 @@ pub const Tag = enum(u8) {
     rename,
     stat,
     symlink,
+    symlinkat,
     unlink,
     utimes,
     write,
@@ -1804,9 +1805,19 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     }
 }
 
-pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.symlink(from, to), .symlink)) |err| {
+        if (Maybe(void).errnoSys(sys.symlink(target, dest), .symlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+}
+
+pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1833,12 +1844,14 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunctionOnWindows(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
+pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
+
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toNTPath(&sym16, dest);
-        const target_path = bun.strings.toNTPath(&target16, target);
+        const sym_path = bun.strings.toWPathNormalizeAutoExtend(&sym16, dest);
+        const target_path = bun.strings.toWPathNormalizeAutoExtend(&target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
                 return Maybe(void).success;

@@ -1,9 +1,25 @@
 // Hardcoded module "sqlite"
-var defineProperties = Object.defineProperties;
 
+const kSafeIntegersFlag = 1 << 1;
+const kStrictFlag = 1 << 2;
+
+var defineProperties = Object.defineProperties;
 var toStringTag = Symbol.toStringTag;
 var isArray = Array.isArray;
 var isTypedArray = ArrayBuffer.isView;
+
+let internalFieldTuple;
+
+function initializeSQL() {
+  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
+}
+
+function createChangesObject() {
+  return {
+    changes: $getInternalField(internalFieldTuple, 0),
+    lastInsertRowid: $getInternalField(internalFieldTuple, 1),
+  };
+}
 
 const constants = {
   SQLITE_OPEN_READONLY: 0x00000001 /* Ok for sqlite3_open_v2() */,
@@ -143,7 +159,24 @@ class Statement {
   }
 
   #runNoArgs() {
-    this.#raw.run();
+    this.#raw.run(internalFieldTuple);
+
+    return createChangesObject();
+  }
+
+  safeIntegers(updatedValue?: boolean) {
+    if (updatedValue !== undefined) {
+      this.#raw.safeIntegers = !!updatedValue;
+      return this;
+    }
+
+    return this.#raw.safeIntegers;
+  }
+
+  as(ClassType: any) {
+    this.#raw.as(ClassType);
+
+    return this;
   }
 
   #get(...args) {
@@ -183,12 +216,17 @@ class Statement {
   }
 
   #run(...args) {
-    if (args.length === 0) return this.#runNoArgs();
+    if (args.length === 0) {
+      this.#runNoArgs();
+      return createChangesObject();
+    }
     var arg0 = args[0];
 
     !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? this.#raw.run(args)
-      : this.#raw.run(...args);
+      ? this.#raw.run(internalFieldTuple, args)
+      : this.#raw.run(internalFieldTuple, ...args);
+
+    return createChangesObject();
   }
 
   get columnNames() {
@@ -217,6 +255,16 @@ class Database {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
+        if (options && typeof options === "object") {
+          if (options.strict) {
+            this.#internalFlags |= kStrictFlag;
+          }
+
+          if (options.safeIntegers) {
+            this.#internalFlags |= kSafeIntegersFlag;
+          }
+        }
+
         this.#handle = Database.#deserialize(
           filenameGiven,
           typeof options === "object" && options
@@ -224,6 +272,7 @@ class Database {
             : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
         );
         this.filename = ":memory:";
+
         return;
       }
 
@@ -248,6 +297,21 @@ class Database {
       if (options.readwrite) {
         flags |= constants.SQLITE_OPEN_READWRITE;
       }
+
+      if ("strict" in options || "safeIntegers" in options) {
+        if (options.safeIntegers) {
+          this.#internalFlags |= kSafeIntegersFlag;
+        }
+
+        if (options.strict) {
+          this.#internalFlags |= kStrictFlag;
+        }
+
+        // If they only set strict: true, reset it back.
+        if (flags === 0) {
+          flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
+        }
+      }
     } else if (typeof options === "number") {
       flags = options;
     }
@@ -258,13 +322,14 @@ class Database {
     }
 
     if (!SQL) {
-      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+      initializeSQL();
     }
 
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags, this);
     this.filename = filename;
   }
 
+  #internalFlags = 0;
   #handle;
   #cachedQueriesKeys = [];
   #cachedQueriesLengths = [];
@@ -293,7 +358,7 @@ class Database {
 
   static #deserialize(serialized, isReadOnly = false) {
     if (!SQL) {
-      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+      initializeSQL();
     }
 
     return SQL.deserialize(serialized, isReadOnly);
@@ -311,7 +376,7 @@ class Database {
 
   static setCustomSQLite(path) {
     if (!SQL) {
-      SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
+      initializeSQL();
     }
 
     return SQL.setCustomSQLite(path);
@@ -343,18 +408,20 @@ class Database {
 
   run(query, ...params) {
     if (params.length === 0) {
-      SQL.run(this.#handle, query);
-      return;
+      SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query);
+      return createChangesObject();
     }
 
     var arg0 = params[0];
-    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
-      ? SQL.run(this.#handle, query, params)
-      : SQL.run(this.#handle, query, ...params);
+    !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, params)
+      : SQL.run(this.#handle, this.#internalFlags, internalFieldTuple, query, ...params);
+
+    return createChangesObject();
   }
 
   prepare(query, params, flags) {
-    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0));
+    return new Statement(SQL.prepare(this.#handle, query, params, flags || 0, this.#internalFlags));
   }
 
   static MAX_QUERY_CACHE_SIZE = 20;

@@ -2956,6 +2956,7 @@ pub const File = struct {
             return self.bytes.items;
         }
     };
+
     pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
         var read_amount: usize = 0;
         while (read_amount < buf.len) {
@@ -2978,6 +2979,7 @@ pub const File = struct {
 
         return .{ .result = buf[0..read_amount] };
     }
+
     pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
         const size = switch (this.getEndPos()) {
             .err => |err| {

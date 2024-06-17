@@ -3,7 +3,90 @@ import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tem
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
 import { join, sep } from "path";
 
+const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
+
 describe("bun patch <pkg>", async () => {
+  // Tests to make sure that patching
+  describe("popular pkg", async () => {
+    const dummyCode = /* ts */ `
+    module.exports = function lmao() {
+      return 420;
+    }
+    `;
+
+    function makeTest(pkgName: string, version: string, folder_in_node_modules: string = `${pkgName}`) {
+      test(
+        `${pkgName}@${version}`,
+        async () => {
+          const tempdir = tempDirWithFiles("popular", {
+            "package.json": JSON.stringify({
+              "name": "bun-patch-test",
+              "module": "index.ts",
+              "type": "module",
+              "dependencies": {
+                [pkgName]: version,
+              },
+            }),
+            "index.ts": /* ts */ `import lmao from '${pkgName}'; console.log(lmao())`,
+          });
+
+          console.log("TEMPDIR", tempdir);
+          expectNoError(await $`${bunExe()} i`.env(bunEnv).cwd(tempdir));
+          expectNoError(await $`${bunExe()} patch ${pkgName}@${version}`.env(bunEnv).cwd(tempdir));
+          await $`echo ${dummyCode} > node_modules/${folder_in_node_modules}/index.js`.env(bunEnv).cwd(tempdir);
+          const { type, module, exports, ...package_json }: Record<string, any> =
+            await $`cat node_modules/${folder_in_node_modules}/package.json`.env(bunEnv).cwd(tempdir).json();
+          package_json["main"] = "index.js";
+          await $`echo ${JSON.stringify(package_json)} > node_modules/${folder_in_node_modules}/package.json`
+            .env(bunEnv)
+            .cwd(tempdir);
+
+          expectNoError(
+            await $`${bunExe()} patch --commit node_modules/${folder_in_node_modules}`.env(bunEnv).cwd(tempdir),
+          );
+
+          const { stdout } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
+          expect(stdout.toString()).toBe("420\n");
+        },
+        30 * 1000,
+      );
+    }
+
+    makeTest("lodash", "4.17.21");
+    makeTest("react", "18.3.1");
+    makeTest("react-dom", "18.3.1");
+    makeTest("axios", "1.7.2");
+    makeTest("tslib", "2.6.3");
+    makeTest("chalk", "5.3.0");
+    makeTest("next", "14.2.4");
+    makeTest("express", "4.19.2");
+    makeTest("inquirer", "9.2.23");
+    makeTest("commander", "12.1.0");
+
+    // vercel/next.js
+    makeTest("webpack-sources", "3.2.3");
+
+    // vitejs/vite
+    makeTest("acorn", "8.11.3");
+    makeTest("chokidar", "3.6.0");
+    makeTest("http-proxy", "1.18.1");
+    makeTest("sirv", "2.0.4");
+
+    // mermaid-js/mermaid
+    makeTest("cytoscape", "3.28.1");
+
+    // remix-run/react-router
+    makeTest("@changesets/get-dependents-graph", "1.3.6", "@changesets/get-dependents-graph");
+
+    // n8n-io/n8n
+    makeTest("typedi", "0.10.0");
+    makeTest("@sentry/cli", "2.17.0", "@sentry/cli");
+    makeTest("pkce-challenge", "3.0.0");
+    makeTest("pyodide", "0.23.4");
+    makeTest("@types/express-serve-static-core", "4.17.43", "@types/express-serve-static-core");
+    makeTest("@types/ws", "8.5.4", "@types/ws");
+    makeTest("@types/uuencode", "0.0.3", "@types/uuencode");
+  });
   test("should patch a package when it is already patched", async () => {
     const tempdir = tempDirWithFiles("lol", {
       "package.json": JSON.stringify({

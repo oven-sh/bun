@@ -457,27 +457,26 @@ pub const PatchTask = struct {
         // what's a good number for this? page size i guess
         const STACK_SIZE = 16384;
 
+        var file = bun.sys.File{ .handle = fd };
         var stack: [STACK_SIZE]u8 = undefined;
         var read: usize = 0;
         while (read < size) {
-            var i: usize = 0;
-            while (i < STACK_SIZE and i < size) {
-                switch (bun.sys.read(fd, stack[i..])) {
-                    .result => |w| i += w,
-                    .err => |e| {
-                        log.addErrorFmt(
-                            null,
-                            Loc.Empty,
-                            this.manager.allocator,
-                            "failed to read from patch file: {} ({s})",
-                            .{ e, absolute_patchfile_path },
-                        ) catch bun.outOfMemory();
-                        return null;
-                    },
-                }
-            }
-            read += i;
-            hasher.update(stack[0..i]);
+            const slice = switch (file.readFillBuf(stack[0..])) {
+                .result => |slice| slice,
+                .err => |e| {
+                    log.addErrorFmt(
+                        null,
+                        Loc.Empty,
+                        this.manager.allocator,
+                        "failed to read from patch file: {} ({s})",
+                        .{ e, absolute_patchfile_path },
+                    ) catch bun.outOfMemory();
+                    return null;
+                },
+            };
+            if (slice.len == 0) break;
+            hasher.update(slice);
+            read += slice.len;
         }
 
         return hasher.final();

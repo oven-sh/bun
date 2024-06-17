@@ -178,14 +178,16 @@ pub const Repository = extern struct {
     pub fn tryHTTPS(url: string) ?string {
         // Do not convert ssh://... urls to https://... urls
         // to use system ssh keys for private repos
-        if (strings.hasPrefixComptime(url, "ssh://")) {
+        if (strings.hasPrefixComptime(url, "ssh://")
+            and strings.hasSuffixComptime(url, ".git")) {
             return null;
         }
 
         if (Dependency.isSCPLikePath(url)) {
             // Use git@<host>:<repo> urls as-is so that the git clone can
             // use the system's ssh keys for private repos
-            if (strings.hasPrefixComptime(url, "git@")) {
+            if (strings.hasPrefixComptime(url, "git@")
+                and strings.hasSuffixComptime(url, ".git")) {
                 return null;
             }
 

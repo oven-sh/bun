@@ -3,54 +3,55 @@ import net from "net";
 import fs from "fs";
 import crypto from "crypto";
 
-import { sql } from "bun:sql";
+import { sql, postgres } from "bun:sql";
 import { expect, test as t } from "bun:test";
 
 process.env.DATABASE_URL = "postgres://bun_sql_test@localhost:5432/bun_sql_test";
 const delay = ms => Bun.sleep(ms);
-// const rel = x => new URL(x, import.meta.url)
+const rel = x => new URL(x, import.meta.url);
 
-// const login = {
-//   user: 'postgres_js_test'
-// }
+const login = {
+  username: "bun_sql_test",
+};
 
-// const login_md5 = {
-//   user: 'postgres_js_test_md5',
-//   pass: 'postgres_js_test_md5'
-// }
+const login_md5 = {
+  username: "bun_sql_test_md5",
+  password: "bun_sql_test_md5",
+};
 
-// const login_scram = {
-//   user: 'postgres_js_test_scram',
-//   pass: 'postgres_js_test_scram'
-// }
+const login_scram = {
+  username: "bun_sql_test_scram",
+  password: "bun_sql_test_scram",
+};
 
-// const options = {
-//   db: 'postgres_js_test',
-//   user: login.user,
-//   pass: login.pass,
-//   idle_timeout,
-//   connect_timeout: 1,
-//   max: 1
-// }
+const options = {
+  db: "bun_sql_test",
+  usenrame: login.usenrame,
+  password: login.password,
+  idle_timeout: 1,
+  connect_timeout: 1,
+  max: 1,
+};
 
-// t('Connects with no options', async() => {
-//   const sql = postgres({ max: 1 })
+t("Connects with no options", async () => {
+  const sql = postgres({ max: 1 });
 
-//   const result = (await sql`select 1 as x`)[0].x
-//   await sql.end()
+  const result = (await sql`select 1 as x`)[0].x;
+  await sql.close();
 
-//   return [1, result]
-// })
+  expect(result).toBe(1);
+});
 
-// t('Uses default database without slash', async() => {
-//   const sql = postgres('postgres://localhost')
-//   return [sql.options.user, sql.options.database]
-// })
+t("Uses default database without slash", async () => {
+  const sql = postgres("postgres://localhost");
+  console.log(sql.options);
+  expect(sql.options.username).toBe(sql.options.database);
+});
 
-// t('Uses default database with slash', async() => {
-//   const sql = postgres('postgres://localhost/')
-//   return [sql.options.user, sql.options.database]
-// })
+t("Uses default database with slash", async () => {
+  const sql = postgres("postgres://localhost/");
+  expect(sql.options.username).toBe(sql.options.database);
+});
 
 // console.log(sql`select 1`)
 t("Result is array", async () => {
@@ -114,10 +115,11 @@ t("implicit json", async () => {
   expect(x).toEqual({ a: "hello", b: 42 });
 });
 
-// t('implicit jsonb', async() => {
-//   const x = (await sql`select ${ { a: 'hello', b: 42 } }::jsonb as x`)[0].x
-//   return ['hello,42', [x.a, x.b].join()]
-// })
+// It's treating as a string.
+t.todo("implicit jsonb", async () => {
+  const x = (await sql`select ${{ a: "hello", b: 42 }}::jsonb as x`)[0].x;
+  expect([x.a, x.b].join(",")).toBe("hello,42");
+});
 
 // t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
 
@@ -153,14 +155,19 @@ t("string arg with ::int -> Array<int>", async () =>
 //   ['Hello "you",c:\\windows', (await sql`select ${ sql.array(['Hello "you"', 'c:\\windows']) } as x`)[0].x.join(',')]
 // )
 
-// t('Escapes', async() => {
-//   return ['hej"hej', Object.keys((await sql`select 1 as ${ sql('hej"hej') }`)[0])[0]]
-// })
+// t.only("Escapes", async () => {
+//   expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
+// });
 
-// t('null for int', async() => {
-//   await sql`create table test (x int)`
-//   return [1, (await sql`insert into test values(${ null })`).count, await sql`drop table test`]
-// })
+t("null for int", async () => {
+  await sql`create table test (x int)`;
+  try {
+    const result = await sql`insert into test values(${null})`;
+    expect(result.count).toBe(1);
+  } finally {
+    await sql`drop table test`;
+  }
+});
 
 // t('Throws on illegal transactions', async() => {
 //   const sql = postgres({ ...options, max: 2, fetch_types: false })
@@ -255,8 +262,8 @@ t("string arg with ::int -> Array<int>", async () =>
 //   return [
 //     'testing',
 //     (await sql.begin(sql => [
-//       sql`select set_config('postgres_js.test', 'testing', true)`,
-//       sql`select current_setting('postgres_js.test') as x`
+//       sql`select set_config('bun_sql.test', 'testing', true)`,
+//       sql`select current_setting('bun_sql.test') as x`
 //     ]))[1][0].x
 //   ]
 // })
@@ -265,7 +272,7 @@ t("string arg with ::int -> Array<int>", async () =>
 //   '42703',
 //   (await sql.begin(sql => [
 //     sql`select wat`,
-//     sql`select current_setting('postgres_js.test') as x, ${ 1 } as a`
+//     sql`select current_setting('bun_sql.test') as x, ${ 1 } as a`
 //   ]).catch(e => e.code))
 // ])
 
@@ -355,9 +362,11 @@ t("string arg with ::int -> Array<int>", async () =>
 //   [null, (await sql`select ${ null } as x`)[0].x]
 // )
 
-// t('Throw syntax error', async() =>
-//   ['42601', (await sql`wat 1`.catch(x => x)).code]
-// )
+// Add code property.
+t.todo("Throw syntax error", async () => {
+  const code = await sql`wat 1`.catch(x => x);
+  console.log({ code });
+});
 
 // t('Connect using uri', async() =>
 //   [true, await new Promise((resolve, reject) => {
@@ -436,9 +445,10 @@ t("string arg with ::int -> Array<int>", async () =>
 //   return [true, (await postgres({ ...options, ...login_md5 })`select true as x`)[0].x]
 // })
 
-// t('Login using scram-sha-256', async() => {
-//   return [true, (await postgres({ ...options, ...login_scram })`select true as x`)[0].x]
-// })
+t.todo("Login using scram-sha-256", async () => {
+  const sql = await postgres({ ...options, ...login_scram });
+  expect((await sql`select true as x`)[0].x).toBe(true);
+});
 
 // t('Parallel connections using scram-sha-256', {
 //   timeout: 2
@@ -455,7 +465,7 @@ t("string arg with ::int -> Array<int>", async () =>
 //   return [true, (await postgres({
 //     ...options,
 //     ...login_scram,
-//     pass: () => 'postgres_js_test_scram'
+//     pass: () => 'bun_sql_test_scram'
 //   })`select true as x`)[0].x]
 // })
 
@@ -463,7 +473,7 @@ t("string arg with ::int -> Array<int>", async () =>
 //   return [true, (await postgres({
 //     ...options,
 //     ...login_scram,
-//     pass: () => Promise.resolve('postgres_js_test_scram')
+//     pass: () => Promise.resolve('bun_sql_test_scram')
 //   })`select true as x`)[0].x]
 // })
 
@@ -1992,7 +2002,7 @@ t("string arg with ::int -> Array<int>", async () =>
 
 // t('subscribe', { timeout: 2 }, async() => {
 //   const sql = postgres({
-//     database: 'postgres_js_test',
+//     database: 'bun_sql_test',
 //     publications: 'alltables'
 //   })
 
@@ -2041,7 +2051,7 @@ t("string arg with ::int -> Array<int>", async () =>
 //         to: postgres.fromCamel
 //       }
 //     },
-//     database: 'postgres_js_test',
+//     database: 'bun_sql_test',
 //     publications: 'alltables'
 //   })
 
@@ -2082,7 +2092,7 @@ t("string arg with ::int -> Array<int>", async () =>
 
 // t('subscribe reconnects and calls onsubscribe', { timeout: 4 }, async() => {
 //   const sql = postgres({
-//     database: 'postgres_js_test',
+//     database: 'bun_sql_test',
 //     publications: 'alltables',
 //     fetch_types: false
 //   })
@@ -2459,15 +2469,17 @@ t("string arg with ::int -> Array<int>", async () =>
 //   return [x, true, await sql`drop table test`]
 // })
 
-// t('Insert array with null', async() => {
-//   await sql`create table test (x int[])`
-//   await sql`insert into test ${ sql({ x: [1, null, 3] }) }`
-//   return [
-//     1,
-//     (await sql`select x from test`)[0].x[0],
-//     await sql`drop table test`
-//   ]
-// })
+// Hangs with array
+t.todo("Insert array with null", async () => {
+  await sql`create table test (x int[])`;
+  console.log("here");
+  try {
+    await sql`insert into test ${sql({ x: [1, null, 3] })}`;
+    expect((await sql`select x from test`)[0].x[0]).toBe(1);
+  } finally {
+    await sql`drop table test`;
+  }
+});
 
 // t('Insert array with undefined throws', async() => {
 //   await sql`create table test (x int[])`

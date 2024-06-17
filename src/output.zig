@@ -138,6 +138,9 @@ pub const Source = struct {
     const WindowsStdio = struct {
         const w = bun.windows;
 
+        /// At program start, we snapshot the console modes of standard in, out, and err
+        /// so that we can restore them at program exit if they change. Restoration is
+        /// best-effort, and may not be applied if the process is killed abruptly.
         pub var console_mode = [3]?u32{ null, null, null };
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
@@ -196,6 +199,11 @@ pub const Source = struct {
             if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
+                // There are no flags to set on standard in, but just in case something
+                // later modifies the mode, we can still reset it at the end of program run
+                //
+                // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
+                // intentionally set for any purpose, and instead only caused problems.
             }
 
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {

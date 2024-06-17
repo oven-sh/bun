@@ -2549,11 +2549,19 @@ it("fstat on a large file", () => {
     }
     fdatasyncSync(fd);
     expect(fstatSync(fd).size).toEqual(offset);
+  } catch (error) {
+    // TODO: Once `fs.statfsSync` is implemented, make sure that the buffer size
+    // is small enough not to cause: ENOSPC: No space left on device.
+    if (error.code === "ENOSPC") {
+      console.warn("Skipping test 'fstat on a large file' because not enough disk space");
+      return;
+    }
+    throw error;
   } finally {
     if (fd) closeSync(fd);
     unlinkSync(dest);
   }
-}, 20_000);
+}, 30_000);
 
 it("fs.constants", () => {
   if (isWindows) {

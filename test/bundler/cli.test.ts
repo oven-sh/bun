@@ -18,22 +18,20 @@ describe("bun build", () => {
 
   test("generating a standalone binary in nested path, issue #4195", () => {
     function testCompile(outfile: string) {
-      const { exitCode } = Bun.spawnSync({
-        cmd: [
-          bunExe(),
-          "build",
-          path.join(import.meta.dir, "./fixtures/trivial/index.js"),
-          "--compile",
-          "--outfile",
-          outfile,
-        ],
-        env: bunEnv,
-      });
-      expect(exitCode).toBe(0);
+      expect([
+        "build",
+        path.join(import.meta.dir, "./fixtures/trivial/index.js"),
+        "--compile",
+        "--outfile",
+        outfile,
+      ]).toRun();
     }
     function testExec(outfile: string) {
       const { exitCode } = Bun.spawnSync({
         cmd: [outfile],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
       });
       expect(exitCode).toBe(0);
     }
@@ -57,11 +55,7 @@ describe("bun build", () => {
     const tmp = tmpdirSync();
     const src = path.join(tmp, "index.js");
     fs.writeFileSync(src, '\ufeffconsole.log("hello world");', { encoding: "utf8" });
-    const { exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "build", src],
-      env: bunEnv,
-    });
-    expect(exitCode).toBe(0);
+    expect(["build", src]).toRun();
   });
 
   test("__dirname and __filename are printed correctly", () => {

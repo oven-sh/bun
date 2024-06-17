@@ -674,304 +674,307 @@ it(".ptr is not leaked", () => {
   }
 });
 
-const lib_path =
+const libPath =
   platform() === "darwin"
     ? "/usr/lib/libSystem.B.dylib"
     : existsSync("/lib/x86_64-linux-gnu/libc.so.6")
       ? "/lib/x86_64-linux-gnu/libc.so.6"
       : null;
-const test = lib_path ? describe : describe.skip;
-test("can open more than 63 symbols via", () => {
-  if (lib_path) {
-    for (const [libPath, description] of [
-      // For file: URLs since one might do import.meta.resolve()
-      [Bun.pathToFileURL(lib_path), "URL"],
 
-      // file: URLs as a string
-      [Bun.pathToFileURL(lib_path).href, "file: URL"],
+const libSymbols = {
+  memchr: {
+    returns: "ptr",
+    args: ["ptr", "int", "usize"],
+  },
+  strcpy: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  strcat: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  strncat: {
+    returns: "ptr",
+    args: ["ptr", "ptr", "usize"],
+  },
+  strcmp: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  strncmp: {
+    returns: "int",
+    args: ["ptr", "ptr", "usize"],
+  },
+  strcoll: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  strxfrm: {
+    returns: "int",
+    args: ["ptr", "ptr", "usize"],
+  },
+  strchr: {
+    returns: "ptr",
+    args: ["ptr", "int"],
+  },
+  strrchr: {
+    returns: "ptr",
+    args: ["ptr", "int"],
+  },
+  strcspn: {
+    returns: "usize",
+    args: ["ptr", "ptr"],
+  },
+  strspn: {
+    returns: "usize",
+    args: ["ptr", "ptr"],
+  },
+  strpbrk: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  strstr: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  strtok: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  strerror: {
+    returns: "ptr",
+    args: ["int"],
+  },
+  strerror_r: {
+    returns: "ptr",
+    args: ["int", "ptr", "usize"],
+  },
+  strsep: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  strsignal: {
+    returns: "ptr",
+    args: ["int"],
+  },
+  stpcpy: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  stpncpy: {
+    returns: "ptr",
+    args: ["ptr", "ptr", "usize"],
+  },
+  basename: {
+    returns: "ptr",
+    args: ["ptr"],
+  },
+  bcmp: {
+    returns: "int",
+    args: ["ptr", "ptr", "usize"],
+  },
+  getdate: {
+    returns: "ptr",
+    args: ["ptr"],
+  },
+  gmtime: {
+    returns: "ptr",
+    args: ["ptr"],
+  },
+  localtime: {
+    returns: "ptr",
+    args: ["ptr"],
+  },
+  ctime: {
+    returns: "ptr",
+    args: ["ptr"],
+  },
+  asctime: {
+    returns: "ptr",
+    args: ["ptr"],
+  },
+  strftime: {
+    returns: "usize",
+    args: ["ptr", "usize", "ptr", "ptr"],
+  },
+  strptime: {
+    returns: "ptr",
+    args: ["ptr", "ptr", "ptr"],
+  },
+  asctime_r: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  ctime_r: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  gmtime_r: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  localtime_r: {
+    returns: "ptr",
+    args: ["ptr", "ptr"],
+  },
+  bcopy: {
+    returns: "int",
+    args: ["ptr", "ptr", "usize"],
+  },
+  bzero: {
+    returns: "void",
+    args: ["ptr", "usize"],
+  },
+  index: {
+    returns: "ptr",
+    args: ["ptr", "int"],
+  },
+  rindex: {
+    returns: "ptr",
+    args: ["ptr", "int"],
+  },
+  ffs: {
+    returns: "int",
+    args: ["int"],
+  },
+  strcasecmp: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  strncasecmp: {
+    returns: "int",
+    args: ["ptr", "ptr", "usize"],
+  },
+  pthread_attr_init: {
+    returns: "int",
+    args: ["ptr"],
+  },
+  pthread_attr_destroy: {
+    returns: "int",
+    args: ["ptr"],
+  },
+  pthread_attr_getdetachstate: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setdetachstate: {
+    returns: "int",
+    args: ["ptr", "int"],
+  },
+  // FIXME:
+  // TypeError: Symbol "pthread_attr_getguardsize" not found in "/lib/x86_64-linux-gnu/libc.so.6"
+  //   code: "ERR_INVALID_ARG_TYPE"
+  //
+  // pthread_attr_getguardsize: {
+  //   returns: "int",
+  //   args: ["ptr", "ptr"],
+  // },
+  // pthread_attr_setguardsize: {
+  //   returns: "int",
+  //   args: ["ptr", "usize"],
+  // },
+  pthread_attr_getschedparam: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setschedparam: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_getschedpolicy: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setschedpolicy: {
+    returns: "int",
+    args: ["ptr", "int"],
+  },
+  pthread_attr_getinheritsched: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setinheritsched: {
+    returns: "int",
+    args: ["ptr", "int"],
+  },
+  pthread_attr_getscope: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setscope: {
+    returns: "int",
+    args: ["ptr", "int"],
+  },
+  pthread_attr_getstackaddr: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setstackaddr: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_getstacksize: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setstacksize: {
+    returns: "int",
+    args: ["ptr", "usize"],
+  },
+  pthread_attr_getstack: {
+    returns: "int",
+    args: ["ptr", "ptr", "ptr"],
+  },
+  pthread_attr_setstack: {
+    returns: "int",
+    args: ["ptr", "ptr", "usize"],
+  },
+  pthread_attr_getguardsize: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setguardsize: {
+    returns: "int",
+    args: ["ptr", "usize"],
+  },
+  login_tty: {
+    returns: "int",
+    args: ["int"],
+  },
+  login: {
+    returns: "int",
+    args: ["ptr"],
+  },
+  logout: {
+    returns: "int",
+    args: ["ptr"],
+  },
+  strlen: {
+    returns: "usize",
+    args: ["ptr"],
+  },
+};
 
-      // For embedding files since one might do Bun.file(embeddedFile)
-      [Bun.file(lib_path), "Bun.file"],
+describe.if(!!libPath)("can open more than 63 symbols via", () => {
+  for (const [libPath, description] of [
+    // For file: URLs since one might do import.meta.resolve()
+    [Bun.pathToFileURL(libPath), "URL"],
 
-      // For file path strings
-      [lib_path, "string"],
-    ]) {
-      it(description, () => {
-        // test file: URL works
-        const lib = dlopen(libPath, {
-          memchr: {
-            returns: "ptr",
-            args: ["ptr", "int", "usize"],
-          },
-          strcpy: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          strcat: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          strncat: {
-            returns: "ptr",
-            args: ["ptr", "ptr", "usize"],
-          },
-          strcmp: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          strncmp: {
-            returns: "int",
-            args: ["ptr", "ptr", "usize"],
-          },
-          strcoll: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          strxfrm: {
-            returns: "int",
-            args: ["ptr", "ptr", "usize"],
-          },
-          strchr: {
-            returns: "ptr",
-            args: ["ptr", "int"],
-          },
-          strrchr: {
-            returns: "ptr",
-            args: ["ptr", "int"],
-          },
-          strcspn: {
-            returns: "usize",
-            args: ["ptr", "ptr"],
-          },
-          strspn: {
-            returns: "usize",
-            args: ["ptr", "ptr"],
-          },
-          strpbrk: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          strstr: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          strtok: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          strerror: {
-            returns: "ptr",
-            args: ["int"],
-          },
-          strerror_r: {
-            returns: "ptr",
-            args: ["int", "ptr", "usize"],
-          },
-          strsep: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          strsignal: {
-            returns: "ptr",
-            args: ["int"],
-          },
-          stpcpy: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          stpncpy: {
-            returns: "ptr",
-            args: ["ptr", "ptr", "usize"],
-          },
-          basename: {
-            returns: "ptr",
-            args: ["ptr"],
-          },
-          bcmp: {
-            returns: "int",
-            args: ["ptr", "ptr", "usize"],
-          },
-          getdate: {
-            returns: "ptr",
-            args: ["ptr"],
-          },
-          gmtime: {
-            returns: "ptr",
-            args: ["ptr"],
-          },
-          localtime: {
-            returns: "ptr",
-            args: ["ptr"],
-          },
-          ctime: {
-            returns: "ptr",
-            args: ["ptr"],
-          },
-          asctime: {
-            returns: "ptr",
-            args: ["ptr"],
-          },
-          strftime: {
-            returns: "usize",
-            args: ["ptr", "usize", "ptr", "ptr"],
-          },
-          strptime: {
-            returns: "ptr",
-            args: ["ptr", "ptr", "ptr"],
-          },
-          asctime_r: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          ctime_r: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          gmtime_r: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          localtime_r: {
-            returns: "ptr",
-            args: ["ptr", "ptr"],
-          },
-          bcopy: {
-            returns: "int",
-            args: ["ptr", "ptr", "usize"],
-          },
-          bzero: {
-            returns: "void",
-            args: ["ptr", "usize"],
-          },
-          index: {
-            returns: "ptr",
-            args: ["ptr", "int"],
-          },
-          rindex: {
-            returns: "ptr",
-            args: ["ptr", "int"],
-          },
-          ffs: {
-            returns: "int",
-            args: ["int"],
-          },
-          strcasecmp: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          strncasecmp: {
-            returns: "int",
-            args: ["ptr", "ptr", "usize"],
-          },
-          pthread_attr_init: {
-            returns: "int",
-            args: ["ptr"],
-          },
-          pthread_attr_destroy: {
-            returns: "int",
-            args: ["ptr"],
-          },
-          pthread_attr_getdetachstate: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setdetachstate: {
-            returns: "int",
-            args: ["ptr", "int"],
-          },
-          pthread_attr_getguardsize: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setguardsize: {
-            returns: "int",
-            args: ["ptr", "usize"],
-          },
-          pthread_attr_getschedparam: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setschedparam: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_getschedpolicy: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setschedpolicy: {
-            returns: "int",
-            args: ["ptr", "int"],
-          },
-          pthread_attr_getinheritsched: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setinheritsched: {
-            returns: "int",
-            args: ["ptr", "int"],
-          },
-          pthread_attr_getscope: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setscope: {
-            returns: "int",
-            args: ["ptr", "int"],
-          },
-          pthread_attr_getstackaddr: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setstackaddr: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_getstacksize: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setstacksize: {
-            returns: "int",
-            args: ["ptr", "usize"],
-          },
-          pthread_attr_getstack: {
-            returns: "int",
-            args: ["ptr", "ptr", "ptr"],
-          },
-          pthread_attr_setstack: {
-            returns: "int",
-            args: ["ptr", "ptr", "usize"],
-          },
-          pthread_attr_getguardsize: {
-            returns: "int",
-            args: ["ptr", "ptr"],
-          },
-          pthread_attr_setguardsize: {
-            returns: "int",
-            args: ["ptr", "usize"],
-          },
-          login_tty: {
-            returns: "int",
-            args: ["int"],
-          },
-          login: {
-            returns: "int",
-            args: ["ptr"],
-          },
-          logout: {
-            returns: "int",
-            args: ["ptr"],
-          },
-          strlen: {
-            returns: "usize",
-            args: ["ptr"],
-          },
-        });
-        expect(Object.keys(lib.symbols).length).toBe(65);
-        expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
-        expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
-      });
-    }
+    // file: URLs as a string
+    [Bun.pathToFileURL(libPath).href, "file: URL"],
+
+    // For embedding files since one might do Bun.file(embeddedFile)
+    [Bun.file(libPath), "Bun.file"],
+
+    // For file path strings
+    [libPath, "string"],
+  ]) {
+    it(description, () => {
+      const lib = dlopen(libPath, libSymbols);
+      expect(Object.keys(lib.symbols).length).toBe(Object.keys(libSymbols).length);
+      expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
+      expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
+    });
   }
 });

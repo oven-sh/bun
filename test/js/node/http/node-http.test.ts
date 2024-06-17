@@ -2152,3 +2152,49 @@ it("should error with faulty args", async () => {
   }
   server.close();
 });
+
+it("http.Agent is configured correctly", () => {
+  const agent = new http.Agent();
+  expect(agent.defaultPort).toBe(80);
+  expect(agent.protocol).toBe("http:");
+});
+
+it("https.Agent is configured correctly", () => {
+  const agent = new https.Agent();
+  expect(agent.defaultPort).toBe(443);
+  expect(agent.protocol).toBe("https:");
+});
+
+it("http.get can use http.Agent", async () => {
+  const agent = new http.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  http.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("http.get can use https.Agent", async () => {
+  const agent = new https.Agent();
+  const { promise, resolve } = Promise.withResolvers();
+  http.get({ agent, hostname: "google.com" }, resolve);
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});
+
+it("http.request has the correct options", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  http.request({ method: "GET", hostname: "google.com" }, resolve).end();
+  const response = await promise;
+  expect(response.req.port).toBe(80);
+  expect(response.req.protocol).toBe("http:");
+});
+
+it("https.request has the correct options", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  https.request({ method: "GET", hostname: "google.com" }, resolve).end();
+  const response = await promise;
+  expect(response.req.port).toBe(443);
+  expect(response.req.protocol).toBe("https:");
+});

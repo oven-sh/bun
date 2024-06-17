@@ -96,7 +96,6 @@ const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const NODE_HTTP_WARNING =
   "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
 
-var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const kfakeSocket = Symbol("kfakeSocket");
@@ -676,10 +675,6 @@ function assignHeaders(object, req) {
 }
 
 var defaultIncomingOpts = { type: "request" };
-
-function getDefaultHTTPSAgent() {
-  return (_defaultHTTPSAgent ??= new Agent({ defaultPort: 443, protocol: "https:" }));
-}
 
 function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
@@ -1598,38 +1593,18 @@ class ClientRequest extends OutgoingMessage {
       options = ObjectAssign(input || {}, options);
     }
 
-    var defaultAgent = options._defaultAgent || Agent.globalAgent;
+    const agent = options.agent || options._defaultAgent || Agent.globalAgent;
+    this.#agent = agent;
 
-    let protocol = options.protocol;
+    let protocol = options.protocol || agent.protocol;
     if (!protocol) {
       if (options.port === 443) {
         protocol = "https:";
       } else {
-        protocol = defaultAgent.protocol || "http:";
+        protocol = agent.protocol;
       }
     }
     this.#protocol = protocol;
-
-    switch (this.#agent?.protocol) {
-      case undefined: {
-        break;
-      }
-      case "http:": {
-        if (protocol === "https:") {
-          defaultAgent = this.#agent = getDefaultHTTPSAgent();
-          break;
-        }
-      }
-      case "https:": {
-        if (protocol === "https") {
-          defaultAgent = this.#agent = Agent.globalAgent;
-          break;
-        }
-      }
-      default: {
-        break;
-      }
-    }
 
     if (options.path) {
       const path = String(options.path);
@@ -1642,14 +1617,14 @@ class ClientRequest extends OutgoingMessage {
 
     // Since we don't implement Agent, we don't need this
     if (protocol !== "http:" && protocol !== "https:" && protocol) {
-      const expectedProtocol = defaultAgent?.protocol ?? "http:";
+      const expectedProtocol = agent.protocol ?? "http:";
       throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
     const defaultPort = protocol === "https:" ? 443 : 80;
 
-    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || defaultPort;
+    this.#port = options.port || options.defaultPort || defaultPort;
     this.#useDefaultPort = this.#port === defaultPort;
     const host =
       (this.#host =

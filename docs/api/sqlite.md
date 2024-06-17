@@ -16,7 +16,7 @@ Features include:
 - Parameters (named & positional)
 - Prepared statements
 - Datatype conversions (`BLOB` becomes `Uint8Array`)
-- Map objects to results without an ORM - `query.as(MyClass)`
+- Map query results to classes without an ORM - `query.as(MyClass)`
 - The fastest performance of any SQLite driver for JavaScript
 - `bigint` support
 - Multi-query statements (e.g. `SELECT 1; SELECT 2;`) in a single call to database.run(query)
@@ -286,7 +286,7 @@ Since Bun v1.1.14, `.run()` returns an object with two properties: `lastInsertRo
 
 The `lastInsertRowid` property returns the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
 
-### `.as(Class)` - Map objects to results
+### `.as(Class)` - Map query results to a class
 
 {% callout %}
 Added in Bun v1.1.14

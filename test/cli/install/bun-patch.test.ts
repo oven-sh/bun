@@ -216,6 +216,12 @@ Once you're done with your changes, run:
       const { stderr, stdout } = await $`${bunExe()} patch lodash`.env(bunEnv).cwd(filedir);
       expect(stderr.toString()).not.toContain("error");
     }
+
+    // run it again to make sure we didn't f something up
+    {
+      const { stderr, stdout } = await $`${bunExe()} patch lodash`.env(bunEnv).cwd(filedir);
+      expect(stderr.toString()).not.toContain("error");
+    }
   });
 
   ["is-even@1.0.0", "node_modules/is-even"].map(patchArg =>

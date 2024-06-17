@@ -196,7 +196,6 @@ pub const Source = struct {
             if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
-                _ = w.SetConsoleMode(stdin, mode | w.ENABLE_VIRTUAL_TERMINAL_INPUT);
             }
 
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {

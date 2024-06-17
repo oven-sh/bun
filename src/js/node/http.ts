@@ -765,8 +765,8 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     var { done, value } = await reader.readMany();
     if (self[abortedSymbol]) return;
     if (done) {
-      self.push(null);
       self.complete = true;
+      self.push(null);
       break;
     }
     for (var v of value) {
@@ -777,13 +777,13 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
 
 IncomingMessage.prototype._read = function (size) {
   if (this[noBodySymbol]) {
-    this.push(null);
     this.complete = true;
+    this.push(null);
   } else if (this[bodyStreamSymbol] == null) {
     const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
     if (!reader) {
-      this.push(null);
       this.complete = true;
+      this.push(null);
       return;
     }
     this[bodyStreamSymbol] = reader;

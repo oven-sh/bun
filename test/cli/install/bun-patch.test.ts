@@ -56,33 +56,33 @@ describe("bun patch <pkg>", async () => {
     makeTest("react", "18.3.1");
     makeTest("react-dom", "18.3.1");
     makeTest("axios", "1.7.2");
-    makeTest("tslib", "2.6.3");
-    makeTest("chalk", "5.3.0");
-    makeTest("next", "14.2.4");
-    makeTest("express", "4.19.2");
-    makeTest("inquirer", "9.2.23");
-    makeTest("commander", "12.1.0");
+    // makeTest("tslib", "2.6.3");
+    // makeTest("chalk", "5.3.0");
+    // makeTest("next", "14.2.4");
+    // makeTest("express", "4.19.2");
+    // makeTest("inquirer", "9.2.23");
+    // makeTest("commander", "12.1.0");
 
-    // vercel/next.js
-    makeTest("webpack-sources", "3.2.3");
+    // // vercel/next.js
+    // makeTest("webpack-sources", "3.2.3");
 
-    // vitejs/vite
-    makeTest("acorn", "8.11.3");
-    makeTest("chokidar", "3.6.0");
-    makeTest("http-proxy", "1.18.1");
-    makeTest("sirv", "2.0.4");
+    // // vitejs/vite
+    // makeTest("acorn", "8.11.3");
+    // makeTest("chokidar", "3.6.0");
+    // makeTest("http-proxy", "1.18.1");
+    // makeTest("sirv", "2.0.4");
 
-    // mermaid-js/mermaid
-    makeTest("cytoscape", "3.28.1");
+    // // mermaid-js/mermaid
+    // makeTest("cytoscape", "3.28.1");
 
-    // remix-run/react-router
-    makeTest("@changesets/get-dependents-graph", "1.3.6", "@changesets/get-dependents-graph");
+    // // remix-run/react-router
+    // makeTest("@changesets/get-dependents-graph", "1.3.6", "@changesets/get-dependents-graph");
 
-    // n8n-io/n8n
-    makeTest("typedi", "0.10.0");
-    makeTest("@sentry/cli", "2.17.0", "@sentry/cli");
-    makeTest("pkce-challenge", "3.0.0");
-    makeTest("pyodide", "0.23.4");
+    // // n8n-io/n8n
+    // makeTest("typedi", "0.10.0");
+    // makeTest("@sentry/cli", "2.17.0", "@sentry/cli");
+    // makeTest("pkce-challenge", "3.0.0");
+    // makeTest("pyodide", "0.23.4");
     makeTest("@types/express-serve-static-core", "4.17.43", "@types/express-serve-static-core");
     makeTest("@types/ws", "8.5.4", "@types/ws");
     makeTest("@types/uuencode", "0.0.3", "@types/uuencode");

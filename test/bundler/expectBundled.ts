@@ -3,7 +3,7 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
 import path from "path";
-import { bunEnv, bunExe, joinP } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
@@ -1546,7 +1546,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      opts.snapshotSourceMap ? 30_000 : undefined,
+      isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
     );
   }
   return ref;

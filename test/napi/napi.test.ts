@@ -24,6 +24,12 @@ describe("napi", () => {
       checkSameOutput("test_issue_7685", args);
     });
   });
+  describe("issue_11949", () => {
+    it("napi_call_threadsafe_function should accept null", () => {
+      const result = checkSameOutput("test_issue_11949", []);
+      expect(result).toBe("data: 0000000000000000");
+    });
+  });
 
   describe("napi_get_value_string_utf8 with buffer", () => {
     // see https://github.com/oven-sh/bun/issues/6949

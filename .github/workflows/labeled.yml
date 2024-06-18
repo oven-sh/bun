@@ -43,9 +43,7 @@ jobs:
             echo "oudated=$(cat outdated.txt)" >> $GITHUB_OUTPUT
           fi
 
-          if [[ -f "latest.txt" ]]; then
-            echo "latest=$(cat latest.txt)" >> $GITHUB_OUTPUT
-          fi
+          echo "latest=$(cat LATEST)" >> $GITHUB_OUTPUT
 
           rm -rf is-outdated.txt outdated.txt latest.txt
       - name: Add labels

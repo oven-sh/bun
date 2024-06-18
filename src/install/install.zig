@@ -947,6 +947,10 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             skipped: u32 = 0,
             successfully_installed: ?Bitset = null,
 
+            /// The lockfile used by `installPackages`. Might be different from the lockfile
+            /// on disk if `--production` is used and dev dependencies are removed.
+            lockfile_used_for_install: *Lockfile,
+
             /// Package name hash -> number of scripts skipped.
             /// Multiple versions of the same package might add to the count, and each version
             /// might have a different number of scripts
@@ -12540,7 +12544,9 @@ pub const PackageManager = struct {
             skip_delete = false;
         }
 
-        var summary = PackageInstall.Summary{};
+        var summary = PackageInstall.Summary{
+            .lockfile_used_for_install = this.lockfile,
+        };
 
         {
             var iterator = Lockfile.Tree.Iterator.init(this.lockfile);
@@ -13532,7 +13538,9 @@ pub const PackageManager = struct {
             }
         }
 
-        var install_summary = PackageInstall.Summary{};
+        var install_summary = PackageInstall.Summary{
+            .lockfile_used_for_install = manager.lockfile,
+        };
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
                 ctx,
@@ -13672,7 +13680,7 @@ pub const PackageManager = struct {
         if (comptime log_level != .silent) {
             if (manager.options.do.summary) {
                 var printer = Lockfile.Printer{
-                    .lockfile = manager.lockfile,
+                    .lockfile = install_summary.lockfile_used_for_install,
                     .options = manager.options,
                     .updates = manager.update_requests,
                     .successfully_installed = install_summary.successfully_installed,

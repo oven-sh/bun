@@ -30,7 +30,7 @@ const latest = await (async () => {
   return cmake.slice(quote + 1, endQuote);
 })();
 
-console.write("latest=" + latest + "\n");
+console.write("latest=" + latest);
 
 const lines = body.split("\n").reverse();
 for (const line of lines) {
@@ -52,13 +52,11 @@ for (const line of lines) {
     }
 
     if (Bun.semver.order(latest, version) === 1) {
-      console.write("outdated=" + version + "\n");
-      console.write("is-outdated=true\n");
+      console.write(",outdated=" + version);
+      console.write(",is-outdated=true\n");
       process.exit(0);
     }
   }
 }
 
-if (labels.length > 0) {
-  console.write(labels.join(",") + "\n");
-}
+console.write("\n");

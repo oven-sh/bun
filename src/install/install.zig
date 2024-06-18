@@ -10276,9 +10276,9 @@ pub const PackageManager = struct {
 
                 const existing_patchfile_hash = existing_patchfile_hash: {
                     var __sfb = std.heap.stackFallback(1024, manager.allocator);
-                    const sfballoc = __sfb.get();
-                    const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
-                    defer sfballoc.free(name_and_version);
+                    const allocator = __sfb.get();
+                    const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    defer allocator.free(name_and_version);
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
                         if (patched_dep.patchfileHash()) |hash| break :existing_patchfile_hash hash;
@@ -10366,7 +10366,6 @@ pub const PackageManager = struct {
                 "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
                 .{@errorName(e)},
             );
-            Output.flush();
             Global.crash();
         };
 
@@ -10470,34 +10469,32 @@ pub const PackageManager = struct {
                         };
 
                         continue;
-                    }
+                    } else if (comptime Environment.isPosix) {
+                        var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
+                        defer in_file.close();
 
-                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
-                    defer in_file.close();
+                        @memcpy(pathbuf[0..entry.path.len], entry.path);
+                        pathbuf[entry.path.len] = 0;
 
-                    @memcpy(pathbuf[0..entry.path.len], entry.path);
-                    pathbuf[entry.path.len] = 0;
+                        if (bun.sys.unlinkat(
+                            bun.toFD(destination_dir_.fd),
+                            pathbuf[0..entry.path.len :0],
+                        ).asErr()) |e| {
+                            Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
+                            Global.crash();
+                        }
 
-                    if (bun.sys.unlinkat(
-                        bun.toFD(destination_dir_.fd),
-                        pathbuf[0..entry.path.len :0],
-                    ).asErr()) |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
-                        Global.crash();
-                    }
+                        var outfile = try createFile(destination_dir_, entry.path, .{});
+                        defer outfile.close();
 
-                    var outfile = try createFile(destination_dir_, entry.path, .{});
-                    defer outfile.close();
-
-                    if (comptime Environment.isPosix) {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
-                    }
 
-                    bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
-                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.crash();
-                    };
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                            Global.crash();
+                        };
+                    }
                 }
 
                 return real_file_count;
@@ -10539,17 +10536,16 @@ pub const PackageManager = struct {
                 &buf1,
                 &buf2,
             );
-            return;
+        } else if (Environment.isPosix) {
+            _ = try FileCopier.copy(
+                node_modules_folder,
+                &walker,
+                {},
+                {},
+                {},
+                {},
+            );
         }
-
-        _ = try FileCopier.copy(
-            node_modules_folder,
-            &walker,
-            {},
-            {},
-            {},
-            {},
-        );
     }
 
     const PatchCommitResult = struct {

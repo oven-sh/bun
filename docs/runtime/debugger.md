@@ -250,9 +250,32 @@ console.log(err.stack);
 // [ "error.js" ]
 ```
 
+The `CallSite` object has the following methods:
+
+| Method                     | Returns                                               |
+| -------------------------- | ----------------------------------------------------- |
+| `getThis`                  | `this` value of the function call                     |
+| `getTypeName`              | typeof `this`                                         |
+| `getFunction`              | function object                                       |
+| `getFunctionName`          | function name as a string                             |
+| `getMethodName`            | method name as a string                               |
+| `getFileName`              | file name or URL                                      |
+| `getLineNumber`            | line number                                           |
+| `getColumnNumber`          | column number                                         |
+| `getEvalOrigin`            | `undefined`                                           |
+| `getScriptNameOrSourceURL` | source URL                                            |
+| `isToplevel`               | returns `true` if the function is in the global scope |
+| `isEval`                   | returns `true` if the function is an `eval` call      |
+| `isNative`                 | returns `true` if the function is native              |
+| `isConstructor`            | returns `true` if the function is a constructor       |
+| `isAsync`                  | returns `true` if the function is `async`             |
+| `isPromiseAll`             | Not implemented yet.                                  |
+| `getPromiseIndex`          | Not implemented yet.                                  |
+| `toString`                 | returns a string representation of the call site      |
+
 ##### Error.captureStackTrace(error, startFn)
 
-The `Error.captureStackTrace` lets you capture a stack trace at a specific point in your code, rather than at the point where the error was thrown.
+The `Error.captureStackTrace` function lets you capture a stack trace at a specific point in your code, rather than at the point where the error was thrown.
 
 This can be helpful when you have callbacks or asynchronous code that makes it difficult to determine where an error originated. The 2nd argument to `Error.captureStackTrace` is the function where you want the stack trace to start.
 

@@ -587,7 +587,7 @@ pub const Bin = extern struct {
                 .file => {
                     var target = this.bin.value.file.slice(this.string_buf);
 
-                    if (strings.hasPrefixComptime(target, "./")) {
+                    if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                         target = target["./".len..];
                     }
                     bun.copy(u8, remain, target);
@@ -609,7 +609,7 @@ pub const Bin = extern struct {
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
-                    if (strings.hasPrefixComptime(target, "./")) {
+                    if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                         target = target["./".len..];
                     }
                     bun.copy(u8, remain, target);
@@ -640,7 +640,7 @@ pub const Bin = extern struct {
                         const name_in_filesystem = this.extern_string_buf[extern_string_i + 1];
 
                         var target = name_in_filesystem.slice(this.string_buf);
-                        if (strings.hasPrefixComptime(target, "./")) {
+                        if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                             target = target["./".len..];
                         }
                         bun.copy(u8, remain, target);
@@ -661,7 +661,7 @@ pub const Bin = extern struct {
                 },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
-                    if (strings.hasPrefixComptime(target, "./")) {
+                    if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                         target = target["./".len..];
                     }
 
@@ -723,7 +723,7 @@ pub const Bin = extern struct {
             if (!link_global) {
                 target_buf[0..dot_bin.len].* = dot_bin.*;
                 from_remain = target_buf[dot_bin.len..];
-                dest_buf[0.."../".len].* = "../".*;
+                dest_buf[0.."../".len].* = (".." ++ std.fs.path.sep_str).*;
                 remain = dest_buf["../".len..];
             } else {
                 if (bun.toFD(this.global_bin_dir.fd) == bun.invalid_fd) {
@@ -790,7 +790,7 @@ pub const Bin = extern struct {
                         const name_in_filesystem = this.extern_string_buf[extern_string_i + 1];
 
                         var target = name_in_filesystem.slice(this.string_buf);
-                        if (strings.hasPrefix(target, "./")) {
+                        if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                             target = target[2..];
                         }
                         bun.copy(u8, remain, target);
@@ -809,7 +809,7 @@ pub const Bin = extern struct {
                 },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
-                    if (strings.hasPrefix(target, "./")) {
+                    if (strings.hasPrefixComptime(target, "./") or strings.hasPrefixComptime(target, ".\\")) {
                         target = target[2..];
                     }
 

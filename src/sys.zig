@@ -2362,7 +2362,10 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
         }
 
         const is_regular_file = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_NORMAL != 0;
+            // from libuv: directories cannot be read-only
+            // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
+            (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
         syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
         return is_regular_file;

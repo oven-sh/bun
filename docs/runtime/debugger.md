@@ -182,12 +182,15 @@ This prints the following to the console:
 
 Bun transpiles every file, which sounds like it would mean that the stack traces you see in the console would unhelpfully point to the transpiled output. To address this, Bun automatically generates and serves sourcemapped files for every file it transpiles. When you see a stack trace in the console, you can click on the file path and be taken to the original source code, even though it was written in TypeScript or JSX, or has some other transformation applied.
 
-In Bun, each `Error` object gets two additional properties:
+<!-- TODO: uncomment once v1.1.13 regression is fixed (cc @paperdave) -->
+<!-- In Bun, each `Error` object gets four additional properties:
 
-- `error.originalColumn` — the column number in the transpiled source code, without sourcemaps.
-- `error.originalLine` — the line number in the transpiled source code, without sourcemaps.
+- `line` — the source-mapped line number. This number points to the input source code, not the transpiled output.
+- `column` — the source-mapped column number. This number points to the input source code, not the transpiled output.
+- `originalColumn` — the column number pointing to transpiled source code, without sourcemaps. This number comes from JavaScriptCore.
+- `originalLine` — the line number pointing to transpiled source code, without sourcemaps. This number comes from JavaScriptCore.
 
-These properties are populated once `error.stack` is accessed.
+These properties are populated lazily when `error.stack` is accessed. -->
 
 Bun automatically loads sourcemaps both at runtime when transpiling files on-demand, and when using `bun build` to precompile files ahead of time.
 

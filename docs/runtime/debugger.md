@@ -226,6 +226,8 @@ Bun implements the [V8 Stack Trace API](https://v8.dev/docs/stack-trace-api), wh
 
 ##### Error.prepareStackTrace
 
+The `Error.prepareStackTrace` function is a global function that lets you customize the stack trace output. This function is called with the error object and an array of `CallSite` objects and lets you return a custom stack trace.
+
 ```ts
 Error.prepareStackTrace = (err, stack) => {
   return stack.map(callSite => {
@@ -237,8 +239,6 @@ const err = new Error("Something went wrong");
 console.log(err.stack);
 // [ "error.js" ]
 ```
-
-This formerly V8-only API lets you customize the stack trace output by providing a custom `prepareStackTrace` function on the `Error` object. This function is called with the error object and an array of `CallSite` objects and lets you return a custom stack trace.
 
 ##### Error.captureStackTrace(error, startFn)
 

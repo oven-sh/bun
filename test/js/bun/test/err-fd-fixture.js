@@ -1,5 +1,5 @@
 try {
-  await require("fs").promises.readFile("][p123][1p23]p1`]3p1]23p=-~!");
+  await require("fs").promises.readFile("this-file-path-is-bad");
 } catch (e) {
   Object.defineProperty(e, "fd", {
     get() {

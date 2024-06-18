@@ -109,10 +109,7 @@ test("throwing inside an error suppresses the error and continues printing prope
   const { stderr, exitCode } = result;
 
   expect(stderr.toString().trim()).toStartWith(
-    `ENOENT: No such file or directory
- syscall: "open"                                                                                
-   path: "][p123][1p23]p1\`]3p1]23p=-~!" 
-    `.trim(),
+    'ENOENT: No such file or directory\n   errno: -2\n syscall: "open"\n   path: "this-file-path-is-bad"'.trim(),
   );
   expect(exitCode).toBe(1);
 });

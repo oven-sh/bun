@@ -24,6 +24,7 @@ pub const subproc = @import("./subproc.zig");
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
 pub const Interpreter = interpret.Interpreter;
+pub const ParsedShellScript = interpret.ParsedShellScript;
 pub const Subprocess = subproc.ShellSubprocess;
 pub const ExitCode = interpret.ExitCode;
 pub const IOWriter = Interpreter.IOWriter;
@@ -3762,7 +3763,7 @@ pub const Test = struct {
 pub fn shellCmdFromJS(
     globalThis: *JSC.JSGlobalObject,
     string_args: JSValue,
-    template_args: []const JSValue,
+    template_args: *JSC.JSArrayIterator,
     out_jsobjs: *std.ArrayList(JSValue),
     jsstrings: *std.ArrayList(bun.String),
     out_script: *std.ArrayList(u8),
@@ -3782,7 +3783,10 @@ pub fn shellCmdFromJS(
         // const str = js_value.getZigString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
-            const template_value = template_args[i];
+            const template_value = template_args.next() orelse {
+                globalThis.throw("Shell script is missing JSValue arg", .{});
+                return false;
+            };
             if (!(try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]))) return false;
         }
     }
@@ -4390,7 +4394,7 @@ pub const TestingAPIs = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
@@ -4400,7 +4404,11 @@ pub const TestingAPIs = struct {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
-        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+        const template_args_js = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 2 arguments, got 0", .{});
+            return .undefined;
+        };
+        var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
             globalThis.throwOutOfMemory();
@@ -4420,7 +4428,7 @@ pub const TestingAPIs = struct {
         }
 
         var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
+        if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
             return JSValue.undefined;
         })) {
@@ -4476,7 +4484,7 @@ pub const TestingAPIs = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
@@ -4486,7 +4494,11 @@ pub const TestingAPIs = struct {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
-        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+        const template_args_js = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 2 arguments, got 0", .{});
+            return .undefined;
+        };
+        var template_args = template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
         var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
             globalThis.throwOutOfMemory();
@@ -4505,7 +4517,7 @@ pub const TestingAPIs = struct {
             }
         }
         var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
+        if (!(shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
             globalThis.throwOutOfMemory();
             return JSValue.undefined;
         })) {
@@ -4515,7 +4527,7 @@ pub const TestingAPIs = struct {
         var out_parser: ?Parser = null;
         var out_lex_result: ?LexResult = null;
 
-        const script_ast = Interpreter.parse(&arena, script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
+        const script_ast = Interpreter.parse(arena.allocator(), script.items[0..], jsobjs.items[0..], jsstrings.items[0..], &out_parser, &out_lex_result) catch |err| {
             if (err == ParseError.Lex) {
                 if (bun.Environment.allow_assert) assert(out_lex_result != null);
                 const str = out_lex_result.?.combineErrors(arena.allocator());

@@ -19,6 +19,7 @@ jobs:
           sparse-checkout: |
             scripts
             .github
+            CMakeLists.txt
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -32,6 +33,7 @@ jobs:
         run: |
           LABELS=$(bun scripts/read-issue.ts)
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          bun scripts/is-outdated.ts >> $GITHUB_OUTPUT
       - name: Add labels
         uses: actions-cool/issues-helper@v3
         with:
@@ -39,3 +41,18 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           labels: ${{ steps.add-labels.outputs.labels }}
+      - name: Comment outdated
+        if: steps.add-labels.outputs.is_outdated == 'true'
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "create-comment"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            The latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but you are using v${{ steps.add-labels.outputs.oudated }}.
+
+            If you upgrade to the latest version, does this fix the issue?
+
+            ```sh
+            bun upgrade
+            ```

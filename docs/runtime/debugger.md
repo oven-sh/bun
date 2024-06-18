@@ -203,7 +203,7 @@ const err = new Error("Something went wrong");
 console.log(Bun.inspect(err, { colors: true }));
 ```
 
-{% image src="https://github.com/oven-sh/bun/assets/709451/31ab1574-f59c-475b-be2e-f1aba74169bf" width=377 alt='1 | // Create an error:\n2 | const err = new Error("Something went wrong");\n                ^\nerror: Something went wrong\n      at /Users/jarred/Desktop/error.js:2:13' /%}
+{% image src="https://github.com/oven-sh/bun/assets/709451/31ab1574-f59c-475b-be2e-f1aba74169bf" width="377" /%}
 
 ### V8 Stack Traces
 

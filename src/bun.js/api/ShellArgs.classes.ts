@@ -2,25 +2,24 @@ import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
-    name: "ShellInterpreter",
+    name: "ParsedShellScript",
     construct: true,
     noConstructor: true,
     finalize: true,
-    hasPendingActivity: true,
+    hasPendingActivity: false,
     configurable: false,
     klass: {},
-    values: ["resolve", "reject"],
     proto: {
-      run: {
-        fn: "runFromJS",
-        length: 0,
+      setCwd: {
+        fn: "setCwd",
+        length: 1,
       },
-      isRunning: {
-        fn: "isRunning",
-        length: 0,
+      setEnv: {
+        fn: "setEnv",
+        length: 1,
       },
-      started: {
-        fn: "getStarted",
+      setQuiet: {
+        fn: "setQuiet",
         length: 0,
       },
     },

@@ -896,10 +896,18 @@ export function tmpdirSync(pattern: string = "bun.test.") {
 export async function runBunInstall(
   env: NodeJS.ProcessEnv,
   cwd: string,
-  options?: { allowWarnings?: boolean; allowErrors?: boolean; expectedExitCode?: number; savesLockfile?: boolean },
+  options?: {
+    allowWarnings?: boolean;
+    allowErrors?: boolean;
+    expectedExitCode?: number;
+    savesLockfile?: boolean;
+    production?: boolean;
+  },
 ) {
+  const production = options?.production ?? false;
+  const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
   const { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: args,
     cwd,
     stdout: "pipe",
     stdin: "ignore",
@@ -916,7 +924,7 @@ export async function runBunInstall(
   if (!options?.allowWarnings) {
     expect(err).not.toContain("warn:");
   }
-  if (options?.savesLockfile ?? true) {
+  if ((options?.savesLockfile ?? true) && !production) {
     expect(err).toContain("Saved lockfile");
   }
   let out = await new Response(stdout).text();
@@ -1035,3 +1043,5 @@ export function rejectUnauthorizedScope(value: boolean) {
     },
   };
 }
+
+export const BREAKING_CHANGES_BUN_1_2 = false;

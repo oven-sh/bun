@@ -4261,6 +4261,7 @@ pub const PackageManager = struct {
         this.patch_task_fifo.writeItemAssumeCapacity(task);
     }
 
+    /// We need to calculate all the patchfile hashes at the beginning so we don't run into problems with stale hashes
     pub fn enqueuePatchTaskPre(this: *PackageManager, task: *PatchTask) void {
         debug("Enqueue patch task pre: 0x{x} {s}", .{ @intFromPtr(task), @tagName(task.callback) });
         task.pre = true;

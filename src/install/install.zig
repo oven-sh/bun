@@ -10128,6 +10128,7 @@ pub const PackageManager = struct {
                 if (dep.name_hash != name_hash) continue;
                 matches_found += 1;
                 const pkg_id = lockfile.buffers.resolutions.items[dep_id];
+                if (pkg_id == invalid_package_id) continue;
                 const pkg = lockfile.packages.get(pkg_id);
                 if (version) |v| {
                     const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");

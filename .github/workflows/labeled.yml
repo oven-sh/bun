@@ -56,7 +56,7 @@ jobs:
           issue-number: ${{ github.event.issue.number }}
           labels: ${{ steps.add-labels.outputs.labels }}
       - name: Comment outdated
-        if: steps.add-labels.outputs.is_outdated == 'true'
+        if: steps.add-labels.outputs.is-outdated == 'true'
         uses: actions-cool/issues-helper@v3
         with:
           actions: "create-comment"

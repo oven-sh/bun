@@ -1632,7 +1632,7 @@ pub export fn napi_create_threadsafe_function(
     };
 
     function.finalizer = .{ .data = thread_finalize_data, .fun = thread_finalize_cb };
-    // nodejs by default keeps the event loop alive until the thread-safe function is destroyed
+    // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     function.ref();
 
     result.* = function;

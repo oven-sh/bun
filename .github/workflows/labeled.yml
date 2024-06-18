@@ -63,9 +63,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            @${{ github.event.issue.user.login }}, the latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but you are using v${{ steps.add-labels.outputs.oudated }}.
+            @${{ github.event.issue.user.login }}, the latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but this crash was reported on Bun v${{ steps.add-labels.outputs.oudated }}.
 
-            If you upgrade to the latest version, does this fix the issue?
+            Are you able to reproduce this crash on the latest version of Bun?
 
             ```sh
             bun upgrade

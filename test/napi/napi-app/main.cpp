@@ -42,7 +42,11 @@ napi_value tsfn_name_11949;
 
 static void test_issue_11949_callback(napi_env env, napi_value js_callback,
                                       void *context, void *data) {
-  printf("data: %p\n", data);
+  if (data != nullptr) {
+    printf("data: %p\n", data);
+  } else {
+    printf("data: nullptr\n");
+  }
   napi_unref_threadsafe_function(env, tsfn_11949);
 }
 

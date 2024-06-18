@@ -27,7 +27,7 @@ describe("napi", () => {
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);
-      expect(result).toBe("data: 0000000000000000");
+      expect(result).toStartWith("data: nullptr");
     });
   });
 

@@ -1953,6 +1953,7 @@ pub const sync = struct {
         var this = SyncWindowsProcess.new(.{
             .process = spawned.toProcess(undefined, true),
         });
+        this.process.ref();
         this.process.setExitHandler(this);
         defer this.destroy();
         this.process.enableKeepingEventLoopAlive();

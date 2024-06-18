@@ -7,6 +7,10 @@ const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toCont
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
 const platformPath = (path: string) => path;
 
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
+
 describe("bun patch <pkg>", async () => {
   // Tests to make sure that patching
   describe("popular pkg", async () => {

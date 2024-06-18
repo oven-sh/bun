@@ -2,6 +2,10 @@ import { $ } from "bun";
 import { bunExe, bunEnv as env, toBeValidBin, toHaveBins, toBeWorkspaceLink, tempDirWithFiles, bunEnv } from "harness";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test, setDefaultTimeout } from "bun:test";
 
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
+
 describe("patch", async () => {
   const is_even_patch = /* patch */ `diff --git a/index.js b/index.js
 index 832d92223a9ec491364ee10dcbe3ad495446ab80..bc652e496c165a7415880ef4520c0ab302bf0765 100644

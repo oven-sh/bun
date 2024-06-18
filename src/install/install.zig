@@ -10437,33 +10437,19 @@ pub const PackageManager = struct {
                             Global.crash();
                         }
 
-                        var in_file = openFile(entry.dir, basename, .{ .mode = .read_only }) catch |e| {
-                            Output.prettyError("<r><red>error<r>: opening node_modules file {s} {s} ()", .{ @errorName(e), entrypath });
-                            Global.crash();
-                        };
-                        var in_file_close = true;
-                        defer if (in_file_close) in_file.close();
-
                         var outfile = createFile(destination_dir_, entrypath, .{}) catch |e| {
                             Output.prettyError("<r><red>error<r>: failed to create file {s} ({s})", .{ entrypath, @errorName(e) });
                             Global.crash();
                         };
-                        var out_file_close = true;
-                        defer if (out_file_close) outfile.close();
+                        outfile.close();
 
                         const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
                         const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
-                        in_file_close = false;
-                        out_file_close = false;
-                        in_file.close();
-                        outfile.close();
                         bun.copyFileWithState(infile_path, outfile_path, &copy_file_state) catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
-
-                        continue;
                     } else if (comptime Environment.isPosix) {
                         var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
                         defer in_file.close();

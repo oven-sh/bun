@@ -949,7 +949,15 @@ pub const ShellSubprocess = struct {
         if (exit_code) |code| {
             if (this.cmd_parent) |cmd| {
                 if (cmd.exit_code == null) {
-                    cmd.onExit(code);
+                    if (this.event_loop == .js) {
+                        const loop = this.event_loop.js;
+
+                        loop.enter();
+                        defer loop.exit();
+                        cmd.onExit(code);
+                    } else {
+                        cmd.onExit(code);
+                    }
                 }
             }
         }

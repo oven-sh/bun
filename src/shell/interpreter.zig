@@ -843,6 +843,7 @@ pub const Interpreter = struct {
     async_commands_executing: u32 = 0,
 
     globalThis: *JSC.JSGlobalObject,
+    ref: bun.Async.KeepAlive = .{},
 
     flags: packed struct(u8) {
         done: bool = false,
@@ -1235,7 +1236,7 @@ pub const Interpreter = struct {
         interpreter.this_jsvalue = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
         JSC.Codegen.JSShellInterpreter.resolveSetCached(interpreter.this_jsvalue, globalThis, resolve);
         JSC.Codegen.JSShellInterpreter.rejectSetCached(interpreter.this_jsvalue, globalThis, reject);
-
+        interpreter.ref.activate(JSC.VirtualMachine.get().uwsLoop());
         bun.Analytics.Features.shell += 1;
         return interpreter.this_jsvalue;
     }
@@ -1656,6 +1657,8 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
+            this.ref.disable();
+
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
             if (this.this_jsvalue != .zero) {
@@ -1676,6 +1679,8 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
+            this.ref.disable();
+
             if (this.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this.this_jsvalue)) |reject| {
                     reject.call(this.globalThis, &[_]JSValue{ JSValue.jsNumberFromChar(1), this.getBufferedStdout(), this.getBufferedStderr() });
@@ -1692,6 +1697,7 @@ pub const Interpreter = struct {
         for (this.jsobjs) |jsobj| {
             jsobj.unprotect();
         }
+        this.ref.disable();
         this.root_io.deref();
         this.root_shell.deinitImpl(false, false);
         this.this_jsvalue = .zero;
@@ -1705,6 +1711,7 @@ pub const Interpreter = struct {
             this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
+        this.ref.disable();
         this.allocator.destroy(this);
     }
 

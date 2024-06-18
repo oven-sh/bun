@@ -259,6 +259,21 @@ pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
+/// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
+pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[0..second_at_index], if (second_at_index + 1 < str.len) str[second_at_index + 1 ..] else null };
+    }
+
+    return .{ str, null };
+}
+
 pub const Version = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},

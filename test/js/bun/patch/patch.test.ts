@@ -4,9 +4,9 @@ import { patchInternals } from "bun:internal-for-testing";
 import { tempDirWithFiles as __tempDirWithFiles } from "harness";
 import { join as __join } from "node:path";
 import fs from "fs/promises";
-const { parse, apply } = patchInternals;
+const { parse, apply, makeDiff } = patchInternals;
 
-const makeDiff = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
+const makeDiffJs = async (aFolder: string, bFolder: string, cwd: string): Promise<string> => {
   const { stdout, stderr } =
     await $`git -c core.safecrlf=false diff --src-prefix=a/ --dst-prefix=b/ --ignore-cr-at-eol --irreversible-delete --full-index --no-index ${aFolder} ${bFolder}`
       .env(
@@ -51,6 +51,47 @@ const join =
     : __join;
 
 describe("apply", () => {
+  test("edgecase", async () => {
+    const newcontents = "module.exports = x => x % 420 === 0;";
+    const tempdir2 = tempDirWithFiles("patch-test2", {
+      ".bun/install/cache/is-even@1.0.0": {
+        "index.js": "module.exports = x => x % 2 === 0;",
+      },
+    });
+    const tempdir = tempDirWithFiles("patch-test", {
+      a: {},
+      ["node_modules/is-even"]: {
+        "index.js": newcontents,
+      },
+    });
+
+    const patchfile = await makeDiff(
+      `${tempdir2}/.bun/install/cache/is-even@1.0.0`,
+      `${tempdir}/node_modules/is-even`,
+      tempdir,
+    );
+
+    await apply(patchfile, `${tempdir}/node_modules/is-even`);
+    expect(await fs.readFile(`${tempdir}/node_modules/is-even/index.js`).then(b => b.toString())).toBe(newcontents);
+  });
+
+  test("empty", async () => {
+    const tempdir = tempDirWithFiles("patch-test", {
+      a: {},
+      b: {},
+    });
+
+    const afolder = join(tempdir, "a");
+    const bfolder = join(tempdir, "b");
+
+    const patchfile = await makeDiff(afolder, bfolder, tempdir);
+    expect(patchfile).toBe("");
+
+    await apply(patchfile, afolder);
+
+    expect(await fs.readdir(afolder)).toEqual([]);
+  });
+
   describe("deletion", () => {
     test("simple", async () => {
       const files = {

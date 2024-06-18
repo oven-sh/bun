@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test,
 import { join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
+const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
 
 describe("bun patch <pkg>", async () => {
   // Tests to make sure that patching
@@ -257,13 +258,13 @@ module.exports = function isOdd(i) {
         const { stderr, stdout } = await $`${bunExe()} patch ${patchArg}`.env(bunEnv).cwd(filedir);
         expect(stderr.toString()).not.toContain("error");
         expect(stdout.toString()).toContain(
-          `To patch ${expected.patchName}, edit the following folder:
+          `To patch ${platformPath(expected.patchName)}, edit the following folder:
 
-  ${expected.patchPath}
+  ${platformPath(expected.patchPath)}
 
 Once you're done with your changes, run:
 
-  bun patch --commit '${expected.patchPath}'`,
+  bun patch --commit '${platformPath(expected.patchPath)}'`,
         );
       }
 

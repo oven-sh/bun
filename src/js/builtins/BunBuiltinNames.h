@@ -126,6 +126,7 @@ using namespace JSC;
     macro(kind) \
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
+    macro(lineText) \
     macro(loadCJS2ESM) \
     macro(Loader) \
     macro(localStreams) \
@@ -141,6 +142,8 @@ using namespace JSC;
     macro(once) \
     macro(options) \
     macro(origin) \
+    macro(originalColumn) \
+    macro(originalLine) \
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
@@ -181,10 +184,10 @@ using namespace JSC;
     macro(readRequests) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
-    macro(removeAbortAlgorithmFromSignal) \
     macro(redirect) \
     macro(relative) \
     macro(releaseLock) \
+    macro(removeAbortAlgorithmFromSignal) \
     macro(removeEventListener) \
     macro(require) \
     macro(requireESM) \

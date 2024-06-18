@@ -1,4 +1,6 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
+import { join } from "node:path";
+import "harness";
 
 test("name property is used for function calls in Error.stack", () => {
   function WRONG() {
@@ -65,4 +67,19 @@ test.todo("name property is used for function calls in Bun.inspect with bound ob
   console.log(WRONG());
   expect(WRONG()).not.toContain("at WRONG");
   expect(WRONG()).toContain("at RIGHT");
+});
+
+test("err.line and err.column are set", () => {
+  expect([join(import.meta.dir, "err-stack-fixture.js")]).toRun(
+    JSON.stringify(
+      {
+        line: 3,
+        column: 17,
+        originalLine: 1,
+        originalColumn: 22,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
 });

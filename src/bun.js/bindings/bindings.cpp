@@ -4324,7 +4324,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
                     except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
 
-                    if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
+                    if (JSC::JSValue lineText = obj->getIfPropertyExists(global, builtinNames(vm).lineTextPublicName())) {
                         if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
                             auto str = jsStr->value(global);
                             except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
@@ -4336,7 +4336,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
                 }
 
                 except->stack.frames_len = 1;
-                except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
+                except->stack.frames_ptr[0].remapped = obj->hasProperty(global, builtinNames(vm).originalLinePublicName());
             }
         }
     }
@@ -4346,11 +4346,14 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
 void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobalObject* global)
 {
+    JSC::VM& vm = global->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
     // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
     // ErrorInstance
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
-        if (obj->hasProperty(global, global->vm().propertyNames->name)) {
-            auto name_str = obj->getIfPropertyExists(global, global->vm().propertyNames->name).toWTFString(global);
+        if (obj->hasProperty(global, vm.propertyNames->name)) {
+            auto name_str = obj->getIfPropertyExists(global, vm.propertyNames->name).toWTFString(global);
             except->name = Bun::toStringRef(name_str);
             if (name_str == "Error"_s) {
                 except->code = JSErrorCodeError;
@@ -4371,14 +4374,22 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             }
         }
 
-        if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
+        if (scope.exception()) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
             if (message) {
                 except->message = Bun::toStringRef(
                     message.toWTFString(global));
             }
         }
 
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
+        if (scope.exception()) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
             if (sourceURL) {
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(
                     sourceURL.toWTFString(global));
@@ -4386,10 +4397,14 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             }
         }
 
-        if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
+        if (scope.exception()) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
             if (line) {
                 // TODO: don't sourcemap it twice
-                if (auto originalLine = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "originalLine"_s))) {
+                if (auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName())) {
                     except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
                 } else {
                     except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
@@ -4398,16 +4413,18 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
             }
         }
 
+        if (scope.exception()) {
+            scope.clearExceptionExceptTermination();
+        }
+
         return;
     }
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
+
     auto str = value.toWTFString(global);
     if (scope.exception()) {
-        scope.clearException();
-        scope.release();
+        scope.clearExceptionExceptTermination();
         return;
     }
-    scope.release();
 
     except->message = Bun::toStringRef(str);
 }

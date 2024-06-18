@@ -2069,11 +2069,11 @@ pub const sync = struct {
             process.stderr orelse bun.invalid_fd,
         };
 
-        if (process.memfds[0]) {
+        if (process.memfds[1]) {
             out_fds_to_wait_for[0] = bun.invalid_fd;
         }
 
-        if (process.memfds[1]) {
+        if (process.memfds[2]) {
             out_fds_to_wait_for[1] = bun.invalid_fd;
         }
 

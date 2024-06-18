@@ -97,6 +97,16 @@ Experimental support for debugging Bun scripts is available in Visual Studio Cod
 
 ## Debugging Network Requests
 
+The `BUN_CONFIG_VERBOSE_FETCH` environment variable lets you log network requests made with `fetch()` or `node:http` automatically.
+
+| Value   | Description                        |
+| ------- | ---------------------------------- |
+| `curl`  | Print requests as `curl` commands. |
+| `true`  | Print request & response info      |
+| `false` | Don't print anything. Default      |
+
+### Print fetch & node:http requests as curl commands
+
 Bun also supports printing `fetch()` and `node:http` network requests as `curl` commands by setting the environment variable `BUN_CONFIG_VERBOSE_FETCH` to `curl`.
 
 ```ts
@@ -111,7 +121,7 @@ await fetch("https://example.com", {
 });
 ```
 
-This prints the following to the console:
+This prints the `fetch` request as a single-line `curl` command to let you copy-paste into your terminal to replicate the request.
 
 ```sh
 [fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.1.14" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"

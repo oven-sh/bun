@@ -34,7 +34,7 @@ runs:
         commit-message: Bump version to ${{ steps.bump.outputs.version }}
         title: Bump to ${{ steps.bump.outputs.version }}
         delete-branch: true
-        branch: github-actions/bump-version-${{ steps.bump.outputs.version }}
+        branch: github-actions/bump-version-${{ steps.bump.outputs.version }}--${{ github.run_id }}
         body: |
           ## What does this PR do?
 

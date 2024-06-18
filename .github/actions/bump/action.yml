@@ -6,6 +6,11 @@ inputs:
     description: The most recent version of Bun.
     required: true
     type: string
+  token:
+    description: The GitHub token to use for creating a pull request.
+    required: true
+    type: string
+    default: ${{ github.token }}
 
 runs:
   using: composite
@@ -25,7 +30,7 @@ runs:
         add-paths: |
           CMakeLists.txt
           LATEST
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ inputs.token }}
         commit-message: Bump version to ${{ steps.bump.outputs.version }}
         title: Bump to ${{ steps.bump.outputs.version }}
         delete-branch: true

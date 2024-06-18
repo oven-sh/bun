@@ -26,3 +26,4 @@ jobs:
         uses: ./.github/actions/bump
         with:
           version: ${{ inputs.version }}
+          token: ${{ github.token }}

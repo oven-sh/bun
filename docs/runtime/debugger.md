@@ -199,11 +199,20 @@ Bun automatically loads sourcemaps both at runtime when transpiling files on-dem
 To help with debugging, Bun automatically prints a small source-code preview when an unhandled exception or rejection occurs. You can simulate this behavior by calling `Bun.inspect(error)`:
 
 ```ts
+// Create an error
 const err = new Error("Something went wrong");
 console.log(Bun.inspect(err, { colors: true }));
 ```
 
-{% image src="https://github.com/oven-sh/bun/assets/709451/31ab1574-f59c-475b-be2e-f1aba74169bf" width="377" /%}
+This prints a syntax-highlighted preview of the source code where the error occurred, along with the error message and stack trace.
+
+```js
+1 | // Create an error
+2 | const err = new Error("Something went wrong");
+                ^
+error: Something went wrong
+      at file.js:2:13
+```
 
 ### V8 Stack Traces
 

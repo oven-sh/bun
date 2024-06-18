@@ -10401,10 +10401,10 @@ pub const PackageManager = struct {
             pub fn copy(
                 destination_dir_: std.fs.Dir,
                 walker: *Walker,
-                in_dir: if (bun.Environment.isWindows) []const u8 else void,
-                out_dir: if (bun.Environment.isWindows) []const u8 else void,
-                buf1: if (bun.Environment.isWindows) []u8 else void,
-                buf2: if (bun.Environment.isWindows) []u8 else void,
+                in_dir: if (bun.Environment.isWindows) []const u16 else void,
+                out_dir: if (bun.Environment.isWindows) []const u16 else void,
+                buf1: if (bun.Environment.isWindows) []u16 else void,
+                buf2: if (bun.Environment.isWindows) []u16 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
 
@@ -10457,8 +10457,8 @@ pub const PackageManager = struct {
                         var out_file_close = true;
                         defer if (out_file_close) outfile.close();
 
-                        const infile_path = bun.path.joinZBuf(buf1, &[_][]const u8{ in_dir, entrypath }, .auto);
-                        const outfile_path = bun.path.joinZBuf(buf2, &[_][]const u8{ out_dir, entrypath }, .auto);
+                        const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
+                        const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
                         in_file_close = false;
                         out_file_close = false;
@@ -10509,10 +10509,10 @@ pub const PackageManager = struct {
         var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
         defer walker.deinit();
 
-        var buf1: if (bun.Environment.isWindows) bun.PathBuffer else void = undefined;
-        var buf2: if (bun.Environment.isWindows) bun.PathBuffer else void = undefined;
-        var in_dir: if (bun.Environment.isWindows) []const u8 else void = undefined;
-        var out_dir: if (bun.Environment.isWindows) []const u8 else void = undefined;
+        var buf1: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
+        var buf2: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
+        var in_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
+        var out_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
 
         if (comptime bun.Environment.isWindows) {
             const inlen = bun.windows.kernel32.GetFinalPathNameByHandleW(pkg_in_cache_dir.fd, &buf1, buf1.len, 0);

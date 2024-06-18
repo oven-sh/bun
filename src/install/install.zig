@@ -10172,7 +10172,7 @@ pub const PackageManager = struct {
         name_and_version,
 
         pub fn fromArg(argument: []const u8) PatchArgKind {
-            if (bun.strings.hasPrefix(argument, "node_modules/")) return .path;
+            if (bun.strings.hasPrefixComptime(argument, "node_modules/")) return .path;
             if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) return .path;
             if (comptime bun.Environment.isWindows) {
                 if (bun.strings.hasPrefix(argument, "node_modules\\")) return .path;
@@ -10438,11 +10438,7 @@ pub const PackageManager = struct {
                         var in_file_close = true;
                         defer if (in_file_close) in_file.close();
 
-                        const mode = in_file.mode() catch |e| {
-                            Output.prettyError("<r><red>error<r>: failed to get file mode {s} ", .{@errorName(e)});
-                            Global.crash();
-                        };
-                        var outfile = createFile(destination_dir_, entrypath, .{ .mode = mode }) catch |e| {
+                        var outfile = createFile(destination_dir_, entrypath, .{}) catch |e| {
                             Output.prettyError("<r><red>error<r>: failed to create file {s} ({s})", .{ entrypath, @errorName(e) });
                             Global.crash();
                         };

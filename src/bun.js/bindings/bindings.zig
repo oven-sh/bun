@@ -2170,6 +2170,80 @@ pub const JSPromise = extern struct {
         };
     }
 
+    pub const Async = struct {
+        strong: ?*AsyncPromise = null,
+
+        const AsyncPromise = opaque {
+            extern fn Bun__AsyncPromise__delete(*AsyncPromise) void;
+            extern fn Bun__AsyncPromise__resolve(*AsyncPromise, *JSGlobalObject, JSValue) void;
+            extern fn Bun__AsyncPromise__reject(*AsyncPromise, *JSGlobalObject, JSValue) void;
+            extern fn Bun__AsyncPromise__get(*AsyncPromise) JSValue;
+            extern fn Bun__AsyncPromise__value(*AsyncPromise) JSValue;
+            extern fn Bun__AsyncPromise__promise(*AsyncPromise) *JSC.JSPromise;
+            extern fn Bun__AsyncPromise__set(*AsyncPromise, JSValue) void;
+            extern fn Bun__AsyncPromise__create(*JSGlobalObject) *AsyncPromise;
+
+            pub const deinit = Bun__AsyncPromise__delete;
+            pub const resolve = Bun__AsyncPromise__resolve;
+            pub const reject = Bun__AsyncPromise__reject;
+            pub const get = Bun__AsyncPromise__get;
+            pub const value = Bun__AsyncPromise__value;
+            pub const promise = Bun__AsyncPromise__promise;
+            pub const set = Bun__AsyncPromise__set;
+            pub const init = Bun__AsyncPromise__create;
+        };
+
+        pub fn reject(this: *Async, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            var str = this.strong.?;
+            this.strong = null;
+            str.reject(globalThis, val);
+            str.deinit();
+        }
+
+        /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
+        pub fn rejectTask(this: *Async, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.enter();
+            defer loop.exit();
+
+            this.reject(globalThis, val);
+        }
+
+        pub fn resolve(this: *Async, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            var str = this.strong.?;
+            this.strong = null;
+            str.resolve(globalThis, val);
+            str.deinit();
+        }
+
+        /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
+        pub fn resolveTask(this: *Async, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
+            const loop = JSC.VirtualMachine.get().eventLoop();
+            loop.enter();
+            defer loop.exit();
+            this.resolve(globalThis, val);
+        }
+
+        pub fn init(globalThis: *JSC.JSGlobalObject) Async {
+            return .{ .strong = AsyncPromise.init(globalThis) };
+        }
+
+        pub fn get(this: *const Async) *JSC.JSPromise {
+            return this.strong.?.promise();
+        }
+
+        pub fn value(this: *const Async) JSValue {
+            return this.strong.?.value();
+        }
+
+        pub fn deinit(this: *Async) void {
+            if (this.strong) |strong| {
+                this.strong = null;
+                strong.deinit();
+            }
+        }
+    };
+
     pub const Strong = struct {
         strong: JSC.Strong = .{},
 

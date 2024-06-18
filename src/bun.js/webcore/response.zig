@@ -1195,7 +1195,7 @@ pub const Fetch = struct {
                 .globalObject = globalThis,
                 .task = undefined,
             };
-            this.promise.strong = .{};
+            this.promise = .{};
             holder.task = switch (success) {
                 true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
                 false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),

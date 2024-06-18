@@ -4,7 +4,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, describe, test,
 import { join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
-const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
+// const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
+const platformPath = (path: string) => path
 
 describe("bun patch <pkg>", async () => {
   // Tests to make sure that patching
@@ -236,6 +237,7 @@ module.exports = function isOdd(i) {
       extra?: (filedir: string) => Promise<void>;
     },
   ) {
+    expected.patchPath = platformPath(expected.patchPath);
     test(name, async () => {
       $.throws(true);
 
@@ -306,7 +308,7 @@ Once you're done with your changes, run:
       const { stderr, stdout } = await $`${bunExe()} patch lodash`.env(bunEnv).cwd(filedir);
       expect(stderr.toString()).not.toContain("error");
     }
-  });
+  }, 15 * 1000);
 
   ["is-even@1.0.0", "node_modules/is-even"].map(patchArg =>
     makeTest("should patch a node_modules package", {

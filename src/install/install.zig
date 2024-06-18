@@ -10136,7 +10136,6 @@ pub const PackageManager = struct {
 
             const first_match = maybe_first_match orelse {
                 Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
-                Output.flush();
                 Global.crash();
                 return;
             };
@@ -10158,7 +10157,6 @@ pub const PackageManager = struct {
                         Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
                     } else break;
                 }
-                Output.flush();
                 Global.crash();
                 return;
             }
@@ -10215,7 +10213,6 @@ pub const PackageManager = struct {
                                 "<r><red>error<r>: failed to read package.json: {}<r>\n",
                                 .{e.withPath(package_json_path).toSystemError()},
                             );
-                            Output.flush();
                             Global.crash();
                         },
                     }
@@ -10241,7 +10238,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {s}<r>\n",
                         .{package_json_source.path.text},
                     );
-                    Output.flush();
                     Global.crash();
                 };
 
@@ -10254,7 +10250,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
                         .{},
                     );
-                    Output.flush();
                     Global.crash();
                 }) {
                     .PackageID => |id| lockfile.packages.get(id),
@@ -10269,7 +10264,6 @@ pub const PackageManager = struct {
                         Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
                             package.name.slice(lockfile.buffers.string_bytes.items),
                         });
-                        Output.flush();
                         Global.crash();
                     },
                 };
@@ -10316,7 +10310,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
                         .{pkg_maybe_version_to_patch},
                     );
-                    Output.flush();
                     Global.crash();
                 };
 
@@ -10613,7 +10606,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {}<r>\n",
                     .{e},
                 );
-                Output.flush();
                 Global.crash();
             },
         };
@@ -10633,7 +10625,6 @@ pub const PackageManager = struct {
                                 "<r><red>error<r>: failed to read package.json: {}<r>\n",
                                 .{e.withPath(package_json_path).toSystemError()},
                             );
-                            Output.flush();
                             Global.crash();
                         },
                     }
@@ -10659,7 +10650,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {s}<r>\n",
                         .{package_json_source.path.text},
                     );
-                    Output.flush();
                     Global.crash();
                 };
 
@@ -10672,7 +10662,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
                         .{},
                     );
-                    Output.flush();
                     Global.crash();
                 }) {
                     .PackageID => |id| lockfile.packages.get(id),
@@ -10687,7 +10676,6 @@ pub const PackageManager = struct {
                         Output.prettyError("<r><red>error<r>: could not find package with name:<r> {s}\n<r>", .{
                             package.name.slice(lockfile.buffers.string_bytes.items),
                         });
-                        Output.flush();
                         Global.crash();
                     },
                 };
@@ -10718,7 +10706,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
                         .{argument},
                     );
-                    Output.flush();
                     Global.crash();
                 };
                 const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
@@ -10760,7 +10747,6 @@ pub const PackageManager = struct {
                             "<r><red>error<r>: failed to read from cache {}<r>\n",
                             .{e.toSystemError()},
                         );
-                        Output.flush();
                         Global.crash();
                     },
                 };
@@ -10775,7 +10761,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: failed to make tempdir {s}<r>\n",
                     .{@errorName(e)},
                 );
-                Output.flush();
                 Global.crash();
             });
 
@@ -10790,7 +10775,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
                         .{ new_folder, @errorName(e) },
                     );
-                    Output.flush();
                     Global.crash();
                 };
                 defer new_folder_handle.close();
@@ -10810,7 +10794,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: failed to make tempdir {s}<r>\n",
                     .{@errorName(e)},
                 );
-                Output.flush();
                 Global.crash();
             });
 
@@ -10832,7 +10815,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
                         .{ new_folder, @errorName(e) },
                     );
-                    Output.flush();
                     Global.crash();
                 };
                 defer new_folder_handle.close();
@@ -10855,7 +10837,6 @@ pub const PackageManager = struct {
                             "<r><red>error<r>: failed to open directory <b>{s}<r> {s}<r>\n",
                             .{ new_folder, @errorName(e) },
                         );
-                        Output.flush();
                         Global.crash();
                     };
                     defer new_folder_handle.close();
@@ -10892,7 +10873,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: failed to get cwd path {}<r>\n",
                         .{e},
                     );
-                    Output.flush();
                     Global.crash();
                 },
             };
@@ -10902,7 +10882,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
                     .{},
                 );
-                Output.flush();
                 Global.crash();
             };
             const paths = bun.patch.gitDiffPreprocessPaths(bun.default_allocator, old_folder, new_folder, false);
@@ -10913,7 +10892,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},
                 );
-                Output.flush();
                 Global.crash();
             }) {
                 .result => |r| r,
@@ -10922,7 +10900,6 @@ pub const PackageManager = struct {
                         "<r><red>error<r>: failed to make diff {}<r>\n",
                         .{e},
                     );
-                    Output.flush();
                     Global.crash();
                 },
             };
@@ -10932,7 +10909,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: failed to make diff {s}<r>\n",
                     .{@errorName(e)},
                 );
-                Output.flush();
                 Global.crash();
             }) {
                 .result => |stdout| stdout,
@@ -10959,7 +10935,6 @@ pub const PackageManager = struct {
                             Truncate{ .stderr = stderr },
                         },
                     );
-                    Output.flush();
                     Global.crash();
                 },
             };
@@ -10991,7 +10966,6 @@ pub const PackageManager = struct {
                     "<r><red>error<r>: failed to open temp file {}<r>\n",
                     .{e.toSystemError()},
                 );
-                Output.flush();
                 Global.crash();
             },
         };
@@ -11002,7 +10976,6 @@ pub const PackageManager = struct {
                 "<r><red>error<r>: failed to write patch to temp file {}<r>\n",
                 .{e.toSystemError()},
             );
-            Output.flush();
             Global.crash();
         }
 
@@ -11032,7 +11005,6 @@ pub const PackageManager = struct {
                 "<r><red>error<r>: failed to make patches dir {}<r>\n",
                 .{e.toSystemError()},
             );
-            Output.flush();
             Global.crash();
         }
 
@@ -11047,7 +11019,6 @@ pub const PackageManager = struct {
                 "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
                 .{e.toSystemError()},
             );
-            Output.flush();
             Global.crash();
         }
 

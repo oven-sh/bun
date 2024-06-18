@@ -33,10 +33,21 @@ jobs:
         run: |
           LABELS=$(bun scripts/read-issue.ts)
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          bun scripts/is-outdated.ts
 
-          OUTDATED=$(bun scripts/is-outdated.ts)
-          echo "Is outdated: $OUTDATED"
-          echo "$OUTDATED" >> $GITHUB_OUTPUT
+          if [[ -f "is-outdated.txt" ]]; then 
+            echo "is-outdated=true" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -f "outdated.txt" ]]; then
+            echo "oudated=$(cat outdated.txt)" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ -f "latest.txt" ]]; then
+            echo "latest=$(cat latest.txt)" >> $GITHUB_OUTPUT
+          fi
+
+          rm -rf is-outdated.txt outdated.txt latest.txt
       - name: Add labels
         uses: actions-cool/issues-helper@v3
         with:
@@ -52,7 +63,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            The latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but you are using v${{ steps.add-labels.outputs.oudated }}.
+            @${{ github.event.issue.user.login }}, the latest version of Bun is v${{ steps.add-labels.outputs.latest }}, but you are using v${{ steps.add-labels.outputs.oudated }}.
 
             If you upgrade to the latest version, does this fix the issue?
 

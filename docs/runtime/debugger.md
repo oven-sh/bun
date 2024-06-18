@@ -273,6 +273,8 @@ The `CallSite` object has the following methods:
 | `getPromiseIndex`          | Not implemented yet.                                  |
 | `toString`                 | returns a string representation of the call site      |
 
+In some cases, the `Function` object may have already been garbage collected, so some of these methods may return `undefined`.
+
 ##### Error.captureStackTrace(error, startFn)
 
 The `Error.captureStackTrace` function lets you capture a stack trace at a specific point in your code, rather than at the point where the error was thrown.

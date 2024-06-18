@@ -1695,6 +1695,7 @@ pub const RenameAt2Flags = packed struct {
     }
 };
 
+// NOTE: that this _does not_ handle moving across filesystems. For that, check if the return error is XDEV and then use `bun.C.moveFileZWithHandle`
 pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8, to_dir_fd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
     var did_atomically_replace = false;
 

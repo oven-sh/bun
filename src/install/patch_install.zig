@@ -41,6 +41,7 @@ pub const BuntagHashBuf = [max_buntag_hash_buf_len]u8;
 
 pub const PatchTask = struct {
     manager: *PackageManager,
+    tempdir: std.fs.Dir,
     project_dir: []const u8,
     callback: union(enum) {
         calc_hash: CalcPatchHash,
@@ -156,7 +157,7 @@ pub const PatchTask = struct {
         _ = manager; // autofix
         if (this.callback.apply.logger.errors > 0) {
             defer this.callback.apply.logger.deinit();
-            // this.log.addErrorFmt(null, logger.Loc.Empty, bun.default_allocator, "failed to apply patch: {}", .{e}) catch unreachable;
+            Output.printErrorln("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
             this.callback.apply.logger.printForLogLevel(Output.writer()) catch {};
         }
     }
@@ -298,14 +299,7 @@ pub const PatchTask = struct {
         // 2. Create temp dir to do all the modifications
         var tmpname_buf: [1024]u8 = undefined;
         const tempdir_name = bun.span(bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()) catch bun.outOfMemory());
-        const system_tmpdir = bun.fs.FileSystem.instance.tmpdir() catch |e| {
-            try log.addErrorFmtNoLoc(
-                this.manager.allocator,
-                "failed to creating temp dir: {s}",
-                .{@errorName(e)},
-            );
-            return;
-        };
+        const system_tmpdir = this.tempdir;
 
         const pkg_name = this.callback.apply.pkgname;
 
@@ -500,6 +494,7 @@ pub const PatchTask = struct {
         const patchfile_path = manager.allocator.dupeZ(u8, patchdep.path.slice(manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
 
         const pt = bun.new(PatchTask, .{
+            .tempdir = manager.getTemporaryDirectory(),
             .callback = .{
                 .calc_hash = .{
                     .state = state,
@@ -535,6 +530,7 @@ pub const PatchTask = struct {
         const patchfilepath = pkg_manager.allocator.dupe(u8, pkg_manager.lockfile.patched_dependencies.get(name_and_version_hash).?.path.slice(pkg_manager.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory();
 
         const pt = bun.new(PatchTask, .{
+            .tempdir = pkg_manager.getTemporaryDirectory(),
             .callback = .{
                 .apply = .{
                     .pkg_id = pkg_id,

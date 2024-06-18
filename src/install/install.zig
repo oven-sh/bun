@@ -11138,7 +11138,7 @@ pub const PackageManager = struct {
         // write the patch contents to temp file then rename
         var tmpname_buf: [1024]u8 = undefined;
         const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
-        const tmpdir = try bun.fs.FileSystem.instance.tmpdir();
+        const tmpdir = manager.getTemporaryDirectory();
         const tmpfd = switch (bun.sys.openat(
             bun.toFD(tmpdir.fd),
             tempfile_name,
@@ -11204,7 +11204,7 @@ pub const PackageManager = struct {
             path_in_patches_dir,
         ).asErr()) |e| {
             Output.prettyError(
-                "<r><red>error<r>: failed to renaming patch file to patches dir {}<r>\n",
+                "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
                 .{e.toSystemError()},
             );
             Output.flush();

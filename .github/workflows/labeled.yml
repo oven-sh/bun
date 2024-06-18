@@ -35,6 +35,7 @@ jobs:
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
 
           OUTDATED=$(bun scripts/is-outdated.ts)
+          echo "Is outdated: $OUTDATED"
           echo "$OUTDATED" >> $GITHUB_OUTPUT
       - name: Add labels
         uses: actions-cool/issues-helper@v3

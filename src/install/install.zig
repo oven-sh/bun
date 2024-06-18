@@ -6049,12 +6049,6 @@ pub const PackageManager = struct {
                         if (ptask.callback.apply.task_id) |task_id| {
                             _ = task_id; // autofix
 
-                            // const name = manager.lockfile.packages.items(.name)[ptask.callback.apply.pkg_id].slice(manager.lockfile.buffers.string_bytes.items);
-                            // if (!callbacks.onPatch(extract_ctx, name, task_id, log_level)) {
-                            //     if (comptime Environment.allow_assert) {
-                            //         Output.panic("Ran callback to install enqueued packages, but there was no task associated with it.", .{});
-                            //     }
-                            // }
                         } else if (ExtractCompletionContext == *PackageInstaller) {
                             if (ptask.callback.apply.install_context) |*ctx| {
                                 var installer: *PackageInstaller = extract_ctx;

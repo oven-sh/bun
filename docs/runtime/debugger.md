@@ -215,7 +215,7 @@ That's why when you log `error.stack` in Bun, the formatting of `error.stack` is
 
 Bun implements the [V8 Stack Trace API](https://v8.dev/docs/stack-trace-api), which is a set of functions that allow you to manipulate stack traces.
 
-##### `Error.prepareStackTrace`
+##### Error.prepareStackTrace
 
 ```ts
 Error.prepareStackTrace = (err, stack) => {
@@ -231,7 +231,7 @@ console.log(err.stack);
 
 This formerly V8-only API lets you customize the stack trace output by providing a custom `prepareStackTrace` function on the `Error` object. This function is called with the error object and an array of `CallSite` objects and lets you return a custom stack trace.
 
-##### `Error.captureStackTrace(error, startFn)`
+##### Error.captureStackTrace(error, startFn)
 
 The `Error.captureStackTrace` lets you capture a stack trace at a specific point in your code, rather than at the point where the error was thrown.
 

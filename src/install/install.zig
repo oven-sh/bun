@@ -6784,12 +6784,12 @@ pub const PackageManager = struct {
             .workspaces = true,
         },
         patch_features: union(enum) {
-            NOTHING: struct {},
+            nothing: struct {},
             patch: struct {},
             commit: struct {
                 patches_dir: string,
             },
-        } = .{ .NOTHING = .{} },
+        } = .{ .nothing = .{} },
         // The idea here is:
         // 1. package has a platform-specific binary to install
         // 2. To prevent downloading & installing incompatible versions, they stick the "real" one in optionalDependencies
@@ -7252,7 +7252,7 @@ pub const PackageManager = struct {
                 if (!this.update.development) this.update.optional = cli.optional;
 
                 switch (cli.patch) {
-                    .NOTHING => {},
+                    .nothing => {},
                     .patch => {
                         this.patch_features = .{ .patch = .{} };
                     },
@@ -7264,15 +7264,6 @@ pub const PackageManager = struct {
                         };
                     },
                 }
-                // if (subcommand == .patch) {
-                //     // TODO args
-                // } else if (subcommand == .@"patch-commit") {
-                //     this.patch_features = .{
-                //         .commit = .{
-                //             .patches_dir = cli.@"patch-commit".patches_dir,
-                //         },
-                //     };
-                // }
             } else {
                 this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
                 PackageManager.verbose_install = false;
@@ -9140,10 +9131,10 @@ pub const PackageManager = struct {
 
         concurrent_scripts: ?usize = null,
 
-        patch: PatchOpts = .{ .NOTHING = .{} },
+        patch: PatchOpts = .{ .nothing = .{} },
 
         const PatchOpts = union(enum) {
-            NOTHING: struct {},
+            nothing: struct {},
             patch: struct {},
             commit: struct {
                 patches_dir: []const u8 = "patches",
@@ -9918,13 +9909,6 @@ pub const PackageManager = struct {
             },
             else => {
                 if (manager.options.patch_features == .commit) {
-                    // _ = manager.lockfile.loadFromDisk(
-                    //     manager,
-                    //     manager.allocator,
-                    //     manager.log,
-                    //     manager.options.lockfile_path,
-                    //     true,
-                    // );
                     var pathbuf: bun.PathBuffer = undefined;
                     if (try manager.doPatchCommit(&pathbuf, log_level)) |stuff| {
                         try PackageJSONEditor.editPatchedDependencies(
@@ -10297,9 +10281,10 @@ pub const PackageManager = struct {
                 };
 
                 const existing_patchfile_hash = existing_patchfile_hash: {
-                    var sfb = std.heap.stackFallback(1024, manager.allocator);
-                    const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
-                    defer sfb.get().free(name_and_version);
+                    var __sfb = std.heap.stackFallback(1024, manager.allocator);
+                    const sfballoc = __sfb.get();
+                    const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    defer sfballoc.free(name_and_version);
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
                         if (patched_dep.patchfileHash()) |hash| break :existing_patchfile_hash hash;
@@ -10345,9 +10330,10 @@ pub const PackageManager = struct {
                 const pkg_name = pkg.name.slice(strbuf);
 
                 const existing_patchfile_hash = existing_patchfile_hash: {
-                    var sfb = std.heap.stackFallback(1024, manager.allocator);
-                    const name_and_version = std.fmt.allocPrint(sfb.get(), "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
-                    defer sfb.get().free(name_and_version);
+                    var __sfb = std.heap.stackFallback(1024, manager.allocator);
+                    const sfballoc = __sfb.get();
+                    const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                    defer sfballoc.free(name_and_version);
                     const name_and_version_hash = String.Builder.stringHash(name_and_version);
                     if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
                         if (patched_dep.patchfileHash()) |hash| break :existing_patchfile_hash hash;
@@ -10415,6 +10401,10 @@ pub const PackageManager = struct {
             pub fn copy(
                 destination_dir_: std.fs.Dir,
                 walker: *Walker,
+                in_dir: if (bun.Environment.isWindows) []const u8 else void,
+                out_dir: if (bun.Environment.isWindows) []const u8 else void,
+                buf1: if (bun.Environment.isWindows) []u8 else void,
+                buf2: if (bun.Environment.isWindows) []u8 else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
 
@@ -10459,34 +10449,22 @@ pub const PackageManager = struct {
                             Output.prettyError("<r><red>error<r>: opening node_modules file {s} {s} ()", .{ @errorName(e), entrypath });
                             Global.crash();
                         };
-                        defer in_file.close();
+                        var in_file_close = true;
+                        defer if (in_file_close) in_file.close();
 
                         const mode = in_file.mode() catch @panic("OH NO");
                         var outfile = createFile(destination_dir_, entrypath, .{ .mode = mode }) catch @panic("OH NO");
-                        defer outfile.close();
+                        var out_file_close = true;
+                        defer if (out_file_close) outfile.close();
 
-                        var buf1: bun.windows.WPathBuffer = undefined;
-                        var buf2: bun.windows.WPathBuffer = undefined;
+                        const infile_path = bun.path.joinZBuf(buf1, &[_][]const u8{ in_dir, entrypath }, .auto);
+                        const outfile_path = bun.path.joinZBuf(buf2, &[_][]const u8{ out_dir, entrypath }, .auto);
 
-                        const infile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(in_file.handle, &buf1, buf1.len, 0);
-                        if (infile_path_len == 0) {
-                            const e = bun.windows.Win32Error.get();
-                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-                            Global.crash();
-                        }
-                        buf1[infile_path_len] = 0;
-
-                        const outfile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(outfile.handle, &buf2, buf2.len, 0);
-                        if (outfile_path_len == 0) {
-                            const e = bun.windows.Win32Error.get();
-                            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-                            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-                            Global.crash();
-                        }
-                        buf2[outfile_path_len] = 0;
-
-                        bun.copyFileWithState(buf1[0..infile_path_len :0], buf2[0..outfile_path_len :0], &copy_file_state) catch |err| {
+                        in_file_close = false;
+                        out_file_close = false;
+                        in_file.close();
+                        outfile.close();
+                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state) catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10511,23 +10489,6 @@ pub const PackageManager = struct {
                     var outfile = try createFile(destination_dir_, entry.path, .{});
                     defer outfile.close();
 
-                    // debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
-                    // var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-                    //     if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
-                    //         bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
-                    //     }
-                    //     break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
-                    //         if (do_progress) {
-                    //             progress_.root.end();
-                    //             progress_.refresh();
-                    //         }
-
-                    //         Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                    //         Global.crash();
-                    //     };
-                    // };
-                    // defer outfile.close();
-
                     if (comptime Environment.isPosix) {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
@@ -10547,172 +10508,49 @@ pub const PackageManager = struct {
         defer pkg_in_cache_dir.close();
         var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
         defer walker.deinit();
+
+        var buf1: if (bun.Environment.isWindows) bun.PathBuffer else void = undefined;
+        var buf2: if (bun.Environment.isWindows) bun.PathBuffer else void = undefined;
+        var in_dir: if (bun.Environment.isWindows) []const u8 else void = undefined;
+        var out_dir: if (bun.Environment.isWindows) []const u8 else void = undefined;
+
+        if (comptime bun.Environment.isWindows) {
+            const inlen = bun.windows.kernel32.GetFinalPathNameByHandleW(pkg_in_cache_dir.fd, &buf1, buf1.len, 0);
+            if (inlen == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                Output.prettyError("<r><red>error<r>: copying file {}", .{err});
+                Global.crash();
+            }
+            in_dir = buf1[0..inlen];
+            const outlen = bun.windows.kernel32.GetFinalPathNameByHandleW(node_modules_folder.fd, &buf2, buf2.len, 0);
+            if (outlen == 0) {
+                const e = bun.windows.Win32Error.get();
+                const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
+                Output.prettyError("<r><red>error<r>: copying file {}", .{err});
+                Global.crash();
+            }
+            out_dir = buf2[0..outlen];
+            _ = try FileCopier.copy(
+                node_modules_folder,
+                &walker,
+                in_dir,
+                out_dir,
+                &buf1,
+                &buf2,
+            );
+            return;
+        }
+
         _ = try FileCopier.copy(
             node_modules_folder,
             &walker,
+            {},
+            {},
+            {},
+            {},
         );
     }
-
-    // fn overwriteNodeModulesFolder(
-    //     manager: *PackageManager,
-    //     cache_dir: std.fs.Dir,
-    //     cache_dir_subpath: []const u8,
-    //     node_modules_folder_path: []const u8,
-    // ) !void {
-    //     var node_modules_folder = try std.fs.cwd().openDir(node_modules_folder_path, .{ .iterate = true });
-    //     defer node_modules_folder.close();
-
-    //     const IGNORED_PATHS: []const bun.OSPathSlice = &[_][]const bun.OSPathChar{
-    //         bun.OSPathLiteral("node_modules"),
-    //         bun.OSPathLiteral(".git"),
-    //         bun.OSPathLiteral("CMakeFiles"),
-    //     };
-
-    //     const FileCopier = struct {
-    //         pub fn copy(
-    //             destination_dir_: std.fs.Dir,
-    //             walker: *Walker,
-    //         ) !u32 {
-    //             var real_file_count: u32 = 0;
-
-    //             var copy_file_state: bun.CopyFileState = .{};
-    //             var pathbuf: bun.PathBuffer = undefined;
-    //             var pathbuf2: bun.PathBuffer = undefined;
-    //             // _ = pathbuf; // autofix
-
-    //             while (try walker.next()) |entry| {
-    //                 if (entry.kind != .file) continue;
-    //                 real_file_count += 1;
-    //                 const openFile = std.fs.Dir.openFile;
-    //                 const createFile = std.fs.Dir.createFile;
-
-    //                 // - rename node_modules/$PKG/$FILE -> node_modules/$PKG/$TMPNAME
-    //                 // - create node_modules/$PKG/$FILE
-    //                 // - copy: cache/$PKG/$FILE -> node_modules/$PKG/$FILE
-    //                 // - unlink: $TMPDIR/$FILE
-    //                 if (comptime bun.Environment.isWindows) {
-    //                     var tmpbuf: [1024]u8 = undefined;
-    //                     const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
-    //                     const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(basename, tmpbuf[0..], bun.fastRandom()) catch |e| {
-    //                         Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
-    //                         Global.crash();
-    //                     });
-
-    //                     const entrypath = bun.strings.fromWPath(pathbuf[0..], entry.path);
-    //                     pathbuf[entrypath.len] = 0;
-    //                     const entrypathZ = pathbuf[0..entrypath.len :0];
-
-    //                     if (bun.sys.renameatConcurrently(
-    //                         bun.toFD(destination_dir_.fd),
-    //                         entrypathZ,
-    //                         bun.toFD(destination_dir_.fd),
-    //                         tmpname,
-    //                     ).asErr()) |e| {
-    //                         Output.prettyError("<r><red>error<r>: copying file {}", .{e});
-    //                         Global.crash();
-    //                     }
-
-    //                     var in_file = try openFile(entry.dir, entrypath, .{ .mode = .read_only });
-    //                     defer in_file.close();
-
-    //                     if (bun.sys.unlinkat(
-    //                         bun.toFD(destination_dir_.fd),
-    //                         entrypath,
-    //                     ).asErr()) |e| {
-    //                         Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entrypath)});
-    //                         Global.crash();
-    //                     }
-
-    //                     const mode = try in_file.mode();
-    //                     var outfile = try createFile(destination_dir_, entrypath, .{ .mode = mode });
-    //                     defer outfile.close();
-
-    //                     var buf1: bun.windows.WPathBuffer = undefined;
-    //                     var buf2: bun.windows.WPathBuffer = undefined;
-
-    //                     const infile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(in_file.handle, &buf1, buf1.len, 0);
-    //                     if (infile_path_len == 0) {
-    //                         const e = bun.windows.Win32Error.get();
-    //                         const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-    //                         Output.prettyError("<r><red>error<r>: copying in path {}", .{err});
-    //                         Global.crash();
-    //                     }
-    //                     buf1[infile_path_len] = 0;
-
-    //                     const outfile_path_len = bun.windows.kernel32.GetFinalPathNameByHandleW(outfile.handle, &buf2, buf2.len, 0);
-    //                     if (outfile_path_len == 0) {
-    //                         const e = bun.windows.Win32Error.get();
-    //                         const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-    //                         Output.prettyError("<r><red>error<r>: getting out path {}", .{err});
-    //                         Global.crash();
-    //                     }
-    //                     buf2[outfile_path_len] = 0;
-    //                     bun.copyFileWithState(buf1[0..infile_path_len :0], buf2[0..outfile_path_len :0], &copy_file_state) catch |err| {
-    //                         Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-    //                         Global.crash();
-    //                     };
-
-    //                     continue;
-    //                 }
-
-    //                 var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
-    //                 defer in_file.close();
-
-    //                 @memcpy(pathbuf[0..entry.path.len], entry.path);
-    //                 pathbuf[entry.path.len] = 0;
-
-    //                 if (bun.sys.unlinkat(
-    //                     bun.toFD(destination_dir_.fd),
-    //                     pathbuf[0..entry.path.len :0],
-    //                 ).asErr()) |e| {
-    //                     Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
-    //                     Global.crash();
-    //                 }
-
-    //                 var outfile = try createFile(destination_dir_, entry.path, .{});
-    //                 defer outfile.close();
-
-    //                 // debug("createFile {} {s}\n", .{ destination_dir_.fd, entry.path });
-    //                 // var outfile = createFile(destination_dir_, entry.path, .{}) catch brk: {
-    //                 //     if (bun.Dirname.dirname(bun.OSPathChar, entry.path)) |entry_dirname| {
-    //                 //         bun.MakePath.makePath(bun.OSPathChar, destination_dir_, entry_dirname) catch {};
-    //                 //     }
-    //                 //     break :brk createFile(destination_dir_, entry.path, .{}) catch |err| {
-    //                 //         if (do_progress) {
-    //                 //             progress_.root.end();
-    //                 //             progress_.refresh();
-    //                 //         }
-
-    //                 //         Output.prettyErrorln("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-    //                 //         Global.crash();
-    //                 //     };
-    //                 // };
-    //                 // defer outfile.close();
-
-    //                 if (comptime Environment.isPosix) {
-    //                     const stat = in_file.stat() catch continue;
-    //                     _ = C.fchmod(outfile.handle, @intCast(stat.mode));
-    //                 }
-
-    //                 bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
-    //                     Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-    //                     Global.crash();
-    //                 };
-    //             }
-
-    //             return real_file_count;
-    //         }
-    //     };
-
-    //     var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
-    //     defer pkg_in_cache_dir.close();
-    //     var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
-    //     defer walker.deinit();
-    //     _ = try FileCopier.copy(
-    //         node_modules_folder,
-    //         &walker,
-    //     );
-    // }
 
     const PatchCommitResult = struct {
         patch_key: []const u8,

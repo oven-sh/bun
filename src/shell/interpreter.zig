@@ -1236,7 +1236,7 @@ pub const Interpreter = struct {
         interpreter.this_jsvalue = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
         JSC.Codegen.JSShellInterpreter.resolveSetCached(interpreter.this_jsvalue, globalThis, resolve);
         JSC.Codegen.JSShellInterpreter.rejectSetCached(interpreter.this_jsvalue, globalThis, reject);
-        interpreter.ref.activate(JSC.VirtualMachine.get().uwsLoop());
+        interpreter.ref.activate(JSC.VirtualMachine.get().uvLoop());
         bun.Analytics.Features.shell += 1;
         return interpreter.this_jsvalue;
     }

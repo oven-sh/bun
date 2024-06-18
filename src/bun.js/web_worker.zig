@@ -401,18 +401,21 @@ pub const WebWorker = struct {
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
         if (this.vm) |vm| {
             this.vm = null;
-            vm.is_shutting_down = true;
+            vm.beginShutdown();
             vm.onExit();
             exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
             vm_to_deinit = vm;
+
+            // Prevent attempting to run GC after the VM has been deinitialized.
+            vm.gc_controller.disabled = true;
         }
         var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
-        this.deinit();
 
         if (vm_to_deinit) |vm| {
+            this.deinit();
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
 

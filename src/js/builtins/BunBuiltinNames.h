@@ -89,6 +89,7 @@ using namespace JSC;
     macro(extname) \
     macro(failureKind) \
     macro(fatal) \
+    macro(fd) \
     macro(fetch) \
     macro(fetchRequest) \
     macro(file) \

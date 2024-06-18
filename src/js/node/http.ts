@@ -765,6 +765,7 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     var { done, value } = await reader.readMany();
     if (self[abortedSymbol]) return;
     if (done) {
+      self.complete = true;
       self.push(null);
       break;
     }
@@ -776,11 +777,12 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
 
 IncomingMessage.prototype._read = function (size) {
   if (this[noBodySymbol]) {
-    this.push(null);
     this.complete = true;
+    this.push(null);
   } else if (this[bodyStreamSymbol] == null) {
     const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
     if (!reader) {
+      this.complete = true;
       this.push(null);
       return;
     }
@@ -794,17 +796,6 @@ Object.defineProperty(IncomingMessage.prototype, "aborted", {
     return this[abortedSymbol];
   },
 });
-
-function abort(self) {
-  if (self[abortedSymbol]) return;
-  self[abortedSymbol] = true;
-  var bodyStream = self[bodyStreamSymbol];
-  if (!bodyStream) return;
-  bodyStream.cancel();
-  self.complete = true;
-  self[bodyStreamSymbol] = undefined;
-  self.push(null);
-}
 
 Object.defineProperty(IncomingMessage.prototype, "connection", {
   get() {
@@ -874,74 +865,6 @@ IncomingMessage.prototype.setTimeout = function (msecs, callback) {
   // TODO:
   return this;
 };
-
-function emitErrorNt(msg, err, callback) {
-  callback(err);
-  if (typeof msg.emit === "function" && !msg._closed) {
-    msg.emit("error", err);
-  }
-}
-
-function onError(self, err, cb) {
-  process.nextTick(() => emitErrorNt(self, err, cb));
-}
-
-function write_(msg, chunk, encoding, callback, fromEnd) {
-  if (typeof callback !== "function") callback = nop;
-
-  let len;
-  if (chunk === null) {
-    // throw new ERR_STREAM_NULL_VALUES();
-    throw new Error("ERR_STREAM_NULL_VALUES");
-  } else if (typeof chunk === "string") {
-    len = Buffer.byteLength(chunk, encoding);
-  } else {
-    throw new Error("Invalid arg type for chunk");
-    // throw new ERR_INVALID_ARG_TYPE(
-    //   "chunk",
-    //   ["string", "Buffer", "Uint8Array"],
-    //   chunk,
-    // );
-  }
-
-  let err;
-  if (msg.finished) {
-    // err = new ERR_STREAM_WRITE_AFTER_END();
-    err = new Error("ERR_STREAM_WRITE_AFTER_END");
-  } else if (msg.destroyed) {
-    // err = new ERR_STREAM_DESTROYED("write");
-    err = new Error("ERR_STREAM_DESTROYED");
-  }
-
-  if (err) {
-    if (!msg.destroyed) {
-      onError(msg, err, callback);
-    } else {
-      process.nextTick(callback, err);
-    }
-    return false;
-  }
-
-  if (!msg._header) {
-    if (fromEnd) {
-      msg._contentLength = len;
-    }
-    // msg._implicitHeader();
-  }
-
-  if (!msg._hasBody) {
-    $debug("This type of response MUST NOT have a body. " + "Ignoring write() calls.");
-    process.nextTick(callback);
-    return true;
-  }
-
-  // if (!fromEnd && msg.socket && !msg.socket.writableCorked) {
-  //   msg.socket.cork();
-  //   process.nextTick(connectionCorkNT, msg.socket);
-  // }
-
-  return true;
-}
 
 const headersSymbol = Symbol("headers");
 const finishedSymbol = Symbol("finished");

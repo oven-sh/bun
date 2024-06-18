@@ -349,9 +349,10 @@ pub const PatchTask = struct {
             .package_version = resolution_label,
             // dummy value
             .node_modules = &dummy_node_modules,
+            .lockfile = this.manager.lockfile,
         };
 
-        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile)) {
+        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
             .success => {},
             .fail => |reason| {
                 return try log.addErrorFmtNoLoc(

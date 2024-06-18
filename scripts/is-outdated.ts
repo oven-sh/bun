@@ -4,33 +4,7 @@ if (!body) {
   throw new Error("GITHUB_ISSUE_BODY must be set");
 }
 
-const latest = await (async () => {
-  const cmake = await Bun.file(join(import.meta.dir, "..", "CMakeLists.txt")).text();
-
-  const startI = cmake.indexOf("Bun_VERSION");
-  if (startI === -1) {
-    throw new Error("CMakeLists.txt is missing a Bun version");
-  }
-
-  const endI = cmake.indexOf("\n", startI);
-  if (endI === -1) {
-    throw new Error("CMakeLists.txt is missing the end of the version");
-  }
-
-  const quote = cmake.indexOf('"', startI);
-  if (quote === -1) {
-    throw new Error("CMakeLists.txt is missing the start of the version");
-  }
-
-  const endQuote = cmake.indexOf('"', quote + 1);
-  if (endQuote === -1) {
-    throw new Error("CMakeLists.txt is missing the end of the version");
-  }
-
-  return cmake.slice(quote + 1, endQuote);
-})();
-
-await Bun.write("latest.txt", latest);
+const latest = (await Bun.file(join(import.meta.dir, "..", "LATEST")).text()).trim();
 
 const lines = body.split("\n").reverse();
 for (const line of lines) {

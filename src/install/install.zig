@@ -3274,7 +3274,7 @@ pub const PackageManager = struct {
                 // 3. apply patch to temp dir
                 // 4. rename temp dir to `folder_path`
                 if (patch_hash != null) {
-                    const non_patched_path_ = folder_path[0 .. std.mem.indexOf(u8, folder_path, "_patch_hash=") orelse @panic("todo this is bad")];
+                    const non_patched_path_ = folder_path[0 .. std.mem.indexOf(u8, folder_path, "_patch_hash=") orelse @panic("Expected folder path to contain `patch_hash=`, this is a bug in Bun. Please file a GitHub issue.")];
                     const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
                     defer manager.lockfile.allocator.free(non_patched_path);
                     if (manager.isFolderInCache(non_patched_path)) {
@@ -10452,8 +10452,14 @@ pub const PackageManager = struct {
                         var in_file_close = true;
                         defer if (in_file_close) in_file.close();
 
-                        const mode = in_file.mode() catch @panic("OH NO");
-                        var outfile = createFile(destination_dir_, entrypath, .{ .mode = mode }) catch @panic("OH NO");
+                        const mode = in_file.mode() catch |e| {
+                            Output.prettyError("<r><red>error<r>: failed to get file mode {s} ", .{@errorName(e)});
+                            Global.crash();
+                        };
+                        var outfile = createFile(destination_dir_, entrypath, .{ .mode = mode }) catch |e| {
+                            Output.prettyError("<r><red>error<r>: failed to create file {s} ({s})", .{ entrypath, @errorName(e) });
+                            Global.crash();
+                        };
                         var out_file_close = true;
                         defer if (out_file_close) outfile.close();
 

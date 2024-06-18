@@ -10113,7 +10113,7 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn pkg_dep_id_for_name_and_version(
+    fn pkgDepIdForNameAndVersion(
         lockfile: *Lockfile,
         pkg_maybe_version_to_patch: []const u8,
         name: []const u8,
@@ -10313,7 +10313,7 @@ pub const PackageManager = struct {
             .name_and_version => brk: {
                 const pkg_maybe_version_to_patch = argument;
                 const name, const version = Dependency.splitNameAndVersion(pkg_maybe_version_to_patch);
-                const result = pkg_dep_id_for_name_and_version(manager.lockfile, pkg_maybe_version_to_patch, name, version);
+                const result = pkgDepIdForNameAndVersion(manager.lockfile, pkg_maybe_version_to_patch, name, version);
                 const pkg_id = result[0];
                 const dependency_id = result[1];
 
@@ -10717,7 +10717,7 @@ pub const PackageManager = struct {
             },
             .name_and_version => brk: {
                 const name, const version = Dependency.splitNameAndVersion(argument);
-                const result = pkg_dep_id_for_name_and_version(lockfile, argument, name, version);
+                const result = pkgDepIdForNameAndVersion(lockfile, argument, name, version);
                 const pkg_id: PackageID = result[0];
                 const dependency_id: DependencyID = result[1];
                 const node_modules = (try nodeModulesFolderForDependencyID(

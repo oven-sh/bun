@@ -10366,7 +10366,7 @@ pub const PackageManager = struct {
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
 
                 const module_folder_ = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
-                const buf = if (comptime bun.Environment.isWindows) bun.path.pathToPosixBuf(u8, module_folder_, _normalizer[0..]) else module_folder_;
+                const buf = if (comptime bun.Environment.isWindows) bun.path.pathToPosixBuf(u8, module_folder_, win_normalizer[0..]) else module_folder_;
 
                 break :brk .{
                     cache_dir,

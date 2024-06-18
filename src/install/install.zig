@@ -754,6 +754,7 @@ pub const Task = struct {
             .git_clone => {
                 const name = this.request.git_clone.name.slice();
                 const url = this.request.git_clone.url.slice();
+                var attempt: u8 = 1;
                 const dir = brk: {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
@@ -763,25 +764,43 @@ pub const Task = struct {
                         this.id,
                         name,
                         https,
-                    ) catch null;
+                        attempt
+                    ) catch |err| {
+                        // Exit early if git checked and could
+                        // not find the repository, skip ssh
+                        if (err == error.RepositoryNotFound) {
+                            this.err = err;
+                            this.status = Status.fail;
+                            this.data = .{ .git_clone = bun.invalid_fd };
+
+                            return;
+                        }
+
+                        attempt += 1;
+                        break :brk null;
+                    };
                     break :brk null;
-                } orelse Repository.download(
+                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
-                    url,
+                    ssh,
+                    attempt
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
 
                     return;
+                } else {
+                    return;
                 };
 
                 manager.git_repositories.put(manager.allocator, this.id, bun.toFD(dir.fd)) catch unreachable;
+
                 this.data = .{
                     .git_clone = bun.toFD(dir.fd),
                 };

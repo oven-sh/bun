@@ -18,6 +18,7 @@ const GitSHA = String;
 const Path = bun.path;
 
 threadlocal var final_path_buf: bun.PathBuffer = undefined;
+threadlocal var ssh_path_buf: bun.PathBuffer = undefined;
 threadlocal var folder_name_buf: bun.PathBuffer = undefined;
 threadlocal var json_path_buf: bun.PathBuffer = undefined;
 
@@ -153,6 +154,14 @@ pub const Repository = extern struct {
         argv: []const string,
     ) !string {
         var std_map = try env.map.stdEnvMap(allocator);
+        // Run git clone in non-interactive mode and
+        // error if ssh or https asks for a password
+        // so that we can fallback to ssh mode
+        try std_map.unsafe_map.put("GIT_TERMINAL_PROMPT", "0");
+        try std_map.unsafe_map.put("GIT_ASKPASS", "echo");
+        try std_map.unsafe_map.put("SSH_ASKPASS", "echo");
+        try std_map.unsafe_map.put("GCM_INTERACTIVE", "never");
+
         defer std_map.deinit();
 
         const result = if (comptime Environment.isWindows)
@@ -169,28 +178,68 @@ pub const Repository = extern struct {
             });
 
         switch (result.term) {
-            .Exited => |sig| if (sig == 0) return result.stdout,
+            .Exited => |sig| if (sig == 0) return result.stdout else if (
+                strings.containsComptime(result.stderr, "remote: The page could not be found")
+            ) {
+                    return error.RepositoryNotFound;
+            },
             else => {},
         }
+
         return error.InstallFailed;
     }
 
-    pub fn tryHTTPS(url: string) ?string {
-        // Do not convert ssh://... urls to https://... urls
-        // to use system ssh keys for private repos
-        if (strings.hasPrefixComptime(url, "ssh://")
-            and strings.hasSuffixComptime(url, ".git")) {
+    pub fn trySSH(url: string) ?string {
+        // Do not cast explicit http(s) URLs to SSH
+        if (strings.hasPrefixComptime(url, "http")) {
             return null;
         }
 
+        if (strings.hasPrefixComptime(url, "git@")
+            or strings.hasPrefixComptime(url, "ssh://")) {
+            return url;
+        }
+
         if (Dependency.isSCPLikePath(url)) {
-            // Use git@<host>:<repo> urls as-is so that the git clone can
-            // use the system's ssh keys for private repos
-            if (strings.hasPrefixComptime(url, "git@")
-                and strings.hasSuffixComptime(url, ".git")) {
-                return null;
+            ssh_path_buf[0.."ssh://git@".len].* = "ssh://git@".*;
+            var rest = ssh_path_buf["ssh://git@".len..];
+
+            const colon_index = strings.indexOfChar(url, ':');
+
+            if (colon_index) |colon| {
+                // make sure known hosts have `.com` or `.org`
+                if (Hosts.get(url[0..colon])) |tld| {
+                    bun.copy(u8, rest, url[0..colon]);
+                    bun.copy(u8, rest[colon..], tld);
+                    rest[colon + tld.len] = '/';
+                    bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
+                    const out = ssh_path_buf[0 .. url.len + "ssh://git@".len + tld.len];
+                    return out;
+                }
             }
 
+            bun.copy(u8, rest, url);
+            if (colon_index) |colon| rest[colon] = '/';
+            const final = ssh_path_buf[0 .. url.len + "ssh://".len];
+            return final;
+        }
+
+        return null;
+    }
+
+    pub fn tryHTTPS(url: string) ?string {
+        if (strings.hasPrefixComptime(url, "http")) {
+            return url;
+        }
+
+        if (strings.hasPrefixComptime(url, "ssh://")) {
+            final_path_buf[0.."https".len].* = "https".*;
+            bun.copy(u8, final_path_buf["https://".len..], url["ssh".len..]);
+            const out = final_path_buf[0 .. url.len - "ssh".len + "https".len];
+            return out;
+        }
+
+        if (Dependency.isSCPLikePath(url)) {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
 
@@ -203,7 +252,8 @@ pub const Repository = extern struct {
                     bun.copy(u8, rest[colon..], tld);
                     rest[colon + tld.len] = '/';
                     bun.copy(u8, rest[colon + tld.len + 1 ..], url[colon + 1 ..]);
-                    return final_path_buf[0 .. url.len + "https://".len + tld.len];
+                    const out = final_path_buf[0 .. url.len + "https://".len + tld.len];
+                    return out;
                 }
             }
 
@@ -223,6 +273,7 @@ pub const Repository = extern struct {
         task_id: u64,
         name: string,
         url: string,
+        attempt: u8
     ) !std.fs.Dir {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
@@ -260,15 +311,18 @@ pub const Repository = extern struct {
                 url,
                 target,
             }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
+                if (err == error.RepositoryNotFound or attempt > 1) {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git clone\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                }
                 return err;
             };
+
             break :clone try cache_dir.openDirZ(folder_name, .{});
         };
     }

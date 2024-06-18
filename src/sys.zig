@@ -75,6 +75,7 @@ pub const Tag = enum(u8) {
     copy_file_range,
     copyfile,
     fchmod,
+    fchmodat,
     fchown,
     fcntl,
     fdatasync,
@@ -104,6 +105,7 @@ pub const Tag = enum(u8) {
     rename,
     stat,
     symlink,
+    symlinkat,
     unlink,
     utimes,
     write,
@@ -147,6 +149,7 @@ pub const Tag = enum(u8) {
     uv_spawn,
     uv_pipe,
     uv_tty_set_mode,
+    uv_open_osfhandle,
 
     // Below this line are Windows API calls only.
 
@@ -359,6 +362,13 @@ pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
         Maybe(void).success;
 }
 
+pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flags: i32) Maybe(void) {
+    if (comptime Environment.isWindows) @compileError("Use fchmod instead");
+
+    return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
+        Maybe(void).success;
+}
+
 pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     assertIsValidWindowsPath(bun.OSPathChar, destination);
 
@@ -461,7 +471,14 @@ pub fn lstat(path: [:0]const u8) Maybe(bun.Stat) {
 }
 
 pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
-    if (Environment.isWindows) return sys_uv.fstat(fd);
+    if (Environment.isWindows) {
+        const dec = bun.FDImpl.decode(fd);
+        if (dec.kind == .system) {
+            const uvfd = bun.toLibUVOwnedFD(fd) catch return .{ .err = Error.fromCode(.MFILE, .uv_open_osfhandle) };
+            defer _ = bun.sys.close(uvfd);
+            return sys_uv.fstat(fd);
+        } else return sys_uv.fstat(fd);
+    }
 
     var stat_ = mem.zeroes(bun.Stat);
 
@@ -511,7 +528,7 @@ pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: []const u16, _: i32) Mayb
 }
 
 pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
-    if (Environment.isWindows) @compileError("TODO");
+    if (Environment.isWindows) @compileError("Use fstat on Windows");
     var stat_ = mem.zeroes(bun.Stat);
     if (Maybe(bun.Stat).errnoSys(sys.fstatat(fd.int(), path, &stat_, 0), .fstatat)) |err| {
         log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
@@ -1729,9 +1746,19 @@ pub fn chown(path: [:0]const u8, uid: os.uid_t, gid: os.gid_t) Maybe(void) {
     }
 }
 
-pub fn symlink(from: [:0]const u8, to: [:0]const u8) Maybe(void) {
+pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errnoSys(sys.symlink(from, to), .symlink)) |err| {
+        if (Maybe(void).errnoSys(sys.symlink(target, dest), .symlink)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(void).success;
+    }
+}
+
+pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]const u8) Maybe(void) {
+    while (true) {
+        if (Maybe(void).errnoSys(sys.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -1758,12 +1785,14 @@ pub const WindowsSymlinkOptions = packed struct {
     pub var has_failed_to_create_symlink = false;
 };
 
-pub fn symlinkOrJunctionOnWindows(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
+pub fn symlinkOrJunction(dest: [:0]const u8, target: [:0]const u8) Maybe(void) {
+    if (comptime !Environment.isWindows) @compileError("symlinkOrJunction is windows only");
+
     if (!WindowsSymlinkOptions.has_failed_to_create_symlink) {
         var sym16: bun.WPathBuffer = undefined;
         var target16: bun.WPathBuffer = undefined;
-        const sym_path = bun.strings.toNTPath(&sym16, dest);
-        const target_path = bun.strings.toNTPath(&target16, target);
+        const sym_path = bun.strings.toWPathNormalizeAutoExtend(&sym16, dest);
+        const target_path = bun.strings.toWPathNormalizeAutoExtend(&target16, target);
         switch (symlinkW(sym_path, target_path, .{ .directory = true })) {
             .result => {
                 return Maybe(void).success;
@@ -2446,6 +2475,11 @@ pub fn setFileOffsetToEndWindows(fd: bun.FileDescriptor) Maybe(usize) {
     @compileError("Not Implemented");
 }
 
+extern fn Bun__disableSOLinger(fd: if (Environment.isWindows) windows.HANDLE else i32) void;
+pub fn disableLinger(fd: bun.FileDescriptor) void {
+    Bun__disableSOLinger(fd.cast());
+}
+
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
         @panic("TODO: Implement `pipe()` for Windows");
@@ -2863,6 +2897,28 @@ pub const File = struct {
             return self.bytes.items;
         }
     };
+    pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
+        var read_amount: usize = 0;
+        while (read_amount < buf.len) {
+            switch (if (comptime Environment.isPosix)
+                bun.sys.pread(this.handle, buf[read_amount..], @intCast(read_amount))
+            else
+                bun.sys.read(this.handle, buf[read_amount..])) {
+                .err => |err| {
+                    return .{ .err = err };
+                },
+                .result => |bytes_read| {
+                    if (bytes_read == 0) {
+                        break;
+                    }
+
+                    read_amount += bytes_read;
+                },
+            }
+        }
+
+        return .{ .result = buf[0..read_amount] };
+    }
     pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
         const size = switch (this.getEndPos()) {
             .err => |err| {
@@ -2915,7 +2971,7 @@ pub const File = struct {
     /// 2. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
+    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([:0]u8) {
         var buf: bun.PathBuffer = undefined;
         const normalized = bun.path.joinAbsStringBufZ(
             bun.fs.FileSystem.instance.top_level_dir,
@@ -2929,7 +2985,7 @@ pub const File = struct {
     /// 1. Open a file for reading
     /// 2. Read the file to a buffer
     /// 3. Return the File handle and the buffer
-    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
+    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, [:0]u8 }) {
         const ElementType = std.meta.Elem(@TypeOf(path));
 
         const rc = brk: {
@@ -2957,14 +3013,22 @@ pub const File = struct {
             return .{ .err = err };
         }
 
-        return .{ .result = .{ this, result.bytes.items } };
+        if (result.bytes.items.len == 0) {
+            // Don't allocate an empty string.
+            // We won't be modifying an empty slice, anyway.
+            return .{ .result = .{ this, @ptrCast(@constCast("")) } };
+        }
+
+        result.bytes.append(0) catch bun.outOfMemory();
+
+        return .{ .result = .{ this, result.bytes.items[0 .. result.bytes.items.len - 1 :0] } };
     }
 
     /// 1. Open a file for reading relative to a directory
     /// 2. Read the file to a buffer
     /// 3. Close the file
     /// 4. Return the buffer
-    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
+    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([:0]u8) {
         const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
             .err => |err| return .{ .err = err },
             .result => |result| result,

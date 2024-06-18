@@ -39,4 +39,35 @@ describe("AbortSignal", () => {
 
     expect(exitCode).toBe(0);
   });
+
+  test("AbortSignal.any() should fire abort event", async () => {
+    async function testAny(signalToAbort: number) {
+      const { promise, resolve } = Promise.withResolvers();
+
+      const a = new AbortController();
+      const b = new AbortController();
+      // @ts-ignore
+      const signal = AbortSignal.any([a.signal, b.signal]);
+      const timeout = setTimeout(() => {
+        resolve(false);
+      }, 100);
+
+      signal.addEventListener("abort", () => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+
+      if (signalToAbort) {
+        b.abort();
+      } else {
+        a.abort();
+      }
+
+      expect(await promise).toBe(true);
+      expect(signal.aborted).toBe(true);
+    }
+
+    await testAny(0);
+    await testAny(1);
+  });
 });

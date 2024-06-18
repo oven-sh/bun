@@ -3208,10 +3208,10 @@ it("promises exists should never throw ENAMETOOLONG", async () => {
 
 it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
   try {
-    await _promises.fdatasync(500);
+    await _promises.fdatasync(50000);
   } catch (e) {
     expect(typeof e.fd).toBe("number");
-    expect(e.fd).toBe(500);
+    expect(e.fd).toBe(50000);
     return;
   }
   expect.unreachable();
@@ -3234,4 +3234,30 @@ it("promises.cp should work even if dest does not exist", async () => {
 
   const text_actual = await Bun.file(dst).text();
   expect(text_actual).toBe(text_expected);
+});
+
+it("promises.writeFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.writeFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+});
+
+it("promises.readFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await Bun.write(Bun.file(x_path), "data");
+  await using file = await fs.promises.open(x_path, "r");
+  expect((await fs.promises.readFile(file)).toString()).toBe("data");
+});
+
+it("promises.appendFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("datadata");
 });

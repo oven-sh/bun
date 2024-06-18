@@ -8,7 +8,7 @@ import {
 } from "bun";
 import { expect, it, beforeEach, afterEach, describe, test } from "bun:test";
 import { mkfifo } from "mkfifo";
-import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { realpathSync, unlinkSync, writeFileSync, createReadStream } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "os";
 
@@ -1040,5 +1040,16 @@ it("Bun.file().stream() read text from large file", async () => {
     expect(output).toBe(hugely);
   } finally {
     unlinkSync(tmpfile);
+  }
+});
+
+it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
+  for (let i = 0; i < 10; i++) {
+    const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));
+    for await (const chunk of fileStream) {
+      expect(chunk).toBeDefined();
+      break;
+    }
+    expect(true).toBe(true);
   }
 });

@@ -416,7 +416,7 @@ export async function toMatchNodeModulesAt(lockfile: any, root: string) {
             return {
               pass: false,
               message: () => `
-Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}       
+Expected at ${join(path, treeDep.name)}: ${JSON.stringify({ name: treePkg.name, version: treePkg.resolution.value })}
 Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
             };
           }
@@ -574,6 +574,17 @@ declare global {
      * **INTERNAL USE ONLY, NOT An API IN BUN**
      */
     toUnixString(): string;
+  }
+
+  interface String {
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    isLatin1(): boolean;
+    /**
+     * **INTERNAL USE ONLY, NOT An API IN BUN**
+     */
+    isUTF16(): boolean;
   }
 }
 
@@ -882,9 +893,21 @@ export function tmpdirSync(pattern: string = "bun.test.") {
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }
 
-export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
+export async function runBunInstall(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  options?: {
+    allowWarnings?: boolean;
+    allowErrors?: boolean;
+    expectedExitCode?: number;
+    savesLockfile?: boolean;
+    production?: boolean;
+  },
+) {
+  const production = options?.production ?? false;
+  const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
   const { stdout, stderr, exited } = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: args,
     cwd,
     stdout: "pipe",
     stdin: "ignore",
@@ -893,13 +916,19 @@ export async function runBunInstall(env: NodeJS.ProcessEnv, cwd: string) {
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err = await new Response(stderr).text();
+  let err = (await new Response(stderr).text()).replace(/warn: Slow filesystem/g, "");
   expect(err).not.toContain("panic:");
-  expect(err).not.toContain("error:");
-  expect(err).not.toContain("warn:");
-  expect(err).toContain("Saved lockfile");
+  if (!options?.allowErrors) {
+    expect(err).not.toContain("error:");
+  }
+  if (!options?.allowWarnings) {
+    expect(err).not.toContain("warn:");
+  }
+  if ((options?.savesLockfile ?? true) && !production) {
+    expect(err).toContain("Saved lockfile");
+  }
   let out = await new Response(stdout).text();
-  expect(await exited).toBe(0);
+  expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }
 
@@ -951,3 +980,68 @@ export function disableAggressiveGCScope() {
     },
   };
 }
+
+String.prototype.isLatin1 = function () {
+  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
+};
+
+String.prototype.isUTF16 = function () {
+  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
+};
+
+expect.extend({
+  toBeLatin1String(actual: unknown) {
+    if ((actual as string).isLatin1()) {
+      return {
+        pass: true,
+        message: () => `Expected ${actual} to be a Latin1 string`,
+      };
+    }
+
+    return {
+      pass: false,
+      message: () => `Expected ${actual} to be a Latin1 string`,
+    };
+  },
+  toBeUTF16String(actual: unknown) {
+    if ((actual as string).isUTF16()) {
+      return {
+        pass: true,
+        message: () => `Expected ${actual} to be a UTF16 string`,
+      };
+    }
+
+    return {
+      pass: false,
+      message: () => `Expected ${actual} to be a UTF16 string`,
+    };
+  },
+});
+
+interface BunHarnessTestMatchers {
+  toBeLatin1String(): void;
+  toBeUTF16String(): void;
+  toHaveTestTimedOutAfter(expected: number): void;
+  toBeBinaryType(expected: keyof typeof binaryTypes): void;
+  toRun(optionalStdout?: string): void;
+}
+
+declare module "bun:test" {
+  interface Matchers<T> extends BunHarnessTestMatchers {}
+  interface AsymmetricMatchers extends BunHarnessTestMatchers {}
+}
+
+/**
+ * Set `NODE_TLS_REJECT_UNAUTHORIZED` for a scope.
+ */
+export function rejectUnauthorizedScope(value: boolean) {
+  const original_rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = value ? "1" : "0";
+  return {
+    [Symbol.dispose]() {
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = original_rejectUnauthorized;
+    },
+  };
+}
+
+export const BREAKING_CHANGES_BUN_1_2 = false;

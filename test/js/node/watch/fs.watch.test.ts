@@ -64,6 +64,19 @@ describe("fs.watch", () => {
     }
   });
 
+  test("should work with relative dirs", done => {
+    try {
+      const myrelativedir = path.join(testDir, "myrelativedir");
+      try {
+        fs.mkdirSync(myrelativedir);
+      } catch {}
+      fs.writeFileSync(path.join(myrelativedir, "relative.txt"), "hello");
+      bunRunAsScript(testDir, path.join(import.meta.dir, "fixtures", "relative_dir.js"));
+      done();
+    } catch (e: any) {
+      done(e);
+    }
+  });
   test("add file/folder to folder", done => {
     let count = 0;
     const root = path.join(testDir, "add-directory");

@@ -82,6 +82,40 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
+
+            /**
+             * When set to `true`, integers are returned as `bigint` types.
+             *
+             * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
+             *
+             * @default false
+             * @since v1.1.14
+             */
+            safeInteger?: boolean;
+
+            /**
+             * When set to `false` or `undefined`:
+             * - Queries missing bound parameters will NOT throw an error
+             * - Bound named parameters in JavaScript need to exactly match the SQL query.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: false });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
+             * ```
+             *
+             * When set to `true`:
+             * - Queries missing bound parameters will throw an error
+             * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: true });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
+             * ```
+             * @since v1.1.14
+             */
+            strict?: boolean;
           },
     );
 
@@ -165,11 +199,11 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
     /**
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -575,7 +609,7 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run(...params: ParamsType): void;
+    run(...params: ParamsType): Changes;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -679,6 +713,44 @@ declare module "bun:sqlite" {
      * ```
      */
     toString(): string;
+
+    /**
+     *
+     * Make {@link get} and {@link all} return an instance of the provided
+     * `Class` instead of the default `Object`.
+     *
+     * @param Class A class to use
+     * @returns The same statement instance, modified to return an instance of `Class`
+     *
+     * This lets you attach methods, getters, and setters to the returned
+     * objects.
+     *
+     * For performance reasons, constructors for classes are not called, which means
+     * initializers will not be called and private fields will not be
+     * accessible.
+     *
+     * @example
+     *
+     * ## Custom class
+     * ```ts
+     * class User {
+     *    rawBirthdate: string;
+     *    get birthdate() {
+     *      return new Date(this.rawBirthdate);
+     *    }
+     * }
+     *
+     * const db = new Database(":memory:");
+     * db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+     * db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
+     * const query = db.query("SELECT * FROM users");
+     * query.as(User);
+     * const user = query.get();
+     * console.log(user.birthdate);
+     * // => Date(1995, 11, 19)
+     * ```
+     */
+    as<T = unknown>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;
 
     /**
      * Native object representing the underlying `sqlite3_stmt`
@@ -1039,5 +1111,22 @@ declare module "bun:sqlite" {
      * @since v1.0.21
      */
     readonly byteOffset: number;
+  }
+
+  /**
+   * An object representing the changes made to the database since the last `run` or `exec` call.
+   *
+   * @since Bun v1.1.14
+   */
+  interface Changes {
+    /**
+     * The number of rows changed by the last `run` or `exec` call.
+     */
+    changes: number;
+
+    /**
+     * If `safeIntegers` is `true`, this is a `bigint`. Otherwise, it is a `number`.
+     */
+    lastInsertRowid: number | bigint;
   }
 }

@@ -197,12 +197,22 @@ const Handlers = struct {
     // corker: Corker = .{},
 
     pub fn resolvePromise(this: *Handlers, value: JSValue) void {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return;
+        }
+
         const promise = this.promise.trySwap() orelse return;
         const anyPromise = promise.asAnyPromise() orelse return;
         anyPromise.resolve(this.globalObject, value);
     }
 
     pub fn rejectPromise(this: *Handlers, value: JSValue) bool {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return true;
+        }
+
         const promise = this.promise.trySwap() orelse return false;
         const anyPromise = promise.asAnyPromise() orelse return false;
         anyPromise.reject(this.globalObject, value);
@@ -233,17 +243,24 @@ const Handlers = struct {
     }
 
     pub fn callErrorHandler(this: *Handlers, thisValue: JSValue, err: []const JSValue) bool {
+        const vm = this.vm;
+        if (vm.isShuttingDown()) {
+            return false;
+        }
+
+        const globalObject = this.globalObject;
         const onError = this.onError;
+
         if (onError == .zero) {
             if (err.len > 0)
-                _ = this.vm.uncaughtException(this.globalObject, err[0], false);
+                _ = vm.uncaughtException(globalObject, err[0], false);
 
             return false;
         }
 
-        const result = onError.callWithThis(this.globalObject, thisValue, err);
+        const result = onError.callWithThis(globalObject, thisValue, err);
         if (result.isAnyError()) {
-            _ = this.vm.uncaughtException(this.globalObject, result, false);
+            _ = vm.uncaughtException(globalObject, result, false);
         }
 
         return true;
@@ -303,6 +320,10 @@ const Handlers = struct {
     }
 
     pub fn unprotect(this: *Handlers) void {
+        if (this.vm.isShuttingDown()) {
+            return;
+        }
+
         if (comptime Environment.allow_assert) {
             bun.assert(this.protection_count > 0);
             this.protection_count -= 1;
@@ -343,6 +364,7 @@ pub const SocketConfig = struct {
     exclusive: bool = false,
 
     pub fn fromJS(
+        vm: *JSC.VirtualMachine,
         opts: JSC.JSValue,
         globalObject: *JSC.JSGlobalObject,
         exception: JSC.C.ExceptionRef,
@@ -360,7 +382,7 @@ pub const SocketConfig = struct {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
                 }
             } else {
-                if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, exception)) |ssl_config| {
+                if (JSC.API.ServerConfig.SSLConfig.inJS(vm, globalObject, tls, exception)) |ssl_config| {
                     ssl = ssl_config;
                 } else if (exception.* != null) {
                     return null;
@@ -595,7 +617,9 @@ pub const Listener = struct {
             return .zero;
         }
 
-        var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
+        const vm = JSC.VirtualMachine.get();
+
+        var socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
             return .zero;
         };
 
@@ -614,7 +638,7 @@ pub const Listener = struct {
         const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl);
 
         defer if (ssl != null) ssl.?.deinit();
-        globalObject.bunVM().eventLoop().ensureWaker();
+        vm.eventLoop().ensureWaker();
 
         const socket_context = uws.us_create_bun_socket_context(
             @intFromBool(ssl_enabled),
@@ -837,7 +861,7 @@ pub const Listener = struct {
         var exception_ref = [_]JSC.C.JSValueRef{null};
         const exception: JSC.C.ExceptionRef = &exception_ref;
 
-        if (JSC.API.ServerConfig.SSLConfig.inJS(global, tls, exception)) |ssl_config| {
+        if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), global, tls, exception)) |ssl_config| {
             // to keep nodejs compatibility, we allow to replace the server name
             uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
             uws.us_bun_socket_context_add_server_name(1, this.socket_context, server_name, ssl_config.asUSockets(), null);
@@ -882,6 +906,11 @@ pub const Listener = struct {
 
     pub fn finalize(this: *Listener) callconv(.C) void {
         log("Finalize", .{});
+        if (this.listener) |listener| {
+            this.listener = null;
+            listener.close(this.ssl);
+        }
+
         this.deinit();
     }
 
@@ -890,11 +919,17 @@ pub const Listener = struct {
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);
         bun.assert(this.listener == null);
-        bun.assert(this.handlers.active_connections == 0);
         this.handlers.unprotect();
 
-        if (this.socket_context) |ctx| {
-            ctx.deinit(this.ssl);
+        if (this.handlers.active_connections > 0) {
+            if (this.socket_context) |ctx| {
+                ctx.close(this.ssl);
+            }
+            // TODO: fix this leak.
+        } else {
+            if (this.socket_context) |ctx| {
+                ctx.deinit(this.ssl);
+            }
         }
 
         this.connection.deinit();
@@ -962,8 +997,9 @@ pub const Listener = struct {
             exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
             return .zero;
         }
+        const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
+        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
             return .zero;
         };
 
@@ -980,7 +1016,7 @@ pub const Listener = struct {
 
         const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
 
-        globalObject.bunVM().eventLoop().ensureWaker();
+        vm.eventLoop().ensureWaker();
 
         const socket_context = uws.us_create_bun_socket_context(@intFromBool(ssl_enabled), uws.Loop.get(), @sizeOf(usize), ctx_opts) orelse {
             const err = JSC.SystemError{
@@ -1144,6 +1180,10 @@ fn NewSocket(comptime ssl: bool) type {
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
         detached: bool = false,
+
+        /// Prevent onClose from calling into JavaScript while we are finalizing
+        finalizing: bool = false,
+
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
@@ -1227,6 +1267,9 @@ fn NewSocket(comptime ssl: bool) type {
             if (callback == .zero) return;
 
             var vm = handlers.vm;
+            if (vm.isShuttingDown()) {
+                return;
+            }
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
 
@@ -1250,7 +1293,10 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
-            if (callback == .zero) return;
+            if (callback == .zero or this.finalizing) return;
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1276,6 +1322,9 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             const vm = handlers.vm;
             this.poll_ref.unrefOnNextTick(vm);
+            if (vm.isShuttingDown()) {
+                return;
+            }
 
             const callback = handlers.onConnectError;
             const globalObject = handlers.globalObject;
@@ -1341,17 +1390,16 @@ fn NewSocket(comptime ssl: bool) type {
                 if (!this.detached) {
                     // we have to close the socket before the socket context is closed
                     // otherwise we will get a segfault
-                    // uSockets will defer closing the TCP socket until the next tick
+                    // uSockets will defer freeing the TCP socket until the next tick
                     if (!this.socket.isClosed()) {
                         this.detached = true;
-                        this.socket.close(0, null);
+                        this.socket.close(.normal);
                         // onClose will call markInactive again
                         return;
                     }
                 }
                 this.is_active = false;
                 const vm = this.handlers.vm;
-
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .Release);
@@ -1461,7 +1509,7 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
 
             const callback = handlers.onEnd;
-            if (callback == .zero) {
+            if (callback == .zero or handlers.vm.isShuttingDown()) {
                 this.poll_ref.unref(handlers.vm);
 
                 // If you don't handle TCP fin, we assume you're done.
@@ -1496,6 +1544,10 @@ fn NewSocket(comptime ssl: bool) type {
             const handlers = this.handlers;
             var callback = handlers.onHandshake;
             var is_open = false;
+
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             // Use open callback when handshake is not provided
             if (callback == .zero) {
@@ -1563,12 +1615,22 @@ fn NewSocket(comptime ssl: bool) type {
             this.detached = true;
             defer this.markInactive();
 
+            if (this.finalizing) {
+                return;
+            }
+
             const handlers = this.handlers;
-            this.poll_ref.unref(handlers.vm);
+            const vm = handlers.vm;
+            this.poll_ref.unref(vm);
 
             const callback = handlers.onClose;
+
             if (callback == .zero)
                 return;
+
+            if (vm.isShuttingDown()) {
+                return;
+            }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
@@ -1594,7 +1656,10 @@ fn NewSocket(comptime ssl: bool) type {
 
             const handlers = this.handlers;
             const callback = handlers.onData;
-            if (callback == .zero) return;
+            if (callback == .zero or this.finalizing) return;
+            if (handlers.vm.isShuttingDown()) {
+                return;
+            }
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1960,6 +2025,19 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn terminate(
+            this: *This,
+            _: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+            if (!this.detached) {
+                this.socket.close(.failure);
+            }
+
+            return JSValue.jsUndefined();
+        }
+
         pub fn shutdown(
             this: *This,
             _: *JSC.JSGlobalObject,
@@ -2021,10 +2099,11 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) callconv(.C) void {
             log("finalize() {d}", .{@intFromPtr(this)});
+            this.finalizing = true;
             if (!this.detached) {
                 this.detached = true;
                 if (!this.socket.isClosed()) {
-                    this.socket.close(0, null);
+                    this.socket.close(.failure);
                 }
             }
 
@@ -2919,7 +2998,7 @@ fn NewSocket(comptime ssl: bool) type {
                         ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
                     }
                 } else {
-                    if (JSC.API.ServerConfig.SSLConfig.inJS(globalObject, tls, &exception)) |ssl_config| {
+                    if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), globalObject, tls, &exception)) |ssl_config| {
                         ssl_opts = ssl_config;
                     } else if (exception != null) {
                         return .zero;

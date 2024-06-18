@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub const Reader = struct {
     const Self = @This();
@@ -423,56 +424,7 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = packed struct {
-        /// source_offset
-        source_offset: i32 = 0,
-
-        /// line
-        line: i32 = 0,
-
-        /// line_start
-        line_start: i32 = 0,
-
-        /// line_stop
-        line_stop: i32 = 0,
-
-        /// column_start
-        column_start: i32 = 0,
-
-        /// column_stop
-        column_stop: i32 = 0,
-
-        /// expression_start
-        expression_start: i32 = 0,
-
-        /// expression_stop
-        expression_stop: i32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!StackFramePosition {
-            var this = std.mem.zeroes(StackFramePosition);
-
-            this.source_offset = try reader.readValue(i32);
-            this.line = try reader.readValue(i32);
-            this.line_start = try reader.readValue(i32);
-            this.line_stop = try reader.readValue(i32);
-            this.column_start = try reader.readValue(i32);
-            this.column_stop = try reader.readValue(i32);
-            this.expression_start = try reader.readValue(i32);
-            this.expression_stop = try reader.readValue(i32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.source_offset);
-            try writer.writeInt(this.line);
-            try writer.writeInt(this.line_start);
-            try writer.writeInt(this.line_stop);
-            try writer.writeInt(this.column_start);
-            try writer.writeInt(this.column_stop);
-            try writer.writeInt(this.expression_start);
-            try writer.writeInt(this.expression_stop);
-        }
-    };
+    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
 
     pub const SourceLine = struct {
         /// line

@@ -44,6 +44,7 @@ pub const is_canary = BuildOptions.is_canary;
 pub const canary_revision = if (is_canary) BuildOptions.canary_revision else "";
 pub const dump_source = isDebug and !isTest;
 pub const base_path = BuildOptions.base_path ++ "/";
+pub const allow_logs = BuildOptions.enable_logs;
 
 pub const version: std.SemanticVersion = BuildOptions.version;
 pub const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });

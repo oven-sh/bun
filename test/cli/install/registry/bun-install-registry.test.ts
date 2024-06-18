@@ -12,8 +12,8 @@ import {
   runBunInstall,
   runBunUpdate,
 } from "harness";
-import { join, sep } from "path";
-import { rm, writeFile, mkdir, exists, cp } from "fs/promises";
+import { join, sep, resolve } from "path";
+import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
 import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
@@ -65,6 +65,39 @@ registry = "http://localhost:${port}/"
 `,
   );
 });
+
+for (const optional of [true, false]) {
+  test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        [optional ? "optionalDependencies" : "dependencies"]: {
+          "missing-tarball": "1.0.0",
+          "uses-what-bin": "1.0.0",
+        },
+        "trustedDependencies": ["uses-what-bin"],
+      }),
+    );
+
+    const { exited, err } = await runBunInstall(env, packageDir, {
+      [optional ? "allowWarnings" : "allowErrors"]: true,
+      expectedExitCode: optional ? 0 : 1,
+      savesLockfile: false,
+    });
+    expect(err).toContain(
+      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 500`,
+    );
+    expect(await exited).toBe(optional ? 0 : 1);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      ".cache",
+      "uses-what-bin",
+      "what-bin",
+    ]);
+    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+  });
+}
 
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
@@ -364,6 +397,61 @@ test("basic 1", async () => {
   expect(await exited).toBe(0);
 });
 
+test("manifest cache will invalidate when registry changes", async () => {
+  const cacheDir = join(packageDir, ".bun-cache");
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = "${cacheDir}"
+registry = "http://localhost:${port}"
+      `,
+    ),
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          // is-number exists in our custom registry and in npm. Switching the registry should invalidate
+          // the manifest cache, the package could be a completely different package.
+          "is-number": "2.0.0",
+        },
+      }),
+    ),
+  ]);
+
+  // first install this package from verdaccio
+  await runBunInstall(env, packageDir);
+  const lockfile = await parseLockfile(packageDir);
+  for (const pkg of Object.values(lockfile.packages) as any) {
+    if (pkg.tag === "npm") {
+      expect(pkg.resolution.resolved).toContain("http://localhost:4873");
+    }
+  }
+
+  // now use default registry
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { force: true, recursive: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = "${cacheDir}"
+`,
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+  const npmLockfile = await parseLockfile(packageDir);
+  for (const pkg of Object.values(npmLockfile.packages) as any) {
+    if (pkg.tag === "npm") {
+      expect(pkg.resolution.resolved).not.toContain("http://localhost:4873");
+    }
+  }
+});
+
 test("dependency from root satisfies range from dependency", async () => {
   await writeFile(
     join(packageDir, "package.json"),
@@ -428,6 +516,123 @@ test("dependency from root satisfies range from dependency", async () => {
     "2 packages installed",
   ]);
   expect(await exited).toBe(0);
+});
+
+test("duplicate names and versions in a manifest do not install incorrect packages", async () => {
+  /**
+   * `duplicate-name-and-version` has two versions:
+   *   1.0.1:
+   *   dependencies: {
+   *       "no-deps": "a-dep"
+   *   }
+   *   1.0.2:
+   *   dependencies: {
+   *       "a-dep": "1.0.1"
+   *   }
+   * Note: version for `no-deps` is the same as second dependency name.
+   *
+   * When this manifest is parsed, the strings for dependency names and versions are stored
+   * with different lists offset length pairs, but we were deduping with the same map. Since
+   * the version of the first dependency is the same as the name as the second, it would try to
+   * dedupe them, and doing so would give the wrong name for the deduped dependency.
+   * (`a-dep@1.0.1` would become `no-deps@1.0.1`)
+   */
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "duplicate-name-and-version": "1.0.2",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockfile = parseLockfile(packageDir);
+  expect(lockfile).toMatchNodeModulesAt(packageDir);
+  const results = await Promise.all([
+    file(join(packageDir, "node_modules", "duplicate-name-and-version", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+    exists(join(packageDir, "node_modules", "no-deps")),
+  ]);
+
+  expect(results).toMatchObject([
+    { name: "duplicate-name-and-version", version: "1.0.2" },
+    { name: "a-dep", version: "1.0.1" },
+    false,
+  ]);
+});
+
+describe("peerDependency index out of bounds", async () => {
+  // Test for "index of out bounds" errors with peer dependencies when adding/removing a package
+  //
+  // Repro:
+  // - Install `1-peer-dep-a`. It depends on peer dep `no-deps@1.0.0`.
+  // - Replace `1-peer-dep-a` with `1-peer-dep-b` (identical other than name), delete manifest cache and
+  //   node_modules, then reinstall.
+  // - `no-deps` will enqueue a dependency id that goes out of bounds
+
+  const dependencies = ["1-peer-dep-a", "1-peer-dep-b", "2-peer-deps-c"];
+
+  for (const firstDep of dependencies) {
+    for (const secondDep of dependencies) {
+      if (firstDep === secondDep) continue;
+      test(`replacing ${firstDep} with ${secondDep}`, async () => {
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              [firstDep]: "1.0.0",
+            },
+          }),
+        );
+
+        await runBunInstall(env, packageDir);
+        const lockfile = parseLockfile(packageDir);
+        expect(lockfile).toMatchNodeModulesAt(packageDir);
+        const results = await Promise.all([
+          file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+          file(join(packageDir, "node_modules", firstDep, "package.json")).json(),
+          exists(join(packageDir, "node_modules", firstDep, "node_modules", "no-deps")),
+        ]);
+
+        expect(results).toMatchObject([
+          { name: "no-deps", version: "1.0.0" },
+          { name: firstDep, version: "1.0.0" },
+          false,
+        ]);
+
+        await Promise.all([
+          rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                [secondDep]: "1.0.0",
+              },
+            }),
+          ),
+        ]);
+
+        await runBunInstall(env, packageDir);
+        const newLockfile = parseLockfile(packageDir);
+        expect(newLockfile).toMatchNodeModulesAt(packageDir);
+        const newResults = await Promise.all([
+          file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+          file(join(packageDir, "node_modules", secondDep, "package.json")).json(),
+          exists(join(packageDir, "node_modules", secondDep, "node_modules", "no-deps")),
+        ]);
+
+        expect(newResults).toMatchObject([
+          { name: "no-deps", version: "1.0.0" },
+          { name: secondDep, version: "1.0.0" },
+          false,
+        ]);
+      });
+    }
+  }
 });
 
 test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {
@@ -617,6 +822,93 @@ test("package added after install", async () => {
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
+});
+
+test("--production excludes devDependencies in workspaces", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+        devDependencies: {
+          "a1": "npm:no-deps@1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "a-dep": "1.0.2",
+        },
+        devDependencies: {
+          "a2": "npm:a-dep@1.0.2",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        devDependencies: {
+          "a3": "npm:a-dep@1.0.3",
+          "a4": "npm:a-dep@1.0.4",
+          "a5": "npm:a-dep@1.0.5",
+        },
+      }),
+    ),
+  ]);
+
+  // without lockfile
+  const expectedResults = [
+    [".cache", "a-dep", "no-deps", "pkg1", "pkg2"],
+    { name: "no-deps", version: "1.0.0" },
+    { name: "a-dep", version: "1.0.2" },
+  ];
+  let { out } = await runBunInstall(env, packageDir, { production: true });
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "4 packages installed",
+  ]);
+  let results = await Promise.all([
+    readdirSorted(join(packageDir, "node_modules")),
+    file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+  ]);
+
+  expect(results).toMatchObject(expectedResults);
+
+  // create non-production lockfile, then install with --production
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out } = await runBunInstall(env, packageDir));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ a1@1.0.0",
+    "+ no-deps@1.0.0",
+    "",
+    "7 packages installed",
+  ]);
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out } = await runBunInstall(env, packageDir, { production: true }));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "4 packages installed",
+  ]);
+  results = await Promise.all([
+    readdirSorted(join(packageDir, "node_modules")),
+    file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+  ]);
+  expect(results).toMatchObject(expectedResults);
 });
 
 test("--production without a lockfile will install and not save lockfile", async () => {
@@ -2370,6 +2662,521 @@ describe("workspaces", async () => {
   }
 });
 
+describe("transitive file dependencies", () => {
+  async function checkHoistedFiles() {
+    const aliasedFileDepFilesPackageJson = join(
+      packageDir,
+      "node_modules",
+      "aliased-file-dep",
+      "node_modules",
+      "files",
+      "the-files",
+      "package.json",
+    );
+    const results = await Promise.all([
+      exists(join(packageDir, "node_modules", "file-dep", "node_modules", "files", "package.json")),
+      readdirSorted(join(packageDir, "node_modules", "missing-file-dep", "node_modules")),
+      exists(join(packageDir, "node_modules", "aliased-file-dep", "package.json")),
+      isWindows
+        ? file(await readlink(aliasedFileDepFilesPackageJson)).json()
+        : file(aliasedFileDepFilesPackageJson).json(),
+      exists(
+        join(packageDir, "node_modules", "@scoped", "file-dep", "node_modules", "@scoped", "files", "package.json"),
+      ),
+      exists(
+        join(
+          packageDir,
+          "node_modules",
+          "@another-scope",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ),
+      exists(join(packageDir, "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json")),
+    ]);
+
+    expect(results).toEqual([
+      true,
+      [],
+      true,
+      {
+        "name": "files",
+        "version": "1.1.1",
+        "dependencies": {
+          "no-deps": "2.0.0",
+        },
+      },
+      true,
+      true,
+      true,
+    ]);
+  }
+
+  async function checkUnhoistedFiles() {
+    const results = await Promise.all([
+      file(join(packageDir, "node_modules", "dep-file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "missing-file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "aliased-file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "@scoped", "file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "@another-scope", "file-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "self-file-dep", "package.json")).json(),
+
+      exists(join(packageDir, "pkg1", "node_modules", "file-dep", "node_modules", "files", "package.json")), // true
+      readdirSorted(join(packageDir, "pkg1", "node_modules", "missing-file-dep", "node_modules")), // []
+      exists(join(packageDir, "pkg1", "node_modules", "aliased-file-dep")), // false
+      exists(
+        join(
+          packageDir,
+          "pkg1",
+          "node_modules",
+          "@scoped",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ),
+      exists(
+        join(
+          packageDir,
+          "pkg1",
+          "node_modules",
+          "@another-scope",
+          "file-dep",
+          "node_modules",
+          "@scoped",
+          "files",
+          "package.json",
+        ),
+      ),
+      exists(
+        join(packageDir, "pkg1", "node_modules", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
+      ),
+      readdirSorted(join(packageDir, "pkg1", "node_modules")),
+    ]);
+
+    const expected = [
+      ...(Array(7).fill({ name: "a-dep", version: "1.0.1" }) as any),
+      true,
+      [] as string[],
+      false,
+      true,
+      true,
+      true,
+      ["@another-scope", "@scoped", "dep-file-dep", "file-dep", "missing-file-dep", "self-file-dep"],
+    ];
+
+    // @ts-ignore
+    expect(results).toEqual(expected);
+  }
+
+  test("from hoisted workspace dependencies", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkg1"],
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            // hoisted
+            "dep-file-dep": "1.0.0",
+            // root
+            "file-dep": "1.0.0",
+            // dangling symlink
+            "missing-file-dep": "1.0.0",
+            // aliased. has `"file-dep": "file:."`
+            "aliased-file-dep": "npm:file-dep@1.0.1",
+            // scoped
+            "@scoped/file-dep": "1.0.0",
+            // scoped with different names
+            "@another-scope/file-dep": "1.0.0",
+            // file dependency on itself
+            "self-file-dep": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { out } = await runBunInstall(env, packageDir);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
+
+    await checkHoistedFiles();
+    expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    // reinstall
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "14 packages installed"]);
+
+    await checkHoistedFiles();
+
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await checkHoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+
+    // install from workspace
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1")));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "14 packages installed",
+    ]);
+
+    await checkHoistedFiles();
+    expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "14 packages installed",
+    ]);
+  });
+
+  test("from non-hoisted workspace dependencies", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["pkg1"],
+          // these dependencies exist to make the workspace
+          // dependencies non-hoisted
+          dependencies: {
+            "dep-file-dep": "npm:a-dep@1.0.1",
+            "file-dep": "npm:a-dep@1.0.1",
+            "missing-file-dep": "npm:a-dep@1.0.1",
+            "aliased-file-dep": "npm:a-dep@1.0.1",
+            "@scoped/file-dep": "npm:a-dep@1.0.1",
+            "@another-scope/file-dep": "npm:a-dep@1.0.1",
+            "self-file-dep": "npm:a-dep@1.0.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            // hoisted
+            "dep-file-dep": "1.0.0",
+            // root
+            "file-dep": "1.0.0",
+            // dangling symlink
+            "missing-file-dep": "1.0.0",
+            // aliased. has `"file-dep": "file:."`
+            "aliased-file-dep": "npm:file-dep@1.0.1",
+            // scoped
+            "@scoped/file-dep": "1.0.0",
+            // scoped with different names
+            "@another-scope/file-dep": "1.0.0",
+            // file dependency on itself
+            "self-file-dep": "1.0.0",
+          },
+        }),
+      ),
+    ]);
+
+    var { out } = await runBunInstall(env, packageDir);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.1",
+      "+ @scoped/file-dep@1.0.1",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.1",
+      "+ file-dep@1.0.1",
+      "+ missing-file-dep@1.0.1",
+      "+ self-file-dep@1.0.1",
+      "",
+      "13 packages installed",
+    ]);
+
+    await checkUnhoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
+
+    // reinstall
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.1",
+      "+ @scoped/file-dep@1.0.1",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.1",
+      "+ file-dep@1.0.1",
+      "+ missing-file-dep@1.0.1",
+      "+ self-file-dep@1.0.1",
+      "",
+      "13 packages installed",
+    ]);
+
+    await checkUnhoistedFiles();
+
+    ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await checkUnhoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "bun.lockb"), { force: true });
+
+    // install from workspace
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1")));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
+
+    await checkUnhoistedFiles();
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
+
+    ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
+  });
+
+  test("from root dependencies", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          // hoisted
+          "dep-file-dep": "1.0.0",
+          // root
+          "file-dep": "1.0.0",
+          // dangling symlink
+          "missing-file-dep": "1.0.0",
+          // aliased. has `"file-dep": "file:."`
+          "aliased-file-dep": "npm:file-dep@1.0.1",
+          // scoped
+          "@scoped/file-dep": "1.0.0",
+          // scoped with different names
+          "@another-scope/file-dep": "1.0.0",
+          // file dependency on itself
+          "self-file-dep": "1.0.0",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await Bun.readableStreamToText(stderr);
+    var out = await Bun.readableStreamToText(stdout);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      "+ file-dep@1.0.0",
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@another-scope",
+      "@scoped",
+      "aliased-file-dep",
+      "dep-file-dep",
+      "file-dep",
+      "missing-file-dep",
+      "self-file-dep",
+    ]);
+
+    await checkHoistedFiles();
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    out = await Bun.readableStreamToText(stdout);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "1 package installed"]);
+    expect(await exited).toBe(0);
+
+    await checkHoistedFiles();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await Bun.readableStreamToText(stderr);
+    out = await Bun.readableStreamToText(stdout);
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".cache",
+      "@another-scope",
+      "@scoped",
+      "aliased-file-dep",
+      "dep-file-dep",
+      "file-dep",
+      "missing-file-dep",
+      "self-file-dep",
+    ]);
+    expect(await exited).toBe(0);
+
+    await checkHoistedFiles();
+  });
+  test("it should install folder dependencies with absolute paths", async () => {
+    async function writePackages(num: number) {
+      await rm(join(packageDir, `pkg0`), { recursive: true, force: true });
+      for (let i = 0; i < num; i++) {
+        await mkdir(join(packageDir, `pkg${i}`));
+        await writeFile(
+          join(packageDir, `pkg${i}`, "package.json"),
+          JSON.stringify({
+            name: `pkg${i}`,
+            version: "1.1.1",
+          }),
+        );
+      }
+    }
+
+    await writePackages(2);
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          // without and without file protocol
+          "pkg0": `file:${resolve(packageDir, "pkg0").replace(/\\/g, "\\\\")}`,
+          "pkg1": `${resolve(packageDir, "pkg1").replace(/\\/g, "\\\\")}`,
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "pipe",
+      env,
+    });
+
+    var err = await Bun.readableStreamToText(stderr);
+    var out = await Bun.readableStreamToText(stdout);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ pkg0@pkg0",
+      "+ pkg1@pkg1",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".cache", "pkg0", "pkg1"]);
+    expect(await file(join(packageDir, "node_modules", "pkg0", "package.json")).json()).toEqual({
+      name: "pkg0",
+      version: "1.1.1",
+    });
+    expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+      name: "pkg1",
+      version: "1.1.1",
+    });
+  });
+});
+
 test("name from manifest is scoped and url encoded", async () => {
   await write(
     join(packageDir, "package.json"),
@@ -2512,6 +3319,186 @@ describe("update", () => {
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "bun.lockb"));
     }
+  });
+  describe("tilde", () => {
+    test("without args", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "no-deps": "~1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+
+      let { out } = await runBunUpdate(env, packageDir);
+      expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "no-deps": "~1.0.1",
+        },
+      });
+
+      // another update does not change anything (previously the version would update because it was changed to `^1.0.1`)
+      ({ out } = await runBunUpdate(env, packageDir));
+      expect(out).toEqual(["", "Checked 1 install across 2 packages (no changes)"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "no-deps": "~1.0.1",
+        },
+      });
+    });
+
+    for (const latest of [true, false]) {
+      test(`update no args${latest ? " --latest" : ""}`, async () => {
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            dependencies: {
+              "a1": "npm:no-deps@1",
+              "a10": "npm:no-deps@~1.0",
+              "a11": "npm:no-deps@^1.0",
+              "a12": "npm:no-deps@~1.0.1",
+              "a13": "npm:no-deps@^1.0.1",
+              "a14": "npm:no-deps@~1.1.0",
+              "a15": "npm:no-deps@^1.1.0",
+              "a2": "npm:no-deps@1.0",
+              "a3": "npm:no-deps@1.1",
+              "a4": "npm:no-deps@1.0.1",
+              "a5": "npm:no-deps@1.1.0",
+              "a6": "npm:no-deps@~1",
+              "a7": "npm:no-deps@^1",
+              "a8": "npm:no-deps@~1.1",
+              "a9": "npm:no-deps@^1.1",
+            },
+          }),
+        );
+
+        if (latest) {
+          await runBunUpdate(env, packageDir, ["--latest"]);
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "a1": "npm:no-deps@^2.0.0",
+              "a10": "npm:no-deps@~2.0.0",
+              "a11": "npm:no-deps@^2.0.0",
+              "a12": "npm:no-deps@~2.0.0",
+              "a13": "npm:no-deps@^2.0.0",
+              "a14": "npm:no-deps@~2.0.0",
+              "a15": "npm:no-deps@^2.0.0",
+              "a2": "npm:no-deps@~2.0.0",
+              "a3": "npm:no-deps@~2.0.0",
+              "a4": "npm:no-deps@2.0.0",
+              "a5": "npm:no-deps@2.0.0",
+              "a6": "npm:no-deps@~2.0.0",
+              "a7": "npm:no-deps@^2.0.0",
+              "a8": "npm:no-deps@~2.0.0",
+              "a9": "npm:no-deps@^2.0.0",
+            },
+          });
+        } else {
+          await runBunUpdate(env, packageDir);
+          expect(await file(join(packageDir, "package.json")).json()).toEqual({
+            name: "foo",
+            dependencies: {
+              "a1": "npm:no-deps@^1.1.0",
+              "a10": "npm:no-deps@~1.0.1",
+              "a11": "npm:no-deps@^1.1.0",
+              "a12": "npm:no-deps@~1.0.1",
+              "a13": "npm:no-deps@^1.1.0",
+              "a14": "npm:no-deps@~1.1.0",
+              "a15": "npm:no-deps@^1.1.0",
+              "a2": "npm:no-deps@~1.0.1",
+              "a3": "npm:no-deps@~1.1.0",
+              "a4": "npm:no-deps@1.0.1",
+              "a5": "npm:no-deps@1.1.0",
+              "a6": "npm:no-deps@~1.1.0",
+              "a7": "npm:no-deps@^1.1.0",
+              "a8": "npm:no-deps@~1.1.0",
+              "a9": "npm:no-deps@^1.1.0",
+            },
+          });
+        }
+        const files = await Promise.all(
+          ["a1", "a10", "a11", "a12", "a13", "a14", "a15", "a2", "a3", "a4", "a5", "a6", "a7", "a8", "a9"].map(alias =>
+            file(join(packageDir, "node_modules", alias, "package.json")).json(),
+          ),
+        );
+
+        if (latest) {
+          // each version should be "2.0.0"
+          expect(files).toMatchObject(Array(15).fill({ version: "2.0.0" }));
+        } else {
+          expect(files).toMatchObject([
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.0.1" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+            { version: "1.1.0" },
+          ]);
+        }
+      });
+    }
+
+    test("with package name in args", async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "a-dep": "1.0.3",
+            "no-deps": "~1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+        name: "no-deps",
+        version: "1.0.1",
+      });
+
+      let { out } = await runBunUpdate(env, packageDir, ["no-deps"]);
+      expect(out).toEqual(["", "installed no-deps@1.0.1", "", expect.stringContaining("done"), ""]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.3",
+          "no-deps": "~1.0.1",
+        },
+      });
+
+      // update with --latest should only change the update request and keep `~`
+      ({ out } = await runBunUpdate(env, packageDir, ["no-deps", "--latest"]));
+      expect(out).toEqual(["", "installed no-deps@2.0.0", "", "1 package installed"]);
+      expect(await file(join(packageDir, "package.json")).json()).toEqual({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.3",
+          "no-deps": "~2.0.0",
+        },
+      });
+    });
   });
   describe("alises", () => {
     test("update all", async () => {
@@ -2815,7 +3802,9 @@ describe("update", () => {
         "dep-loop-entry": "1.0.0",
         "dep-with-tags": "^2.0.0",
         "dev-deps": "1.0.0",
-        "a-dep": "1.0.5",
+
+        // a-dep should keep caret
+        "a-dep": "^1.0.5",
       },
     });
 
@@ -2968,6 +3957,54 @@ describe("update", () => {
       version: "1.1.0",
     });
   });
+
+  test("--latest works with packages from arguments", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir, ["no-deps", "--latest"]);
+
+    const files = await Promise.all([
+      file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+      file(join(packageDir, "package.json")).json(),
+    ]);
+
+    expect(files).toMatchObject([{ version: "2.0.0" }, { dependencies: { "no-deps": "2.0.0" } }]);
+  });
+});
+
+test("packages dependening on each other with aliases does not infinitely loop", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "alias-loop-1": "1.0.0",
+        "alias-loop-2": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const files = await Promise.all([
+    file(join(packageDir, "node_modules", "alias-loop-1", "package.json")).json(),
+    file(join(packageDir, "node_modules", "alias-loop-2", "package.json")).json(),
+    file(join(packageDir, "node_modules", "alias1", "package.json")).json(),
+    file(join(packageDir, "node_modules", "alias2", "package.json")).json(),
+  ]);
+  expect(files).toMatchObject([
+    { name: "alias-loop-1", version: "1.0.0" },
+    { name: "alias-loop-2", version: "1.0.0" },
+    { name: "alias-loop-2", version: "1.0.0" },
+    { name: "alias-loop-1", version: "1.0.0" },
+  ]);
 });
 
 test("it should re-populate .bin folder if package is reinstalled", async () => {
@@ -6421,6 +7458,10 @@ const prereleaseFailTests = [
       title: "greater than or equal to highest prerelease + 1",
       depVersion: ">=5.0.0-alpha.154",
     },
+    {
+      title: "`.` instead of `-` should fail",
+      depVersion: "5.0.0.alpha.150",
+    },
   ],
   // prereleases-4 has one version
   // - 2.0.0-pre.0
@@ -7211,12 +8252,13 @@ describe("yarn tests", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(["", "4 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       ".cache",
+      "fake-peer-deps",
       "no-deps",
       "peer-deps",
       "pkg-a",
       "pkg-b",
     ]);
-    expect(await file(join(packageDir, "pkg-b", "node_modules", "fake-peer-deps", "package.json")).json()).toEqual({
+    expect(await file(join(packageDir, "node_modules", "fake-peer-deps", "package.json")).json()).toEqual({
       name: "peer-deps",
       version: "1.0.0",
       peerDependencies: {
@@ -7647,4 +8689,78 @@ describe("yarn tests", () => {
     expect(await exists(join(packageDir, "node_modules/one-dep-scripted/success.txt"))).toBeTrue();
     expect(await exited).toBe(0);
   });
+});
+
+test("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "tarball-without-package-prefix": "1.0.0",
+      },
+    }),
+  );
+
+  // Entries in this tarball:
+  //
+  //  ./
+  //  ./package1000.js
+  //  ./package2/
+  //  ./package3/
+  //  ./package4/
+  //  ./package.json
+  //  ./package/
+  //  ./package1000/
+  //  ./package/index.js
+  //  ./package4/package5/
+  //  ./package4/package.json
+  //  ./package3/package6/
+  //  ./package3/package6/index.js
+  //  ./package2/index.js
+  //  package3/
+  //  package3/package6/
+  //  package3/package6/index.js
+  //
+  // The directory `package3` is added twice, but because one doesn't start
+  // with `./`, it is stripped from the path and a copy of `package6` is placed
+  // at the root of the output directory. Also `package1000` is not included in
+  // the output because it is an empty directory.
+
+  await runBunInstall(env, packageDir);
+  const prefix = join(packageDir, "node_modules", "tarball-without-package-prefix");
+  const results = await Promise.all([
+    file(join(prefix, "package.json")).json(),
+    file(join(prefix, "package1000.js")).text(),
+    file(join(prefix, "package", "index.js")).text(),
+    file(join(prefix, "package2", "index.js")).text(),
+    file(join(prefix, "package3", "package6", "index.js")).text(),
+    file(join(prefix, "package4", "package.json")).json(),
+    exists(join(prefix, "package4", "package5")),
+    exists(join(prefix, "package1000")),
+    file(join(prefix, "package6", "index.js")).text(),
+  ]);
+  expect(results).toEqual([
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+    "hi",
+    "ooops",
+    "ooooops",
+    "oooooops",
+    {
+      "name": "tarball-without-package-prefix",
+      "version": "2.0.0",
+    },
+    false,
+    false,
+    "oooooops",
+  ]);
+  expect(await file(join(packageDir, "node_modules", "tarball-without-package-prefix", "package.json")).json()).toEqual(
+    {
+      name: "tarball-without-package-prefix",
+      version: "1.0.0",
+    },
+  );
 });

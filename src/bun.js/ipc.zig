@@ -497,7 +497,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         break :brk global;
                     }
                     this.handleIPCClose();
-                    socket.close(0, null);
+                    socket.close(.failure);
                     return;
                 },
                 else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
@@ -516,7 +516,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         error.InvalidFormat => {
                             Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                             this.handleIPCClose();
-                            socket.close(0, null);
+                            socket.close(.failure);
                             return;
                         },
                     };
@@ -546,7 +546,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                     error.InvalidFormat => {
                         Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                         this.handleIPCClose();
-                        socket.close(0, null);
+                        socket.close(.failure);
                         return;
                     },
                 };

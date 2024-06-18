@@ -234,6 +234,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 js_printer.formatJSONStringUTF8(source_file),
                 mappings.formatVLQs(),
             });
+            try bufw.flush();
         }
     } else {
         dir.writeFile(std.fs.path.basename(specifier), written) catch return;
@@ -1068,7 +1069,9 @@ pub const ModuleLoader = struct {
                         const package = pm.lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
-                        switch (pm.determinePreinstallState(package, pm.lockfile)) {
+                        var name_and_version_hash: ?u64 = null;
+                        var patchfile_hash: ?u64 = null;
+                        switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
                             .done => {
                                 // we are only truly done if all the dependencies are done.
                                 const current_tasks = pm.total_tasks;
@@ -2276,9 +2279,16 @@ pub const ModuleLoader = struct {
             _specifier.slice(),
             &display_specifier,
         );
-        const path = Fs.Path.init(specifier);
+        var path = Fs.Path.init(specifier);
 
         var virtual_source: ?*logger.Source = null;
+        var virtual_source_to_use: ?logger.Source = null;
+        var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        defer {
+            if (blob_to_deinit != null) {
+                blob_to_deinit.?.deinit();
+            }
+        }
 
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
@@ -2295,6 +2305,39 @@ pub const ModuleLoader = struct {
             }
         }
 
+        if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+            if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+                blob_to_deinit = blob;
+
+                // "file:" loader makes no sense for blobs
+                // so let's default to tsx.
+                if (blob.getFileName()) |filename| {
+                    const current_path = Fs.Path.init(filename);
+
+                    // Only treat it as a file if is a Bun.file()
+                    if (blob.needsToReadFile()) {
+                        path = current_path;
+                    }
+
+                    loader = jsc_vm.bundler.options.loaders.get(current_path.name.ext) orelse .tsx;
+                } else {
+                    loader = .tsx;
+                }
+
+                if (!blob.needsToReadFile()) {
+                    virtual_source_to_use = logger.Source{
+                        .path = path,
+                        .contents = blob.sharedView(),
+                        .key_path = path,
+                    };
+                    virtual_source = &virtual_source_to_use.?;
+                }
+            } else {
+                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.createErrorInstanceWithCode(.MODULE_NOT_FOUND, "Blob not found", .{}).asVoid());
+                return null;
+            }
+        }
+
         if (type_attribute) |attribute| {
             if (attribute.eqlComptime("sqlite")) {
                 loader = .sqlite;
@@ -2306,6 +2349,14 @@ pub const ModuleLoader = struct {
                 loader = .toml;
             } else if (attribute.eqlComptime("file")) {
                 loader = .file;
+            } else if (attribute.eqlComptime("js")) {
+                loader = .js;
+            } else if (attribute.eqlComptime("jsx")) {
+                loader = .jsx;
+            } else if (attribute.eqlComptime("ts")) {
+                loader = .ts;
+            } else if (attribute.eqlComptime("tsx")) {
+                loader = .tsx;
             }
         }
 
@@ -2317,7 +2368,7 @@ pub const ModuleLoader = struct {
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
             const concurrent_loader = loader orelse .file;
-            if (allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
+            if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)

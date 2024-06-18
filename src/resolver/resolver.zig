@@ -1967,6 +1967,7 @@ pub const Resolver = struct {
                                         .{
                                             .root_request_id = 0,
                                         },
+                                        null,
                                     );
 
                                 return .{

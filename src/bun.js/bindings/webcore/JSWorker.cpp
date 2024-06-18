@@ -582,7 +582,7 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
 {
     auto* jsWorker = jsCast<JSWorker*>(handle.slot()->asCell());
     auto& wrapped = jsWorker->wrapped();
-    if (wrapped.hasPendingActivity()) {
+    if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
             *reason = "ActiveDOMObject with pending activity"_s;
         return true;

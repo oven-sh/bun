@@ -490,28 +490,22 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int options
 ) {
 
-    if (port != 0) {
-        /* Otherwise, always enable SO_REUSEPORT and SO_REUSEADDR _unless_ options specify otherwise */
-#ifdef _WIN32
-        if (options & LIBUS_LISTEN_EXCLUSIVE_PORT) {
-            int optval2 = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
-        } else {
-            int optval3 = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
-        }
-#else
-    #if /*defined(__linux__) &&*/ defined(SO_REUSEPORT)
-        if (!(options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
-            int optval = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval, sizeof(optval));
-        }
-    #endif
-        int enabled = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &enabled, sizeof(enabled));
+     if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
+#if _WIN32
+        int optval2 = 1;
+        setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
 #endif
-
+    } else {
+      #if defined(SO_REUSEPORT)
+        int optval2 = 1;
+        setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+        #endif
     }
+
+#if defined(SO_REUSEADDR)
+    int optval3 = 1;
+    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
+#endif
 
 #ifdef IPV6_V6ONLY
     int disabled = 0;
@@ -927,13 +921,23 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
 
     
 #else
+    int r;
      do {
-        if (connect(fd, (struct sockaddr *)addr, namelen) == 0 || errno == EINPROGRESS || errno == EAGAIN) {
+        errno = 0;
+        r = connect(fd, (struct sockaddr *)addr, namelen);
+    } while (r == -1 && errno == EINTR);
+    
+    // connect() can return -1 with an errno of 0.
+    // the errno is the correct one in that case.
+    if (r == -1 && errno != 0) {
+        if (errno == EINPROGRESS) {
             return 0;
         }
-    } while (errno == EINTR);
 
-    return errno;
+        return errno;
+    }
+    
+    return 0;
 #endif
 }
 

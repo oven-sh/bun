@@ -80,7 +80,10 @@ public:
     JSC::JSValue value() const
     {
         if (refCount == 0) {
-            if (!weakValueRef.isSet()) {
+            // isSet() can return true even if the value was cleared
+            // so we must check if the value is clear
+            // if the value is unset, isClear() will return true
+            if (weakValueRef.isClear()) {
                 return JSC::JSValue {};
             }
 

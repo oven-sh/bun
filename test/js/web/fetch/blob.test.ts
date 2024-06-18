@@ -1,4 +1,24 @@
 import { test, expect } from "bun:test";
+import type { BinaryLike } from "node:crypto";
+import type { BlobOptions } from "node:buffer";
+test("blob: imports have sourcemapped stacktraces", async () => {
+  const blob = new Blob(
+    [
+      `
+    export function uhOh(very: any): boolean {
+      return Bun.inspect(new Error());  
+    }
+  `,
+    ],
+    { type: "application/typescript" },
+  );
+
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const { uhOh } = await import(url);
+  expect(uhOh()).toContain(`uhOh(very: any): boolean`);
+  URL.revokeObjectURL(url);
+});
 
 test("Blob.slice", async () => {
   const blob = new Blob(["Bun", "Foo"]);
@@ -63,4 +83,131 @@ test("new Blob", () => {
   blob = new Blob(["Bun", "Foo"], { type: "\u1234" });
   expect(blob.size).toBe(6);
   expect(blob.type).toBe("");
+});
+
+test("blob: can be fetched", async () => {
+  const blob = new Blob(["Bun", "Foo"]);
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  expect(await fetch(url).then(r => r.text())).toBe("BunFoo");
+  URL.revokeObjectURL(url);
+  expect(async () => {
+    await fetch(url);
+  }).toThrow();
+});
+
+test("blob: URL has Content-Type", async () => {
+  const blob = new File(["Bun", "Foo"], "file.txt", { type: "text/javascript;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const resp = await fetch(url);
+  expect(resp.headers.get("Content-Type")).toBe("text/javascript;charset=utf-8");
+  URL.revokeObjectURL(url);
+  expect(async () => {
+    await fetch(url);
+  }).toThrow();
+});
+
+test("blob: can be imported", async () => {
+  const blob = new Blob(
+    [
+      `
+    export function supportsTypescript(): boolean {
+      return true;
+    }
+  `,
+    ],
+    { type: "application/typescript" },
+  );
+
+  const url = URL.createObjectURL(blob);
+  expect(url).toStartWith("blob:");
+  const { supportsTypescript } = await import(url);
+  expect(supportsTypescript()).toBe(true);
+  URL.revokeObjectURL(url);
+  expect(async () => {
+    await import(url);
+  }).toThrow();
+});
+
+test("blob: can reliable get type from fetch #10072", async () => {
+  using server = Bun.serve({
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(Buffer.from("Hello"));
+          },
+          async pull(controller) {
+            await Bun.sleep(100);
+            controller.enqueue(Buffer.from("World"));
+            await Bun.sleep(100);
+            controller.close();
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "plain/text",
+          },
+        },
+      );
+    },
+  });
+
+  const blob = await fetch(server.url).then(res => res.blob());
+  expect(blob.type).toBe("plain/text");
+});
+
+test("blob: can set name property #10178", () => {
+  const blob = new Blob([Buffer.from("Hello, World")]);
+  // @ts-expect-error
+  expect(blob.name).toBeUndefined();
+  // @ts-expect-error
+  blob.name = "logo.svg";
+  // @ts-expect-error
+  expect(blob.name).toBe("logo.svg");
+  // @ts-expect-error
+  blob.name = 10;
+  // @ts-expect-error
+  expect(blob.name).toBe("logo.svg");
+  Object.defineProperty(blob, "name", {
+    value: 42,
+    writable: false,
+  });
+  // @ts-expect-error
+  expect(blob.name).toBe(42);
+
+  class MyBlob extends Blob {
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+      super(sources, options);
+      // @ts-expect-error
+      this.name = "logo.svg";
+    }
+  }
+
+  const myBlob = new MyBlob([Buffer.from("Hello, World")]);
+  // @ts-expect-error
+  expect(myBlob.name).toBe("logo.svg");
+  // @ts-expect-error
+  myBlob.name = 10;
+  // @ts-expect-error
+  expect(myBlob.name).toBe("logo.svg");
+  Object.defineProperty(myBlob, "name", {
+    value: 42,
+    writable: false,
+  });
+  // @ts-expect-error
+  expect(myBlob.name).toBe(42);
+
+  class MyOtherBlob extends Blob {
+    name: string | number;
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+      super(sources, options);
+      this.name = "logo.svg";
+    }
+  }
+  const myOtherBlob = new MyOtherBlob([Buffer.from("Hello, World")]);
+  expect(myOtherBlob.name).toBe("logo.svg");
+  myOtherBlob.name = 10;
+  expect(myOtherBlob.name).toBe(10);
 });

@@ -528,7 +528,7 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
   prototype->putDirectCustomAccessor(
-    vm, JSC::Identifier::fromString(vm, "require"_s),
+    vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
     JSC::CustomGetterSetter::create(
       vm,
       getterRequireFunction,

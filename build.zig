@@ -65,6 +65,7 @@ fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: [
 }
 
 const BunBuildOptions = struct {
+    enable_logs: bool = false,
     is_canary: bool = false,
     canary_revision: u32 = 0,
     sha: [:0]const u8 = "",
@@ -111,6 +112,7 @@ const BunBuildOptions = struct {
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
+        opts.addOption(@TypeOf(this.enable_logs), "enable_logs", this.enable_logs);
         opts.addOption(@TypeOf(this.is_canary), "is_canary", this.is_canary);
         opts.addOption(@TypeOf(this.canary_revision), "canary_revision", this.canary_revision);
         opts.addOption(
@@ -313,6 +315,8 @@ pub fn build_(b: *Build) !void {
             }
         }
 
+        const enable_logs = if (b.option(bool, "enable_logs", "Enable logs in release")) |l| l else false;
+
         const is_canary, const canary_revision = if (b.option(u32, "canary", "Treat this as a canary build")) |rev|
             if (rev == 0)
                 .{ false, 0 }
@@ -321,6 +325,7 @@ pub fn build_(b: *Build) !void {
         else
             .{ false, 0 };
         break :brk .{
+            .enable_logs = enable_logs,
             .is_canary = is_canary,
             .canary_revision = canary_revision,
             .version = b.option([]const u8, "version", "Value of `Bun.version`") orelse "0.0.0",

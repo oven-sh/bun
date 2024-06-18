@@ -33,7 +33,9 @@ jobs:
         run: |
           LABELS=$(bun scripts/read-issue.ts)
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
-          bun scripts/is-outdated.ts >> $GITHUB_OUTPUT
+
+          OUTDATED=$(bun scripts/is-outdated.ts)
+          echo "$OUTDATED" >> $GITHUB_OUTPUT
       - name: Add labels
         uses: actions-cool/issues-helper@v3
         with:

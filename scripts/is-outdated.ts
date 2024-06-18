@@ -53,10 +53,8 @@ for (const line of lines) {
 
     if (Bun.semver.order(latest, version) === 1) {
       console.write(",outdated=" + version);
-      console.write(",is-outdated=true\n");
+      console.write(",is-outdated=true");
       process.exit(0);
     }
   }
 }
-
-console.write("\n");

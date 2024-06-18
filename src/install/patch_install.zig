@@ -157,7 +157,7 @@ pub const PatchTask = struct {
         _ = manager; // autofix
         if (this.callback.apply.logger.errors > 0) {
             defer this.callback.apply.logger.deinit();
-            Output.printErrorln("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
+            Output.errGeneric("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
             this.callback.apply.logger.printForLogLevel(Output.writer()) catch {};
         }
     }

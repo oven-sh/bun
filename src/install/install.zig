@@ -10222,6 +10222,8 @@ pub const PackageManager = struct {
         var iterator = Lockfile.Tree.Iterator.init(manager.lockfile);
         var resolution_buf: [1024]u8 = undefined;
 
+        var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
+
         const cache_dir: std.fs.Dir, const cache_dir_subpath: []const u8, const module_folder: []const u8, const pkg_name: []const u8 = switch (arg_kind) {
             .path => brk: {
                 var lockfile = manager.lockfile;
@@ -10314,10 +10316,12 @@ pub const PackageManager = struct {
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
 
+                const buf = if (comptime bun.Environment.isWindows) bun.path.posixToPlatformInPlace(argument, win_normalizer[0..]) else argument;
+
                 break :brk .{
                     cache_dir,
                     cache_dir_subpath,
-                    argument,
+                    buf,
                     name,
                 };
             },
@@ -10361,11 +10365,13 @@ pub const PackageManager = struct {
                 const cache_dir = cache_result.cache_dir;
                 const cache_dir_subpath = cache_result.cache_dir_subpath;
 
-                const module_folder = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
+                const module_folder_ = bun.path.join(&[_][]const u8{ folder.relative_path, name }, .auto);
+                const buf = if (comptime bun.Environment.isWindows) bun.path.posixToPlatformInPlace(module_folder_, win_normalizer[0..]) else module_folder_;
+
                 break :brk .{
                     cache_dir,
                     cache_dir_subpath,
-                    module_folder,
+                    buf,
                     pkg_name,
                 };
             },

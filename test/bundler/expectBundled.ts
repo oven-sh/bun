@@ -13,7 +13,7 @@ import * as esbuild from "esbuild";
 import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
-function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   // https://github.com/tc39/proposal-string-cooked#motivation
   let single_string = String.raw({ raw: str }, ...args);
   single_string = single_string.trim();

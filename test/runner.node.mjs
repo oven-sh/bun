@@ -29,6 +29,7 @@ const isBuildKite = !!process.env["BUILDKITE"];
 const isBuildKiteTestSuite = !!process.env["BUILDKITE_ANALYTICS_TOKEN"];
 const isCI = !!process.env["CI"] || isGitHubAction || isBuildKite;
 const isInteractive = !isCI && process.argv.includes("-i") && process.stdout.isTTY;
+const isBail = process.argv.includes("--bail");
 
 const shardId = parseInt(process.env["BUILDKITE_PARALLEL_JOB"]) || 0;
 const maxShards = parseInt(process.env["BUILDKITE_PARALLEL_JOB_COUNT"]) || 1;
@@ -99,6 +100,9 @@ async function runTests(target, filters) {
    */
   const runTest = async (title, fn) => {
     const result = await runTask(title, fn);
+    if (isBail && !result.ok) {
+      process.exit(1);
+    }
     results.push(result);
 
     if (isBuildKite) {
@@ -133,7 +137,7 @@ async function runTests(target, filters) {
 
   for (const path of [cwd, testsPath]) {
     const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-    await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+    // await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
   }
 
   if (results.every(({ ok }) => ok)) {

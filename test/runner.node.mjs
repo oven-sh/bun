@@ -137,7 +137,7 @@ async function runTests(target, filters) {
 
   for (const path of [cwd, testsPath]) {
     const title = relative(cwd, join(path, "package.json")).replace(/\\/g, "/");
-    // await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
+    await runTest(title, async () => spawnBunInstall(execPath, { cwd: path }));
   }
 
   if (results.every(({ ok }) => ok)) {

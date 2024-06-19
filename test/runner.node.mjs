@@ -11,6 +11,7 @@ import {
   appendFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
@@ -106,19 +107,19 @@ async function runTests(target, filters) {
 
     if (isBuildKite) {
       const { ok, testPath, error, stdout, stdoutPreview } = result;
+
       const logsPath = join(cwd, "logs");
-      mkdirSync(logsPath, { recursive: true });
+      const logFilePath = join(logsPath, `${testPath}.log`);
+      mkdirSync(dirname(logFilePath), { recursive: true });
+      writeFileSync(logFilePath, stripAnsi(stdout));
+      if (!ok) {
+        uploadArtifactsToBuildKite(logFilePath);
+      }
 
       const statusFilePath = join(logsPath, ok ? "PASSED.txt" : "FAILED.txt");
       appendFileSync(statusFilePath, `${testPath}\n`);
       if (!ok || i % 10 === 0) {
         uploadArtifactsToBuildKite(statusFilePath);
-      }
-
-      const logFilePath = join(logsPath, `${testPath}.log`);
-      appendFileSync(logFilePath, stripAnsi(stdout));
-      if (!ok) {
-        uploadArtifactsToBuildKite(logFilePath);
       }
 
       const markdown = formatTestToMarkdown(result);

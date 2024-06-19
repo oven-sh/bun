@@ -13798,7 +13798,7 @@ pub const PackageManager = struct {
             for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
                 if (package_id < end) continue;
                 // even if optional dependencies are enabled, it's still allowed to fail
-                if (failed_dep.behavior.isOptional() or !failed_dep.behavior.isEnabled(
+                if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(
                     if (root_list.contains(@truncate(parent_id)))
                         this.options.local_package_features
                     else

@@ -31,6 +31,10 @@ export const shellInternals = {
   builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
 };
 
+export const iniInternals = {
+  parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
+};
+
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;

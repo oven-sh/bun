@@ -1,0 +1,569 @@
+const std = @import("std");
+const bun = @import("root").bun;
+const Allocator = std.mem.Allocator;
+const E = bun.JSAst.E;
+const Expr = bun.JSAst.Expr;
+const Loc = bun.logger.Loc;
+const js_ast = bun.JSAst;
+const Rope = js_ast.E.Object.Rope;
+
+pub const Parser = struct {
+    opts: Options = .{},
+    source: bun.logger.Source,
+    src: []const u8,
+    out: Expr,
+    logger: bun.logger.Log,
+    arena: std.heap.ArenaAllocator,
+
+    const Options = struct {
+        bracked_array: bool = true,
+    };
+
+    pub fn init(allocator: Allocator, path: []const u8, src: []const u8) Parser {
+        return .{
+            .logger = bun.logger.Log.init(allocator),
+            .src = src,
+            .out = Expr.init(E.Object, E.Object{}, Loc.Empty),
+            .source = bun.logger.Source.initPathString(path, src),
+            .arena = std.heap.ArenaAllocator.init(allocator),
+        };
+    }
+
+    pub fn deinit(this: *Parser) void {
+        this.logger.deinit();
+        this.arena.deinit();
+    }
+
+    pub fn parse(this: *Parser) !void {
+        try this.parseImpl();
+    }
+
+    inline fn shouldSkipLine(line: []const u8) bool {
+        if (line.len == 0 or
+            // comments
+            line[0] == ';' or
+            line[0] == '#') return true;
+
+        // starts with anything other than whitespace then don't skip
+        if (switch (line[0]) {
+            ' ',
+            '\t',
+            '\n',
+            '\r',
+            => false,
+            else => true,
+        }) return false;
+
+        // check the rest is whitespace
+        for (line) |c| {
+            switch (c) {
+                ' ', '\t', '\n', '\r' => {},
+                '#', ';' => return true,
+                else => return false,
+            }
+        }
+        return true;
+    }
+
+    fn parseImpl(this: *Parser) !void {
+        var iter = std.mem.splitScalar(u8, this.src, '\n');
+        var head: *E.Object = this.out.data.e_object;
+
+        // var duplicates = std.StringArrayHashMapUnmanaged(u32){};
+        // defer duplicates.deinit(allocator);
+
+        var stack = std.heap.stackFallback(@sizeOf(Rope) * 6, this.arena.allocator());
+        const ropealloc = stack.get();
+
+        var skip_until_next_section: bool = false;
+
+        while (iter.next()) |line| {
+            if (shouldSkipLine(line)) continue;
+
+            // Section
+            // [foo]
+            if (line[0] == '[') {
+                skip_until_next_section = false;
+                const close_bracket_idx = std.mem.indexOfScalar(u8, line[0..], ']') orelse continue;
+                // Make sure the rest is just whitespace
+                if (close_bracket_idx + 1 < line.len) {
+                    for (line[close_bracket_idx + 1 ..]) |c| if (switch (c) {
+                        ' ', '\t' => false,
+                        else => true,
+                    }) continue;
+                }
+                const section: *Rope = try this.prepareStr(ropealloc, line[1..close_bracket_idx], @as(i32, @intCast(@intFromPtr(line.ptr) - @intFromPtr(this.src.ptr))) + 1, .section);
+                defer stack.fixed_buffer_allocator.reset();
+                const parent_object = this.out.data.e_object.getOrPutObject(section, this.arena.allocator()) catch |e| switch (e) {
+                    error.OutOfMemory => bun.outOfMemory(),
+                    error.Clobber => {
+                        // We're in here if key exists but it is not an object
+                        //
+                        // This is possible if someone did:
+                        //
+                        // ```ini
+                        // foo = 'bar'
+                        //
+                        // [foo]
+                        // hello = 420
+                        // ```
+                        //
+                        // In the above case, `this.out[section]` would be a string.
+                        // So what should we do in that case?
+                        //
+                        // npm/ini's will chug along happily trying to assign keys to the string.
+                        //
+                        // In JS assigning keys to string does nothing.
+                        //
+                        // Technically, this would have an effect if the value was an array:
+                        //
+                        // ```ini
+                        // foo[] = 0
+                        // foo[] = 1
+                        //
+                        // [foo]
+                        // 0 = 420
+                        // ```
+                        //
+                        // This would result in `foo` being `[420, 1]`.
+                        //
+                        // To be honest this is kind of crazy behavior so we're just going to skip this for now.
+                        skip_until_next_section = true;
+                        continue;
+                    },
+                };
+                head = parent_object.data.e_object;
+                continue;
+            }
+            if (skip_until_next_section) continue;
+
+            // Otherwise it's a key val here
+
+            const line_offset: i32 = @intCast(@intFromPtr(line.ptr) - @intFromPtr(this.src.ptr));
+
+            const maybe_eq_sign_idx = std.mem.indexOfScalar(u8, line, '=');
+
+            const key_raw: []const u8 = try this.prepareStr(ropealloc, line[0 .. maybe_eq_sign_idx orelse line.len], line_offset, .key);
+            const is_array: bool = brk: {
+                if (this.opts.bracked_array) {
+                    break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
+                } else {
+                    // const gop = try duplicates.getOrPut(allocator, key_raw);
+                    // if (gop.found_existing) {
+                    //     gop.value_ptr.* = 1;
+                    // } else gop.value_ptr.* += 1;
+                    // break :brk gop.value_ptr.* > 1;
+                    @panic("We don't support this right now");
+                }
+            };
+
+            const key = if (is_array and bun.strings.endsWith(key_raw, "[]"))
+                key_raw[0 .. key_raw.len - 2]
+            else
+                key_raw;
+
+            if (bun.strings.eql(key, "__proto__")) continue;
+
+            const value_raw: Expr = brk: {
+                if (maybe_eq_sign_idx) |eq_sign_idx| {
+                    if (eq_sign_idx + 1 < line.len) break :brk try this.prepareStr(
+                        ropealloc,
+                        line[eq_sign_idx + 1 ..],
+                        @intCast(line_offset + @as(i32, @intCast(eq_sign_idx)) + 1),
+                        .value,
+                    );
+                    break :brk Expr.init(E.String, E.String{ .data = "" }, Loc.Empty);
+                }
+                break :brk Expr.init(E.Boolean, E.Boolean{ .value = true }, Loc.Empty);
+            };
+
+            const value: Expr = switch (value_raw.data) {
+                .e_string => |s| if (bun.strings.eqlComptime(s.data, "true"))
+                    Expr.init(E.Boolean, E.Boolean{ .value = true }, Loc.Empty)
+                else if (bun.strings.eqlComptime(s.data, "false"))
+                    Expr.init(E.Boolean, E.Boolean{ .value = false }, Loc.Empty)
+                else if (bun.strings.eqlComptime(s.data, "null"))
+                    Expr.init(E.Null, E.Null{}, Loc.Empty)
+                else
+                    value_raw,
+                else => value_raw,
+            };
+
+            if (is_array) {
+                if (head.get(key)) |val| {
+                    if (val.data != .e_array) {
+                        var arr = E.Array{};
+                        arr.push(this.arena.allocator(), val) catch bun.outOfMemory();
+                        head.put(this.arena.allocator(), key, Expr.init(E.Array, arr, Loc.Empty)) catch bun.outOfMemory();
+                    }
+                } else {
+                    head.put(this.arena.allocator(), key, Expr.init(E.Array, E.Array{}, Loc.Empty)) catch bun.outOfMemory();
+                }
+            }
+
+            // safeguard against resetting a previously defined
+            // array by accidentally forgetting the brackets
+            var was_already_array = false;
+            if (head.get(key)) |val| {
+                if (val.data == .e_array) {
+                    was_already_array = true;
+                    val.data.e_array.push(this.arena.allocator(), value) catch bun.outOfMemory();
+                    head.put(this.arena.allocator(), key, val) catch bun.outOfMemory();
+                }
+            }
+            if (!was_already_array) {
+                head.put(this.arena.allocator(), key, value) catch bun.outOfMemory();
+            }
+        }
+    }
+
+    fn prepareStr(
+        this: *Parser,
+        ropealloc: Allocator,
+        val_: []const u8,
+        offset_: i32,
+        comptime usage: enum { section, key, value },
+    ) !switch (usage) {
+        .value => Expr,
+        .section => *Rope,
+        .key => []const u8,
+    } {
+        var offset = offset_;
+        var val = std.mem.trim(u8, val_, " \n\r\t");
+
+        if (isQuoted(val)) out: {
+            // remove single quotes before calling JSON.parse
+            if (val.len > 0 and val[0] == '\'') {
+                val = if (val.len > 1) val[1 .. val.len - 1] else val[1..];
+                offset += 1;
+            }
+            const src = bun.logger.Source.initPathString("<unknown>", val);
+            var log = bun.logger.Log.init(this.arena.allocator());
+            defer log.deinit();
+            // Try to parse it and it if fails will just treat it as a string
+            const json_val: Expr = bun.JSON.ParseJSONUTF8Impl(&src, &log, this.arena.allocator(), true) catch {
+                break :out;
+            };
+
+            if (json_val.asString(this.arena.allocator())) |str| {
+                if (comptime usage == .value) return Expr.init(E.String, E.String.init(str), Loc{ .start = @intCast(offset) });
+                if (comptime usage == .section) return strToRope(ropealloc, str);
+                return str;
+            }
+
+            if (comptime usage == .value) return json_val;
+
+            // unfortunately, we need to match npm/ini behavior here,
+            // which requires us to turn these into a string,
+            // same behavior as doing this:
+            // ```
+            // let foo = {}
+            // const json_val = { hi: 'hello' }
+            // foo[json_val] = 'nice'
+            // ```
+            switch (json_val.data) {
+                .e_object => {
+                    if (comptime usage == .section) return singleStrRope(ropealloc, "[Object object]");
+                    return "[Object object]";
+                },
+                else => {
+                    const str = std.fmt.allocPrint(this.arena.allocator(), "{}", .{toStringFormatter{ .d = json_val.data }}) catch |e| {
+                        this.logger.addErrorFmt(&this.source, Loc{ .start = offset }, this.arena.allocator(), "failed to stringify value: {s}", .{@errorName(e)}) catch bun.outOfMemory();
+                        return error.ParserError;
+                    };
+                    if (comptime usage == .section) return singleStrRope(ropealloc, str);
+                    return str;
+                },
+            }
+        } else {
+            const STACK_BUF_SIZE = 1024;
+            // walk the val to find the first non-escaped comment character (; or #)
+            var did_any_escape: bool = false;
+            var esc = false;
+            var sfb = std.heap.stackFallback(STACK_BUF_SIZE, this.arena.allocator());
+            var unesc = try std.ArrayList(u8).initCapacity(sfb.get(), STACK_BUF_SIZE);
+
+            const RopeT = if (comptime usage == .section) *Rope else struct {};
+            var rope: ?RopeT = if (comptime usage == .section) null else undefined;
+
+            var i: usize = 0;
+            while (i < val.len) : (i += 1) {
+                const c = val[i];
+                if (esc) {
+                    switch (c) {
+                        '\\', ';', '#' => try unesc.append(c),
+                        '.' => {
+                            if (comptime usage == .section) {
+                                try unesc.append('.');
+                            } else {
+                                try unesc.appendSlice("\\.");
+                            }
+                        },
+                        else => {
+                            try unesc.appendSlice(switch (bun.strings.utf8ByteSequenceLength(c)) {
+                                1 => brk: {
+                                    break :brk &[_]u8{ '\\', c };
+                                },
+                                2 => brk: {
+                                    i += 1;
+                                    break :brk &[_]u8{ '\\', c, val[i + 1] };
+                                },
+                                3 => brk: {
+                                    i += 2;
+                                    break :brk &[_]u8{ '\\', c, val[i + 1], val[i + 2] };
+                                },
+                                4 => brk: {
+                                    i += 3;
+                                    break :brk &[_]u8{ '\\', c, val[i + 1], val[i + 2], val[i + 3] };
+                                },
+                                // this means invalid utf8
+                                else => unreachable,
+                            });
+                        },
+                    }
+
+                    esc = false;
+                } else switch (c) {
+                    ';', '#' => break,
+                    '\\' => {
+                        esc = true;
+                        did_any_escape = true;
+                    },
+                    '.' => {
+                        if (comptime usage == .section) {
+                            this.commitRopePart(ropealloc, &unesc, &rope);
+                        } else {
+                            try unesc.append('.');
+                        }
+                    },
+                    else => try unesc.appendSlice(switch (bun.strings.utf8ByteSequenceLength(c)) {
+                        1 => brk: {
+                            break :brk &[_]u8{c};
+                        },
+                        2 => brk: {
+                            i += 1;
+                            break :brk &[_]u8{ c, val[i + 1] };
+                        },
+                        3 => brk: {
+                            i += 2;
+                            break :brk &[_]u8{ c, val[i + 1], val[i + 2] };
+                        },
+                        4 => brk: {
+                            i += 3;
+                            break :brk &[_]u8{ c, val[i + 1], val[i + 2], val[i + 3] };
+                        },
+                        // this means invalid utf8
+                        else => unreachable,
+                    }),
+                }
+            }
+
+            if (esc)
+                try unesc.append('\\');
+
+            switch (usage) {
+                .section => {
+                    this.commitRopePart(ropealloc, &unesc, &rope);
+                    return rope.?;
+                },
+                .value => {
+                    if (!did_any_escape) return Expr.init(E.String, E.String.init(val[0..]), Loc{ .start = offset });
+                    if (unesc.items.len <= STACK_BUF_SIZE) return Expr.init(
+                        E.String,
+                        E.String.init(try this.arena.allocator().dupe(u8, unesc.items[0..])),
+                        Loc{ .start = offset },
+                    );
+                    return Expr.init(E.String, E.String.init(unesc.items[0..]), Loc{ .start = offset });
+                },
+                .key => {
+                    const thestr: []const u8 = thestr: {
+                        if (!did_any_escape) break :thestr val[0..];
+                        if (unesc.items.len <= STACK_BUF_SIZE) break :thestr try this.arena.allocator().dupe(u8, unesc.items[0..]);
+                        break :thestr unesc.items[0..];
+                    };
+                    return thestr;
+                },
+            }
+        }
+        if (comptime usage == .value) return Expr.init(E.String, E.String.init(val[0..]), Loc{ .start = offset });
+        if (comptime usage == .key) return val[0..];
+        return strToRope(ropealloc, val[0..]);
+    }
+
+    fn singleStrRope(ropealloc: Allocator, str: []const u8) *Rope {
+        const rope = ropealloc.create(Rope) catch bun.outOfMemory();
+        rope.* = .{
+            .head = Expr.init(E.String, E.String.init(str), Loc.Empty),
+        };
+        return rope;
+    }
+
+    fn nextDot(key: []const u8) ?usize {
+        return std.mem.indexOfScalar(u8, key, '.');
+        // const dot_idx = std.mem.indexOfScalar(u8, key, '.') orelse return null;
+        // if (dot_idx == 0) return dot_idx;
+        // var i: usize = @intCast(dot_idx - 1);
+        // var count: u8 = 0;
+        // while(key[
+        // while (i >= 0) {
+        //     if (key[@intCast(i)] == '\\') {
+        //         count += 1;
+        //     }
+        //     i -= 1;
+        // }
+        // if (count % 2 == 1) return dot_idx;
+        // if (dot_idx + 1 < key.len) {
+        //     if (nextDot(key[dot_idx + 1 ..])) |val| return dot_idx + 1 + val;
+        // }
+        // return null;
+    }
+
+    fn commitRopePart(this: *Parser, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) void {
+        const slice = this.arena.allocator().dupe(u8, unesc.items[0..]) catch bun.outOfMemory();
+        const expr = Expr.init(E.String, E.String{ .data = slice }, Loc.Empty);
+        if (existing_rope.*) |_r| {
+            const r: *Rope = _r;
+            _ = r.append(expr, ropealloc) catch bun.outOfMemory();
+        } else {
+            existing_rope.* = ropealloc.create(Rope) catch bun.outOfMemory();
+            existing_rope.*.?.* = Rope{
+                .head = expr,
+            };
+        }
+        unesc.clearRetainingCapacity();
+    }
+
+    fn strToRope(ropealloc: Allocator, key: []const u8) *Rope {
+        var dot_idx = nextDot(key) orelse {
+            const rope = ropealloc.create(Rope) catch bun.outOfMemory();
+            rope.* = .{
+                .head = Expr.init(E.String, E.String.init(key), Loc.Empty),
+            };
+            return rope;
+        };
+        var rope = ropealloc.create(Rope) catch bun.outOfMemory();
+        const head = rope;
+        rope.* = .{
+            .head = Expr.init(E.String, E.String.init(key[0..dot_idx]), Loc.Empty),
+            .next = null,
+        };
+
+        while (dot_idx + 1 < key.len) {
+            const next_dot_idx = dot_idx + 1 + (nextDot(key[dot_idx + 1 ..]) orelse {
+                const rest = key[dot_idx + 1 ..];
+                rope = rope.append(Expr.init(E.String, E.String.init(rest), Loc.Empty), ropealloc) catch bun.outOfMemory();
+                break;
+            });
+            const part = key[dot_idx + 1 .. next_dot_idx];
+            rope = rope.append(Expr.init(E.String, E.String.init(part), Loc.Empty), ropealloc) catch bun.outOfMemory();
+            dot_idx = next_dot_idx;
+        }
+
+        return head;
+    }
+
+    fn isQuoted(val: []const u8) bool {
+        return (bun.strings.startsWithChar(val, '"') and bun.strings.endsWithChar(val, '"')) or
+            (bun.strings.startsWithChar(val, '\'') and bun.strings.endsWithChar(val, '\''));
+    }
+};
+
+/// Used in JS tests, see `internal-for-testing.ts` and shell tests.
+pub const IniTestingAPIs = struct {
+    const JSC = bun.JSC;
+
+    pub fn parse(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(1);
+        const arguments = arguments_.slice();
+
+        const jsstr = arguments[0];
+        const bunstr = jsstr.toBunString(globalThis);
+        defer bunstr.deref();
+        const utf8str = bunstr.toUTF8(bun.default_allocator);
+        defer utf8str.deinit();
+
+        var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice());
+        defer parser.deinit();
+
+        parser.parse() catch |e| {
+            if (parser.logger.errors > 0) {
+                parser.logger.printForLogLevel(bun.Output.writer()) catch bun.outOfMemory();
+            } else globalThis.throwError(e, "failed to parse");
+            return .undefined;
+        };
+
+        return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
+            globalThis.throwError(e, "failed to turn AST into JS");
+            return .undefined;
+        };
+    }
+};
+
+pub const toStringFormatter = struct {
+    d: js_ast.Expr.Data,
+
+    pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (this.d) {
+            .e_array => {
+                const last = this.d.e_array.items.len -| 1;
+                for (this.d.e_array.items.slice(), 0..) |*e, i| {
+                    const is_last = i == last;
+                    try writer.print("{}{s}", .{ toStringFormatter{ .d = e.data }, if (is_last) "" else "," });
+                }
+            },
+            .e_object => try writer.print("[Object object]", .{}),
+            .e_boolean => try writer.print("{s}", .{if (this.d.e_boolean.value) "true" else "false"}),
+            .e_number => try writer.print("{d}", .{this.d.e_number.value}),
+            .e_string => try writer.print("{s}", .{this.d.e_string.data}),
+            .e_null => try writer.print("null", .{}),
+            .e_utf8_string => try writer.print("{s}", .{this.d.e_utf8_string.data}),
+
+            .e_unary => {},
+            .e_binary => {},
+            .e_class => {},
+
+            .e_new => {},
+            .e_function => {},
+            .e_call => {},
+            .e_dot => {},
+            .e_index => {},
+            .e_arrow => {},
+
+            .e_jsx_element => {},
+            .e_spread => {},
+            .e_template_part => {},
+            .e_template => {},
+            .e_reg_exp => {},
+            .e_await => {},
+            .e_yield => {},
+            .e_if => {},
+            .e_import => {},
+
+            .e_identifier => {},
+            .e_import_identifier => {},
+            .e_private_identifier => {},
+            .e_commonjs_export_identifier => {},
+
+            .e_big_int => {},
+
+            .e_require_string => {},
+            .e_require_resolve_string => {},
+            .e_require_call_target => {},
+            .e_require_resolve_call_target => {},
+
+            .e_missing => {},
+            .e_this => {},
+            .e_super => {},
+            .e_undefined => {},
+            .e_new_target => {},
+            .e_import_meta => {},
+
+            // This type should not exist outside of MacroContext
+            // If it ends up in JSParser or JSPrinter, it is a bug.
+            .inline_identifier => {},
+        }
+    }
+};

@@ -1,7 +1,6 @@
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 
 describe("bun build", () => {
@@ -27,23 +26,25 @@ describe("bun build", () => {
       ]).toRun();
     }
     function testExec(outfile: string) {
-      const { exitCode } = Bun.spawnSync({
+      const { exitCode, stderr } = Bun.spawnSync({
         cmd: [outfile],
         env: bunEnv,
-        stdout: "inherit",
-        stderr: "inherit",
+        stdout: "pipe",
+        stderr: "pipe",
       });
+      expect(stderr.toString("utf8")).toBeEmpty();
       expect(exitCode).toBe(0);
     }
+    const tmpdir = tmpdirSync();
     {
-      const baseDir = `${tmpdir()}/bun-build-outfile-${Date.now()}`;
+      const baseDir = `${tmpdir}/bun-build-outfile-${Date.now()}`;
       const outfile = path.join(baseDir, "index.exe");
       testCompile(outfile);
       testExec(outfile);
       fs.rmSync(baseDir, { recursive: true, force: true });
     }
     {
-      const baseDir = `${tmpdir()}/bun-build-outfile2-${Date.now()}`;
+      const baseDir = `${tmpdir}/bun-build-outfile2-${Date.now()}`;
       const outfile = path.join(baseDir, "b/u/n", "index.exe");
       testCompile(outfile);
       testExec(outfile);
@@ -59,7 +60,8 @@ describe("bun build", () => {
   });
 
   test("__dirname and __filename are printed correctly", () => {
-    const baseDir = `${tmpdir()}/bun-build-dirname-filename-${Date.now()}`;
+    const tmpdir = tmpdirSync();
+    const baseDir = `${tmpdir}/bun-build-dirname-filename-${Date.now()}`;
     fs.mkdirSync(baseDir, { recursive: true });
     fs.mkdirSync(path.join(baseDir, "我")), { recursive: true };
     fs.writeFileSync(path.join(baseDir, "我", "我.ts"), "console.log(__dirname); console.log(__filename);");

@@ -1,6 +1,6 @@
-import { fileURLToPath, pathToFileURL } from "bun";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { fileURLToPath } from "bun";
+import { itBundled } from "./expectBundled";
+import { describe } from "bun:test";
 
 describe("bundler", async () => {
   for (let target of ["bun", "node"] as const) {

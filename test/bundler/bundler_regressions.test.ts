@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "./expectBundled";
+import { describe } from "bun:test";
 
 describe("bundler", () => {
   // https://x.com/jeroendotdot/status/1740651288239460384?s=46&t=0Uhw6mmGT650_9M2pXUsCw

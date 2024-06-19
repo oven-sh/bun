@@ -7188,6 +7188,8 @@ pub const PackageManager = struct {
                     this.do.trust_dependencies_from_args = true;
                 }
 
+                this.enable.hoist_workspace_dependencies = cli.hoist_workspace_dependencies;
+
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
                 const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
@@ -7304,6 +7306,8 @@ pub const PackageManager = struct {
             force_install: bool = false,
 
             exact_versions: bool = false,
+
+            hoist_workspace_dependencies: bool = false,
         };
     };
 
@@ -9037,6 +9041,7 @@ pub const PackageManager = struct {
         clap.parseParam("--backend <STR>                       Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...           Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
         clap.parseParam("--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default 5)") catch unreachable,
+        clap.parseParam("--hoist-workspaces                    If possible, hoist dependencies in workspaces to the root node_modules, making them available to all workspaces") catch unreachable,
         // clap.parseParam("--omit <STR>...                    Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
@@ -9117,6 +9122,7 @@ pub const PackageManager = struct {
         trusted: bool = false,
         no_summary: bool = false,
         latest: bool = false,
+        hoist_workspace_dependencies: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -9396,6 +9402,7 @@ pub const PackageManager = struct {
             cli.ignore_scripts = args.flag("--ignore-scripts");
             cli.trusted = args.flag("--trust");
             cli.no_summary = args.flag("--no-summary");
+            cli.hoist_workspace_dependencies = args.flag("--hoist-workspaces");
 
             // link and unlink default to not saving, all others default to
             // saving.

@@ -482,6 +482,7 @@ pub const Tree = struct {
         log: *logger.Log,
         lockfile: *Lockfile,
         prefer_dev_dependencies: bool = false,
+        hoist_workspace_dependencies: bool = false,
 
         pub fn maybeReportError(this: *Builder, comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -575,7 +576,10 @@ pub const Tree = struct {
 
             const dependency = builder.dependencies[dep_id];
             // Do not hoist folder dependencies
-            const destination = if (resolutions[pid].tag == .folder)
+            const destination = if (resolutions[pid].tag == .folder or
+                (!builder.hoist_workspace_dependencies and
+                dependency_id != root_dep_id and
+                builder.lockfile.buffers.dependencies.items[dependency_id].behavior.isWorkspaceOnly()))
                 next.id
             else
                 try next.hoistDependency(
@@ -1165,6 +1169,7 @@ const Cloner = struct {
             .log = this.log,
             .lockfile = lockfile,
             .prefer_dev_dependencies = this.manager.options.local_package_features.dev_dependencies,
+            .hoist_workspace_dependencies = this.manager.options.enable.hoist_workspace_dependencies,
         };
 
         try (Tree{}).processSubtree(Tree.root_dep_id, &builder);

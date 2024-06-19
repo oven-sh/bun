@@ -4519,6 +4519,42 @@ it("should fail on invalid Git URL", async () => {
   }
 });
 
+it("should fail on ssh Git URL if invalid credentials", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "private-install": "git+ssh://git@bitbucket.org/kaizenmedia/private-install-test.git",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "private-install" failed');
+  const out = await new Response(stdout).text();
+  expect(out).toBeEmpty();
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 it("should fail on Git URL with invalid committish", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

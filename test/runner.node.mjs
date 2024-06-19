@@ -147,10 +147,8 @@ async function runTests(target, filters) {
       const logsPath = join(cwd, "logs");
       const logFilePath = join(logsPath, `${testPath}.log`);
       mkdirSync(dirname(logFilePath), { recursive: true });
-      writeFileSync(logFilePath, stripAnsi(stdout));
-      if (!ok) {
-        uploadArtifactsToBuildKite(relative(cwd, logFilePath));
-      }
+      appendFileSync(logFilePath, stripAnsi(stdout));
+      uploadArtifactsToBuildKite(relative(cwd, logFilePath));
 
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
@@ -158,8 +156,8 @@ async function runTests(target, filters) {
       }
 
       if (!ok) {
-        const titleFailed = `${label}${getAnsi("red")} - ${error}${getAnsi("reset")}`;
-        await runTask(titleFailed, () => {
+        const label = `${getAnsi("red")}[${i}/${total}] ${title} - ${error}${getAnsi("reset")}`;
+        await runTask(label, () => {
           process.stderr.write(stdoutPreview);
         });
       }
@@ -1234,17 +1232,11 @@ function formatTestToMarkdown(result, concise) {
  * @param {string} glob
  */
 function uploadArtifactsToBuildKite(glob) {
-  const { error, status, signal, stderr } = spawnSync("buildkite-agent", ["artifact", "upload", glob], {
+  spawn("buildkite-agent", ["artifact", "upload", glob], {
     stdio: ["ignore", "ignore", "ignore"],
-    encoding: "utf-8",
     timeout: spawnTimeout,
     cwd,
   });
-  if (status === 0) {
-    return;
-  }
-  const cause = error ?? signal ?? `code ${status}`;
-  console.warn("Failed to upload artifacts to BuildKite:", cause, stderr);
 }
 
 /**
@@ -1272,7 +1264,7 @@ function listArtifactsFromBuildKite(glob, step) {
     cwd,
   });
   if (status === 0) {
-    return stdout.trim().split("\n");
+    return stdout?.split("\n").map(line => line.trim()) || [];
   }
   const cause = error ?? signal ?? `code ${status}`;
   console.warn("Failed to list artifacts from BuildKite:", cause, stderr);

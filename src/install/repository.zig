@@ -238,7 +238,7 @@ pub const Repository = extern struct {
 
         if (strings.hasPrefixComptime(url, "ssh://")) {
             final_path_buf[0.."https".len].* = "https".*;
-            bun.copy(u8, final_path_buf["https://".len..], url["ssh".len..]);
+            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
             const out = final_path_buf[0 .. url.len - "ssh".len + "https".len];
             return out;
         }

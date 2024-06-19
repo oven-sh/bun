@@ -12,7 +12,7 @@ import http, {
   IncomingMessage,
   OutgoingMessage,
 } from "node:http";
-import https from "node:https";
+import https, { createServer as createHttpsServer } from "node:https";
 import { EventEmitter } from "node:events";
 import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
@@ -826,6 +826,60 @@ describe("node:http", () => {
         });
         req.end();
       });
+    });
+  });
+
+  describe("https.request with custom tls options", () => {
+    const createServer = () =>
+      new Promise(resolve => {
+        const server = createHttpsServer(
+          {
+            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+            rejectUnauthorized: true,
+          },
+          (req, res) => {
+            res.writeHead(200);
+            res.end("hello world");
+          },
+        );
+
+        listen(server, "https").then(url => {
+          resolve({
+            server,
+            close: () => server.close(),
+            url,
+          });
+        });
+      });
+
+    it("supports custom tls args", async done => {
+      const { url, close } = await createServer();
+      try {
+        const options: https.RequestOptions = {
+          method: "GET",
+          url,
+          port: url.port,
+          ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
+        };
+        const req = https.request(options, res => {
+          res.on("data", () => null);
+          res.on("end", () => {
+            close();
+            done();
+          });
+        });
+
+        req.on("error", error => {
+          close();
+          done(error);
+        });
+
+        req.end();
+      } catch (e) {
+        close();
+        throw e;
+      }
     });
   });
 
@@ -2035,6 +2089,110 @@ it("ServerResponse ClientRequest field exposes agent getter", async () => {
     await promise;
   } catch (e) {
     throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("should accept custom certs when provided", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "localhost");
+  const address = server.address();
+
+  let url_address = address.address;
+  const res = await fetch(`https://localhost:${address.port}`, {
+    tls: {
+      rejectUnauthorized: true,
+      ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
+    },
+  });
+  const t = await res.text();
+  expect(t).toEqual("Hello from https server");
+
+  server.close();
+});
+it("should error with faulty args", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "localhost");
+  const address = server.address();
+
+  try {
+    let url_address = address.address;
+    const res = await fetch(`https://localhost:${address.port}`, {
+      tls: {
+        rejectUnauthorized: true,
+        ca: "some invalid value for a ca",
+      },
+    });
+    await res.text();
+    expect(true).toBe("unreacheable");
+  } catch (err) {
+    expect(err.code).toBe("FailedToOpenSocket");
+    expect(err.message).toBe("Was there a typo in the url or port?");
+  }
+  server.close();
+});
+
+it("should mark complete true", async () => {
+  const { promise: serve, resolve: resolveServe } = Promise.withResolvers();
+  const server = createServer(async (req, res) => {
+    let count = 0;
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk.toString();
+    });
+    while (!req.complete) {
+      await Bun.sleep(100);
+      count++;
+      if (count > 10) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Request timeout");
+        return;
+      }
+    }
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(data);
+  });
+
+  server.listen(0, () => {
+    resolveServe(`http://localhost:${server.address().port}`);
+  });
+
+  const url = await serve;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Hotel 1",
+        price: 100,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('{"name":"Hotel 1","price":100}');
   } finally {
     server.close();
   }

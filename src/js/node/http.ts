@@ -765,6 +765,7 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
     var { done, value } = await reader.readMany();
     if (self[abortedSymbol]) return;
     if (done) {
+      self.complete = true;
       self.push(null);
       break;
     }
@@ -776,11 +777,12 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
 
 IncomingMessage.prototype._read = function (size) {
   if (this[noBodySymbol]) {
-    this.push(null);
     this.complete = true;
+    this.push(null);
   } else if (this[bodyStreamSymbol] == null) {
     const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
     if (!reader) {
+      this.complete = true;
       this.push(null);
       return;
     }
@@ -794,17 +796,6 @@ Object.defineProperty(IncomingMessage.prototype, "aborted", {
     return this[abortedSymbol];
   },
 });
-
-function abort(self) {
-  if (self[abortedSymbol]) return;
-  self[abortedSymbol] = true;
-  var bodyStream = self[bodyStreamSymbol];
-  if (!bodyStream) return;
-  bodyStream.cancel();
-  self.complete = true;
-  self[bodyStreamSymbol] = undefined;
-  self.push(null);
-}
 
 Object.defineProperty(IncomingMessage.prototype, "connection", {
   get() {
@@ -874,74 +865,6 @@ IncomingMessage.prototype.setTimeout = function (msecs, callback) {
   // TODO:
   return this;
 };
-
-function emitErrorNt(msg, err, callback) {
-  callback(err);
-  if (typeof msg.emit === "function" && !msg._closed) {
-    msg.emit("error", err);
-  }
-}
-
-function onError(self, err, cb) {
-  process.nextTick(() => emitErrorNt(self, err, cb));
-}
-
-function write_(msg, chunk, encoding, callback, fromEnd) {
-  if (typeof callback !== "function") callback = nop;
-
-  let len;
-  if (chunk === null) {
-    // throw new ERR_STREAM_NULL_VALUES();
-    throw new Error("ERR_STREAM_NULL_VALUES");
-  } else if (typeof chunk === "string") {
-    len = Buffer.byteLength(chunk, encoding);
-  } else {
-    throw new Error("Invalid arg type for chunk");
-    // throw new ERR_INVALID_ARG_TYPE(
-    //   "chunk",
-    //   ["string", "Buffer", "Uint8Array"],
-    //   chunk,
-    // );
-  }
-
-  let err;
-  if (msg.finished) {
-    // err = new ERR_STREAM_WRITE_AFTER_END();
-    err = new Error("ERR_STREAM_WRITE_AFTER_END");
-  } else if (msg.destroyed) {
-    // err = new ERR_STREAM_DESTROYED("write");
-    err = new Error("ERR_STREAM_DESTROYED");
-  }
-
-  if (err) {
-    if (!msg.destroyed) {
-      onError(msg, err, callback);
-    } else {
-      process.nextTick(callback, err);
-    }
-    return false;
-  }
-
-  if (!msg._header) {
-    if (fromEnd) {
-      msg._contentLength = len;
-    }
-    // msg._implicitHeader();
-  }
-
-  if (!msg._hasBody) {
-    $debug("This type of response MUST NOT have a body. " + "Ignoring write() calls.");
-    process.nextTick(callback);
-    return true;
-  }
-
-  // if (!fromEnd && msg.socket && !msg.socket.writableCorked) {
-  //   msg.socket.cork();
-  //   process.nextTick(connectionCorkNT, msg.socket);
-  // }
-
-  return true;
-}
 
 const headersSymbol = Symbol("headers");
 const finishedSymbol = Symbol("finished");
@@ -1388,6 +1311,7 @@ class ClientRequest extends OutgoingMessage {
   #protocol;
   #method;
   #port;
+  #tls = null;
   #useDefaultPort;
   #joinDuplicateHeaders;
   #maxHeaderSize;
@@ -1402,7 +1326,6 @@ class ClientRequest extends OutgoingMessage {
   #timeoutTimer?: Timer = undefined;
   #options;
   #finished;
-  #tls;
 
   _httpMessage;
 
@@ -1459,6 +1382,11 @@ class ClientRequest extends OutgoingMessage {
     callback();
   }
 
+  _ensureTls() {
+    if (this.#tls === null) this.#tls = {};
+    return this.#tls;
+  }
+
   _final(callback) {
     this.#finished = true;
     this[kAbortController] = new AbortController();
@@ -1476,26 +1404,34 @@ class ClientRequest extends OutgoingMessage {
 
     let url: string;
     let proxy: string | undefined;
-    if (this.#path.startsWith("http://") || this.#path.startsWith("https://")) {
-      url = this.#path;
-      proxy = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
+    const protocol = this.#protocol;
+    const path = this.#path;
+    if (path.startsWith("http://") || path.startsWith("https://")) {
+      url = path;
+      proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
     } else {
-      url = `${this.#protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${this.#path}`;
+      url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
     }
+    const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
       const fetchOptions: any = {
         method,
         headers: this.getHeaders(),
-        body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
         redirect: "manual",
         signal: this[kAbortController].signal,
-
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
-        tls: this.#tls,
       };
+
+      if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+        fetchOptions.body = body;
+      }
+
+      if (tls) {
+        fetchOptions.tls = tls;
+      }
 
       if (!!$debug) {
         fetchOptions.verbose = true;
@@ -1694,7 +1630,48 @@ class ClientRequest extends OutgoingMessage {
     }
 
     this.#joinDuplicateHeaders = _joinDuplicateHeaders;
+    if (options.pfx) {
+      throw new Error("pfx is not supported");
+    }
+    if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+    if (options.ca) {
+      if (!isValidTLSArray(options.ca))
+        throw new TypeError(
+          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().ca = options.ca;
+    }
+    if (options.cert) {
+      if (!isValidTLSArray(options.cert))
+        throw new TypeError(
+          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().cert = options.cert;
+    }
+    if (options.key) {
+      if (!isValidTLSArray(options.key))
+        throw new TypeError(
+          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().key = options.key;
+    }
+    if (options.passphrase) {
+      if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+      this._ensureTls().passphrase = options.passphrase;
+    }
+    if (options.ciphers) {
+      if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");
+      this._ensureTls().ciphers = options.ciphers;
+    }
+    if (options.servername) {
+      if (typeof options.servername !== "string") throw new TypeError("servername argument must be a string");
+      this._ensureTls().servername = options.servername;
+    }
 
+    if (options.secureOptions) {
+      if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
+      this._ensureTls().secureOptions = options.secureOptions;
+    }
     this.#path = options.path || "/";
     if (cb) {
       this.once("response", cb);
@@ -1723,7 +1700,6 @@ class ClientRequest extends OutgoingMessage {
     this.#reusedSocket = false;
     this.#host = host;
     this.#protocol = protocol;
-    this.#tls = options.tls;
 
     const timeout = options.timeout;
     if (timeout !== undefined && timeout !== 0) {

@@ -37,8 +37,7 @@ const Node = struct {
     }
 
     pub fn deinit(node: *Node, joiner_alloc: Allocator) void {
-        if (node.allocator.get()) |alloc|
-            alloc.free(node.slice);
+        node.allocator.free(node.slice);
         joiner_alloc.destroy(node);
     }
 };

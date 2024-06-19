@@ -78,8 +78,8 @@
 
 namespace WebCore {
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
-extern "C" bool Bun__defaultRejectUnauthorized(JSGlobalObject* lexicalGlobalObject);
 static size_t getFramingOverhead(size_t payloadSize)
 {
     static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
@@ -164,7 +164,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
-    m_rejectUnauthorized = Bun__defaultRejectUnauthorized(context.jsGlobalObject());
+    m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
 }
 
 WebSocket::~WebSocket()
@@ -403,7 +403,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     auto headers = headersOrException.releaseReturnValue();
     headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
-    auto iterator = headers.get().createIterator();
+    // lowerCaseKeys = false so we dont touch the keys casing
+    auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
         headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
         headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));
@@ -1206,25 +1207,36 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
 
-    if (this->hasEventListeners("close"_s)) {
-        this->incPendingActivityCount();
-        this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
-        this->decPendingActivityCount();
+    // since we are open and closing now we know that we have at least one pending activity
+    // so we just call decPendingActivityCount() after dispatching the event
+    ASSERT(m_pendingActivityCount > 0);
 
+    if (this->hasEventListeners("close"_s)) {
+        this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
+
+        // we deinit if possible in the next tick
+        if (auto* context = scriptExecutionContext()) {
+            context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+                protectedThis->decPendingActivityCount();
+            });
+        } else {
+            // we fallback if we don't have a context or we will leak
+            this->decPendingActivityCount();
+        }
         return;
     }
 
     if (auto* context = scriptExecutionContext()) {
-        this->incPendingActivityCount();
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
             protectedThis->decPendingActivityCount();
         });
+    } else {
+        // we fallback if we don't have a context
+        this->decPendingActivityCount();
     }
-
-    // m_pendingActivity = nullptr;
-    // });
 }
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
@@ -1424,9 +1436,14 @@ void WebSocket::didFailWithErrorCode(int32_t code)
     }
 
     m_state = CLOSED;
-    scriptExecutionContext()->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-        protectedThis->decPendingActivityCount();
-    });
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            protectedThis->decPendingActivityCount();
+        });
+    } else {
+        // we fallback if we don't have a context
+        this->decPendingActivityCount();
+    }
 }
 void WebSocket::updateHasPendingActivity()
 {

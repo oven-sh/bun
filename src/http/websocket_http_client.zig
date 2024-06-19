@@ -143,15 +143,6 @@ const ErrorCode = enum(i32) {
     tls_handshake_failed,
 };
 
-pub export fn Bun__defaultRejectUnauthorized(global: *JSC.JSGlobalObject) callconv(.C) bool {
-    var vm = global.bunVM();
-    return vm.bundler.env.getTLSRejectUnauthorized();
-}
-
-comptime {
-    _ = Bun__defaultRejectUnauthorized;
-}
-
 const CppWebSocket = opaque {
     extern fn WebSocket__didConnect(
         websocket_context: *CppWebSocket,

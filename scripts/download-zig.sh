@@ -14,6 +14,8 @@ else
   zig_version=$(grep 'recommended_zig_version = "' "build.zig" | cut -d'"' -f2)
 fi
 
+zig_version_short=$(echo "$zig_version" | cut -d'+' -f1)
+
 case $(uname -ms) in
 'Darwin x86_64')
   target='macos'
@@ -37,7 +39,7 @@ case $(uname -ms) in
   ;;
 esac
 
-url="https://ziglang.org/builds/zig-${target}-${arch}-${zig_version}.tar.xz"
+url="https://github.com/oven-sh/zig/releases/download/${zig_version_short}/zig-${target}-${arch}-${zig_version}.tar.xz"
 dest="$(pwd)/.cache/zig-${zig_version}.tar.xz"
 extract_at="$(pwd)/.cache/zig"
 

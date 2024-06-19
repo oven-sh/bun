@@ -398,7 +398,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         var _msg: ZigString = ZigString.Empty;
 
@@ -445,7 +445,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
 
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         var _msg: ZigString = ZigString.Empty;
 
@@ -488,7 +488,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(2);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toBe() takes 1 argument", .{});
@@ -555,7 +555,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toHaveLength() takes 1 argument", .{});
@@ -630,7 +630,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toBeOneOf() takes 1 argument", .{});
@@ -716,7 +716,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toContain() takes 1 argument", .{});
@@ -814,7 +814,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toContainKey() takes 1 argument", .{});
@@ -826,15 +826,29 @@ pub const Expect = struct {
         const expected = arguments[0];
         expected.ensureStillAlive();
         const value: JSValue = this.getValue(globalThis, thisValue, "toContainKey", "<green>expected<r>") orelse return .zero;
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
 
         const not = this.flags.not;
+        if (!value.isObject()) {
+            const err = globalThis.createTypeErrorInstance("Expected value must be an object\nReceived: {}", .{value.toFmt(
+                globalThis,
+                &formatter,
+            )});
+            globalThis.throwValue(err);
+            return .zero;
+        }
+
         var pass = value.hasOwnPropertyValue(globalThis, expected);
+
+        if (globalThis.hasException()) {
+            return .zero;
+        }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+
         const value_fmt = value.toFmt(globalThis, &formatter);
         const expected_fmt = expected.toFmt(globalThis, &formatter);
         if (not) {
@@ -860,7 +874,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toContainKeys() takes 1 argument", .{});
@@ -899,6 +913,10 @@ pub const Expect = struct {
             break :brk true;
         };
 
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
         if (not) pass = !pass;
         if (pass) return thisValue;
 
@@ -921,6 +939,74 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toContainAllKeys(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAllKeys() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllKeys", "<green>expected<r>") orelse return .zero;
+
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAllKeys", "expected", "array");
+            return .zero;
+        }
+
+        const not = this.flags.not;
+        var pass = false;
+
+        const count = expected.getLength(globalObject);
+
+        var keys = value.keys(globalObject);
+        if (keys.getLength(globalObject) == count) {
+            var itr = keys.arrayIterator(globalObject);
+            outer: {
+                while (itr.next()) |item| {
+                    var i: u32 = 0;
+                    while (i < count) : (i += 1) {
+                        const key = expected.getIndex(globalObject, i);
+                        if (item.jestDeepEquals(key, globalObject)) break;
+                    } else break :outer;
+                }
+                pass = true;
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = keys.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = keys.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain all keys: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toContainAnyKeys(
         this: *Expect,
         globalThis: *JSC.JSGlobalObject,
@@ -929,7 +1015,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toContainAnyKeys() takes 1 argument", .{});
@@ -963,6 +1049,10 @@ pub const Expect = struct {
             }
         }
 
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
         if (not) pass = !pass;
         if (pass) return thisValue;
 
@@ -985,6 +1075,270 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toContainValue(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainValue() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainValue", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (!value.isUndefinedOrNull()) {
+            const values = value.values(globalObject);
+            var itr = values.arrayIterator(globalObject);
+            while (itr.next()) |item| {
+                if (item.jestDeepEquals(expected, globalObject)) {
+                    pass = true;
+                    break;
+                }
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainValues(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainValues() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainValues", "expected", "array");
+            return .zero;
+        }
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainValues", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = true;
+
+        if (!value.isUndefinedOrNull()) {
+            const values = value.values(globalObject);
+            var itr = expected.arrayIterator(globalObject);
+            const count = values.getLength(globalObject);
+
+            while (itr.next()) |item| {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    const key = values.getIndex(globalObject, i);
+                    if (key.jestDeepEquals(item, globalObject)) break;
+                } else {
+                    pass = false;
+                    break;
+                }
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainAllValues(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAllValues() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAllValues", "expected", "array");
+            return .zero;
+        }
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAllValues", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (!value.isUndefinedOrNull()) {
+            var values = value.values(globalObject);
+            var itr = expected.arrayIterator(globalObject);
+            const count = values.getLength(globalObject);
+            const expectedLength = expected.getLength(globalObject);
+
+            if (count == expectedLength) {
+                while (itr.next()) |item| {
+                    var i: u32 = 0;
+                    while (i < count) : (i += 1) {
+                        const key = values.getIndex(globalObject, i);
+                        if (key.jestDeepEquals(item, globalObject)) {
+                            pass = true;
+                            break;
+                        }
+                    } else {
+                        pass = false;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain all values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain all values: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toContainAnyValues(
+        this: *Expect,
+        globalObject: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const arguments_ = callFrame.arguments(1);
+        const arguments = arguments_.slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toContainAnyValues() takes 1 argument", .{});
+            return .zero;
+        }
+
+        incrementExpectCallCounter();
+
+        const expected = arguments[0];
+        if (!expected.jsType().isArray()) {
+            globalObject.throwInvalidArgumentType("toContainAnyValues", "expected", "array");
+            return .zero;
+        }
+        expected.ensureStillAlive();
+        const value: JSValue = this.getValue(globalObject, thisValue, "toContainAnyValues", "<green>expected<r>") orelse return .zero;
+
+        const not = this.flags.not;
+        var pass = false;
+
+        if (!value.isUndefinedOrNull()) {
+            var values = value.values(globalObject);
+            var itr = expected.arrayIterator(globalObject);
+            const count = values.getLength(globalObject);
+
+            outer: while (itr.next()) |item| {
+                var i: u32 = 0;
+                while (i < count) : (i += 1) {
+                    const key = values.getIndex(globalObject, i);
+                    if (key.jestDeepEquals(item, globalObject)) {
+                        pass = true;
+                        break :outer;
+                    }
+                }
+            }
+        }
+
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_fmt = value.toFmt(globalObject, &formatter);
+            const expected_line = "Expected to not contain any of the following values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+            const fmt = "\n\n" ++ expected_line;
+            this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected to contain any of the following values: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = "\n\n" ++ expected_line ++ received_line;
+        this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", false), fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
     pub fn toContainEqual(
         this: *Expect,
         globalThis: *JSC.JSGlobalObject,
@@ -993,7 +1347,7 @@ pub const Expect = struct {
         defer this.postMatch(globalThis);
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toContainEqual() takes 1 argument", .{});
@@ -3174,7 +3528,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toInclude() requires 1 argument", .{});
@@ -3231,7 +3585,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(2);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 2) {
             globalThis.throwInvalidArguments("toIncludeRepeated() requires 2 arguments", .{});
@@ -3342,7 +3696,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toSatisfy() requires 1 argument", .{});
@@ -3406,7 +3760,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toStartWith() requires 1 argument", .{});
@@ -3463,7 +3817,7 @@ pub const Expect = struct {
 
         const thisValue = callFrame.this();
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("toEndWith() requires 1 argument", .{});
@@ -3664,7 +4018,7 @@ pub const Expect = struct {
 
         const thisValue = callframe.this();
         const arguments_ = callframe.arguments(1);
-        const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
+        const arguments: []const JSValue = arguments_.slice();
         defer this.postMatch(globalThis);
         const value: JSValue = this.getValue(globalThis, thisValue, "toHaveBeenCalledTimes", "<green>expected<r>") orelse return .zero;
 
@@ -3770,8 +4124,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments_ = callframe.argumentsPtr()[0..callframe.argumentsCount()];
-        const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
         defer this.postMatch(globalThis);
         const value: JSValue = this.getValue(globalThis, thisValue, "toHaveBeenCalledWith", "<green>expected<r>") orelse return .zero;
 
@@ -3834,8 +4187,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments_ = callframe.argumentsPtr()[0..callframe.argumentsCount()];
-        const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
         defer this.postMatch(globalThis);
         const value: JSValue = this.getValue(globalThis, thisValue, "toHaveBeenLastCalledWith", "<green>expected<r>") orelse return .zero;
 
@@ -3897,8 +4249,7 @@ pub const Expect = struct {
         JSC.markBinding(@src());
 
         const thisValue = callframe.this();
-        const arguments_ = callframe.argumentsPtr()[0..callframe.argumentsCount()];
-        const arguments: []const JSValue = arguments_.ptr[0..arguments_.len];
+        const arguments = callframe.argumentsPtr()[0..callframe.argumentsCount()];
         defer this.postMatch(globalThis);
         const value: JSValue = this.getValue(globalThis, thisValue, "toHaveBeenNthCalledWith", "<green>expected<r>") orelse return .zero;
 
@@ -4419,7 +4770,7 @@ pub const Expect = struct {
         defer globalThis.bunVM().autoGarbageCollect();
 
         const arguments_ = callFrame.arguments(1);
-        const arguments = arguments_.ptr[0..arguments_.len];
+        const arguments = arguments_.slice();
 
         if (arguments.len < 1) {
             globalThis.throwInvalidArguments("expect.assertions() takes 1 argument", .{});
@@ -5107,7 +5458,9 @@ pub const ExpectMatcherUtils = struct {
 
         try buffered_writer.flush();
 
-        return bun.String.createUTF8(mutable_string.toOwnedSlice()).toJS(globalThis);
+        const str = bun.String.createUTF8(mutable_string.toOwnedSlice());
+        defer str.deref();
+        return str.toJS(globalThis);
     }
 
     inline fn printValueCatched(globalThis: *JSC.JSGlobalObject, value: JSValue, comptime color_or_null: ?[]const u8) JSValue {

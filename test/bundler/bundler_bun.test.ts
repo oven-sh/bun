@@ -10,7 +10,6 @@ describe("bundler", () => {
     target: "bun",
     outfile: "",
     outdir: "/out",
-
     files: {
       "/entry.ts": /* js */ `
         import db from './db.sqlite' with {type: "sqlite", embed: "true"};
@@ -61,7 +60,7 @@ describe("bundler", () => {
       exitCode: 1,
       validate({ stderr }) {
         expect(stderr).toInclude("\nnote: missing sourcemaps for ");
-        expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get an unminified traces\n");
+        expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get unminified traces\n");
       },
     },
   });

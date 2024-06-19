@@ -1,0 +1,41 @@
+{
+	"name": "dep-file-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "dep-file-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"file-dep": "1.0.0"
+			},
+			"_id": "dep-file-dep@1.0.0",
+			"_nodeVersion": "21.7.1",
+			"_npmVersion": "10.5.0",
+			"dist": {
+				"integrity": "sha512-3AXgBxJXGzGd8oiJEgV1/Y7cml/zb3bNtZt9YdNd3RkVTP02PaymDeBkRRQ+3He4xseq07B27TsW7aKhIf7/5A==",
+				"shasum": "8098e5847c6314eb9095236a9beaaab48efe798f",
+				"tarball": "http://localhost:4873/dep-file-dep/-/dep-file-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-04-17T21:03:37.884Z",
+		"created": "2024-04-17T21:03:37.884Z",
+		"1.0.0": "2024-04-17T21:03:37.884Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dep-file-dep-1.0.0.tgz": {
+			"shasum": "8098e5847c6314eb9095236a9beaaab48efe798f",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "dep-file-dep",
+	"readme": "ERROR: No README data found!"
+}

@@ -273,8 +273,13 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
         m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
-        for (auto& header : m_headers->m_headers)
-            m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
+        if (m_lowerCaseKeys) {
+            for (auto& header : m_headers->m_headers)
+                m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
+        } else {
+            for (auto& header : m_headers->m_headers)
+                m_keys.unsafeAppendWithoutCapacityCheck(header.name());
+        }
         std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
         if (hasSetCookie)
             m_keys.unsafeAppendWithoutCapacityCheck(String());
@@ -317,10 +322,11 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
     return std::nullopt;
 }
 
-FetchHeaders::Iterator::Iterator(FetchHeaders& headers)
+FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = true)
     : m_headers(headers)
 {
     m_cookieIndex = 0;
+    m_lowerCaseKeys = lowerCaseKeys;
 }
 
 } // namespace WebCore

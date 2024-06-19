@@ -61,8 +61,8 @@ pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: bun.String = bun.String.empty,
-
-    headers: ?*FetchHeaders = null,
+    // NOTE(@cirospaciari): renamed to _headers to avoid direct manipulation, use getFetchHeaders, setFetchHeaders, ensureFetchHeaders and hasFetchHeaders instead
+    _headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
     body: *BodyValueRef,
     method: Method = Method.GET,
@@ -98,6 +98,20 @@ pub const Request = struct {
         }
     }
 
+    pub fn init(
+        url: bun.String,
+        headers: ?*FetchHeaders,
+        body: *BodyValueRef,
+        method: Method,
+    ) Request {
+        return Request{
+            .url = url,
+            ._headers = headers,
+            .body = body,
+            .method = method,
+        };
+    }
+
     pub fn getContentType(
         this: *Request,
     ) ?ZigString.Slice {
@@ -107,7 +121,7 @@ pub const Request = struct {
             }
         }
 
-        if (this.headers) |headers| {
+        if (this._headers) |headers| {
             if (headers.fastGet(.ContentType)) |value| {
                 return value.toSlice(bun.default_allocator);
             }
@@ -194,7 +208,7 @@ pub const Request = struct {
     }
 
     pub fn mimeType(this: *const Request) string {
-        if (this.headers) |headers| {
+        if (this._headers) |headers| {
             if (headers.fastGet(.ContentType)) |content_type| {
                 return content_type.slice();
             }
@@ -271,9 +285,9 @@ pub const Request = struct {
     }
 
     pub fn finalizeWithoutDeinit(this: *Request) void {
-        if (this.headers) |headers| {
+        if (this._headers) |headers| {
             headers.deref();
-            this.headers = null;
+            this._headers = null;
         }
 
         this.url.deref();
@@ -301,7 +315,7 @@ pub const Request = struct {
         this: *Request,
         globalObject: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        if (this.headers) |headers_ref| {
+        if (this._headers) |headers_ref| {
             if (headers_ref.get("referrer", globalObject)) |referrer| {
                 return ZigString.init(referrer).toValueGC(globalObject);
             }
@@ -532,7 +546,7 @@ pub const Request = struct {
 
                     if (!fields.contains(.headers)) {
                         if (request.cloneHeaders(globalThis)) |headers| {
-                            req.headers = headers;
+                            req._headers = headers;
                             fields.insert(.headers);
                         }
                     }
@@ -556,7 +570,7 @@ pub const Request = struct {
 
                     if (!fields.contains(.headers)) {
                         if (response.init.headers) |headers| {
-                            req.headers = headers.cloneThis(globalThis);
+                            req._headers = headers.cloneThis(globalThis);
                             fields.insert(.headers);
                         }
                     }
@@ -631,17 +645,17 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
-                if (Response.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
+                if (Response.Init.init(globalThis.allocator(), globalThis, value) catch null) |response_init| {
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
                         if (!fields.contains(.method)) {
-                            req.method = init.method;
+                            req.method = response_init.method;
                             fields.insert(.method);
                         }
                     }
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .headers) != null)) {
-                        if (init.headers) |headers| {
+                        if (response_init.headers) |headers| {
                             if (!fields.contains(.headers)) {
-                                req.headers = headers;
+                                req._headers = headers;
                                 fields.insert(.headers);
                             } else {
                                 headers.deref();
@@ -680,11 +694,11 @@ pub const Request = struct {
         req.url = href;
 
         if (req.body.value == .Blob and
-            req.headers != null and
+            req._headers != null and
             req.body.value.Blob.content_type.len > 0 and
-            !req.headers.?.fastHas(.ContentType))
+            !req._headers.?.fastHas(.ContentType))
         {
-            req.headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
+            req._headers.?.put("content-type", req.body.value.Blob.content_type, globalThis);
         }
 
         req.calculateEstimatedByteSize();
@@ -714,12 +728,6 @@ pub const Request = struct {
         return &this.body.value;
     }
 
-    pub fn getFetchHeaders(
-        this: *Request,
-    ) ?*FetchHeaders {
-        return this.headers;
-    }
-
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
@@ -729,36 +737,77 @@ pub const Request = struct {
         return cloned.toJS(globalThis);
     }
 
-    pub fn getHeaders(
+    // Returns if the request has headers already cached/set.
+    pub fn hasFetchHeaders(this: *Request) bool {
+        return this._headers != null;
+    }
+
+    /// Sets the headers of the request. This will take ownership of the headers.
+    /// it will deref the previous headers if they exist.
+    pub fn setFetchHeaders(
+        this: *Request,
+        headers: ?*FetchHeaders,
+    ) void {
+        if (this._headers) |old_headers| {
+            old_headers.deref();
+        }
+
+        this._headers = headers;
+    }
+
+    /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
+    /// If the headers are empty, it will look at request_context to get the headers.
+    /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
+    pub fn ensureFetchHeaders(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        if (this.headers == null) {
-            if (this.request_context.getRequest()) |req| {
-                this.headers = FetchHeaders.createFromUWS(globalThis, req);
-            } else {
-                this.headers = FetchHeaders.createEmpty();
+    ) *FetchHeaders {
+        if (this._headers) |headers| {
+            // headers is already set
+            return headers;
+        }
 
-                if (this.body.value == .Blob) {
-                    const content_type = this.body.value.Blob.content_type;
-                    if (content_type.len > 0) {
-                        this.headers.?.put("content-type", content_type, globalThis);
-                    }
+        if (this.request_context.getRequest()) |req| {
+            // we have a request context, so we can get the headers from it
+            this._headers = FetchHeaders.createFromUWS(globalThis, req);
+        } else {
+            // we don't have a request context, so we need to create an empty headers object
+            this._headers = FetchHeaders.createEmpty();
+
+            if (this.body.value == .Blob) {
+                const content_type = this.body.value.Blob.content_type;
+                if (content_type.len > 0) {
+                    this._headers.?.put("content-type", content_type, globalThis);
                 }
             }
         }
 
-        return this.headers.?.toJS(globalThis);
+        return this._headers.?;
+    }
+
+    /// Returns the headers of the request. This will not look at the request contex to get the headers.
+    pub fn getFetchHeaders(
+        this: *Request,
+    ) ?*FetchHeaders {
+        return this._headers;
+    }
+
+    /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
+    pub fn getHeaders(
+        this: *Request,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return this.ensureFetchHeaders(globalThis).toJS(globalThis);
     }
 
     pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
-        if (this.headers == null) {
+        if (this._headers == null) {
             if (this.request_context.getRequest()) |uws_req| {
-                this.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
+                this._headers = FetchHeaders.createFromUWS(globalThis, uws_req);
             }
         }
 
-        if (this.headers) |head| {
+        if (this._headers) |head| {
             if (head.isEmpty()) {
                 return null;
             }
@@ -789,7 +838,7 @@ pub const Request = struct {
             .body = body,
             .url = if (preserve_url) original_url else this.url.dupeRef(),
             .method = this.method,
-            .headers = this.cloneHeaders(globalThis),
+            ._headers = this.cloneHeaders(globalThis),
         };
 
         if (this.signal) |signal| {

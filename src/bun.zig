@@ -47,6 +47,8 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 
+pub const patch = @import("./patch.zig");
+
 pub const glob = @import("./glob.zig");
 
 pub const shell = struct {
@@ -138,6 +140,23 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
 
     pub fn cwd() FileDescriptor {
         return toFD(std.fs.cwd().fd);
+    }
+
+    pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
+        if (Environment.isPosix) return this.int() == that.int();
+
+        const this_ = FDImpl.decode(this);
+        const that_ = FDImpl.decode(that);
+        return switch (this_.kind) {
+            .system => switch (that_.kind) {
+                .system => this_.value.as_system == that_.value.as_system,
+                .uv => false,
+            },
+            .uv => switch (that_.kind) {
+                .system => false,
+                .uv => this_.value.as_uv == that_.value.as_uv,
+            },
+        };
     }
 
     pub fn isStdio(fd: FileDescriptor) bool {
@@ -727,6 +746,12 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
         const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
+}
+
+pub fn openDirNoRenamingOrDeletingWindows(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
+    if (comptime !Environment.isWindows) @compileError("use openDir!");
+    const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+    return res.asDir();
 }
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
@@ -3235,6 +3260,19 @@ noinline fn assertionFailure() noreturn {
     Output.panic("Internal assertion failure", .{});
 }
 
+noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure {s}:{d}:{d}", .{
+        src.file,
+        src.line,
+        src.column,
+    });
+}
+
 pub inline fn debugAssert(cheap_value_only_plz: bool) void {
     if (comptime !Environment.isDebug) {
         return;
@@ -3253,6 +3291,17 @@ pub fn assert(value: bool) callconv(callconv_inline) void {
     if (!value) {
         if (comptime Environment.isDebug) unreachable;
         assertionFailure();
+    }
+}
+
+pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailureWithLocation(src);
     }
 }
 

@@ -433,9 +433,9 @@ pub const CreateCommand = struct {
                     &archive_context,
                     void,
                     {},
-                    1,
-                    false,
-                    false,
+                    .{
+                        .depth_to_skip = 1,
+                    },
                 );
 
                 if (!create_options.skip_package_json) {
@@ -2280,8 +2280,8 @@ pub const CreateListExamplesCommand = struct {
         env_loader.loadProcess();
 
         var progress = std.Progress{};
-        const node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
+        const node = progress.start("Fetching manifest", 0);
         progress.refresh();
 
         const examples = try Example.fetchAllLocalAndRemote(ctx, node, &env_loader, filesystem);

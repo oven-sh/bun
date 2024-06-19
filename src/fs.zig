@@ -1704,10 +1704,6 @@ pub const Path = struct {
         is_parent_package: bool = false,
     };
 
-    pub inline fn textZ(this: *const Path) [:0]const u8 {
-        return @as([:0]const u8, this.text.ptr[0..this.text.len :0]);
-    }
-
     pub inline fn sourceDir(this: *const Path) string {
         return this.name.dirWithTrailingSlash();
     }

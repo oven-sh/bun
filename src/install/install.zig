@@ -10722,6 +10722,7 @@ pub const PackageManager = struct {
 
                 this.seen_bin_links.clearRetainingCapacity();
 
+                // iterate slice instread of `remove` to avoid shifting
                 for (tree.binaries.items[0..tree.binaries.len]) |dep_id| {
                     bun.assertWithLocation(dep_id < this.lockfile.buffers.dependencies.items.len, @src());
                     const package_id = this.lockfile.buffers.resolutions.items[dep_id];

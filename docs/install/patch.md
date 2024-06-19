@@ -10,8 +10,6 @@ Features:
 - Test your changes locally before committing them with `bun patch --commit <pkg>`
 - To preserve disk space and keep `bun install` fast, patched packages are committed to the Global Cache and shared across projects where possible
 
-{% callout %}
-
 #### Step 1. Prepare the package for patching
 
 To get started, use `bun patch <pkg>` to prepare the package for patching:

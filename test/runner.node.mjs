@@ -102,7 +102,8 @@ async function runTests(target, filters) {
    * @param {function} fn
    */
   const runTest = async (title, fn) => {
-    const result = await runTask(`[${++i}/${total}] ${title}`, fn);
+    const label = `[${++i}/${total}] ${title}`;
+    const result = await runTask(label, fn);
     results.push(result);
 
     if (isBuildKite) {
@@ -113,13 +114,13 @@ async function runTests(target, filters) {
       mkdirSync(dirname(logFilePath), { recursive: true });
       writeFileSync(logFilePath, stripAnsi(stdout));
       if (!ok) {
-        uploadArtifactsToBuildKite(logFilePath);
+        uploadArtifactsToBuildKite(relative(cwd, logFilePath));
       }
 
-      const statusFilePath = join(logsPath, ok ? "PASSED.txt" : "FAILED.txt");
+      const statusFilePath = join(cwd, ok ? "PASSED.txt" : "FAILED.txt");
       appendFileSync(statusFilePath, `${testPath}\n`);
       if (!ok || i % 10 === 0) {
-        uploadArtifactsToBuildKite(statusFilePath);
+        uploadArtifactsToBuildKite(relative(cwd, statusFilePath));
       }
 
       const markdown = formatTestToMarkdown(result);
@@ -128,7 +129,7 @@ async function runTests(target, filters) {
       }
 
       if (!ok) {
-        const titleFailed = `${getAnsi("red")}${title} - ${error}${getAnsi("reset")}`;
+        const titleFailed = `${getAnsi("red")}${label} - ${error}${getAnsi("reset")}`;
         await runTask(titleFailed, () => {
           process.stderr.write(stdoutPreview);
         });

@@ -9293,7 +9293,7 @@ const LinkerContext = struct {
 
         var output_files = std.ArrayList(options.OutputFile).initCapacity(
             bun.default_allocator,
-            (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(
+            (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) + @as(
                 usize,
                 @intFromBool(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
             ),
@@ -9336,24 +9336,26 @@ const LinkerContext = struct {
                 );
 
                 switch (c.options.source_maps) {
-                    .external => {
+                    inline .external, .linked => |tag| {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
                         bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                         bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
 
-                        const basename = std.fs.path.basename(source_map_final_rel_path);
+                        if (tag == .linked) {
+                            const basename = std.fs.path.basename(source_map_final_rel_path);
 
-                        const source_map_start = "//# sourceMappingURL=";
-                        const total_len = code_result.buffer.len + source_map_start.len + basename.len + "\n".len;
-                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
-                        buf.appendSliceAssumeCapacity(code_result.buffer);
-                        buf.appendSliceAssumeCapacity(source_map_start);
-                        buf.appendSliceAssumeCapacity(basename);
-                        buf.appendAssumeCapacity('\n');
+                            const source_map_start = "//# sourceMappingURL=";
+                            const total_len = code_result.buffer.len + source_map_start.len + basename.len + "\n".len;
+                            var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                            buf.appendSliceAssumeCapacity(code_result.buffer);
+                            buf.appendSliceAssumeCapacity(source_map_start);
+                            buf.appendSliceAssumeCapacity(basename);
+                            buf.appendAssumeCapacity('\n');
 
-                        Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
-                        code_result.buffer = buf.items;
+                            Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                            code_result.buffer = buf.items;
+                        }
 
                         sourcemap_output_file = options.OutputFile.init(
                             options.OutputFile.Options{
@@ -9533,24 +9535,25 @@ const LinkerContext = struct {
             );
 
             switch (c.options.source_maps) {
-                .external => {
+                inline .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
                         chunk.final_rel_path,
                         ".map",
                     }) catch @panic("Failed to allocate memory for external source map path");
 
-                    const basename = std.fs.path.basename(source_map_final_rel_path);
+                    if (tag == .linked) {
+                        const basename = std.fs.path.basename(source_map_final_rel_path);
 
-                    const source_map_start = "//# sourceMappingURL=";
-                    const total_len = code_result.buffer.len + source_map_start.len + basename.len + "\n".len;
-                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
-                    buf.appendSliceAssumeCapacity(code_result.buffer);
-                    buf.appendSliceAssumeCapacity(source_map_start);
-                    buf.appendSliceAssumeCapacity(basename);
-                    buf.appendAssumeCapacity('\n');
-
-                    code_result.buffer = buf.items;
+                        const source_map_start = "//# sourceMappingURL=";
+                        const total_len = code_result.buffer.len + source_map_start.len + basename.len + "\n".len;
+                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                        buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(source_map_start);
+                        buf.appendSliceAssumeCapacity(basename);
+                        buf.appendAssumeCapacity('\n');
+                        code_result.buffer = buf.items;
+                    }
 
                     switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,

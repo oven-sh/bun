@@ -771,11 +771,13 @@ pub const Arguments = struct {
 
             if (args.option("--sourcemap")) |setting| {
                 if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
-                    opts.source_map = Api.SourceMapMode.inline_into_file;
+                    opts.source_map = Api.SourceMapMode.@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
-                    opts.source_map = Api.SourceMapMode._none;
+                    opts.source_map = Api.SourceMapMode.none;
                 } else if (strings.eqlComptime(setting, "external")) {
                     opts.source_map = Api.SourceMapMode.external;
+                } else if (strings.eqlComptime(setting, "linked")) {
+                    opts.source_map = Api.SourceMapMode.linked;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();

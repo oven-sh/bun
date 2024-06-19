@@ -563,12 +563,12 @@ Specifies the type of sourcemap to generate.
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  sourcemap: "external", // default "none"
+  sourcemap: "linked", // default "none"
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --sourcemap=external
+$ bun build ./index.tsx --outdir ./out --sourcemap
 ```
 
 {% /codetabs %}
@@ -593,8 +593,19 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=external
 
 ---
 
+- `"linked"`
+- A separate `*.js.map` file is created alongside each `*.js` bundle using a `//# sourceMappingURL` comment to link the two. When `--sourcemap` is specified without an option, it defaults to this.
+
+  ```ts
+  // <bundled code here>
+
+  //# sourceMappingURL=bundle.js.map
+  ```
+
+---
+
 - `"external"`
-- A separate `*.js.map` file is created alongside each `*.js` bundle.
+- A separate `*.js.map` file is created alongside each `*.js` bundle without inserting a `//# sourceMappingURL` comment.
 
 {% /table %}
 
@@ -1246,7 +1257,7 @@ interface BuildOptions {
   loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
   manifest?: boolean; // false
   external?: string[]; // []
-  sourcemap?: "none" | "inline" | "external"; // "none"
+  sourcemap?: "none" | "inline" | "linked" | "external"; // "none"
   root?: string; // computed from entrypoints
   naming?:
     | string

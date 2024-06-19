@@ -423,10 +423,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath) {
+  const timeout = getTestTimeout(testPath);
+  const perTestTimeout = Math.ceil(timeout / 2);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: ["test", testPath],
+    args: ["test", `--timeout=${perTestTimeout}`, testPath],
     cwd: cwd,
-    timeout: getTestTimeout(testPath),
+    timeout,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },

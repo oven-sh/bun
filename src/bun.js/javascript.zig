@@ -198,7 +198,7 @@ pub const SavedSourceMap = struct {
             if (seen_invalid) return;
             if (path) |note| {
                 Output.note("missing sourcemaps for {s}", .{note});
-                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+                Output.note("consider bundling with '--sourcemap' to get unminified traces", .{});
             }
         }
     };

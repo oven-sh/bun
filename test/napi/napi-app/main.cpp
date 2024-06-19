@@ -37,6 +37,38 @@ napi_value test_issue_7685(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_threadsafe_function tsfn_11949;
+napi_value tsfn_name_11949;
+
+static void test_issue_11949_callback(napi_env env, napi_value js_callback,
+                                      void *context, void *data) {
+  if (data != nullptr) {
+    printf("data: %p\n", data);
+  } else {
+    printf("data: nullptr\n");
+  }
+  napi_unref_threadsafe_function(env, tsfn_11949);
+}
+
+static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
+  Napi::Env env(info.Env());
+  Napi::HandleScope scope(env);
+  napi_status status;
+  status = napi_create_string_utf8(env, "TSFN", 4, &tsfn_name_11949);
+  assert(status == napi_ok);
+  status = napi_create_threadsafe_function(
+      env, NULL, NULL, tsfn_name_11949, 0, 1, NULL, NULL, NULL,
+      &test_issue_11949_callback, &tsfn_11949);
+  assert(status == napi_ok);
+  status =
+      napi_call_threadsafe_function(tsfn_11949, NULL, napi_tsfn_nonblocking);
+  assert(status == napi_ok);
+  napi_value result;
+  status = napi_get_undefined(env, &result);
+  assert(status == napi_ok);
+  return result;
+}
+
 napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -78,12 +110,11 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
 Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
   // check that these symbols are defined
   auto *isolate = v8::Isolate::GetCurrent();
-  node::AddEnvironmentCleanupHook(
-      isolate, [](void *) {}, isolate);
-  node::RemoveEnvironmentCleanupHook(
-      isolate, [](void *) {}, isolate);
+  node::AddEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
+  node::RemoveEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
+  exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
 
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",

@@ -1258,6 +1258,14 @@ pub fn joinStringBufW(buf: []u16, parts: anytype, comptime _platform: Platform) 
     return joinStringBufT(u16, buf, parts, _platform);
 }
 
+pub fn joinStringBufWZ(buf: []u16, parts: anytype, comptime _platform: Platform) [:0]const u16 {
+    const joined = joinStringBufT(u16, buf[0 .. buf.len - 1], parts, _platform);
+    assert(bun.isSliceInBufferT(u16, joined, buf));
+    const start_offset = @intFromPtr(joined.ptr) / 2 - @intFromPtr(buf.ptr) / 2;
+    buf[joined.len + start_offset] = 0;
+    return buf[start_offset..][0..joined.len :0];
+}
+
 pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime _platform: Platform) []const T {
     const platform = comptime _platform.resolve();
 

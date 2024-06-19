@@ -496,15 +496,17 @@ pub fn Channel(
             var popped: usize = 0;
             while (popped < items.len) {
                 const new_item = blk: {
-                    if (self.buffer.readItem()) |item| {
-                        self.putters.signal();
-                        break :blk item;
+                    // Buffer can contain null items but readItem will return null if the buffer is empty.
+                    // we need to check if the buffer is empty before trying to read an item.
+                    if (self.buffer.count == 0) {
+                        if (self.is_closed)
+                            return error.Closed;
+                        break :blk null;
                     }
 
-                    if (self.is_closed)
-                        return error.Closed;
-
-                    break :blk null;
+                    const item = self.buffer.readItem();
+                    self.putters.signal();
+                    break :blk item;
                 };
 
                 if (new_item) |item| {

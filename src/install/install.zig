@@ -13797,6 +13797,11 @@ pub const PackageManager = struct {
         for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
             for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
                 if (package_id < end) continue;
+
+                // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
+                //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
+                if (failed_dep.behavior.isPeer()) continue;
+
                 // even if optional dependencies are enabled, it's still allowed to fail
                 if (failed_dep.behavior.optional or !failed_dep.behavior.isEnabled(
                     if (root_list.contains(@truncate(parent_id)))

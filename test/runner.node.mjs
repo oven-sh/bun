@@ -102,17 +102,24 @@ async function runTests(target, filters) {
    */
   const runTest = async (title, fn) => {
     const result = await runTask(`[${++i}/${total}] ${title}`, fn);
-
-    if (isBail && !result.ok) {
-      process.exit(1);
-    }
     results.push(result);
 
     if (isBuildKite) {
-      const { ok, testPath, error, stdout } = result;
-      const logsPath = join(cwd, "logs", `${testPath}.log`);
-      mkdirSync(dirname(logsPath), { recursive: true });
-      appendFileSync(logsPath, stripAnsi(stdout));
+      const { ok, testPath, error, stdout, stdoutPreview } = result;
+      const logsPath = join(cwd, "logs");
+      mkdirSync(logsPath, { recursive: true });
+
+      const statusFilePath = join(logsPath, ok ? "PASSED.txt" : "FAILED.txt");
+      appendFileSync(statusFilePath, `${testPath}\n`);
+      if (!ok || i % 10 === 0) {
+        uploadArtifactsToBuildKite(statusFilePath);
+      }
+
+      const logFilePath = join(logsPath, `${testPath}.log`);
+      appendFileSync(logFilePath, stripAnsi(stdout));
+      if (!ok) {
+        uploadArtifactsToBuildKite(logFilePath);
+      }
 
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
@@ -122,7 +129,7 @@ async function runTests(target, filters) {
       if (!ok) {
         const titleFailed = `${getAnsi("red")}${title} - ${error}${getAnsi("reset")}`;
         await runTask(titleFailed, () => {
-          process.stderr.write(stdout);
+          process.stderr.write(stdoutPreview);
         });
       }
     }
@@ -135,6 +142,10 @@ async function runTests(target, filters) {
       }
       const shortMarkdown = formatTestToMarkdown(result, true);
       appendFileSync("comment.md", shortMarkdown);
+    }
+
+    if (isBail && !result.ok) {
+      process.exit(1);
     }
   };
 
@@ -396,7 +407,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @property {string} [error]
  * @property {TestEntry[]} tests
  * @property {string} stdout
- * @property {string} stderr
+ * @property {string} stdoutPreview
  */
 
 /**
@@ -438,7 +449,7 @@ async function spawnBunTest(execPath, testPath) {
     stdout: chunk => pipeTestStdout(process.stdout, chunk),
     stderr: chunk => pipeTestStdout(process.stderr, chunk),
   });
-  const { tests, errors, stdout: testStdout } = parseTestStdout(stdout, testPath);
+  const { tests, errors, stdout: stdoutPreview } = parseTestStdout(stdout, testPath);
   return {
     testPath,
     ok,
@@ -446,7 +457,8 @@ async function spawnBunTest(execPath, testPath) {
     error,
     errors,
     tests,
-    stdout: testStdout,
+    stdout,
+    stdoutPreview,
   };
 }
 
@@ -612,6 +624,7 @@ async function spawnBunInstall(execPath, options) {
       },
     ],
     stdout,
+    stdoutPreview: stdout,
   };
 }
 
@@ -1116,7 +1129,7 @@ function formatTestToMarkdown(result, concise) {
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
 
   let markdown = "";
-  for (const { testPath, ok, tests, error, stdout } of results) {
+  for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
     if (ok) {
       continue;
     }
@@ -1168,6 +1181,23 @@ function formatTestToMarkdown(result, concise) {
   }
 
   return markdown;
+}
+
+/**
+ * @param {string} glob
+ */
+function uploadArtifactsToBuildKite(glob) {
+  const { error, status, signal, stderr } = spawnSync("buildkite-agent", ["artifact", "upload", glob], {
+    stdio: ["ignore", "ignore", "ignore"],
+    encoding: "utf-8",
+    timeout: spawnTimeout,
+    cwd,
+  });
+  if (status === 0) {
+    return;
+  }
+  const cause = error ?? signal ?? `code ${status}`;
+  console.warn("Failed to upload artifacts to BuildKite:", cause, stderr);
 }
 
 /**

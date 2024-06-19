@@ -9342,6 +9342,19 @@ const LinkerContext = struct {
                         bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                         bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
 
+                        const basename = std.fs.path.basename(source_map_final_rel_path);
+
+                        const source_map_start = "//# sourceMappingURL=";
+                        const total_len = code_result.buffer.len + source_map_start.len + basename.len + "\n".len;
+                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                        buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(source_map_start);
+                        buf.appendSliceAssumeCapacity(basename);
+                        buf.appendAssumeCapacity('\n');
+
+                        Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                        code_result.buffer = buf.items;
+
                         sourcemap_output_file = options.OutputFile.init(
                             options.OutputFile.Options{
                                 .data = .{
@@ -9526,6 +9539,18 @@ const LinkerContext = struct {
                         chunk.final_rel_path,
                         ".map",
                     }) catch @panic("Failed to allocate memory for external source map path");
+
+                    const basename = std.fs.path.basename(source_map_final_rel_path);
+
+                    const source_map_start = "//# sourceMappingURL=";
+                    const total_len = code_result.buffer.len + source_map_start.len + basename.len + "\n".len;
+                    var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                    buf.appendSliceAssumeCapacity(code_result.buffer);
+                    buf.appendSliceAssumeCapacity(source_map_start);
+                    buf.appendSliceAssumeCapacity(basename);
+                    buf.appendAssumeCapacity('\n');
+
+                    code_result.buffer = buf.items;
 
                     switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,

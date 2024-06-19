@@ -1,7 +1,6 @@
 import { file, spawn, write } from "bun";
 import {
   bunExe,
-  nodeExe,
   bunEnv as env,
   isLinux,
   isWindows,
@@ -13,6 +12,7 @@ import {
   runBunInstall,
   runBunUpdate,
   tempDirWithFiles,
+  randomPort,
 } from "harness";
 import { join, sep, resolve } from "path";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
@@ -29,7 +29,7 @@ expect.extend({
 });
 
 var verdaccioServer: ChildProcess;
-var port: number = 4873;
+var port: number = randomPort();
 var packageDir: string;
 
 beforeAll(async () => {
@@ -38,7 +38,7 @@ beforeAll(async () => {
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
     {
-      silent: false,
+      silent: true,
       // Prefer using a release build of Bun since it's faster
       execPath: Bun.which("bun") || bunExe(),
     },
@@ -4224,7 +4224,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
   });
 
   const out = await Bun.readableStreamToText(stdout);
-  expect(out).toMatchSnapshot();
+  expect(out.replaceAll(`${port}`, "4873")).toMatchSnapshot();
   expect(await exited).toBe(0);
 });
 

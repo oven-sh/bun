@@ -86,10 +86,10 @@ pub fn parseUrl(
                     const len = bun.base64.decodeLen(base64_data);
                     const bytes = arena.alloc(u8, len) catch bun.outOfMemory();
                     const decoded = bun.base64.decode(bytes, base64_data);
-                    if (decoded.fail) {
+                    if (decoded.isSuccessful()) {
                         return error.InvalidBase64;
                     }
-                    break :json_bytes bytes[0..decoded.written];
+                    break :json_bytes bytes[0..decoded.count];
                 },
                 ',' => break :json_bytes source[data_prefix.len + 1 ..],
                 else => break :try_data_url,

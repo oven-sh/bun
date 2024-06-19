@@ -297,19 +297,6 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   && make boringssl \
   && rm -rf src/deps/boringssl Makefile
 
-FROM bun-base as base64
-
-ARG BUN_DIR
-ARG CPU_TARGET
-ENV CPU_TARGET=${CPU_TARGET}
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/base64 ${BUN_DIR}/src/deps/base64
-
-WORKDIR $BUN_DIR
-
-RUN cd $BUN_DIR && \
-  make base64 && rm -rf src/deps/base64 Makefile
 
 FROM bun-base as zstd
 
@@ -508,7 +495,6 @@ COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
-COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
@@ -572,7 +558,6 @@ COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
-COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/

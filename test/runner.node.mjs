@@ -92,6 +92,8 @@ async function runTests(target, filters) {
     console.log("Running tests:", firstTest, "...", lastTest, "/", tests.length);
   }
 
+  let i = 0;
+  let total = actualTests.length + 2;
   const results = [];
 
   /**
@@ -99,7 +101,8 @@ async function runTests(target, filters) {
    * @param {function} fn
    */
   const runTest = async (title, fn) => {
-    const result = await runTask(title, fn);
+    const result = await runTask(`[${++i}/${total}] ${title}`, fn);
+
     if (isBail && !result.ok) {
       process.exit(1);
     }

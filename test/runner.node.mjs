@@ -106,29 +106,6 @@ async function runTests(target, filters) {
     console.log("Found tests:", filteredTests.length);
   }
 
-  if (isBuildKite) {
-    const retryCount = parseInt(process.env["BUILDKITE_RETRY_COUNT"]) || 0;
-    if (retryCount) {
-      const step = isFileLike ? process.env["BUILDKITE_STEP_ID"] : target;
-      const logPaths = listArtifactsFromBuildKite("**/*.log", step);
-      const previousTests = filteredTests
-        .filter(testPath => logPaths.some(logPath => logPath.includes(testPath)))
-        .sort();
-      console.log({ logPaths, filteredTests, previousTests });
-      if (previousTests.length < filteredTests.length) {
-        console.log(
-          "Detected partial test run, skipping already run tests:",
-          previousTests.length,
-          "/",
-          filteredTests.length,
-        );
-        for (const testPath of previousTests) {
-          filteredTests.splice(filteredTests.indexOf(testPath), 1);
-        }
-      }
-    }
-  }
-
   let i = 0;
   let total = filteredTests.length + 2;
   const results = [];

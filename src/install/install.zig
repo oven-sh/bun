@@ -13441,7 +13441,7 @@ pub const PackageManager = struct {
                     return error.InstallFailed;
                 }
             }
-            manager.lockfile.verifyResolutions(manager.options.local_package_features, manager.options.remote_package_features, log_level);
+            manager.verifyResolutions(log_level);
         }
 
         // append scripts to lockfile before generating new metahash
@@ -13780,6 +13780,56 @@ pub const PackageManager = struct {
         } else {
             Output.pretty("<r>\n", .{});
         }
+    }
+
+    pub fn verifyResolutions(this: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) void {
+        const lockfile = this.lockfile;
+        const resolutions_lists: []const Lockfile.DependencyIDSlice = lockfile.packages.items(.resolutions);
+        const dependency_lists: []const Lockfile.DependencySlice = lockfile.packages.items(.dependencies);
+        const dependencies_buffer = lockfile.buffers.dependencies.items;
+        const resolutions_buffer = lockfile.buffers.resolutions.items;
+        const end: PackageID = @truncate(lockfile.packages.len);
+
+        var any_failed = false;
+        const string_buf = lockfile.buffers.string_bytes.items;
+
+        const root_list = resolutions_lists[0];
+        for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
+            for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
+                if (package_id < end) continue;
+                // even if optional dependencies are enabled, it's still allowed to fail
+                if (failed_dep.behavior.isOptional() or !failed_dep.behavior.isEnabled(
+                    if (root_list.contains(@truncate(parent_id)))
+                        this.options.local_package_features
+                    else
+                        this.options.remote_package_features,
+                )) continue;
+                if (log_level != .silent) {
+                    if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
+                        Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{
+                            failed_dep.version.literal.fmt(string_buf),
+                        });
+                    } else {
+                        Output.errGeneric("<b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>", .{
+                            failed_dep.name.slice(string_buf),
+                            failed_dep.version.literal.fmt(string_buf),
+                        });
+                    }
+                }
+                // track this so we can log each failure instead of just the first
+                any_failed = true;
+            }
+        }
+
+        if (any_failed) this.crash();
+    }
+
+    pub fn crash(this: *const PackageManager) noreturn {
+        if (this.options.log_level != .silent) {
+            this.log.printForLogLevel(Output.errorWriter()) catch {};
+        }
+
+        Global.crash();
     }
 
     pub fn spawnPackageLifecycleScripts(

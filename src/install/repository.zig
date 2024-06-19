@@ -179,7 +179,11 @@ pub const Repository = extern struct {
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout else if (
-                strings.containsComptime(result.stderr, "remote: The page could not be found")
+                // remote: The page could not be found <-- for non git
+                // remote: Repository not found. <-- for git
+                strings.containsComptime(result.stderr, "remote:")
+                and strings.containsComptime(result.stderr, "not")
+                and strings.containsComptime(result.stderr, "found")
             ) {
                     return error.RepositoryNotFound;
             },

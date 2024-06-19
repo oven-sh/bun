@@ -14,7 +14,8 @@ const stringZ = bun.stringZ;
 const Resolution = @import("./resolution.zig").Resolution;
 const bun = @import("root").bun;
 const string = bun.string;
-const PackageInstall = @import("./install.zig").PackageInstall;
+const Install = @import("./install.zig");
+const PackageInstall = Install.PackageInstall;
 
 /// Normalized `bin` field in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#bin)
 /// Can be a:
@@ -266,9 +267,27 @@ pub const Bin = extern struct {
         }
     };
 
+    pub const PriorityQueueContext = struct {
+        lockfile: *const Install.Lockfile,
+
+        pub fn lessThan(this: PriorityQueueContext, a: Install.DependencyID, b: Install.DependencyID) std.math.Order {
+            const buf = this.lockfile.buffers.string_bytes.items;
+            const a_name = this.lockfile.buffers.dependencies.items[a].name.slice(buf);
+            const b_name = this.lockfile.buffers.dependencies.items[b].name.slice(buf);
+            const order = strings.order(a_name, b_name);
+            return order;
+        }
+    };
+
+    pub const PriorityQueue = std.PriorityQueue(Install.DependencyID, PriorityQueueContext, PriorityQueueContext.lessThan);
+
     pub const Linker = struct {
         bin: Bin,
         clobber: bool,
+
+        // Hash map of seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it before
+        // linking each tree.
+        seen: ?*bun.StringHashMap(void),
 
         destination_node_modules: bun.FileDescriptor,
         root_node_modules_folder: bun.FileDescriptor,
@@ -314,6 +333,23 @@ pub const Bin = extern struct {
         }
 
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8, link_global: bool) void {
+            if (this.seen) |seen| {
+                // skip seen targets
+                // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
+                const entry = seen.getOrPut(dest_path) catch bun.outOfMemory();
+                if (entry.found_existing) {
+                    return;
+                }
+                entry.key_ptr.* = seen.allocator.dupe(u8, dest_path) catch bun.outOfMemory();
+            }
+
+            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L1-L5
+            // 1. if the thing isn't there, skip
+            // 2. if there's a non-symlink there already, delete and create symlink if clobber, else error
+            // 3. if there's a symlink already, pointing into our pkg, and the same target, skip
+            // 4. if there's a symlink already, pointing somewhere else, delete and create symlink if clobber, else error
+            // 5. if there's a symlink already, pointing into our pkg, remove it first then create the symlink
+
             const destination_dir = if (comptime Environment.isWindows)
                 if (link_global)
                     this.global_bin_dir
@@ -327,44 +363,72 @@ pub const Bin = extern struct {
             else
                 target_path;
 
-            // skip targets that don't exist
-            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L1
+            // 1
             if (!bun.sys.existsAt(bun.toFD(destination_dir.fd), target_path_trim)) {
                 return;
             }
 
             if (comptime !Environment.isWindows) {
-                if (this.clobber) {
-                    destination_dir.deleteFileZ(dest_path) catch {};
-                }
-                std.os.symlinkatZ(target_path, destination_dir.fd, dest_path) catch |err| {
-                    // Silently ignore PathAlreadyExists if the symlink is valid.
-                    // Most likely, the symlink was already created by another package
-                    if (err == error.PathAlreadyExists) {
-                        if (PackageInstall.isDanglingSymlink(dest_path)) {
-                            // this case is hit if the package was previously and the bin is located in a different directory
-                            destination_dir.deleteFileZ(dest_path) catch |err2| {
-                                this.err = err2;
-                                return;
-                            };
-
-                            std.os.symlinkatZ(target_path, destination_dir.fd, dest_path) catch |err2| {
-                                this.err = err2;
-                                return;
-                            };
-
-                            setPermissions(destination_dir.fd, dest_path);
-                            return;
-                        }
-
-                        setPermissions(destination_dir.fd, target_path_trim);
+                std.os.symlinkatZ(target_path, destination_dir.fd, dest_path) catch |symlink_err_1| {
+                    if (symlink_err_1 != error.PathAlreadyExists) {
+                        this.err = symlink_err_1;
                         return;
                     }
 
-                    this.err = err;
+                    var readlink_buf: bun.PathBuffer = undefined;
+                    switch (bun.sys.readlinkat(bun.toFD(destination_dir), dest_path, &readlink_buf)) {
+                        .err => |readlink_err| {
+                            // 2
+                            if (readlink_err.getErrno() == .INVAL and this.clobber) {
+                                destination_dir.deleteTree(dest_path) catch {};
+                            } else {
+                                this.err = readlink_err.toZigErr();
+                                return;
+                            }
+                        },
+                        .result => |existing_target| {
+                            const compare_func = if (comptime Environment.isMac)
+                                strings.eqlCaseInsensitiveASCII
+                            else
+                                strings.eqlLong;
+
+                            if (compare_func(existing_target, target_path, true)) {
+                                // 3
+                                return;
+                            }
+
+                            const should_clobber = this.clobber or should_clobber: {
+                                var existing_target_trim = existing_target;
+                                if (strings.hasPrefixComptime(existing_target_trim, "../")) {
+                                    existing_target_trim = existing_target_trim["../".len..];
+                                }
+
+                                const slash_index = strings.indexOfChar(existing_target_trim, '/') orelse existing_target_trim.len;
+
+                                break :should_clobber slash_index < target_path_trim.len and
+                                    compare_func(existing_target_trim[0..slash_index], target_path_trim[0..slash_index], false);
+                            };
+
+                            if (!should_clobber) {
+                                this.err = error.PathAlreadyExists;
+                                return;
+                            }
+
+                            // 4 and 5
+                            destination_dir.deleteTree(dest_path) catch {};
+                        },
+                    }
+
+                    // 4 and 5
+                    std.os.symlinkatZ(target_path, destination_dir.fd, dest_path) catch |symlink_err_2| {
+                        this.err = symlink_err_2;
+                        return;
+                    };
+
+                    setPermissions(destination_dir.fd, target_path_trim);
                     return;
                 };
-                setPermissions(destination_dir.fd, dest_path);
+                setPermissions(destination_dir.fd, target_path_trim);
                 return;
             } else {
                 const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");

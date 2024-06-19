@@ -8804,6 +8804,7 @@ pub const PackageManager = struct {
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
+                    .seen = null,
                     .clobber = false,
                 };
                 bin_linker.link(true);
@@ -8936,6 +8937,7 @@ pub const PackageManager = struct {
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
+                    .seen = null,
                     .clobber = false,
                 };
                 bin_linker.unlink(true);
@@ -10622,14 +10624,14 @@ pub const PackageManager = struct {
         /// being able to install it's dependencies
         pending_installs: std.ArrayListUnmanaged(DependencyInstallContext) = .{},
 
-        seen_packages_with_binaries: bun.U32HashMapUnmanaged(string) = .{},
+        binaries: Bin.PriorityQueue,
 
         /// Number of installed dependencies. Could be successful or failure.
         install_count: usize = 0,
 
         pub fn deinit(this: *TreeContext, allocator: std.mem.Allocator) void {
             this.pending_installs.deinit(allocator);
-            this.seen_packages_with_binaries.deinit(allocator);
+            this.binaries.deinit();
         }
     };
 
@@ -10675,11 +10677,14 @@ pub const PackageManager = struct {
 
         trees: []TreeContext,
 
+        seen_bin_links: bun.StringHashMap(void),
+
         /// Increments the number of installed packages for a tree id and runs available scripts
         /// if the tree is finished.
         pub fn incrementTreeInstallCount(
             this: *PackageInstaller,
             tree_id: Lockfile.Tree.Id,
+            maybe_destination_dir: ?std.fs.Dir,
             comptime should_install_packages: bool,
             comptime log_level: Options.LogLevel,
         ) void {
@@ -10687,9 +10692,10 @@ pub const PackageManager = struct {
                 bun.assert(tree_id != Lockfile.Tree.invalid_id);
             }
 
-            const trees = this.lockfile.buffers.trees.items;
-            const current_count = this.trees[tree_id].install_count;
-            const max = trees[tree_id].dependencies.len;
+            const tree = &this.trees[tree_id];
+            const current_count = tree.install_count;
+            const lockfile_trees = this.lockfile.buffers.trees.items;
+            const max = lockfile_trees[tree_id].dependencies.len;
 
             if (current_count == std.math.maxInt(usize)) {
                 if (comptime Environment.allow_assert)
@@ -10705,6 +10711,53 @@ pub const PackageManager = struct {
             if (is_not_done) return;
 
             this.completed_trees.set(tree_id);
+
+            if (maybe_destination_dir orelse (this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch null)) |_destination_dir| {
+                var destination_dir = _destination_dir;
+                defer {
+                    if (maybe_destination_dir == null) {
+                        destination_dir.close();
+                    }
+                }
+
+                this.seen_bin_links.clearRetainingCapacity();
+
+                for (tree.binaries.items[0..tree.binaries.len]) |dep_id| {
+                    bun.assertWithLocation(dep_id < this.lockfile.buffers.dependencies.items.len, @src());
+                    const package_id = this.lockfile.buffers.resolutions.items[dep_id];
+                    bun.assertWithLocation(package_id != invalid_package_id, @src());
+                    const bin = this.bins[package_id];
+                    bun.assertWithLocation(bin.tag != .none, @src());
+                    const alias = this.lockfile.buffers.dependencies.items[dep_id].name.slice(this.lockfile.buffers.string_bytes.items);
+
+                    var bin_linker: Bin.Linker = .{
+                        .bin = bin,
+                        .destination_node_modules = bun.toFD(destination_dir),
+                        .global_bin_path = this.options.bin_path,
+                        .global_bin_dir = this.options.global_bin_dir,
+                        .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
+                        .package_name = strings.StringOrTinyString.init(alias),
+                        .string_buf = this.lockfile.buffers.string_bytes.items,
+                        .extern_string_buf = this.lockfile.buffers.extern_strings.items,
+                        .seen = &this.seen_bin_links,
+                        .clobber = !this.options.global,
+                    };
+
+                    bin_linker.link(this.manager.options.global);
+                    if (bin_linker.err) |err| {
+                        this.manager.log.addErrorFmtNoLoc(
+                            this.manager.allocator,
+                            "Failed to link <b>{s}<r>: {s}",
+                            .{ alias, @errorName(err) },
+                        ) catch bun.outOfMemory();
+
+                        if (this.manager.options.enable.fail_early) {
+                            this.manager.crash();
+                        }
+                    }
+                }
+            }
+
             if (comptime should_install_packages) {
                 const force = false;
                 this.installAvailablePackages(log_level, force);
@@ -11205,7 +11258,8 @@ pub const PackageManager = struct {
 
                         Output.flush();
                         this.summary.fail += 1;
-                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+
+                        if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                         return;
                     };
 
@@ -11236,7 +11290,7 @@ pub const PackageManager = struct {
                     if (comptime Environment.allow_assert) {
                         @panic("Internal assertion failure: unexpected resolution tag");
                     }
-                    if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                    if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                     return;
                 },
             }
@@ -11322,7 +11376,7 @@ pub const PackageManager = struct {
                             if (comptime Environment.allow_assert) {
                                 @panic("unreachable, handled above");
                             }
-                            if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                            if (!installer.patch.isNull()) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                             this.summary.fail += 1;
                         },
                     }
@@ -11368,7 +11422,7 @@ pub const PackageManager = struct {
                         });
                     }
                     this.summary.fail += 1;
-                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                     return;
                 };
 
@@ -11409,49 +11463,8 @@ pub const PackageManager = struct {
                             this.node.completeOne();
                         }
 
-                        link_binaries: {
-                            const bin = this.bins[package_id];
-                            if (bin.tag == .none) break :link_binaries;
-
-                            var clobber = false;
-                            const entry = this.trees[this.current_tree_id].seen_packages_with_binaries.getOrPut(this.manager.allocator, package_id) catch bun.outOfMemory();
-                            if (entry.found_existing) {
-                                // We don't install packages in a tree in alphabetical order. Normally this doesn't matter, but
-                                // package binaries are installed in shared folder (node_modules/.bin) and names can conflict.
-                                const previous_dep_name = entry.value_ptr.*;
-                                const order = strings.order(previous_dep_name, alias);
-                                if (order != .lt) break :link_binaries;
-
-                                clobber = true;
-                            }
-
-                            entry.value_ptr.* = this.manager.allocator.dupe(u8, alias) catch bun.outOfMemory();
-
-                            var bin_linker = Bin.Linker{
-                                .bin = bin,
-                                .destination_node_modules = bun.toFD(destination_dir),
-                                .global_bin_path = this.options.bin_path,
-                                .global_bin_dir = this.options.global_bin_dir,
-                                .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
-                                .package_name = strings.StringOrTinyString.init(alias),
-                                .string_buf = buf,
-                                .extern_string_buf = this.lockfile.buffers.extern_strings.items,
-                                .clobber = clobber,
-                            };
-
-                            bin_linker.link(this.manager.options.global);
-                            if (bin_linker.err) |err| {
-                                this.manager.log.addErrorFmtNoLoc(
-                                    this.manager.allocator,
-                                    "Failed to link <b>{s}<r>: {s}",
-                                    .{ alias, @errorName(err) },
-                                ) catch bun.outOfMemory();
-
-                                if (this.manager.options.enable.fail_early) {
-                                    installer.uninstall(destination_dir);
-                                    this.manager.crash();
-                                }
-                            }
+                        if (this.bins[package_id].tag != .none) {
+                            this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
                         }
 
                         const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
@@ -11500,7 +11513,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
                     },
                     .fail => |cause| {
                         if (comptime Environment.allow_assert) {
@@ -11509,7 +11522,7 @@ pub const PackageManager = struct {
 
                         // even if the package failed to install, we still need to increment the install
                         // counter for this tree
-                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                        if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
 
                         if (cause.err == error.DanglingSymlink) {
                             Output.prettyErrorln(
@@ -11568,8 +11581,6 @@ pub const PackageManager = struct {
                     },
                 }
             } else {
-                defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
-
                 var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                     if (log_level != .silent) {
                         Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
@@ -11578,12 +11589,15 @@ pub const PackageManager = struct {
                         });
                     }
                     this.summary.fail += 1;
+                    if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                     return;
                 };
 
                 defer {
                     if (std.fs.cwd().fd != destination_dir.fd) destination_dir.close();
                 }
+
+                defer if (!pkg_has_patch) this.incrementTreeInstallCount(this.current_tree_id, destination_dir, !is_pending_package_install, log_level);
 
                 const name_hash: TruncatedPackageNameHash = @truncate(this.lockfile.buffers.dependencies.items[dependency_id].name_hash);
                 const is_trusted, const is_trusted_through_update_request, const add_to_lockfile = brk: {
@@ -11709,7 +11723,7 @@ pub const PackageManager = struct {
                 if (comptime log_level.showProgress()) {
                     this.node.completeOne();
                 }
-                if (comptime increment_tree_count) this.incrementTreeInstallCount(this.current_tree_id, !is_pending_package_install, log_level);
+                if (comptime increment_tree_count) this.incrementTreeInstallCount(this.current_tree_id, null, !is_pending_package_install, log_level);
                 return;
             }
 
@@ -12106,10 +12120,15 @@ pub const PackageManager = struct {
                     .completed_trees = completed_trees,
                     .trees = trees: {
                         const trees = this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len) catch bun.outOfMemory();
-                        @memset(trees, .{});
+                        for (0..this.lockfile.buffers.trees.items.len) |i| {
+                            trees[i] = .{
+                                .binaries = Bin.PriorityQueue.init(this.allocator, .{ .lockfile = this.lockfile }),
+                            };
+                        }
                         break :trees trees;
                     },
                     .trusted_dependencies_from_update_requests = trusted_dependencies_from_update_requests,
+                    .seen_bin_links = bun.StringHashMap(void).init(this.allocator),
                 };
             };
 

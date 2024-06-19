@@ -279,6 +279,10 @@ pub const Error = struct {
         return "UNKNOWN";
     }
 
+    pub fn toZigErr(this: Error) anyerror {
+        return bun.errnoToZigErr(this.errno);
+    }
+
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
@@ -1624,14 +1628,14 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
 
 pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
     while (true) {
-        const rc = sys.readlinkat(fd, in, buf.ptr, buf.len);
+        const rc = sys.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]const u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         buf[@intCast(rc)] = 0;
-        return Maybe(usize){ .result = buf[0..@intCast(rc)] };
+        return Maybe([:0]const u8){ .result = buf[0..@intCast(rc) :0] };
     }
 }
 

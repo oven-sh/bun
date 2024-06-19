@@ -109,8 +109,8 @@ async function runTests(target, filters) {
   if (isBuildKite) {
     const retryCount = parseInt(process.env["BUILDKITE_RETRY_COUNT"]) || 0;
     if (retryCount) {
-      const jobId = isFileLike ? process.env["BUILDKITE_JOB_ID"] : target;
-      const logPaths = listArtifactsFromBuildKite("**/*.log", jobId);
+      const step = isFileLike ? process.env["BUILDKITE_STEP_ID"] : target;
+      const logPaths = listArtifactsFromBuildKite("**/*.log", step);
       const previousTests = filteredTests
         .filter(testPath => logPaths.some(logPath => logPath.includes(testPath)))
         .sort();

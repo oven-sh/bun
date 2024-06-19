@@ -1,5 +1,12 @@
 #! /usr/bin/env node
 
+// This is a script that runs `bun test` to test Bun itself.
+// It is not intended to be used as a test runner for other projects.
+//
+// - It runs each `bun test` in a separate process, to catch crashes.
+// - It cannot use Bun APIs, since it is run using Node.js.
+// - It does not import dependencies, so it's faster to start.
+
 import {
   constants as fs,
   readFileSync,
@@ -15,7 +22,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative } from "node:path";
+import { join, basename, dirname, relative, sep } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
 const spawnTimeout = 30_000;
@@ -70,8 +77,10 @@ function printInfo() {
  * @param {string[]} [filters]
  */
 async function runTests(target, filters) {
+  const isFileLike = existsSync(target) || /\/|\\|\./.test(target);
+
   let execPath;
-  if (isBuildKite && !existsSync(target)) {
+  if (isBuildKite && !isFileLike) {
     execPath = await getExecPathFromBuildKite(target);
   } else {
     execPath = getExecPath(target);
@@ -82,19 +91,45 @@ async function runTests(target, filters) {
   console.log("Revision:", revision);
 
   const tests = getTests(testsPath);
-  let actualTests;
-  if (filters?.length > 0) {
-    actualTests = tests.filter(testPath => filters.some(filter => testPath.includes(filter)));
-    console.log("Filtering tests:", actualTests.length, "/", tests.length);
-  } else {
+  const filteredTests = [];
+
+  if (filters?.length) {
+    filteredTests.push(...tests.filter(testPath => filters.some(filter => testPath.includes(filter))));
+    console.log("Filtering tests:", filteredTests.length, "/", tests.length);
+  } else if (maxShards > 1) {
     const firstTest = shardId * Math.ceil(tests.length / maxShards);
     const lastTest = Math.min(firstTest + Math.ceil(tests.length / maxShards), tests.length);
-    actualTests = tests.slice(firstTest, lastTest);
-    console.log("Running tests:", firstTest, "...", lastTest, "/", tests.length);
+    filteredTests.push(...tests.slice(firstTest, lastTest));
+    console.log("Sharding tests:", firstTest, "...", lastTest, "/", tests.length);
+  } else {
+    filteredTests.push(...tests);
+    console.log("Found tests:", filteredTests.length);
+  }
+
+  if (isBuildKite) {
+    const retryCount = parseInt(process.env["BUILDKITE_RETRY_COUNT"]) || 0;
+    if (retryCount) {
+      const jobId = isFileLike ? process.env["BUILDKITE_JOB_ID"] : target;
+      const logPaths = listArtifactsFromBuildKite("**/*.log", jobId);
+      const previousTests = filteredTests
+        .filter(testPath => logPaths.some(logPath => logPath.includes(testPath)))
+        .sort();
+      if (previousTests.length < filteredTests.length) {
+        console.log(
+          "Detected partial test run, skipping already run tests:",
+          previousTests.length,
+          "/",
+          filteredTests.length,
+        );
+        for (const testPath of previousTests) {
+          filteredTests.splice(filteredTests.indexOf(testPath), 1);
+        }
+      }
+    }
   }
 
   let i = 0;
-  let total = actualTests.length + 2;
+  let total = filteredTests.length + 2;
   const results = [];
 
   /**
@@ -102,7 +137,7 @@ async function runTests(target, filters) {
    * @param {function} fn
    */
   const runTest = async (title, fn) => {
-    const label = `[${++i}/${total}] ${title}`;
+    const label = `${getAnsi("gray")}[${++i}/${total}]${getAnsi("reset")} ${title}`;
     const result = await runTask(label, fn);
     results.push(result);
 
@@ -117,19 +152,13 @@ async function runTests(target, filters) {
         uploadArtifactsToBuildKite(relative(cwd, logFilePath));
       }
 
-      const statusFilePath = join(cwd, ok ? "PASSED.txt" : "FAILED.txt");
-      appendFileSync(statusFilePath, `${testPath}\n`);
-      if (!ok || i % 10 === 0) {
-        uploadArtifactsToBuildKite(relative(cwd, statusFilePath));
-      }
-
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
         reportAnnotationToBuildKite(title, markdown);
       }
 
       if (!ok) {
-        const titleFailed = `${getAnsi("red")}${label} - ${error}${getAnsi("reset")}`;
+        const titleFailed = `${label}${getAnsi("red")} - ${error}${getAnsi("reset")}`;
         await runTask(titleFailed, () => {
           process.stderr.write(stdoutPreview);
         });
@@ -157,7 +186,7 @@ async function runTests(target, filters) {
   }
 
   if (results.every(({ ok }) => ok)) {
-    for (const testPath of actualTests) {
+    for (const testPath of filteredTests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
@@ -285,21 +314,33 @@ async function spawnSafe({
     }
   });
   let error;
-  if (spawnError) {
-    const { message } = spawnError;
+  if (exitCode === 0) {
+    // ...
+  } else if (spawnError) {
+    const { stack, message } = spawnError;
     if (/timed? ?out/.test(message)) {
       error = "timeout";
     } else {
-      error = `error: ${message}`;
+      error = "spawn error";
+      buffer = stack || message;
     }
+  } else if (
+    (error = /thread \d+ panic: (.*)/i.test(buffer)) ||
+    (error = /panic\(.*\): (.*)/i.test(buffer)) ||
+    (error = /(Segmentation fault) at address/i.test(buffer)) ||
+    (error = /(Internal assertion failure)/i.test(buffer)) ||
+    (error = /(Illegal instruction) at address/i.test(buffer)) ||
+    (error = /panic: (.*) at address/i.test(buffer)) ||
+    (error = /oh no: Bun has crashed/i.test(buffer))
+  ) {
+    const [, message] = error;
+    error = message ? `crash: ${message}` : "crash";
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";
     } else {
       error = signalCode;
     }
-  } else if ((error = /thread \d+ panic: (.*)/.test(buffer))) {
-    error = `panic: ${error[1]}`;
   } else if (exitCode === 1) {
     const match = buffer.match(/\x1b\[31m\s(\d+) fail/);
     if (match) {
@@ -810,6 +851,10 @@ function getExecPath(bunExe) {
  * @returns {Promise<string>}
  */
 async function getExecPathFromBuildKite(target) {
+  if (existsSync(target) || target.includes("/")) {
+    return getExecPath(target);
+  }
+
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
   await spawnSafe({
@@ -1203,6 +1248,38 @@ function uploadArtifactsToBuildKite(glob) {
 }
 
 /**
+ * @param {string} [glob]
+ * @param {string} [step]
+ */
+function listArtifactsFromBuildKite(glob, step) {
+  const args = [
+    "artifact",
+    "search",
+    "--no-color",
+    "--allow-empty-results",
+    "--include-retried-jobs",
+    "--format",
+    "%p\n",
+    glob || "*",
+  ];
+  if (step) {
+    args.push("--step", step);
+  }
+  const { error, status, signal, stdout, stderr } = spawnSync("buildkite-agent", args, {
+    stdio: ["ignore", "ignore", "ignore"],
+    encoding: "utf-8",
+    timeout: spawnTimeout,
+    cwd,
+  });
+  if (status === 0) {
+    return stdout.trim().split("\n");
+  }
+  const cause = error ?? signal ?? `code ${status}`;
+  console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
+  return [];
+}
+
+/**
  * @param {string} label
  * @param {string} content
  * @param {number | undefined} attempt
@@ -1390,8 +1467,15 @@ if (!target) {
 runTask("Environment", printInfo);
 const results = await runTests(target, filters);
 const ok = results.every(({ ok }) => ok);
-if (isBuildKite) {
-  process.exit(ok ? 0 : 2);
-} else {
-  process.exit(ok ? 0 : 1);
-}
+
+// On Buildkite, you can define a `soft_fail` property to differentiate
+// from failing tests and the runner itself failing.
+//
+// ```yml
+// steps:
+//  - command: smoke-test.sh
+//    soft_fail:
+//      - exit_status: 2
+// ```
+const exitCode = ok ? 0 : isBuildKite ? 2 : 1;
+process.exit(exitCode);

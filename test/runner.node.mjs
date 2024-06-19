@@ -114,6 +114,7 @@ async function runTests(target, filters) {
       const previousTests = filteredTests
         .filter(testPath => logPaths.some(logPath => logPath.includes(testPath)))
         .sort();
+      console.log({ logPaths, filteredTests, previousTests });
       if (previousTests.length < filteredTests.length) {
         console.log(
           "Detected partial test run, skipping already run tests:",

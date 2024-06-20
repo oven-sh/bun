@@ -1129,7 +1129,7 @@ function getHostname() {
 async function getPublicIp() {
   const addressUrls = ["https://checkip.amazonaws.com", "https://ipinfo.io/ip"];
   if (isAWS) {
-    addressUrls.push("http://169.254.169.254/latest/meta-data/public-hostname");
+    addressUrls.unshift("http://169.254.169.254/latest/meta-data/public-hostname");
   }
   for (const url of addressUrls) {
     try {

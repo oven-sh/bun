@@ -161,14 +161,19 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
     return null;
 }
 pub inline fn containsComptime(self: string, comptime str: string) bool {
-    var remain = self;
+    if (comptime str.len == 0) @compileError("Don't call this with an empty string plz.");
+
+    const start = std.mem.indexOfScalar(u8, self, str[0]) orelse return false;
+    var remain = self[start..];
     const Int = std.meta.Int(.unsigned, str.len * 8);
 
     while (remain.len >= comptime str.len) {
         if (@as(Int, @bitCast(remain.ptr[0..str.len].*)) == @as(Int, @bitCast(str.ptr[0..str.len].*))) {
             return true;
         }
-        remain = remain[str.len..];
+
+        const next_start = std.mem.indexOfScalar(u8, remain[1..], str[0]) orelse return false;
+        remain = remain[1 + next_start ..];
     }
 
     return false;

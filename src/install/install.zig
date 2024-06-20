@@ -9832,6 +9832,7 @@ pub const PackageManager = struct {
             "dependencies";
         var any_changes = false;
 
+        var not_in_workspace_root: ?PatchCommitResult = null;
         switch (subcommand) {
             .remove => {
                 // if we're removing, they don't have to specify where it is installed in the dependencies list
@@ -9910,12 +9911,18 @@ pub const PackageManager = struct {
                 if (manager.options.patch_features == .commit) {
                     var pathbuf: bun.PathBuffer = undefined;
                     if (try manager.doPatchCommit(&pathbuf, log_level)) |stuff| {
-                        try PackageJSONEditor.editPatchedDependencies(
-                            manager,
-                            &current_package_json.root,
-                            stuff.patch_key,
-                            stuff.patchfile_path,
-                        );
+                        // we're inside a workspace package, we need to edit the
+                        // root json, not the `current_package_json`
+                        if (stuff.not_in_workspace_root) {
+                            not_in_workspace_root = stuff;
+                        } else {
+                            try PackageJSONEditor.editPatchedDependencies(
+                                manager,
+                                &current_package_json.root,
+                                stuff.patch_key,
+                                stuff.patchfile_path,
+                            );
+                        }
                     }
                 }
             },
@@ -9953,6 +9960,8 @@ pub const PackageManager = struct {
         @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
         @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
         const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+        root_package_json_path_buf[root_package_json_path.len] = 0;
+        const root_package_json_pathZ = root_package_json_path_buf[0..root_package_json_path.len :0];
 
         const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
             .parse_err => |err| {
@@ -9976,6 +9985,25 @@ pub const PackageManager = struct {
             },
             .entry => |entry| entry,
         };
+
+        if (not_in_workspace_root) |stuff| {
+            try PackageJSONEditor.editPatchedDependencies(
+                manager,
+                &root_package_json.root,
+                stuff.patch_key,
+                stuff.patchfile_path,
+            );
+            var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+            try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
+            buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
+            var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
+
+            _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+            root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
+        }
 
         try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
 
@@ -10036,12 +10064,14 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.write_package_json) {
+            const source, const path = if (manager.options.patch_features == .commit) .{ root_package_json.source.contents, root_package_json_pathZ } else .{ new_package_json_source, manager.original_package_json_path };
+
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
-            const workspace_package_json_file = (try bun.sys.File.openat(bun.invalid_fd, manager.original_package_json_path, std.os.O.RDWR, 0).unwrap()).handle.asFile();
+            const workspace_package_json_file = (try bun.sys.File.openat(bun.invalid_fd, path, std.os.O.RDWR, 0).unwrap()).handle.asFile();
 
-            try workspace_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.os.ftruncate(workspace_package_json_file.handle, new_package_json_source.len) catch {};
+            try workspace_package_json_file.pwriteAll(source, 0);
+            std.os.ftruncate(workspace_package_json_file.handle, source.len) catch {};
             workspace_package_json_file.close();
 
             if (subcommand == .remove) {
@@ -10178,15 +10208,19 @@ pub const PackageManager = struct {
         name_and_version,
 
         pub fn fromArg(argument: []const u8) PatchArgKind {
-            if (bun.strings.hasPrefixComptime(argument, "node_modules/")) return .path;
-            if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) return .path;
-            if (comptime bun.Environment.isWindows) {
-                if (bun.strings.hasPrefix(argument, "node_modules\\")) return .path;
-                if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules\\")) return .path;
-            }
+            if (bun.strings.containsComptime(argument, "node_modules/")) return .path;
+            if (bun.Environment.isWindows and bun.strings.hasPrefix(argument, "node_modules\\")) return .path;
             return .name_and_version;
         }
     };
+
+    fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile: *const Lockfile, argument: []const u8) ?[]const u8 {
+        const workspace_package_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
+        if (workspace_package_id == 0) return null;
+        const workspace_res = lockfile.packages.items(.resolution)[workspace_package_id];
+        const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
+        return bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)) catch bun.outOfMemory();
+    }
 
     /// 1. Arg is either:
     ///   - name and possibly version (e.g. "is-even" or "is-even@1.0.0")
@@ -10196,7 +10230,7 @@ pub const PackageManager = struct {
     /// 4. Print to user
     fn preparePatch(manager: *PackageManager) !void {
         const strbuf = manager.lockfile.buffers.string_bytes.items;
-        const argument = manager.options.positionals[1];
+        var argument = manager.options.positionals[1];
 
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
@@ -10206,9 +10240,24 @@ pub const PackageManager = struct {
 
         var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
 
+        const not_in_workspace_root = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash) != 0;
+        var free_argument = false;
+        argument = if (arg_kind == .path and
+            not_in_workspace_root and
+            (!bun.path.Platform.posix.isAbsolute(argument) or (bun.Environment.isWindows and !bun.path.Platform.windows.isAbsolute(argument))))
+        brk: {
+            if (pathArgumentRelativeToRootWorkspacePackage(manager, manager.lockfile, argument)) |rel_path| {
+                free_argument = true;
+                break :brk rel_path;
+            }
+            break :brk argument;
+        } else argument;
+        defer if (free_argument) manager.allocator.free(argument);
+
         const cache_dir: std.fs.Dir, const cache_dir_subpath: []const u8, const module_folder: []const u8, const pkg_name: []const u8 = switch (arg_kind) {
             .path => brk: {
                 var lockfile = manager.lockfile;
+
                 const package_json_source: logger.Source = src: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
@@ -10368,8 +10417,14 @@ pub const PackageManager = struct {
             Global.crash();
         };
 
-        Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
-        Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
+        if (not_in_workspace_root) {
+            var bufn: bun.PathBuffer = undefined;
+            Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, bun.path.joinStringBuf(bufn[0..], &[_][]const u8{ bun.fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), module_folder }, .auto) });
+            Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{bun.path.joinStringBuf(bufn[0..], &[_][]const u8{ bun.fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), module_folder }, .auto)});
+        } else {
+            Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
+            Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
+        }
 
         return;
     }
@@ -10532,6 +10587,7 @@ pub const PackageManager = struct {
     const PatchCommitResult = struct {
         patch_key: []const u8,
         patchfile_path: []const u8,
+        not_in_workspace_root: bool = false,
     };
 
     /// - Arg is the dir containing the package with changes OR name and version
@@ -10582,9 +10638,22 @@ pub const PackageManager = struct {
             .ok => {},
         }
 
-        const argument = manager.options.positionals[1];
-
+        var argument = manager.options.positionals[1];
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
+
+        const not_in_workspace_root = manager.root_package_id.get(lockfile, manager.workspace_name_hash) != 0;
+        var free_argument = false;
+        argument = if (arg_kind == .path and
+            not_in_workspace_root and
+            (!bun.path.Platform.posix.isAbsolute(argument) or (bun.Environment.isWindows and !bun.path.Platform.windows.isAbsolute(argument))))
+        brk: {
+            if (pathArgumentRelativeToRootWorkspacePackage(manager, lockfile, argument)) |rel_path| {
+                free_argument = true;
+                break :brk rel_path;
+            }
+            break :brk argument;
+        } else argument;
+        defer if (free_argument) manager.allocator.free(argument);
 
         // Attempt to open the existing node_modules folder
         var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
@@ -10744,7 +10813,7 @@ pub const PackageManager = struct {
                 }, .posix);
             };
 
-            const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname(name, buf2[0..], bun.fastRandom()) catch |e| {
+            const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make tempdir {s}<r>\n",
                     .{@errorName(e)},
@@ -10777,7 +10846,7 @@ pub const PackageManager = struct {
                 break :has_nested_node_modules true;
             };
 
-            const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(name, buf3[0..], bun.fastRandom()) catch |e| {
+            const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make tempdir {s}<r>\n",
                     .{@errorName(e)},
@@ -11017,6 +11086,7 @@ pub const PackageManager = struct {
         return .{
             .patch_key = patch_key,
             .patchfile_path = patchfile_path,
+            .not_in_workspace_root = not_in_workspace_root,
         };
     }
 

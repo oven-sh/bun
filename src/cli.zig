@@ -770,12 +770,20 @@ pub const Arguments = struct {
             }
 
             if (args.option("--sourcemap")) |setting| {
-                if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
-                    opts.source_map = Api.SourceMapMode.inline_into_file;
+                if (setting.len == 0) {
+                    // In the future, Bun is going to make this default to .linked
+                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
+                        .linked
+                    else
+                        .@"inline";
+                } else if (strings.eqlComptime(setting, "inline")) {
+                    opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
-                    opts.source_map = Api.SourceMapMode._none;
+                    opts.source_map = .none;
                 } else if (strings.eqlComptime(setting, "external")) {
-                    opts.source_map = Api.SourceMapMode.external;
+                    opts.source_map = .external;
+                } else if (strings.eqlComptime(setting, "linked")) {
+                    opts.source_map = .linked;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();

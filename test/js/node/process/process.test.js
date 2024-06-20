@@ -634,3 +634,17 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
   process.setUncaughtExceptionCaptureCallback(null);
 });
+
+it("process.execArgv", async () => {
+  const fixtures = [
+    ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
+    ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
+    ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+  ];
+
+  for (const [cmd, execArgv, argv] of fixtures) {
+    const replacedCmd = cmd.replace("index.ts", Bun.$.escape(join(__dirname, "print-process-execArgv.js")));
+    const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
+    expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
+  }
+});

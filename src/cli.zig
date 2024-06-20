@@ -203,7 +203,7 @@ pub const Arguments = struct {
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
-    const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
+    pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,

@@ -18,12 +18,12 @@ import {
   appendFileSync,
   readdirSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative, sep } from "node:path";
+import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
+import { isIP } from "node:net";
 
 const spawnTimeout = 30_000;
 const testTimeout = 3 * 60_000;
@@ -32,10 +32,15 @@ const integrationTimeout = 5 * 60_000;
 const isLinux = process.platform === "linux";
 const isMacOS = process.platform === "darwin";
 const isWindows = process.platform === "win32";
+
 const isGitHubAction = !!process.env["GITHUB_ACTIONS"];
 const isBuildKite = !!process.env["BUILDKITE"];
 const isBuildKiteTestSuite = !!process.env["BUILDKITE_ANALYTICS_TOKEN"];
 const isCI = !!process.env["CI"] || isGitHubAction || isBuildKite;
+
+const isAWS = !!process.env["AWS_EXECUTION_ENV"] || process.env["USERNAME"]?.startsWith("EC2");
+const isCloud = isAWS;
+
 const isInteractive = !isCI && process.argv.includes("-i") && process.stdout.isTTY;
 const isBail = process.argv.includes("--bail");
 
@@ -52,11 +57,15 @@ const cwd = dirname(import.meta.dirname);
 const testsPath = join(cwd, "test");
 const tmpPath = getTmpdir();
 
-function printInfo() {
+async function printInfo() {
   console.log("Timestamp:", new Date());
   console.log("OS:", getOsPrettyText(), getOsEmoji());
   console.log("Arch:", getArchText(), getArchEmoji());
   console.log("Hostname:", getHostname());
+  if (isCloud) {
+    console.log("Public IP:", await getPublicIp());
+    console.log("Cloud:", getCloud());
+  }
   if (isCI) {
     console.log("CI:", getCI());
     console.log("Shard:", shardId, "/", maxShards);
@@ -1094,6 +1103,15 @@ function getCI() {
 /**
  * @returns {string | undefined}
  */
+function getCloud() {
+  if (isAWS) {
+    return "AWS";
+  }
+}
+
+/**
+ * @returns {string | undefined}
+ */
 function getHostname() {
   if (isBuildKite) {
     return process.env["BUILDKITE_AGENT_NAME"];
@@ -1102,6 +1120,34 @@ function getHostname() {
     return hostname();
   } catch (error) {
     console.warn(error);
+  }
+}
+
+/**
+ * @returns {Promise<string | undefined>}
+ */
+async function getPublicIp() {
+  const addressUrls = ["https://checkip.amazonaws.com", "https://ipinfo.io/ip"];
+  if (isAWS) {
+    addressUrls.push("http://169.254.169.254/latest/meta-data/public-hostname");
+  }
+  for (const url of addressUrls) {
+    try {
+      const response = await fetch(url);
+      const { ok, status, statusText } = response;
+      if (!ok) {
+        throw new Error(`${status} ${statusText}: ${url}`);
+      }
+      const text = await response.text();
+      const address = text.trim();
+      if (isIP(address)) {
+        return address;
+      } else {
+        throw new Error(`Invalid IP address: ${address}`);
+      }
+    } catch (error) {
+      console.warn(error);
+    }
   }
 }
 
@@ -1435,7 +1481,7 @@ if (!target) {
   throw new Error(`Usage: ${process.argv0} ${filename} <target> [...filters]`);
 }
 
-runTask("Environment", printInfo);
+await runTask("Environment", printInfo);
 const results = await runTests(target, filters);
 const ok = results.every(({ ok }) => ok);
 

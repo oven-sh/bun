@@ -2231,12 +2231,19 @@ describe("expect()", () => {
       expect(thisFile).toHaveLength(thisFileSize);
       expect(thisFile).toHaveLength(Bun.file(__filename).size);
 
+      const { join } = require("path");
+      const { tmpdir } = require("os");
+      const { mkdtempSync, writeFileSync } = require("fs");
+      const tmpDir = mkdtempSync(join(tmpdir(), "jest-extended-"));
+      const tmpFile = join(tmpDir, "empty.txt");
+      writeFileSync(tmpFile, "");
+
       // empty file should have length 0
-      require("fs").writeFileSync("/tmp/empty.txt", "");
       expect(Bun.file("/tmp/empty.txt")).toHaveLength(0);
 
       // if a file doesn't exist, it should throw (not return 0 size)
-      expect(() => expect(Bun.file("/does-not-exist/file.txt")).toHaveLength(0)).toThrow();
+      const emptyFile = join(tmpDir, "does-not-exist.txt");
+      expect(() => expect(Bun.file(emptyFile)).toHaveLength(0)).toThrow();
 
       // Blob
       expect(new Blob(ANY([1, 2, 3]))).toHaveLength(3);

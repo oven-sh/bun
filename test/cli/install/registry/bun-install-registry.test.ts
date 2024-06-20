@@ -123,7 +123,9 @@ describe("optionalDependencies", () => {
         savesLockfile: !rootOptional,
       });
 
-      expect(err).toContain("warn: GET http://localhost:4873/this-package-does-not-exist-in-the-registry - ");
+      expect(err).toMatch(
+        `warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry/-/this-package-does-not-exist-in-the-registry-1.0.0.tgz - `,
+      );
     });
   }
 });
@@ -455,7 +457,7 @@ registry = "http://localhost:${port}"
   const lockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(lockfile.packages) as any) {
     if (pkg.tag === "npm") {
-      expect(pkg.resolution.resolved).toContain("http://localhost:4873");
+      expect(pkg.resolution.resolved).toContain(`http://localhost:${port}`);
     }
   }
 
@@ -476,7 +478,7 @@ cache = "${cacheDir}"
   const npmLockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(npmLockfile.packages) as any) {
     if (pkg.tag === "npm") {
-      expect(pkg.resolution.resolved).not.toContain("http://localhost:4873");
+      expect(pkg.resolution.resolved).not.toContain(`http://localhost:${port}`);
     }
   }
 });

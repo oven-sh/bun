@@ -2284,9 +2284,8 @@ pub const E = struct {
                     .is_utf16 = true,
                 };
             }
-            return .{
-                .data = value,
-            };
+
+            return .{ .data = value };
         }
 
         pub fn slice16(this: *const String) []const u16 {

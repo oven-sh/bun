@@ -60,7 +60,7 @@ pub fn OOM(e: anyerror) noreturn {
     if (comptime bun.Environment.allow_assert) {
         if (e != error.OutOfMemory) bun.outOfMemory();
     }
-    @panic("Out of memory");
+    bun.outOfMemory();
 }
 
 const log = bun.Output.scoped(.SHELL, false);
@@ -602,19 +602,232 @@ pub const EnvMap = struct {
     }
 };
 
+pub const ShellArgs = struct {
+    /// This is the arena used to allocate the input shell script's AST nodes,
+    /// tokens, and a string pool used to store all strings.
+    __arena: *bun.ArenaAllocator,
+    /// Root ast node
+    script_ast: ast.Script = .{ .stmts = &[_]ast.Stmt{} },
+
+    pub usingnamespace bun.New(@This());
+
+    pub fn arena_allocator(this: *ShellArgs) std.mem.Allocator {
+        return this.__arena.allocator();
+    }
+
+    pub fn deinit(this: *ShellArgs) void {
+        this.__arena.deinit();
+        bun.destroy(this.__arena);
+        this.destroy();
+    }
+
+    pub fn init() *ShellArgs {
+        const arena = bun.new(bun.ArenaAllocator, bun.ArenaAllocator.init(bun.default_allocator));
+        return ShellArgs.new(.{
+            .__arena = arena,
+            .script_ast = undefined,
+        });
+    }
+};
+
+pub const ParsedShellScript = struct {
+    pub usingnamespace JSC.Codegen.JSParsedShellScript;
+    args: ?*ShellArgs = null,
+    /// allocated with arena in jsobjs
+    jsobjs: std.ArrayList(JSValue),
+    export_env: ?EnvMap = null,
+    quiet: bool = false,
+    cwd: ?bun.String = null,
+    this_jsvalue: JSValue = .zero,
+
+    fn take(
+        this: *ParsedShellScript,
+        globalObject: *JSC.JSGlobalObject,
+        out_args: **ShellArgs,
+        out_jsobjs: *std.ArrayList(JSValue),
+        out_quiet: *bool,
+        out_cwd: *?bun.String,
+        out_export_env: *?EnvMap,
+    ) void {
+        _ = globalObject; // autofix
+        out_args.* = this.args.?;
+        out_jsobjs.* = this.jsobjs;
+        out_quiet.* = this.quiet;
+        out_cwd.* = this.cwd;
+        out_export_env.* = this.export_env;
+
+        this.args = null;
+        this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
+        this.cwd = null;
+        this.export_env = null;
+    }
+
+    pub fn finalize(
+        this: *ParsedShellScript,
+    ) callconv(.C) void {
+        this.this_jsvalue = .zero;
+        log("ParsedShellScript(0x{x}) finalize", .{@intFromPtr(this)});
+        if (this.export_env) |*env| env.deinit();
+        if (this.cwd) |*cwd| cwd.deref();
+        for (this.jsobjs.items) |jsobj| {
+            jsobj.unprotect();
+        }
+        if (this.args) |a| a.deinit();
+        bun.destroy(this);
+    }
+
+    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        const str_js = arguments.nextEat() orelse {
+            globalThis.throw("$`...`.cwd(): expected a string argument", .{});
+            return .undefined;
+        };
+        const str = bun.String.fromJS(str_js, globalThis);
+        this.cwd = str;
+        return .undefined;
+    }
+
+    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
+        this.quiet = true;
+        return .undefined;
+    }
+
+    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        var env =
+            if (this.export_env) |*env|
+        brk: {
+            env.clearRetainingCapacity();
+            break :brk env.*;
+        } else EnvMap.init(bun.default_allocator);
+        defer this.export_env = env;
+
+        const value1 = callframe.argument(0);
+        if (!value1.isObject()) {
+            globalThis.throwInvalidArguments("env must be an object", .{});
+            return .undefined;
+        }
+
+        var object_iter = JSC.JSPropertyIterator(.{
+            .skip_empty_name = false,
+            .include_value = true,
+        }).init(globalThis, value1);
+        defer object_iter.deinit();
+
+        env.ensureTotalCapacity(object_iter.len);
+
+        // If the env object does not include a $PATH, it must disable path lookup for argv[0]
+        // PATH = "";
+
+        while (object_iter.next()) |key| {
+            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            var value = object_iter.value;
+            if (value == .undefined) continue;
+
+            const value_str = value.getZigString(globalThis);
+            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyref = EnvStr.initRefCounted(keyslice);
+            defer keyref.deref();
+            const valueref = EnvStr.initRefCounted(slice);
+            defer valueref.deref();
+
+            env.insert(keyref, valueref);
+        }
+
+        return .undefined;
+    }
+
+    pub fn createParsedShellScript(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        var shargs = ShellArgs.init();
+
+        const arguments_ = callframe.arguments(2);
+        const arguments = arguments_.slice();
+        if (arguments.len < 2) {
+            globalThis.throwNotEnoughArguments("Bun.$", 2, arguments.len);
+            return .zero;
+        }
+        const string_args = arguments[0];
+        const template_args_js = arguments[1];
+        var template_args = template_args_js.arrayIterator(globalThis);
+
+        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
+        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        };
+        defer {
+            for (jsstrings.items[0..]) |bunstr| {
+                bunstr.deref();
+            }
+            jsstrings.deinit();
+        }
+        var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
+        var script = std.ArrayList(u8).init(shargs.arena_allocator());
+        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script) catch {
+            globalThis.throwOutOfMemory();
+            return .undefined;
+        })) {
+            return .undefined;
+        }
+
+        var parser: ?bun.shell.Parser = null;
+        var lex_result: ?shell.LexResult = null;
+        const script_ast = Interpreter.parse(
+            shargs.arena_allocator(),
+            script.items[0..],
+            jsobjs.items[0..],
+            jsstrings.items[0..],
+            &parser,
+            &lex_result,
+        ) catch |err| {
+            if (err == shell.ParseError.Lex) {
+                assert(lex_result != null);
+                const str = lex_result.?.combineErrors(shargs.arena_allocator());
+                globalThis.throwPretty("{s}", .{str});
+                return .undefined;
+            }
+
+            if (parser) |*p| {
+                if (bun.Environment.allow_assert) {
+                    assert(p.errors.items.len > 0);
+                }
+                const errstr = p.combineErrors();
+                globalThis.throwPretty("{s}", .{errstr});
+                return .undefined;
+            }
+
+            globalThis.throwError(err, "failed to lex/parse shell");
+            return .undefined;
+        };
+
+        shargs.script_ast = script_ast;
+
+        const parsed_shell_script = bun.new(ParsedShellScript, .{
+            .args = shargs,
+            .jsobjs = jsobjs,
+        });
+        parsed_shell_script.this_jsvalue = JSC.Codegen.JSParsedShellScript.toJS(parsed_shell_script, globalThis);
+        log("ParsedShellScript(0x{x}) create", .{@intFromPtr(parsed_shell_script)});
+
+        bun.Analytics.Features.shell += 1;
+        return parsed_shell_script.this_jsvalue;
+    }
+};
+
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
+    pub usingnamespace JSC.Codegen.JSShellInterpreter;
     command_ctx: bun.CLI.Command.Context,
     event_loop: JSC.EventLoopHandle,
-    /// This is the arena used to allocate the input shell script's AST nodes,
-    /// tokens, and a string pool used to store all strings.
-    arena: bun.ArenaAllocator,
     /// This is the allocator used to allocate interpreter state
     allocator: Allocator,
 
-    /// Root ast node
-    script: *ast.Script,
+    args: *ShellArgs,
 
     /// JS objects used as input for the shell script
     /// This should be allocated using the arena
@@ -623,13 +836,13 @@ pub const Interpreter = struct {
     root_shell: ShellState,
     root_io: IO,
 
-    resolve: JSC.Strong = .{},
-    reject: JSC.Strong = .{},
     has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     started: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
     async_commands_executing: u32 = 0,
+
+    globalThis: *JSC.JSGlobalObject,
 
     flags: packed struct(u8) {
         done: bool = false,
@@ -637,6 +850,7 @@ pub const Interpreter = struct {
         __unused: u6 = 0,
     } = .{},
     exit_code: ?ExitCode = 0,
+    this_jsvalue: JSValue = .zero,
 
     const InterpreterChildPtr = StatePtrUnion(.{
         Script,
@@ -812,6 +1026,10 @@ pub const Interpreter = struct {
         }
 
         pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
+            return this.changeCwdImpl(interp, new_cwd_, false);
+        }
+
+        pub fn changeCwdImpl(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype, comptime in_init: bool) Maybe(void) {
             _ = interp; // autofix
             if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
@@ -878,7 +1096,9 @@ pub const Interpreter = struct {
 
             this.cwd_fd = new_cwd_fd;
 
-            this.export_env.insert(EnvStr.initSlice("OLDPWD"), EnvStr.initSlice(this.prevCwd()));
+            if (comptime !in_init) {
+                this.export_env.insert(EnvStr.initSlice("OLDPWD"), EnvStr.initSlice(this.prevCwd()));
+            }
             this.export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initSlice(this.cwd()));
 
             return Maybe(void).success;
@@ -936,100 +1156,92 @@ pub const Interpreter = struct {
         }
     };
 
-    pub fn constructor(
+    pub fn createShellInterpreter(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*ThisInterpreter {
+    ) callconv(.C) JSValue {
         const allocator = bun.default_allocator;
-        var arena = bun.ArenaAllocator.init(allocator);
-
-        const arguments_ = callframe.arguments(1);
+        const arguments_ = callframe.arguments(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
-        const string_args = arguments.nextEat() orelse {
-            globalThis.throw("shell: expected 2 arguments, got 0", .{});
-            return null;
+
+        const resolve = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 3 arguments, got 0", .{});
+            return .undefined;
         };
 
-        const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
-        var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4) catch {
-            globalThis.throwOutOfMemory();
-            return null;
+        const reject = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 3 arguments, got 0", .{});
+            return .undefined;
         };
-        defer {
-            for (jsstrings.items[0..]) |bunstr| {
-                bunstr.deref();
-            }
-            jsstrings.deinit();
+
+        const parsed_shell_script_js = arguments.nextEat() orelse {
+            globalThis.throw("shell: expected 3 arguments, got 0", .{});
+            return .undefined;
+        };
+
+        const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse {
+            globalThis.throw("shell: expected a ParsedShellScript", .{});
+            return .undefined;
+        };
+
+        var shargs: *ShellArgs = undefined;
+        var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
+        var quiet: bool = false;
+        var cwd: ?bun.String = null;
+        var export_env: ?EnvMap = null;
+
+        if (parsed_shell_script.args == null) {
+            globalThis.throw("shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.", .{});
+            return .undefined;
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        var script = std.ArrayList(u8).init(arena.allocator());
-        if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &jsstrings, &script) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        })) {
-            return null;
-        }
 
-        var parser: ?bun.shell.Parser = null;
-        var lex_result: ?shell.LexResult = null;
-        const script_ast = ThisInterpreter.parse(
-            &arena,
-            script.items[0..],
-            jsobjs.items[0..],
-            jsstrings.items[0..],
-            &parser,
-            &lex_result,
-        ) catch |err| {
-            if (err == shell.ParseError.Lex) {
-                assert(lex_result != null);
-                const str = lex_result.?.combineErrors(arena.allocator());
-                globalThis.throwPretty("{s}", .{str});
-                return null;
-            }
+        parsed_shell_script.take(
+            globalThis,
+            &shargs,
+            &jsobjs,
+            &quiet,
+            &cwd,
+            &export_env,
+        );
 
-            if (parser) |*p| {
-                if (bun.Environment.allow_assert) {
-                    assert(p.errors.items.len > 0);
-                }
-                const errstr = p.combineErrors();
-                globalThis.throwPretty("{s}", .{errstr});
-                return null;
-            }
+        const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {
+            break :brk c.toUTF8(bun.default_allocator);
+        } else null;
+        defer if (cwd_string) |c| c.deinit();
 
-            globalThis.throwError(err, "failed to lex/parse shell");
-            return null;
-        };
-
-        const script_heap = arena.allocator().create(bun.shell.AST.Script) catch {
-            globalThis.throwOutOfMemory();
-            return null;
-        };
-
-        script_heap.* = script_ast;
-
-        const interpreter = switch (ThisInterpreter.init(
+        const interpreter: *Interpreter = switch (ThisInterpreter.init(
             undefined, // command_ctx, unused when event_loop is .js
             .{ .js = globalThis.bunVM().event_loop },
             allocator,
-            &arena,
-            script_heap,
+            shargs,
             jsobjs.items[0..],
+            export_env,
+            if (cwd_string) |c| c.slice() else null,
         )) {
             .result => |i| i,
             .err => |*e| {
-                arena.deinit();
+                jsobjs.deinit();
+                if (export_env) |*ee| ee.deinit();
+                if (cwd) |*cc| cc.deref();
+                shargs.deinit();
                 throwShellErr(e, .{ .js = globalThis.bunVM().event_loop });
-                return null;
+                return .undefined;
             },
         };
 
+        interpreter.flags.quiet = quiet;
+
+        interpreter.globalThis = globalThis;
+        interpreter.this_jsvalue = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
+        JSC.Codegen.JSShellInterpreter.resolveSetCached(interpreter.this_jsvalue, globalThis, resolve);
+        JSC.Codegen.JSShellInterpreter.rejectSetCached(interpreter.this_jsvalue, globalThis, reject);
+
         bun.Analytics.Features.shell += 1;
-        return interpreter;
+        return interpreter.this_jsvalue;
     }
 
     pub fn parse(
-        arena: *bun.ArenaAllocator,
+        arena_allocator: std.mem.Allocator,
         script: []const u8,
         jsobjs: []JSValue,
         jsstrings_to_escape: []bun.String,
@@ -1038,11 +1250,11 @@ pub const Interpreter = struct {
     ) !ast.Script {
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script)) {
-                var lexer = bun.shell.LexerAscii.new(arena.allocator(), script, jsstrings_to_escape);
+                var lexer = bun.shell.LexerAscii.new(arena_allocator, script, jsstrings_to_escape);
                 try lexer.lex();
                 break :brk lexer.get_result();
             }
-            var lexer = bun.shell.LexerUnicode.new(arena.allocator(), script, jsstrings_to_escape);
+            var lexer = bun.shell.LexerUnicode.new(arena_allocator, script, jsstrings_to_escape);
             try lexer.lex();
             break :brk lexer.get_result();
         };
@@ -1054,7 +1266,7 @@ pub const Interpreter = struct {
 
         if (comptime bun.Environment.allow_assert) {
             const debug = bun.Output.scoped(.ShellTokens, true);
-            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len) catch @panic("OOPS");
+            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
                 const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
@@ -1066,7 +1278,7 @@ pub const Interpreter = struct {
             debug("Tokens: {s}", .{str});
         }
 
-        out_parser.* = try bun.shell.Parser.new(arena.allocator(), lex_result, jsobjs);
+        out_parser.* = try bun.shell.Parser.new(arena_allocator, lex_result, jsobjs);
 
         const script_ast = try out_parser.*.?.parse();
         return script_ast;
@@ -1078,13 +1290,13 @@ pub const Interpreter = struct {
         ctx: bun.CLI.Command.Context,
         event_loop: JSC.EventLoopHandle,
         allocator: Allocator,
-        arena: *bun.ArenaAllocator,
-        script: *ast.Script,
+        shargs: *ShellArgs,
         jsobjs: []JSValue,
+        export_env_: ?EnvMap,
+        cwd_: ?[]const u8,
     ) shell.Result(*ThisInterpreter) {
         const export_env = brk: {
-            // This will be set in the shell builtin to `process.env`
-            if (event_loop == .js) break :brk EnvMap.init(allocator);
+            if (event_loop == .js) break :brk if (export_env_) |e| e else EnvMap.init(allocator);
 
             var env_loader: *bun.DotEnv.Loader = env_loader: {
                 if (event_loop == .js) {
@@ -1108,20 +1320,20 @@ pub const Interpreter = struct {
             break :brk export_env;
         };
 
-        var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        const cwd = switch (Syscall.getcwd(&pathbuf)) {
-            .result => |cwd| cwd.ptr[0..cwd.len :0],
+        var pathbuf: bun.PathBuffer = undefined;
+        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(&pathbuf)) {
+            .result => |cwd| cwd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
             },
         };
-
         const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
             .result => |fd| fd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
             },
         };
+
         var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
         cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
 
@@ -1142,11 +1354,9 @@ pub const Interpreter = struct {
             .command_ctx = ctx,
             .event_loop = event_loop,
 
-            .script = script,
+            .args = shargs,
             .allocator = allocator,
             .jsobjs = jsobjs,
-
-            .arena = arena.*,
 
             .root_shell = ShellState{
                 .shell_env = EnvMap.init(allocator),
@@ -1171,25 +1381,30 @@ pub const Interpreter = struct {
             },
 
             .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
+            .globalThis = undefined,
         };
+
+        if (cwd_) |c| {
+            if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toSystemError() } };
+        }
 
         return .{ .result = interpreter };
     }
 
     pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        var shargs = ShellArgs.init();
         const src = src: {
             var file = try std.fs.cwd().openFile(path, .{});
             defer file.close();
-            break :src try file.reader().readAllAlloc(arena.allocator(), std.math.maxInt(u32));
+            break :src try file.reader().readAllAlloc(shargs.arena_allocator(), std.math.maxInt(u32));
         };
-        defer arena.deinit();
+        defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
         const script = ThisInterpreter.parse(
-            &arena,
+            shargs.arena_allocator(),
             src,
             jsobjs,
             &[_]bun.String{},
@@ -1198,7 +1413,7 @@ pub const Interpreter = struct {
         ) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
                 assert(out_lex_result != null);
-                const str = out_lex_result.?.combineErrors(arena.allocator());
+                const str = out_lex_result.?.combineErrors(shargs.arena_allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(path), str });
                 bun.Global.exit(1);
             }
@@ -1211,9 +1426,16 @@ pub const Interpreter = struct {
 
             return err;
         };
-        const script_heap = try arena.allocator().create(ast.Script);
-        script_heap.* = script;
-        var interp = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        shargs.script_ast = script;
+        var interp = switch (ThisInterpreter.init(
+            ctx,
+            .{ .mini = mini },
+            bun.default_allocator,
+            shargs,
+            jsobjs,
+            null,
+            null,
+        )) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1252,16 +1474,16 @@ pub const Interpreter = struct {
 
     pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8) !ExitCode {
         bun.Analytics.Features.standalone_shell += 1;
-        var arena = bun.ArenaAllocator.init(bun.default_allocator);
-        defer arena.deinit();
+        var shargs = ShellArgs.init();
+        defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
         var out_parser: ?bun.shell.Parser = null;
         var out_lex_result: ?bun.shell.LexResult = null;
-        const script = ThisInterpreter.parse(&arena, src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
+        const script = ThisInterpreter.parse(shargs.arena_allocator(), src, jsobjs, &[_]bun.String{}, &out_parser, &out_lex_result) catch |err| {
             if (err == bun.shell.ParseError.Lex) {
                 assert(out_lex_result != null);
-                const str = out_lex_result.?.combineErrors(arena.allocator());
+                const str = out_lex_result.?.combineErrors(shargs.arena_allocator());
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{ path_for_errors, str });
                 bun.Global.exit(1);
             }
@@ -1274,9 +1496,16 @@ pub const Interpreter = struct {
 
             return err;
         };
-        const script_heap = try arena.allocator().create(ast.Script);
-        script_heap.* = script;
-        var interp: *ThisInterpreter = switch (ThisInterpreter.init(ctx, .{ .mini = mini }, bun.default_allocator, &arena, script_heap, jsobjs)) {
+        shargs.script_ast = script;
+        var interp: *ThisInterpreter = switch (ThisInterpreter.init(
+            ctx,
+            .{ .mini = mini },
+            bun.default_allocator,
+            shargs,
+            jsobjs,
+            null,
+            null,
+        )) {
             .err => |*e| {
                 throwShellErr(e, .{ .mini = mini });
                 return 1;
@@ -1365,7 +1594,7 @@ pub const Interpreter = struct {
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
-        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
+        var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
 
@@ -1382,7 +1611,7 @@ pub const Interpreter = struct {
             return .undefined;
         }
         incrPendingActivityFlag(&this.has_pending_activity);
-        var root = Script.init(this, &this.root_shell, this.script, Script.ParentPtr.init(this), this.root_io.copy());
+        var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .SeqCst);
         root.start();
         return .undefined;
@@ -1429,7 +1658,13 @@ pub const Interpreter = struct {
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
-            _ = this.resolve.call(&.{JSValue.jsNumberFromU16(exit_code)});
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this.this_jsvalue)) |resolve| {
+                    _ = resolve.call(this.globalThis, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                }
+            }
         } else {
             this.flags.done = true;
             this.exit_code = exit_code;
@@ -1441,8 +1676,14 @@ pub const Interpreter = struct {
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
-            this.resolve.deinit();
-            _ = this.reject.call(&[_]JSValue{JSValue.jsNumberFromChar(1)});
+            if (this.this_jsvalue != .zero) {
+                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this.this_jsvalue)) |reject| {
+                    reject.call(this.globalThis, &[_]JSValue{ JSValue.jsNumberFromChar(1), this.getBufferedStdout(), this.getBufferedStderr() });
+                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
+                    this.this_jsvalue = .zero;
+                }
+            }
         }
     }
 
@@ -1453,6 +1694,7 @@ pub const Interpreter = struct {
         }
         this.root_io.deref();
         this.root_shell.deinitImpl(false, false);
+        this.this_jsvalue = .zero;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
@@ -1462,8 +1704,7 @@ pub const Interpreter = struct {
         if (this.root_shell._buffered_stdout == .owned) {
             this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
         }
-        this.resolve.deinit();
-        this.reject.deinit();
+        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
     }
 
@@ -1473,34 +1714,13 @@ pub const Interpreter = struct {
             jsobj.unprotect();
         }
         this.root_io.deref();
-        this.resolve.deinit();
-        this.reject.deinit();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {
             str.deinit();
         }
         this.vm_args_utf8.deinit();
+        this.this_jsvalue = .zero;
         this.allocator.destroy(this);
-    }
-
-    pub fn setResolve(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const value = callframe.argument(0);
-        if (!value.isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArguments("resolve must be a function", .{});
-            return .undefined;
-        }
-        this.resolve.set(globalThis, value.withAsyncContextIfNeeded(globalThis));
-        return .undefined;
-    }
-
-    pub fn setReject(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const value = callframe.argument(0);
-        if (!value.isCallable(globalThis.vm())) {
-            globalThis.throwInvalidArguments("reject must be a function", .{});
-            return .undefined;
-        }
-        this.reject.set(globalThis, value.withAsyncContextIfNeeded(globalThis));
-        return .undefined;
     }
 
     pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1586,24 +1806,14 @@ pub const Interpreter = struct {
 
     pub fn getBufferedStdout(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
+    ) JSC.JSValue {
         const stdout = this.ioToJSValue(this.root_shell.buffered_stdout());
         return stdout;
     }
 
     pub fn getBufferedStderr(
         this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
-        _ = globalThis; // autofix
-        _ = callframe; // autofix
-
+    ) JSC.JSValue {
         const stdout = this.ioToJSValue(this.root_shell.buffered_stderr());
         return stdout;
     }
@@ -1611,7 +1821,7 @@ pub const Interpreter = struct {
     pub fn finalize(
         this: *ThisInterpreter,
     ) callconv(.C) void {
-        log("Interpreter finalize", .{});
+        log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }
 
@@ -1689,6 +1899,7 @@ pub const Interpreter = struct {
                 walker: GlobWalker,
             },
         },
+        out_exit_code: ExitCode = 0,
         out: Result,
         out_idx: u32,
 
@@ -2109,7 +2320,6 @@ pub const Interpreter = struct {
         }
 
         fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) void {
-            _ = exit_code;
             if (comptime bun.Environment.allow_assert) {
                 assert(this.state != .done and this.state != .err);
                 assert(this.child_state != .idle);
@@ -2119,6 +2329,21 @@ pub const Interpreter = struct {
             if (child.ptr.is(Script)) {
                 if (comptime bun.Environment.allow_assert) {
                     assert(this.child_state == .cmd_subst);
+                }
+
+                // This branch is true means that we expanded
+                // a single command substitution and it failed.
+                //
+                // This information is propagated to `Cmd` because in the case
+                // that the command substitution would be expanded to the
+                // command name (e.g. `$(lkdfjsldf)`), and it fails, the entire
+                // command should fail with the exit code of the command
+                // substitution.
+                if (exit_code != 0 and
+                    this.node.* == .simple and
+                    this.node.simple == .cmd_subst)
+                {
+                    this.out_exit_code = exit_code;
                 }
 
                 const stdout = this.child_state.cmd_subst.cmd.base.shell.buffered_stdout().slice();
@@ -3703,6 +3928,7 @@ pub const Interpreter = struct {
             expanding_args: struct {
                 idx: u32 = 0,
                 expansion: Expansion,
+                last_exit_code: ExitCode = 0,
             },
             waiting_stat,
             stat_complete: struct {
@@ -4379,13 +4605,14 @@ pub const Interpreter = struct {
                 .parent = parent,
 
                 .spawn_arena = bun.ArenaAllocator.init(interpreter.allocator),
-                .args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory(),
+                .args = undefined,
                 .redirection_file = undefined,
 
                 .exit_code = null,
                 .io = io,
                 .state = .idle,
             };
+            cmd.args = std.ArrayList(?[*:0]const u8).initCapacity(cmd.spawn_arena.allocator(), node.name_and_args.len) catch bun.outOfMemory();
 
             cmd.redirection_file = std.ArrayList(u8).init(cmd.spawn_arena.allocator());
 
@@ -4544,6 +4771,21 @@ pub const Interpreter = struct {
                     this.writeFailingError("{s}", .{buf});
                     return;
                 }
+                // Handling this case from the shell spec:
+                // "If there is no command name, but the command contained a
+                // command substitution, the command shall complete with the
+                // exit status of the last command substitution performed."
+                //
+                // See the comment where `this.out_exit_code` is assigned for
+                // more info.
+                const e: *Expansion = child.ptr.as(Expansion);
+                if (this.state == .expanding_args and
+                    e.node.* == .simple and
+                    e.node.simple == .cmd_subst and
+                    this.state.expanding_args.idx == 1 and this.node.name_and_args.len == 1)
+                {
+                    this.exit_code = e.out_exit_code;
+                }
                 this.next();
                 return;
             }
@@ -4574,8 +4816,21 @@ pub const Interpreter = struct {
                 }
 
                 const first_arg = this.args.items[0] orelse {
-                    // If no args then this is a bug
-                    @panic("No arguments provided");
+                    // Sometimes the expansion can result in an empty string
+                    //
+                    //  For example:
+                    //
+                    //     await $`echo "" > script.sh`
+                    //     await $`(bash ./script.sh)`
+                    //     await $`$(lkdlksdfjsf)`
+                    //
+                    // In this case, we should just exit.
+                    //
+                    // BUT, if the expansion contained a single command
+                    // substitution (third example above), then we need to
+                    // return the exit code of that command substitution.
+                    this.parent.childDone(this, this.exit_code orelse 0);
+                    return;
                 };
 
                 const first_arg_len = std.mem.len(first_arg);
@@ -4620,7 +4875,7 @@ pub const Interpreter = struct {
                     return;
                 }
 
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf: bun.PathBuffer = undefined;
                 const resolved = which(&path_buf, spawn_args.PATH, spawn_args.cwd, first_arg_real) orelse blk: {
                     if (bun.strings.eqlComptime(first_arg_real, "bun") or bun.strings.eqlComptime(first_arg_real, "bun-debug")) blk2: {
                         break :blk bun.selfExePath() catch break :blk2;
@@ -6180,7 +6435,10 @@ pub const Interpreter = struct {
                         if (err.getErrno() == bun.C.E.NOENT) {
                             const perm = 0o664;
                             switch (Syscall.open(filepath, std.os.O.CREAT | std.os.O.WRONLY, perm)) {
-                                .result => break :out,
+                                .result => |fd| {
+                                    _ = bun.sys.close(fd);
+                                    break :out;
+                                },
                                 .err => |e| {
                                     this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toSystemError();
                                     break :out;
@@ -6418,7 +6676,7 @@ pub const Interpreter = struct {
             }
 
             pub fn onShellMkdirTaskDone(this: *Mkdir, task: *ShellMkdirTask) void {
-                defer bun.default_allocator.destroy(task);
+                defer task.deinit();
                 this.state.exec.tasks_done += 1;
                 var output = task.takeOutput();
                 const err = task.err;
@@ -6499,6 +6757,11 @@ pub const Interpreter = struct {
                 concurrent_task: JSC.EventLoopTask,
 
                 const debug = bun.Output.scoped(.ShellMkdirTask, true);
+
+                pub fn deinit(this: *ShellMkdirTask) void {
+                    this.created_directories.deinit();
+                    bun.default_allocator.destroy(this);
+                }
 
                 fn takeOutput(this: *ShellMkdirTask) ArrayList(u8) {
                     const out = this.created_directories;
@@ -6613,7 +6876,7 @@ pub const Interpreter = struct {
                     pub fn onCreateDir(vtable: *@This(), dirpath: bun.OSPathSliceZ) void {
                         if (!vtable.active) return;
                         if (bun.Environment.isWindows) {
-                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var buf: bun.PathBuffer = undefined;
                             const str = bun.strings.fromWPath(&buf, dirpath[0..dirpath.len]);
                             vtable.inner.created_directories.appendSlice(str) catch bun.outOfMemory();
                             vtable.inner.created_directories.append('\n') catch bun.outOfMemory();
@@ -6814,16 +7077,22 @@ pub const Interpreter = struct {
             pub fn start(this: *Echo) Maybe(void) {
                 const args = this.bltn.argsSlice();
 
+                var has_leading_newline: bool = false;
                 const args_len = args.len;
                 for (args, 0..) |arg, i| {
-                    const len = std.mem.len(arg);
-                    this.output.appendSlice(arg[0..len]) catch bun.outOfMemory();
+                    const thearg = std.mem.span(arg);
                     if (i < args_len - 1) {
+                        this.output.appendSlice(thearg) catch bun.outOfMemory();
                         this.output.append(' ') catch bun.outOfMemory();
+                    } else {
+                        if (thearg.len > 0 and thearg[thearg.len - 1] == '\n') {
+                            has_leading_newline = true;
+                        }
+                        this.output.appendSlice(bun.strings.trimSubsequentLeadingChars(thearg, '\n')) catch bun.outOfMemory();
                     }
                 }
 
-                this.output.append('\n') catch bun.outOfMemory();
+                if (!has_leading_newline) this.output.append('\n') catch bun.outOfMemory();
 
                 if (!this.bltn.stdout.needsIO()) {
                     _ = this.bltn.writeNoIO(.stdout, this.output.items[0..]);
@@ -6893,7 +7162,7 @@ pub const Interpreter = struct {
                 }
 
                 if (!this.bltn.stdout.needsIO()) {
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var path_buf: bun.PathBuffer = undefined;
                     const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
                     var had_not_found = false;
                     for (args) |arg_raw| {
@@ -6933,7 +7202,7 @@ pub const Interpreter = struct {
                 const arg_raw = multiargs.args_slice[multiargs.arg_idx];
                 const arg = arg_raw[0..std.mem.len(arg_raw)];
 
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var path_buf: bun.PathBuffer = undefined;
                 const PATH = this.bltn.parentCmd().base.shell.export_env.get(EnvStr.initSlice("PATH")) orelse EnvStr.initSlice("");
 
                 const resolved = which(&path_buf, PATH.slice(), this.bltn.parentCmd().base.shell.cwdZ(), arg) orelse {
@@ -7020,7 +7289,7 @@ pub const Interpreter = struct {
             pub fn start(this: *Cd) Maybe(void) {
                 const args = this.bltn.argsSlice();
                 if (args.len > 1) {
-                    this.writeStderrNonBlocking("too many arguments", .{});
+                    this.writeStderrNonBlocking("too many arguments\n", .{});
                     // yield execution
                     return Maybe(void).success;
                 }
@@ -7060,7 +7329,7 @@ pub const Interpreter = struct {
                 switch (errno) {
                     @as(usize, @intFromEnum(bun.C.E.NOTDIR)) => {
                         if (!this.bltn.stderr.needsIO()) {
-                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
                             this.bltn.done(1);
@@ -7068,12 +7337,12 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
 
-                        this.writeStderrNonBlocking("not a directory: {s}", .{new_cwd_});
+                        this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
                         return Maybe(void).success;
                     },
                     @as(usize, @intFromEnum(bun.C.E.NOENT)) => {
                         if (!this.bltn.stderr.needsIO()) {
-                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}", .{new_cwd_});
+                            const buf = this.bltn.fmtErrorArena(.cd, "not a directory: {s}\n", .{new_cwd_});
                             _ = this.bltn.writeNoIO(.stderr, buf);
                             this.state = .done;
                             this.bltn.done(1);
@@ -7081,7 +7350,7 @@ pub const Interpreter = struct {
                             return Maybe(void).success;
                         }
 
-                        this.writeStderrNonBlocking("not a directory: {s}", .{new_cwd_});
+                        this.writeStderrNonBlocking("not a directory: {s}\n", .{new_cwd_});
                         return Maybe(void).success;
                     },
                     else => return Maybe(void).success,
@@ -7100,7 +7369,7 @@ pub const Interpreter = struct {
                 }
 
                 this.state = .done;
-                this.bltn.done(0);
+                this.bltn.done(1);
             }
 
             pub fn deinit(this: *Cd) void {
@@ -8068,7 +8337,7 @@ pub const Interpreter = struct {
                     if (this.target_fd) |fd| {
                         _ = fd;
 
-                        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var buf: bun.PathBuffer = undefined;
                         _ = this.moveInDir(src, &buf);
                         return;
                     }
@@ -8083,7 +8352,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn moveInDir(this: *@This(), src: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) bool {
+                pub fn moveInDir(this: *@This(), src: [:0]const u8, buf: *bun.PathBuffer) bool {
                     const path_in_dir_ = bun.path.normalizeBuf(ResolvePath.basename(src), buf, .auto);
                     if (path_in_dir_.len + 1 >= buf.len) {
                         this.err = Syscall.Error.fromCode(bun.C.E.NAMETOOLONG, .rename);
@@ -8109,7 +8378,7 @@ pub const Interpreter = struct {
                 }
 
                 fn moveMultipleIntoDir(this: *@This()) void {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     var fixed_alloc = std.heap.FixedBufferAllocator.init(buf[0..bun.MAX_PATH_BYTES]);
 
                     for (this.sources) |src_raw| {
@@ -8647,7 +8916,7 @@ pub const Interpreter = struct {
 
                                             // Check that non of the paths will delete the root
                                             {
-                                                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                                var buf: bun.PathBuffer = undefined;
                                                 const cwd = switch (Syscall.getcwd(&buf)) {
                                                     .err => |err| {
                                                         return .{ .err = err };
@@ -9045,7 +9314,7 @@ pub const Interpreter = struct {
                         // Root, get cwd path on windows
                         if (bun.Environment.isWindows) {
                             if (this.parent_task == null) {
-                                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var buf: bun.PathBuffer = undefined;
                                 const cwd_path = switch (Syscall.getFdPath(this.task_manager.cwd, &buf)) {
                                     .result => |p| bun.default_allocator.dupeZ(u8, p) catch bun.outOfMemory(),
                                     .err => |err| {
@@ -9271,7 +9540,7 @@ pub const Interpreter = struct {
                     }
                 }
 
-                pub fn bufJoin(this: *ShellRmTask, buf: *[bun.MAX_PATH_BYTES]u8, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]const u8) {
+                pub fn bufJoin(this: *ShellRmTask, buf: *bun.PathBuffer, parts: []const []const u8, syscall_tag: Syscall.Tag) Maybe([:0]const u8) {
                     _ = syscall_tag; // autofix
 
                     if (this.join_style == .posix) {
@@ -9284,14 +9553,14 @@ pub const Interpreter = struct {
                         .task = this,
                         .child_of_dir = false,
                     };
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     switch (dir_task.kind_hint) {
                         .idk, .file => return this.removeEntryFile(dir_task, dir_task.path, is_absolute, &buf, &remove_child_vtable),
                         .dir => return this.removeEntryDir(dir_task, is_absolute, &buf),
                     }
                 }
 
-                fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                fn removeEntryDir(this: *ShellRmTask, dir_task: *DirTask, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                     const path = dir_task.path;
                     const dirfd = this.cwd;
                     debug("removeEntryDir({s})", .{path});
@@ -9452,7 +9721,7 @@ pub const Interpreter = struct {
                 const DummyRemoveFile = struct {
                     var dummy: @This() = std.mem.zeroes(@This());
 
-                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = this; // autofix
                         _ = parent_dir_task; // autofix
                         _ = path; // autofix
@@ -9462,7 +9731,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = this; // autofix
                         _ = parent_dir_task; // autofix
                         _ = path; // autofix
@@ -9477,7 +9746,7 @@ pub const Interpreter = struct {
                     task: *ShellRmTask,
                     child_of_dir: bool,
 
-                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         if (this.child_of_dir) {
                             this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir);
                             return Maybe(void).success;
@@ -9485,7 +9754,7 @@ pub const Interpreter = struct {
                         return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         if (this.child_of_dir) return .{ .result = this.task.enqueueNoJoin(parent_dir_task, bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(), .dir) };
                         return this.task.removeEntryDir(parent_dir_task, is_absolute, buf);
                     }
@@ -9497,7 +9766,7 @@ pub const Interpreter = struct {
                     allow_enqueue: bool = true,
                     enqueued: bool = false,
 
-                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onIsDir(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = parent_dir_task; // autofix
                         _ = path; // autofix
                         _ = is_absolute; // autofix
@@ -9507,7 +9776,7 @@ pub const Interpreter = struct {
                         return Maybe(void).success;
                     }
 
-                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                    pub fn onDirNotEmpty(this: *@This(), parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer) Maybe(void) {
                         _ = is_absolute; // autofix
                         _ = buf; // autofix
 
@@ -9553,7 +9822,7 @@ pub const Interpreter = struct {
                                 },
                             }
                         } else {
-                            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                            var buf: bun.PathBuffer = undefined;
                             if (this.removeEntryFile(dir_task, dir_task.path, dir_task.is_absolute, &buf, &state).asErr()) |e| {
                                 return .{ .err = e };
                             }
@@ -9564,17 +9833,17 @@ pub const Interpreter = struct {
                     }
                 }
 
-                fn removeEntryFile(this: *ShellRmTask, parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *[bun.MAX_PATH_BYTES]u8, vtable: anytype) Maybe(void) {
+                fn removeEntryFile(this: *ShellRmTask, parent_dir_task: *DirTask, path: [:0]const u8, is_absolute: bool, buf: *bun.PathBuffer, vtable: anytype) Maybe(void) {
                     const VTable = std.meta.Child(@TypeOf(vtable));
                     const Handler = struct {
-                        pub fn onIsDir(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        pub fn onIsDir(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *bun.PathBuffer) Maybe(void) {
                             if (@hasDecl(VTable, "onIsDir")) {
                                 return VTable.onIsDir(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                             }
                             return Maybe(void).success;
                         }
 
-                        pub fn onDirNotEmpty(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *[bun.MAX_PATH_BYTES]u8) Maybe(void) {
+                        pub fn onDirNotEmpty(vtable_: anytype, parent_dir_task_: *DirTask, path_: [:0]const u8, is_absolute_: bool, buf_: *bun.PathBuffer) Maybe(void) {
                             if (@hasDecl(VTable, "onDirNotEmpty")) {
                                 return VTable.onDirNotEmpty(vtable_, parent_dir_task_, path_, is_absolute_, buf_);
                             }
@@ -10538,17 +10807,16 @@ pub const Interpreter = struct {
 
                 pub fn isDir(_: *ShellCpTask, path: [:0]const u8) Maybe(bool) {
                     if (bun.Environment.isWindows) {
-                        var wpath: bun.OSPathBuffer = undefined;
-                        const attributes = windows.GetFileAttributesW(bun.strings.toWPath(wpath[0..], path[0..path.len]));
-                        if (attributes == windows.INVALID_FILE_ATTRIBUTES) {
+                        const attributes = bun.sys.getFileAttributes(path[0..path.len]) orelse {
                             const err: Syscall.Error = .{
                                 .errno = @intFromEnum(bun.C.SystemErrno.ENOENT),
                                 .syscall = .copyfile,
                                 .path = path,
                             };
                             return .{ .err = err };
-                        }
-                        return .{ .result = (attributes & windows.FILE_ATTRIBUTE_DIRECTORY) != 0 };
+                        };
+
+                        return .{ .result = attributes.is_directory };
                     }
                     const stat = switch (Syscall.lstat(path)) {
                         .result => |x| x,
@@ -10587,8 +10855,8 @@ pub const Interpreter = struct {
                 }
 
                 fn runFromThreadPoolImpl(this: *ShellCpTask) ?bun.shell.ShellErr {
-                    var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-                    var buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf2: bun.PathBuffer = undefined;
+                    var buf3: bun.PathBuffer = undefined;
                     // We have to give an absolute path to our cp
                     // implementation for it to work with cwd
                     const src: [:0]const u8 = brk: {
@@ -11953,7 +12221,7 @@ pub const IOWriterChildPtr = struct {
 const ShellSyscall = struct {
     pub const unlinkatWithFlags = Syscall.unlinkatWithFlags;
     pub const rmdirat = Syscall.rmdirat;
-    fn getPath(dirfd: anytype, to: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8) Maybe([:0]const u8) {
+    fn getPath(dirfd: anytype, to: [:0]const u8, buf: *bun.PathBuffer) Maybe([:0]const u8) {
         if (bun.Environment.isPosix) @compileError("Don't use this");
         if (bun.strings.eqlComptime(to[0..to.len], "/dev/null")) {
             return .{ .result = shell.WINDOWS_DEV_NULL };
@@ -11993,7 +12261,7 @@ const ShellSyscall = struct {
 
     fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             const path = switch (getPath(dir, path_, &buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
@@ -12012,7 +12280,7 @@ const ShellSyscall = struct {
         if (bun.Environment.isWindows) {
             if (flags & os.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var buf: bun.PathBuffer = undefined;
                     const p = switch (getPath(dir, path, &buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
@@ -12028,7 +12296,7 @@ const ShellSyscall = struct {
                 };
             }
 
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             const p = switch (getPath(dir, path, &buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },

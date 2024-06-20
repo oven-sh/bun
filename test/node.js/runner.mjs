@@ -140,7 +140,7 @@ async function runTests(options, filters) {
     }
 
     const { pathname: filePath } = new URL(filename, testPath);
-    const tmp = mkdtempSync(join(tmpdir(), "bun-"));
+    const tmp = tmpdirSync();
     const timestamp = Date.now();
     const {
       status: exitCode,

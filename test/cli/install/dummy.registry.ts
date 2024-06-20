@@ -21,7 +21,6 @@ type Pkg = {
 };
 let handler: Handler;
 let server: Server;
-let testCounter = 0;
 export let package_dir: string;
 export let requested: number;
 export let root_url: string;
@@ -98,7 +97,7 @@ export function dummyAfterAll() {
 }
 
 let packageDirGetter: () => string = () => {
-  return tmpdirSync("bun-install-test-" + testCounter++ + "--");
+  return tmpdirSync();
 };
 export async function dummyBeforeEach() {
   resetHandler();

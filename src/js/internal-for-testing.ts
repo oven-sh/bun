@@ -17,9 +17,15 @@ export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
+export const patchInternals = {
+  parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
+  apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
+  makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
+};
+
 export const shellInternals = {
-  lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
-  parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
+  lex: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2)(a.raw, b),
+  parse: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2)(a.raw, b),
   /**
    * Checks if the given builtin is disabled on the current platform
    *
@@ -45,8 +51,13 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
 };
 
 export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
-  printLockfileAsJSON: (cwd: string) => string;
+  /**
+   * Returns the lockfile at the given path as an object.
+   */
+  parseLockfile: (cwd: string) => any;
 };
+
+export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpers");
 
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",

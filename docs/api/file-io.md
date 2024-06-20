@@ -28,6 +28,7 @@ const foo = Bun.file("foo.txt");
 await foo.text(); // contents as a string
 await foo.stream(); // contents as ReadableStream
 await foo.arrayBuffer(); // contents as ArrayBuffer
+await foo.bytes(); // contents as Uint8Array
 ```
 
 File references can also be created using numerical [file descriptors](https://en.wikipedia.org/wiki/File_descriptor) or `file://` URLs.

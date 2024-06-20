@@ -16,7 +16,7 @@ const Run = @import("./run_command.zig").RunCommand;
 const debug = Output.scoped(.bunx, false);
 
 pub const BunxCommand = struct {
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
 
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -135,13 +135,13 @@ pub const BunxCommand = struct {
     }
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
-        var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var subpath: bun.PathBuffer = undefined;
         const subpath_z = std.fmt.bufPrintZ(&subpath, bun.pathLiteral("node_modules/{s}/package.json"), .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
     fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
-        var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var subpath: bun.PathBuffer = undefined;
         if (with_stale_check) {
             const subpath_z = std.fmt.bufPrintZ(
                 &subpath,

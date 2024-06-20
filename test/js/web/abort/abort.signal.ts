@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 
-const server = Bun.serve({
+using server = Bun.serve({
   port: 0,
   async fetch() {
     const signal = AbortSignal.timeout(1);
@@ -19,6 +19,5 @@ const responses: Response[] = [];
 for (let i = 0; i < 10; i++) {
   responses.push(await fetch(url));
 }
-server.stop(true);
 // we fail if any of the requests succeeded
 process.exit(responses.every(res => res.status === 500) ? 0 : 1);

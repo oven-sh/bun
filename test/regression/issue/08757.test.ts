@@ -1,7 +1,6 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, symlinkSync } from "fs";
-import { tmpdir } from "os";
-import { bunRun } from "../../harness";
+import { symlinkSync } from "fs";
+import { bunRun, tmpdirSync } from "../../harness";
 
 if (process.env.IS_SUBPROCESS) {
   console.log(process.argv[1]);
@@ -14,7 +13,7 @@ if (process.env.IS_SUBPROCESS) {
 }
 
 test("absolute path to a file that is symlinked has import.meta.main", () => {
-  const root = mkdtempSync(tmpdir() + "/bun-08757-");
+  const root = tmpdirSync();
   try {
     symlinkSync(process.argv[1], root + "/main.js");
   } catch (e) {

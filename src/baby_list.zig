@@ -29,6 +29,18 @@ pub fn BabyList(comptime Type: type) type {
             this.* = .{};
         }
 
+        pub fn orderedRemove(this: *@This(), index: usize) Type {
+            var l = this.list();
+            defer this.update(l);
+            return l.orderedRemove(index);
+        }
+
+        pub fn swapRemove(this: *@This(), index: usize) Type {
+            var l = this.list();
+            defer this.update(l);
+            return l.swapRemove(index);
+        }
+
         pub fn contains(this: @This(), item: []const Type) bool {
             return this.len > 0 and @intFromPtr(item.ptr) >= @intFromPtr(this.ptr) and @intFromPtr(item.ptr) < @intFromPtr(this.ptr) + this.len;
         }
@@ -63,6 +75,16 @@ pub fn BabyList(comptime Type: type) type {
                 .len = @as(u32, @truncate(copy.items.len)),
                 .cap = @as(u32, @truncate(copy.capacity)),
             };
+        }
+
+        pub fn deepClone(this: @This(), allocator: std.mem.Allocator) !@This() {
+            if (comptime Type != bun.JSAst.Expr and Type != bun.JSAst.G.Property) @compileError("Unsupported type for BabyList.deepClone()");
+            var list_ = try initCapacity(allocator, this.len);
+            for (this.slice()) |item| {
+                list_.appendAssumeCapacity(try item.deepClone(allocator));
+            }
+
+            return list_;
         }
 
         pub fn clearRetainingCapacity(this: *@This()) void {

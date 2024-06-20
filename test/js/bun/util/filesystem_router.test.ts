@@ -1,9 +1,8 @@
 import { FileSystemRouter } from "bun";
 import { it, expect } from "bun:test";
-import path, { dirname, resolve } from "path";
-import fs, { mkdirSync, realpathSync, rmSync } from "fs";
-import { tmpdir } from "os";
-const tempdir = realpathSync(tmpdir()) + "/";
+import path, { dirname } from "path";
+import fs, { mkdirSync, rmSync } from "fs";
+import { tmpdirSync } from "harness";
 
 function createTree(basedir: string, paths: string[]) {
   for (const end of paths) {
@@ -17,7 +16,7 @@ function createTree(basedir: string, paths: string[]) {
 }
 var count = 0;
 function make(files: string[]) {
-  const dir = (tempdir + `fs-router-test-${count++}`).replace(/\\/g, "/");
+  const dir = tmpdirSync().replaceAll("\\", "/");
   rmSync(dir, {
     recursive: true,
     force: true,

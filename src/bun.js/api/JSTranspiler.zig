@@ -461,7 +461,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
 
             if (out.isEmpty()) break :tsconfig;
-            transpiler.tsconfig_buf = out.toOwnedSlice(allocator) catch @panic("OOM");
+            transpiler.tsconfig_buf = out.toOwnedSlice(allocator) catch bun.outOfMemory();
 
             // TODO: JSC -> Ast conversion
             if (TSConfigJSON.parse(
@@ -505,7 +505,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             }
 
             if (out.isEmpty()) break :macros;
-            transpiler.macros_buf = out.toOwnedSlice(allocator) catch @panic("OOM");
+            transpiler.macros_buf = out.toOwnedSlice(allocator) catch bun.outOfMemory();
             const source = logger.Source.initPathString("macros.json", transpiler.macros_buf);
             const json = (VirtualMachine.get().bundler.resolver.caches.json.parseJSON(
                 &transpiler.log,

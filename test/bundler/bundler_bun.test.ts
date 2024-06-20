@@ -2,6 +2,7 @@ import assert from "assert";
 import dedent from "dedent";
 import { ESBUILD, itBundled, testForFile } from "./expectBundled";
 import { Database } from "bun:sqlite";
+import { isWindows } from "harness";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 describe("bundler", () => {
@@ -9,7 +10,6 @@ describe("bundler", () => {
     target: "bun",
     outfile: "",
     outdir: "/out",
-
     files: {
       "/entry.ts": /* js */ `
         import db from './db.sqlite' with {type: "sqlite", embed: "true"};
@@ -41,5 +41,61 @@ describe("bundler", () => {
       })(),
     },
     run: { stdout: "Hello, world!", setCwd: true },
+  });
+  itBundled("bun/TargetBunNoSourcemapMessage", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        // this file has comments and weird whitespace, intentionally
+        // to make it obvious if sourcemaps were generated and mapped properly
+        if           (true) code();
+        function code() {
+          // hello world
+                  throw new
+            Error("Hello World");
+        }
+      `,
+    },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toInclude("\nnote: missing sourcemaps for ");
+        expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get unminified traces\n");
+      },
+    },
+  });
+  itBundled("bun/TargetBunSourcemapInline", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        // this file has comments and weird whitespace, intentionally
+        // to make it obvious if sourcemaps were generated and mapped properly
+        if           (true) code();
+        function code() {
+          // hello world
+                  throw   new
+            Error("Hello World");
+        }
+      `,
+    },
+    sourceMap: "inline",
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        assert(
+          stderr.startsWith(
+            `1 | // this file has comments and weird whitespace, intentionally
+2 | // to make it obvious if sourcemaps were generated and mapped properly
+3 | if           (true) code();
+4 | function code() {
+5 |   // hello world
+6 |           throw   new
+                      ^
+error: Hello World`,
+          ) || void console.error(stderr),
+        );
+        expect(stderr).toInclude("entry.ts:6:19");
+      },
+    },
   });
 });

@@ -637,7 +637,6 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
             var buf: bun.OSPathBuffer = undefined;
 
-            // const normdest = bun.path.normalizeStringGenericTZ(bun.OSPathChar, dest, &buf, true, std.fs.path.sep, bun.path.isSepAnyT, false, true);
             const normdest: bun.OSPathSliceZ = if (Environment.isWindows)
                 switch (bun.sys.normalizePathWindows(u16, bun.invalid_fd, dest, &buf)) {
                     .err => |err| {
@@ -773,7 +772,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 switch (this.*) {
                     .with_file_types => |*res| {
                         for (res.items) |item| {
-                            item.name.deref();
+                            item.deref();
                         }
                         res.clearAndFree();
                     },
@@ -812,7 +811,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
                 this.destroy();
             }
-            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
             this.readdir_task.performWork(this.basename.sliceAssumeZ(), &buf, false);
         }
     };
@@ -859,7 +858,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         return task.promise.value();
     }
 
-    pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *[bun.MAX_PATH_BYTES]u8, comptime is_root: bool) void {
+    pub fn performWork(this: *AsyncReaddirRecursiveTask, basename: [:0]const u8, buf: *bun.PathBuffer, comptime is_root: bool) void {
         switch (this.args.tag()) {
             inline else => |tag| {
                 const ResultType = comptime switch (tag) {
@@ -887,7 +886,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                         for (entries.items) |*item| {
                             switch (ResultType) {
                                 bun.String => item.deref(),
-                                Dirent => item.name.deref(),
+                                Dirent => item.deref(),
                                 Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
                                 else => @compileError("unreachable"),
                             }
@@ -916,7 +915,7 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
         var this: *AsyncReaddirRecursiveTask = @fieldParentPtr(AsyncReaddirRecursiveTask, "task", task);
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
     }
 
@@ -1180,7 +1179,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -1271,7 +1270,7 @@ pub const Arguments = struct {
         pub fn toThreadSafe(this: *@This()) void {
             this.buffers.value.protect();
 
-            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch @panic("out of memory");
+            const clone = bun.default_allocator.dupe(bun.PlatformIOVec, this.buffers.buffers.items) catch bun.outOfMemory();
             this.buffers.buffers.deinit();
             this.buffers.buffers.items = clone;
             this.buffers.buffers.capacity = clone.len;
@@ -4057,7 +4056,7 @@ pub const NodeFS = struct {
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
     /// That means a stack-allocated buffer won't suffice. Instead, we re-use
     /// the heap allocated buffer on the NodefS struct
-    sync_error_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    sync_error_buf: bun.PathBuffer = undefined,
     vm: ?*JSC.VirtualMachine = null,
 
     pub const ReturnType = Return;
@@ -4220,8 +4219,8 @@ pub const NodeFS = struct {
 
         // TODO: do we need to fchown?
         if (comptime Environment.isMac) {
-            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
 
             const src = args.src.sliceZ(&src_buf);
             const dest = args.dest.sliceZ(&dest_buf);
@@ -4295,8 +4294,8 @@ pub const NodeFS = struct {
         }
 
         if (comptime Environment.isLinux) {
-            var src_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var src_buf: bun.PathBuffer = undefined;
+            var dest_buf: bun.PathBuffer = undefined;
             const src = args.src.sliceZ(&src_buf);
             const dest = args.dest.sliceZ(&dest_buf);
 
@@ -4577,7 +4576,7 @@ pub const NodeFS = struct {
     }
 
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime _: Flavor) Maybe(Return.Link) {
-        var new_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var new_path_buf: bun.PathBuffer = undefined;
         const from = args.old_path.sliceZ(&this.sync_error_buf);
         const to = args.new_path.sliceZ(&new_path_buf);
 
@@ -4637,13 +4636,13 @@ pub const NodeFS = struct {
             args.path.osPath(&buf)
         else brk: {
             // TODO(@paperdave): clean this up a lot.
-            var joined_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var joined_buf: bun.PathBuffer = undefined;
             if (std.fs.path.isAbsolute(args.path.slice())) {
                 const utf8 = PosixToWinNormalizer.resolveCWDWithExternalBufZ(&joined_buf, args.path.slice()) catch
                     return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, utf8);
             } else {
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 const cwd = std.os.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
             }
@@ -5036,15 +5035,16 @@ pub const NodeFS = struct {
     fn readdirWithEntries(
         args: Arguments.Readdir,
         fd: bun.FileDescriptor,
+        basename: [:0]const u8,
         comptime ExpectedType: type,
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = fd.asDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
-        var iterator = DirIterator.iterate(
-            dir,
-            comptime if (is_u16) .u16 else .u8,
-        );
+
+        var dirent_path: ?bun.String = null;
+
+        var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
 
         while (switch (entry) {
@@ -5052,7 +5052,7 @@ pub const NodeFS = struct {
                 for (entries.items) |*item| {
                     switch (ExpectedType) {
                         Dirent => {
-                            item.name.deref();
+                            item.deref();
                         },
                         Buffer => {
                             item.destroy();
@@ -5072,12 +5072,19 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
+            if (ExpectedType == Dirent) {
+                if (dirent_path == null) {
+                    dirent_path = bun.String.createUTF8(basename);
+                }
+            }
             if (comptime !is_u16) {
                 const utf8_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
+                        dirent_path.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
+                            .path = dirent_path.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5093,8 +5100,10 @@ pub const NodeFS = struct {
                 const utf16_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
+                        dirent_path.?.ref();
                         entries.append(.{
                             .name = bun.String.createUTF16(utf16_name),
+                            .path = dirent_path.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5105,12 +5114,15 @@ pub const NodeFS = struct {
                 }
             }
         }
+        if (dirent_path) |*p| {
+            p.deref();
+        }
 
         return Maybe(void).success;
     }
 
     pub fn readdirWithEntriesRecursiveAsync(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         args: Arguments.Readdir,
         async_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
@@ -5118,8 +5130,8 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
         comptime is_root: bool,
     ) Maybe(void) {
+        const root_basename = async_task.root_path.slice();
         const flags = os.O.DIRECTORY | os.O.RDONLY;
-
         const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
@@ -5139,7 +5151,7 @@ pub const NodeFS = struct {
                         else => {},
                     }
 
-                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    const path_parts = [_]string{ root_basename, basename };
                     return .{
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
@@ -5163,11 +5175,12 @@ pub const NodeFS = struct {
 
         var iterator = DirIterator.iterate(fd.asDir(), .u8);
         var entry = iterator.next();
+        var dirent_path_prev: ?bun.String = null;
 
         while (switch (entry) {
             .err => |err| {
                 if (comptime !is_root) {
-                    const path_parts = [_]string{ async_task.root_path.slice(), basename };
+                    const path_parts = [_]string{ root_basename, basename };
                     return .{
                         .err = err.withPath(bun.path.joinZBuf(buf, &path_parts, .auto)),
                     };
@@ -5215,8 +5228,14 @@ pub const NodeFS = struct {
 
             switch (comptime ExpectedType) {
                 Dirent => {
+                    const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
+                    if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                        dirent_path_prev = bun.String.createUTF8(path_u8);
+                    }
+                    dirent_path_prev.?.ref();
                     entries.append(.{
-                        .name = bun.String.createUTF8(name_to_copy),
+                        .name = bun.String.createUTF8(utf8_name),
+                        .path = dirent_path_prev.?,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5229,12 +5248,15 @@ pub const NodeFS = struct {
                 else => bun.outOfMemory(),
             }
         }
+        if (dirent_path_prev) |*p| {
+            p.deref();
+        }
 
         return Maybe(void).success;
     }
 
     fn readdirWithEntriesRecursiveSync(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         args: Arguments.Readdir,
         root_basename: [:0]const u8,
         comptime ExpectedType: type,
@@ -5306,6 +5328,7 @@ pub const NodeFS = struct {
 
             var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
+            var dirent_path_prev: ?bun.String = null;
 
             while (switch (entry) {
                 .err => |err| {
@@ -5344,8 +5367,14 @@ pub const NodeFS = struct {
 
                 switch (comptime ExpectedType) {
                     Dirent => {
+                        const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
+                        if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                            dirent_path_prev = bun.String.createUTF8(path_u8);
+                        }
+                        dirent_path_prev.?.ref();
                         entries.append(.{
-                            .name = bun.String.createUTF8(name_to_copy),
+                            .name = bun.String.createUTF8(utf8_name),
+                            .path = dirent_path_prev.?,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5358,13 +5387,16 @@ pub const NodeFS = struct {
                     else => @compileError("Impossible"),
                 }
             }
+            if (dirent_path_prev) |*p| {
+                p.deref();
+            }
         }
 
         return Maybe(void).success;
     }
 
     fn _readdir(
-        buf: *[bun.MAX_PATH_BYTES]u8,
+        buf: *bun.PathBuffer,
         args: Arguments.Readdir,
         comptime ExpectedType: type,
         comptime recursive: bool,
@@ -5380,7 +5412,7 @@ pub const NodeFS = struct {
         const path = args.path.sliceZ(buf);
 
         if (comptime recursive and flavor == .sync) {
-            var buf_to_pass: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var buf_to_pass: bun.PathBuffer = undefined;
 
             var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
             return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
@@ -5429,7 +5461,7 @@ pub const NodeFS = struct {
         defer _ = Syscall.close(fd);
 
         var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
-        return switch (readdirWithEntries(args, fd, ExpectedType, &entries)) {
+        return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
             .err => |err| return .{
                 .err = err,
             },
@@ -5470,7 +5502,7 @@ pub const NodeFS = struct {
                                 return .{
                                     .result = .{
                                         .buffer = Buffer.fromBytes(
-                                            bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                            bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                             bun.default_allocator,
                                             .Uint8Array,
                                         ),
@@ -5479,13 +5511,13 @@ pub const NodeFS = struct {
                             } else if (comptime string_type == .default)
                                 return .{
                                     .result = .{
-                                        .string = bun.default_allocator.dupe(u8, file.contents) catch @panic("out of memory"),
+                                        .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 }
                             else
                                 return .{
                                     .result = .{
-                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch @panic("out of memory"),
+                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
                                     },
                                 };
                         }
@@ -5645,7 +5677,7 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn writeFileWithPathBuffer(pathbuf: *[bun.MAX_PATH_BYTES]u8, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
+    pub fn writeFileWithPathBuffer(pathbuf: *bun.PathBuffer, args: Arguments.WriteFile) Maybe(Return.WriteFile) {
         const fd = switch (args.file) {
             .path => brk: {
                 const path = args.file.path.sliceZWithForceCopy(pathbuf, true);
@@ -5753,7 +5785,7 @@ pub const NodeFS = struct {
     }
 
     pub fn readlink(this: *NodeFS, args: Arguments.Readlink, comptime _: Flavor) Maybe(Return.Readlink) {
-        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: bun.PathBuffer = undefined;
         const inbuf = &this.sync_error_buf;
 
         const path = args.path.sliceZ(inbuf);
@@ -5821,7 +5853,7 @@ pub const NodeFS = struct {
             };
         }
 
-        var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var outbuf: bun.PathBuffer = undefined;
         var inbuf = &this.sync_error_buf;
         if (comptime Environment.allow_assert) bun.assert(FileSystem.instance_loaded);
 
@@ -5881,7 +5913,7 @@ pub const NodeFS = struct {
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
         _ = flavor;
         const from_buf = &this.sync_error_buf;
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
 
         const from = args.old_path.sliceZ(from_buf);
         const to = args.new_path.sliceZ(&to_buf);
@@ -6056,7 +6088,7 @@ pub const NodeFS = struct {
     }
 
     pub fn symlink(this: *NodeFS, args: Arguments.Symlink, comptime _: Flavor) Maybe(Return.Symlink) {
-        var to_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var to_buf: bun.PathBuffer = undefined;
 
         if (Environment.isWindows) {
             const target: [:0]u8 = args.old_path.sliceZWithForceCopy(&this.sync_error_buf, true);
@@ -6595,7 +6627,12 @@ pub const NodeFS = struct {
                 mode_ |= C.darwin.COPYFILE_EXCL;
             }
 
-            return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+            const first_try = ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse return ret.success;
+            if (first_try == .err and first_try.err.errno == @intFromEnum(C.E.NOENT)) {
+                bun.makePath(std.fs.cwd(), bun.path.dirname(dest, .auto)) catch {};
+                return ret.errnoSysP(C.copyfile(src, dest, null, mode_), .copyfile, src) orelse ret.success;
+            }
+            return first_try;
         }
 
         if (Environment.isLinux) {
@@ -6742,30 +6779,30 @@ pub const NodeFS = struct {
         }
 
         if (Environment.isWindows) {
+            const src_enoent_maybe = ret.initErrWithP(.ENOENT, .copyfile, this.osPathIntoSyncErrorBuf(src));
+            const dst_enoent_maybe = ret.initErrWithP(.ENOENT, .copyfile, this.osPathIntoSyncErrorBuf(dest));
             const stat_ = reuse_stat orelse switch (windows.GetFileAttributesW(src)) {
-                windows.INVALID_FILE_ATTRIBUTES => return .{ .err = .{
-                    .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                    .syscall = .copyfile,
-                    .path = this.osPathIntoSyncErrorBuf(src),
-                } },
+                windows.INVALID_FILE_ATTRIBUTES => return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(src)).?,
                 else => |result| result,
             };
             if (stat_ & windows.FILE_ATTRIBUTE_REPARSE_POINT == 0) {
                 if (windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite())) == 0) {
-                    const err = windows.GetLastError();
-                    const errpath = switch (err) {
-                        .FILE_EXISTS, .ALREADY_EXISTS => dest,
-                        else => src,
-                    };
-                    return shouldIgnoreEbusy(
-                        args.src,
-                        args.dest,
-                        Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(errpath)) orelse .{ .err = .{
-                            .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                            .syscall = .copyfile,
-                            .path = this.osPathIntoSyncErrorBuf(src),
-                        } },
-                    );
+                    var err = windows.GetLastError();
+                    var errpath: bun.OSPathSliceZ = undefined;
+                    switch (err) {
+                        .FILE_EXISTS, .ALREADY_EXISTS => errpath = dest,
+                        .PATH_NOT_FOUND => {
+                            bun.makePathW(std.fs.cwd(), bun.path.dirnameW(dest)) catch {};
+                            const second_try = windows.CopyFileW(src, dest, @intFromBool(mode.shouldntOverwrite()));
+                            if (second_try > 0) return ret.success;
+                            err = windows.GetLastError();
+                            errpath = dest;
+                            if (err == .FILE_EXISTS or err == .ALREADY_EXISTS) errpath = src;
+                        },
+                        else => errpath = src,
+                    }
+                    const result = ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse src_enoent_maybe;
+                    return shouldIgnoreEbusy(args.src, args.dest, result);
                 }
                 return ret.success;
             } else {
@@ -6776,24 +6813,14 @@ pub const NodeFS = struct {
                 var wbuf: bun.WPathBuffer = undefined;
                 const len = bun.windows.GetFinalPathNameByHandleW(handle.cast(), &wbuf, wbuf.len, 0);
                 if (len == 0) {
-                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse .{ .err = .{
-                        .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                        .syscall = .copyfile,
-                        .path = this.osPathIntoSyncErrorBuf(dest),
-                    } };
+                    return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 const flags = if (stat_ & windows.FILE_ATTRIBUTE_DIRECTORY != 0)
                     std.os.windows.SYMBOLIC_LINK_FLAG_DIRECTORY
                 else
                     0;
                 if (windows.CreateSymbolicLinkW(dest, wbuf[0..len :0], flags) == 0) {
-                    return Maybe(Return.CopyFile).errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse .{
-                        .err = .{
-                            .errno = @intFromEnum(C.SystemErrno.ENOENT),
-                            .syscall = .copyfile,
-                            .path = this.osPathIntoSyncErrorBuf(dest),
-                        },
-                    };
+                    return ret.errnoSysP(0, .copyfile, this.osPathIntoSyncErrorBuf(dest)) orelse dst_enoent_maybe;
                 }
                 return ret.success;
             }

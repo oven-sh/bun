@@ -3,7 +3,7 @@ try {
   const watcher = fs.watch("relative.txt", { signal: AbortSignal.timeout(2000) });
 
   watcher.on("change", function (event, filename) {
-    if (filename !== "relative.txt" && event !== "change") {
+    if (filename !== "relative.txt" || event !== "change") {
       console.error("fail");
       clearInterval(interval);
       watcher.close();

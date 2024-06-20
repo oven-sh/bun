@@ -78,7 +78,7 @@ public:
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
-        JSC::Identifier moduleKey,
+        const JSC::Identifier& moduleKey,
         Vector<JSC::Identifier, 4>& exportNames,
         JSC::MarkedArgumentBuffer& exportValues);
 

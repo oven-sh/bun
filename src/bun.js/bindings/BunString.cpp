@@ -1,4 +1,5 @@
 
+#include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -194,6 +195,13 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     wtfString->ref();
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
+}
+
+BunString toStringView(StringView view) {
+    return {
+        BunStringTag::ZigString,
+        { .zig = toZigString(view) }
+    };
 }
 
 }

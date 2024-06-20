@@ -347,7 +347,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.doAppend(AppendType, _value);
         }
 
-        threadlocal var lowercase_append_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();

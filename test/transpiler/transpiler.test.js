@@ -3036,9 +3036,9 @@ console.log(foo, array);
       expectPrinted("NaN.toString()", "NaN.toString()");
       expectPrinted("NaN === NaN", "!1");
 
-      expectPrinted("Infinity", "Infinity");
-      expectPrinted("Infinity.toString()", "Infinity.toString()");
-      expectPrinted("(-Infinity).toString()", "(-Infinity).toString()");
+      expectPrinted("Infinity", "1 / 0");
+      expectPrinted("Infinity.toString()", "(1 / 0).toString()");
+      expectPrinted("(-Infinity).toString()", "(-1 / 0).toString()");
       expectPrinted("Infinity === Infinity", "!0");
       expectPrinted("Infinity === -Infinity", "!1");
 

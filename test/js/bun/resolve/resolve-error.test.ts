@@ -6,6 +6,8 @@ describe("ResolveMessage", () => {
       await import("./file-importing-nonexistent-file.js");
     } catch (e: any) {
       expect(Bun.inspect(e.position).length > 0).toBe(true);
+      expect(e.column).toBeGreaterThanOrEqual(0);
+      expect(e.line).toBeGreaterThanOrEqual(0);
     }
   });
 

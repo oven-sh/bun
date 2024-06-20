@@ -147,7 +147,7 @@ void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
 void NapiRef::ref()
 {
     ++refCount;
-    if (refCount == 1 && weakValueRef.isSet()) {
+    if (refCount == 1 && !weakValueRef.isClear()) {
         auto& vm = globalObject.get()->vm();
         if (weakValueRef.isString()) {
             strongRef.set(vm, JSC::JSValue(weakValueRef.string()));
@@ -156,8 +156,11 @@ void NapiRef::ref()
         } else {
             strongRef.set(vm, weakValueRef.primitive());
         }
-
-        weakValueRef.clear();
+        // isSet() will return always true after being set once
+        // We cannot rely on isSet() to check if the value is set we need to use isClear()
+        // .setString/.setObject/.setPrimitive will assert fail if called more than once (even after clear())
+        // We should not clear the weakValueRef here because we need to keep it if we call NapiRef::unref()
+        // so we can call the finalizer
     }
 }
 
@@ -166,16 +169,8 @@ void NapiRef::unref()
     bool clear = refCount == 1;
     refCount = refCount > 0 ? refCount - 1 : 0;
     if (clear) {
-        if (JSC::JSValue val = strongRef.get()) {
-
-            if (val.isString()) {
-                weakValueRef.setString(val.toString(globalObject.get()), weakValueHandleOwner(), this);
-            } else if (val.isObject()) {
-                weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), this);
-            } else {
-                weakValueRef.setPrimitive(val);
-            }
-        }
+        // we still dont clean weakValueRef so we can ref it again using NapiRef::ref() if the GC didn't collect it
+        // and use it to call the finalizer when GC'd
         strongRef.clear();
     }
 }
@@ -200,17 +195,17 @@ static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
 {
     const uint32_t attributes = static_cast<uint32_t>(attributes_);
     uint32_t result = 0;
-    if (!(attributes & napi_key_configurable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_configurable))) {
         result |= JSC::PropertyAttribute::DontDelete;
     }
 
-    if (!(attributes & napi_key_enumerable)) {
+    if (!(attributes & static_cast<napi_property_attributes>(napi_key_enumerable))) {
         result |= JSC::PropertyAttribute::DontEnum;
     }
 
-    if (!(attributes & napi_key_writable)) {
-        // result |= JSC::PropertyAttribute::ReadOnly;
-    }
+    // if (!(attributes & napi_key_writable)) {
+    //     // result |= JSC::PropertyAttribute::ReadOnly;
+    // }
 
     return result;
 }
@@ -1233,14 +1228,14 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     auto* ref = new NapiRef(globalObject, initial_refcount);
     if (initial_refcount > 0) {
         ref->strongRef.set(globalObject->vm(), val);
+    }
+    // we dont have a finalizer but we can use the weak value to re-ref again or get the value until the GC is called
+    if (val.isString()) {
+        ref->weakValueRef.setString(val.toString(globalObject), weakValueHandleOwner(), ref);
+    } else if (val.isObject()) {
+        ref->weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), ref);
     } else {
-        if (val.isString()) {
-            ref->weakValueRef.setString(val.toString(globalObject), weakValueHandleOwner(), ref);
-        } else if (val.isObject()) {
-            ref->weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), ref);
-        } else {
-            ref->weakValueRef.setPrimitive(val);
-        }
+        ref->weakValueRef.setPrimitive(val);
     }
 
     *result = toNapi(ref);
@@ -1672,11 +1667,8 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
 
     Zig::GlobalObject* globalObject = toJS(env);
 
-    JSC::EncodedJSValue encodedCode = reinterpret_cast<JSC::EncodedJSValue>(code);
-    JSC::JSValue codeValue = JSC::JSValue::decode(encodedCode);
-
-    JSC::EncodedJSValue encodedMessage = reinterpret_cast<JSC::EncodedJSValue>(msg);
-    JSC::JSValue messageValue = JSC::JSValue::decode(encodedMessage);
+    JSC::JSValue codeValue = toJS(code);
+    JSC::JSValue messageValue = toJS(msg);
 
     auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
     if (codeValue) {
@@ -1778,9 +1770,8 @@ JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
     RETURN_IF_EXCEPTION(scope, {});
     callFrame->setThisValue(subclass);
 
-    size_t count = callFrame->argumentCount();
     MarkedArgumentBufferWithSize<12> args;
-    size_t argc = count + 1;
+    size_t argc = callFrame->argumentCount() + 1;
     args.fill(vm, argc, [&](auto* slot) {
         memcpy(slot, ADDRESS_OF_THIS_VALUE_IN_CALLFRAME(callFrame), sizeof(JSC::JSValue) * argc);
     });

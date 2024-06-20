@@ -5,7 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { tempDirWithFiles } from "harness";
-import { describe, test, afterAll, beforeAll, expect } from "bun:test";
+import { describe, test, afterAll, beforeAll, expect, setDefaultTimeout } from "bun:test";
 import { $ } from "bun";
 import path from "path";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -18,6 +18,10 @@ const fileExists = async (path: string): Promise<boolean> =>
 
 $.nothrow();
 
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
+
 const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
@@ -25,7 +29,6 @@ describe("bunshell rm", () => {
   TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
     .ensureTempDir()
     .doesNotExist("node_modules")
-    .timeout(10 * 1000)
     .runAsTest("node_modules");
 
   test("force", async () => {

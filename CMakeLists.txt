@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.8")
-set(WEBKIT_TAG 413f6fc119cfca98d5063049ce444cc4eb56f0a4)
+set(Bun_VERSION "1.1.15")
+set(WEBKIT_TAG 64d04ec1a65d91326c5f2298b9c7d05b56125252)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -301,12 +301,12 @@ option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
 option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd" ON)
 option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
-option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
 option(USE_CUSTOM_LSHPACK "Use Bun's recommended version of ls-hpack" ON)
 option(USE_BASELINE_BUILD "Build Bun for baseline (older) CPUs" OFF)
+option(USE_SYSTEM_ICU "Use the system-provided libicu. May fix startup crashes when building WebKit yourself." OFF)
 
 option(USE_VALGRIND "Build Bun with Valgrind support (Linux only)" OFF)
 
@@ -316,6 +316,9 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
+option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
 
 if(NOT ZIG_LIB_DIR)
     cmake_path(SET ZIG_LIB_DIR NORMALIZE "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/zig/lib")
@@ -334,6 +337,10 @@ endif()
 
 if(NOT CANARY)
     set(CANARY 0)
+endif()
+
+if(NOT ENABLE_LOGS)
+    set(ENABLE_LOGS false)
 endif()
 
 if(NOT ZIG_OPTIMIZE)
@@ -413,7 +420,7 @@ if(ZIG_COMPILER)
     find_program(ZIG_COMPILER_ zig ${REQUIRED_IF_NOT_ONLY_CPP_OR_LINK} DOC "Path to the Zig compiler" VALIDATOR validate_zig)
     set(ZIG_COMPILER "${ZIG_COMPILER_}")
     message(STATUS "Found Zig Compiler: ${ZIG_COMPILER}")
-elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY)
+elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_TIDY_ONLY_EXTRA)
     execute_process(
         COMMAND "${SHELL}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/download-zig.${SCRIPT_EXTENSION}"
@@ -870,6 +877,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Doptimize=${ZIG_OPTIMIZE}"
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
+        "-Denable_logs=${ENABLE_LOGS}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
@@ -915,7 +923,9 @@ if(WIN32)
 endif()
 
 # -- The Buntime™️ ---
-if(NOT BUN_CPP_ONLY)
+if(BUN_TIDY_ONLY OR BUN_TIDY_ONLY_EXTRA)
+    add_library(${bun} OBJECT "${BUN_SOURCES}")
+elseif(NOT BUN_CPP_ONLY)
     add_executable(${bun} "${BUN_SOURCES}" "${BUN_ZIG_OBJ}")
 else()
     add_executable(${bun} "${BUN_SOURCES}")
@@ -1173,9 +1183,15 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(${bun} PRIVATE "libatomic.a")
     endif()
 
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
-    target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+    if(USE_SYSTEM_ICU)
+        target_link_libraries(${bun} PRIVATE "libicudata.a")
+        target_link_libraries(${bun} PRIVATE "libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "libicuuc.a")
+    else()
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicudata.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicui18n.a")
+        target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libicuuc.a")
+    endif()
 
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/linker.lds")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.dyn")
@@ -1271,11 +1287,11 @@ if(USE_CUSTOM_MIMALLOC)
     elseif(APPLE)
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
             message(STATUS "Using debug mimalloc")
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.a")
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc-debug.o")
         else()
-            # https://github.com/microsoft/mimalloc/issues/512
-            # Linking mimalloc via object file on macOS x64 can cause heap corruption
-            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.a")
+            # Note: https://github.com/microsoft/mimalloc/issues/512
+            # It may have been a bug in our code at the time.
+            target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libmimalloc.o")
         endif()
     else()
         if(USE_DEBUG_JSC OR CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -1314,19 +1330,6 @@ if(USE_CUSTOM_CARES)
 else()
     find_package(c-ares CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE c-ares::cares)
-endif()
-
-if(USE_CUSTOM_BASE64)
-    include_directories(${BUN_DEPS_DIR}/base64/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/base64.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libbase64.a")
-    endif()
-else()
-    find_package(base64 REQUIRED)
-    target_link_libraries(${bun} PRIVATE base64::base64)
 endif()
 
 if(USE_CUSTOM_TINYCC)
@@ -1432,4 +1435,16 @@ endif()
 
 if(NO_CODEGEN)
     message(STATUS "NOTE: NO_CODEGEN is ON, this build expects ./codegen to exist")
+endif()
+
+if(BUN_TIDY_ONLY)
+    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
+endif()
+
+if(BUN_TIDY_ONLY_EXTRA)
+    find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

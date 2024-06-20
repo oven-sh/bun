@@ -26,6 +26,7 @@
 
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "wtf/text/OrdinalNumber.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -74,7 +75,7 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "21.6.0"
+#define REPORTED_NODE_VERSION "22.2.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
 #define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
@@ -128,11 +129,11 @@ static JSValue constructArch(VM& vm, JSObject* processObject)
 static JSValue constructPlatform(VM& vm, JSObject* processObject)
 {
 #if defined(__APPLE__)
-    return JSC::jsString(vm, makeAtomString("darwin"));
+    return JSC::jsString(vm, makeAtomString("darwin"_s));
 #elif defined(__linux__)
-    return JSC::jsString(vm, makeAtomString("linux"));
+    return JSC::jsString(vm, makeAtomString("linux"_s));
 #elif OS(WINDOWS)
-    return JSC::jsString(vm, makeAtomString("win32"));
+    return JSC::jsString(vm, makeAtomString("win32"_s));
 #else
 #error "Unknown platform"
 #endif
@@ -141,15 +142,13 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 20);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 23);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
     object->putDirect(
         vm, JSC::Identifier::fromString(vm, "bun"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__version + 1 /* remove "v" prefix */))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_boringssl))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s),
@@ -178,12 +177,15 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_c_ares))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
-
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("11.3.244.8-node.15"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_lshpack))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_zstd))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("12.4.254.14-node.12"_s))), 0);
 #if OS(WINDOWS)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString(uv_version_string()))), 0);
 #else
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.46.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.48.0"_s))), 0);
 #endif
     object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("9"_s))), 0);
 
@@ -1590,10 +1592,14 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
             vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
             String name = "Error"_s;
             String message = "JavaScript Callstack"_s;
-            unsigned int line = 0;
-            unsigned int column = 0;
+            OrdinalNumber line = OrdinalNumber::beforeFirst();
+            OrdinalNumber column = OrdinalNumber::beforeFirst();
             WTF::String sourceURL;
-            WTF::String stackProperty = Bun::formatStackTrace(vm, globalObject, name, message, line, column, sourceURL, stackFrames, nullptr);
+            WTF::String stackProperty = Bun::formatStackTrace(
+                vm, globalObject, name, message,
+                line, column,
+                sourceURL, stackFrames, nullptr);
+
             WTF::String stack;
             // first line after "Error:"
             size_t firstLine = stackProperty.find('\n');
@@ -1603,7 +1609,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
             JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
 
-            stack.split('\n', [&](WTF::StringView line) {
+            stack.split('\n', [&](const WTF::StringView& line) {
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 
@@ -2610,12 +2616,12 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(encodedValue);
 
-    if (!value.isInt32()) {
+    if (!value.isInt32AsAnyInt()) {
         throwRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
         return false;
     }
 
-    int port = value.asInt32();
+    int port = value.toInt32(globalObject);
 
     if (port != 0) {
         if (port < 1024 || port > 65535) {

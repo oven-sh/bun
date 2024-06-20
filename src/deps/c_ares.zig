@@ -15,6 +15,8 @@ pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
 const libuv = bun.windows.libuv;
 
+pub const AF = std.os.AF;
+
 pub const NSClass = enum(c_int) {
     /// Cookie.
     ns_c_invalid = 0,
@@ -152,7 +154,17 @@ pub const NSType = enum(c_int) {
     ns_t_max = 65536,
     _,
 };
-
+pub const struct_ares_server_failover_options = extern struct {
+    retry_chance: c_ushort = 0,
+    retry_delay: usize = 0,
+};
+const ARES_EVSYS_DEFAULT: c_int = 0;
+const ARES_EVSYS_WIN32: c_int = 1;
+const ARES_EVSYS_EPOLL: c_int = 2;
+const ARES_EVSYS_KQUEUE: c_int = 3;
+const ARES_EVSYS_POLL: c_int = 4;
+const ARES_EVSYS_SELECT: c_int = 5;
+const ares_evsys_t = c_uint;
 pub const Options = extern struct {
     flags: c_int = 0,
     timeout: c_int = 0,
@@ -164,9 +176,9 @@ pub const Options = extern struct {
     socket_receive_buffer_size: c_int = 0,
     servers: [*c]struct_in_addr = null,
     nservers: c_int = 0,
-    domains: [*c][*:0]u8 = null,
+    domains: ?[*][*:0]u8 = null,
     ndomains: c_int = 0,
-    lookups: [*c]u8 = null,
+    lookups: ?[*:0]u8 = null,
     sock_state_cb: ares_sock_state_cb = null,
     sock_state_cb_data: ?*anyopaque = null,
     sortlist: ?*struct_apattern = null,
@@ -174,6 +186,11 @@ pub const Options = extern struct {
     ednspsz: c_int = 0,
     resolvconf_path: ?[*:0]u8 = null,
     hosts_path: ?[*:0]u8 = null,
+    udp_max_queries: c_int = 0,
+    maxtimeout: c_int = 0,
+    qcache_max_ttl: c_uint = 0,
+    evsys: ares_evsys_t = 0,
+    server_failover_opts: struct_ares_server_failover_options = @import("std").mem.zeroes(struct_ares_server_failover_options),
 };
 pub const struct_hostent = extern struct {
     h_name: [*c]u8,
@@ -260,7 +277,7 @@ pub const struct_hostent = extern struct {
                     }
                     function(this, null, timeouts, start);
                 } else if (comptime strings.eqlComptime(lookup_name, "ptr")) {
-                    const result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, std.os.AF.INET, &start);
+                    const result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, AF.INET, &start);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
                         return;
@@ -387,8 +404,8 @@ pub const AddrInfo = extern struct {
                     GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
-                                std.os.AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
-                                std.os.AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
+                                AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
+                                AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
                                 else => unreachable,
                             },
                             .ttl = this_node.ttl,
@@ -602,11 +619,11 @@ pub const Channel = opaque {
         // which can avoid the use of `struct_in_addr` to reduce extra bytes.
         var addr: [16]u8 = undefined;
         if (addr_ptr != null) {
-            if (ares_inet_pton(std.os.AF.INET, addr_ptr, &addr) == 1) {
-                ares_gethostbyaddr(this, &addr, 4, std.os.AF.INET, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+            if (ares_inet_pton(AF.INET, addr_ptr, &addr) > 0) {
+                ares_gethostbyaddr(this, &addr, 4, AF.INET, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
                 return;
-            } else if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &addr) == 1) {
-                return ares_gethostbyaddr(this, &addr, 16, std.os.AF.INET6, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
+            } else if (ares_inet_pton(AF.INET6, addr_ptr, &addr) > 0) {
+                return ares_gethostbyaddr(this, &addr, 16, AF.INET6, struct_hostent.hostCallbackWrapper(Type, callback), ctx);
             }
         }
         struct_hostent.hostCallbackWrapper(Type, callback).?(ctx, ARES_ENOTIMP, 0, null);
@@ -617,7 +634,7 @@ pub const Channel = opaque {
         return ares_getnameinfo(
             this,
             sa,
-            if (sa.*.family == std.os.AF.INET) @sizeOf(std.os.sockaddr.in) else @sizeOf(std.os.sockaddr.in6),
+            if (sa.*.family == AF.INET) @sizeOf(std.os.sockaddr.in) else @sizeOf(std.os.sockaddr.in6),
             // node returns ENOTFOUND for addresses like 255.255.255.255:80
             // So, it requires setting the ARES_NI_NAMEREQD flag
             ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE,
@@ -1524,10 +1541,10 @@ pub export fn Bun__canonicalizeIP(
         bun.copy(u8, &ip_addr, addr_str);
         ip_addr[addr_str.len] = 0;
 
-        var af: c_int = std.os.AF.INET;
+        var af: c_int = AF.INET;
         // get the standard text representation of the IP
         if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-            af = std.os.AF.INET6;
+            af = AF.INET6;
             if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
                 return JSC.JSValue.jsUndefined();
             }
@@ -1572,16 +1589,16 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.os.sockaddr) c_int {
 
     {
         const in: *std.os.sockaddr.in = @as(*std.os.sockaddr.in, @alignCast(@ptrCast(sa)));
-        if (ares_inet_pton(std.os.AF.INET, addr_ptr, &in.addr) == 1) {
-            in.*.family = std.os.AF.INET;
+        if (ares_inet_pton(AF.INET, addr_ptr, &in.addr) == 1) {
+            in.*.family = AF.INET;
             in.*.port = std.mem.nativeToBig(u16, port);
             return 0;
         }
     }
     {
         const in6: *std.os.sockaddr.in6 = @as(*std.os.sockaddr.in6, @alignCast(@ptrCast(sa)));
-        if (ares_inet_pton(std.os.AF.INET6, addr_ptr, &in6.addr) == 1) {
-            in6.*.family = std.os.AF.INET6;
+        if (ares_inet_pton(AF.INET6, addr_ptr, &in6.addr) == 1) {
+            in6.*.family = AF.INET6;
             in6.*.port = std.mem.nativeToBig(u16, port);
             return 0;
         }

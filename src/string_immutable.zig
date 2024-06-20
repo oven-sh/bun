@@ -5,7 +5,6 @@ const string = bun.string;
 const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("root").bun;
-pub const joiner = @import("./string_joiner.zig");
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
@@ -29,7 +28,11 @@ pub inline fn containsChar(self: string, char: u8) bool {
 }
 
 pub inline fn contains(self: string, str: string) bool {
-    return indexOf(self, str) != null;
+    return containsT(u8, self, str);
+}
+
+pub inline fn containsT(comptime T: type, self: []const T, str: []const T) bool {
+    return indexOfT(T, self, str) != null;
 }
 
 pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
@@ -273,6 +276,14 @@ pub fn indexOfSigned(self: string, str: string) i32 {
 }
 
 pub inline fn lastIndexOfChar(self: []const u8, char: u8) ?usize {
+    if (comptime Environment.isLinux) {
+        if (@inComptime()) {
+            return lastIndexOfCharT(u8, self, char);
+        }
+        const start = bun.C.memrchr(self.ptr, char, self.len) orelse return null;
+        const i = @intFromPtr(start) - @intFromPtr(self.ptr);
+        return @intCast(i);
+    }
     return lastIndexOfCharT(u8, self, char);
 }
 
@@ -310,6 +321,11 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     const i = @intFromPtr(start) - @intFromPtr(self_ptr);
     bun.unsafeAssert(i < self_len);
     return @as(usize, @intCast(i));
+}
+
+pub fn indexOfT(comptime T: type, haystack: []const T, needle: []const T) ?usize {
+    if (T == u8) return indexOf(haystack, needle);
+    return std.mem.indexOf(T, haystack, needle);
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {
@@ -1693,7 +1709,7 @@ pub fn toWPathNormalizeAutoExtend(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 }
 
 pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
 
     var path_to_use = normalizeSlashesOnly(&renormalized, utf8, '\\');
 
@@ -1723,7 +1739,7 @@ pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash:
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var renormalized: bun.PathBuffer = undefined;
     var path_to_use = utf8;
 
     if (bun.strings.containsChar(utf8, '/')) {
@@ -4033,6 +4049,20 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
     return to_read * 2;
 }
 
+/// Leave a single leading char
+/// ```zig
+/// trimSubsequentLeadingChars("foo\n\n\n\n", '\n') -> "foo\n"
+/// ```
+pub fn trimSubsequentLeadingChars(slice: []const u8, char: u8) []const u8 {
+    if (slice.len == 0) return slice;
+    var end = slice.len - 1;
+    var endend = slice.len;
+    while (end > 0 and slice[end] == char) : (end -= 1) {
+        endend = end + 1;
+    }
+    return slice[0..endend];
+}
+
 pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     if (indexOfNotChar(slice, char)) |i| {
         return slice[i..];
@@ -4890,7 +4920,7 @@ pub fn isIPAddress(input: []const u8) bool {
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
 
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) > 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
@@ -4903,7 +4933,7 @@ pub fn isIPV6Address(input: []const u8) bool {
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn cloneNormalizingSeparators(
@@ -5105,6 +5135,10 @@ pub inline fn charIsAnySlash(char: u8) bool {
 }
 
 pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
+    return startsWithWindowsDriveLetterT(u8, s);
+}
+
+pub inline fn startsWithWindowsDriveLetterT(comptime T: type, s: []const T) bool {
     return s.len > 2 and s[1] == ':' and switch (s[0]) {
         'a'...'z', 'A'...'Z' => true,
         else => false,

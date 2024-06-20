@@ -30,11 +30,12 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <netdb.h>
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#else /* _WIN32 */
+#include <mstcpip.h>
 #endif
 
 #if defined(__APPLE__) && defined(__aarch64__)
@@ -60,9 +61,10 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
                 errno = EAFNOSUPPORT;
                 return -1;
             }
+            int err = WSAGetLastError();
             if (ret < 0) {
-                if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                if (err == WSAEINTR) continue;
+                if (err == WSAEWOULDBLOCK) return i;
                 return ret;
             }
             break;
@@ -110,7 +112,7 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     while (1) {
         ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
         if (ret < 0) {
-            if (errno == EINTR) continue;
+            if (WSAGetLastError() == WSAEINTR) continue;
             return ret;
         }
         recvbuf->recvlen = ret;
@@ -274,6 +276,20 @@ LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd) {
     return fd;
 }
 
+static LIBUS_SOCKET_DESCRIPTOR win32_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
+#if _WIN32
+    if (fd != LIBUS_SOCKET_ERROR) {
+        // libuv will set non-blocking, but only on poll init!
+        // we need it to be set on connect as well
+        DWORD yes = 1;
+        ioctlsocket(fd, FIONBIO, &yes);
+    }
+    return fd;
+#else
+    return fd;
+#endif
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
     /* Libuv will set windows sockets as non-blocking */
@@ -298,15 +314,14 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol) {
-    // returns INVALID_SOCKET on error
-    int flags = 0;
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
-    flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
-#endif
-
+    int flags = SOCK_CLOEXEC | SOCK_NONBLOCK;
     LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type | flags, protocol);
-
+    return apple_no_sigpipe(created_fd);
+#else
+    LIBUS_SOCKET_DESCRIPTOR created_fd = socket(domain, type, protocol);
     return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
+#endif
 }
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -475,28 +490,22 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     int options
 ) {
 
-    if (port != 0) {
-        /* Otherwise, always enable SO_REUSEPORT and SO_REUSEADDR _unless_ options specify otherwise */
-#ifdef _WIN32
-        if (options & LIBUS_LISTEN_EXCLUSIVE_PORT) {
-            int optval2 = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
-        } else {
-            int optval3 = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
-        }
-#else
-    #if /*defined(__linux__) &&*/ defined(SO_REUSEPORT)
-        if (!(options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
-            int optval = 1;
-            setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval, sizeof(optval));
-        }
-    #endif
-        int enabled = 1;
-        setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &enabled, sizeof(enabled));
+     if ((options & LIBUS_LISTEN_EXCLUSIVE_PORT)) {
+#if _WIN32
+        int optval2 = 1;
+        setsockopt(listenFd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (void *) &optval2, sizeof(optval2));
 #endif
-
+    } else {
+      #if defined(SO_REUSEPORT)
+        int optval2 = 1;
+        setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, (void *) &optval2, sizeof(optval2));  
+        #endif
     }
+
+#if defined(SO_REUSEADDR)
+    int optval3 = 1;
+    setsockopt(listenFd, SOL_SOCKET, SO_REUSEADDR, (void *) &optval3, sizeof(optval3));
+#endif
 
 #ifdef IPV6_V6ONLY
     int disabled = 0;
@@ -576,7 +585,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
 #include <sys/stat.h>
 #include <stddef.h>
 
-static int bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
+static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, size_t path_len, int* dirfd_linux_workaround_for_unix_path_len, struct sockaddr_un *server_address, size_t* addrlen) {
     memset(server_address, 0, sizeof(struct sockaddr_un));
     server_address->sun_family = AF_UNIX;
 
@@ -842,7 +851,13 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
     int res = connect(fd, &addr, sizeof(addr));
     // EAFNOSUPPORT is harmless in this case - we just want to disconnect
-    if (res == 0 || errno == EAFNOSUPPORT) {
+    if (res == 0 || 
+#ifdef _WIN32
+    WSAGetLastError() == WSAEAFNOSUPPORT
+#else
+    errno == EAFNOSUPPORT
+#endif
+    ) {
         return 0;
     } else {
         return -1;
@@ -880,146 +895,132 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 //     return 0; // no ecn defaults to 0
 // }
 
-static int bsd_do_connect_raw(struct addrinfo *rp, int fd)
+static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {
-     do {
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0 || errno == EINPROGRESS) {
-            return 0;
-        }
-    } while (errno == EINTR);
-
-    return LIBUS_SOCKET_ERROR;
-}
-
-static int bsd_do_connect(struct addrinfo *rp, int *fd)
-{
-    while (rp != NULL) {
-        if (bsd_do_connect_raw(rp, *fd) == 0) {
-            return 0;
-        }
-
-        rp = rp->ai_next;
-        bsd_close_socket(*fd);
-
-        if (rp == NULL) {
-            return LIBUS_SOCKET_ERROR;
-        }
-
-        int resultFd = bsd_create_socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (resultFd < 0) {
-            return LIBUS_SOCKET_ERROR;
-        }
-        *fd = resultFd;
-    }
-
-    return LIBUS_SOCKET_ERROR;
-}
-
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(const char *host, int port, const char *source_host, int options) {
 #ifdef _WIN32
-    // The caller (sometimes) uses NULL to indicate localhost. This works fine with getaddrinfo, but not with WSAConnectByName
-    if (!host) {
-        host = "localhost";
-    } else if (strcmp(host, "0.0.0.0") == 0 || strcmp(host, "::") == 0 || strcmp(host, "[::]") == 0) {
-        // windows disallows connecting to 0.0.0.0. To emulate POSIX behavior, we connect to localhost instead
-        // Also see https://docs.libuv.org/en/v1.x/tcp.html#c.uv_tcp_connect
-        host = "localhost";
-    }
-    // On windows we use WSAConnectByName to speed up connecting to localhost
-    // The other implementation also works on windows, but is slower
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-    SOCKET s = socket(AF_INET6, SOCK_STREAM, 0);
-    if (s == INVALID_SOCKET) {
-        return LIBUS_SOCKET_ERROR;
-    }
+    while (1) {
+        if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
+            return 0;
+        }
 
-    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
-    DWORD zero = 0;
-    if (SOCKET_ERROR == setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (const char*)&zero, sizeof(DWORD))) {
-        closesocket(s);
-        return LIBUS_SOCKET_ERROR;
-    }
-    if (source_host) {
-        struct addrinfo *interface_result;
-        if (!getaddrinfo(source_host, NULL, NULL, &interface_result)) {
-            int ret = bind(s, interface_result->ai_addr, (socklen_t) interface_result->ai_addrlen);
-            freeaddrinfo(interface_result);
-            if (ret == SOCKET_ERROR) {
-                closesocket(s);
-                return LIBUS_SOCKET_ERROR;
+        int err = WSAGetLastError();
+        switch (err) {
+            case WSAEINPROGRESS:
+            case WSAEWOULDBLOCK:
+            case WSAEALREADY: {
+                return 0;
+            }
+            case WSAEINTR: {
+                continue;
+            }
+            default: {
+                return err;
             }
         }
     }
-    SOCKADDR_STORAGE local;
-    SOCKADDR_STORAGE remote;
-    DWORD local_len = sizeof(local);
-    DWORD remote_len = sizeof(remote);
-    if (FALSE == WSAConnectByNameA(s, host, port_string, &local_len, (SOCKADDR*)&local, &remote_len, (SOCKADDR*)&remote, NULL, NULL)) {
-        closesocket(s);
-        return LIBUS_SOCKET_ERROR;
-    }
 
-    // See
-    // - https://stackoverflow.com/questions/60591081/getpeername-always-fails-with-error-code-wsaenotconn
-    // - https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaconnectbynamea#remarks
-    //
-    // When the WSAConnectByName function returns TRUE, the socket s is in the default state for a connected socket. 
-    // The socket s does not enable previously set properties or options until SO_UPDATE_CONNECT_CONTEXT is set on the socket. 
-    // Use the setsockopt function to set the SO_UPDATE_CONNECT_CONTEXT option.
-    //
-    if (SOCKET_ERROR == setsockopt( s, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, NULL, 0 )) {
-        closesocket(s);
-        return LIBUS_SOCKET_ERROR;
-    }
-    return s;
+    
 #else
-    struct addrinfo hints, *result;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port_string[16];
-    snprintf(port_string, 16, "%d", port);
-
-    if (getaddrinfo(host, port_string, &hints, &result) != 0) {
-        return LIBUS_SOCKET_ERROR;
-    }
-
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (fd == LIBUS_SOCKET_ERROR) {
-        freeaddrinfo(result);
-        return LIBUS_SOCKET_ERROR;
-    }
-
-    if (source_host) {
-        struct addrinfo *interface_result;
-        if (!getaddrinfo(source_host, NULL, NULL, &interface_result)) {
-            int ret = bind(fd, interface_result->ai_addr, (socklen_t) interface_result->ai_addrlen);
-            freeaddrinfo(interface_result);
-            if (ret == LIBUS_SOCKET_ERROR) {
-                bsd_close_socket(fd);
-                freeaddrinfo(result);
-                return LIBUS_SOCKET_ERROR;
-            }
+    int r;
+     do {
+        errno = 0;
+        r = connect(fd, (struct sockaddr *)addr, namelen);
+    } while (r == -1 && errno == EINTR);
+    
+    // connect() can return -1 with an errno of 0.
+    // the errno is the correct one in that case.
+    if (r == -1 && errno != 0) {
+        if (errno == EINPROGRESS) {
+            return 0;
         }
 
-        if (bsd_do_connect_raw(result, fd) != 0) {
-            bsd_close_socket(fd);
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
-    } else {
-        if (bsd_do_connect(result, &fd) != 0) {
-            freeaddrinfo(result);
-            return LIBUS_SOCKET_ERROR;
-        }
+        return errno;
     }
     
-    
-    freeaddrinfo(result);
-    return fd;
+    return 0;
 #endif
+}
+
+#ifdef _WIN32
+
+static int convert_null_addr(const struct sockaddr_storage *addr, struct sockaddr_storage* result) {
+    // 1. check that all addrinfo results are 0.0.0.0 or ::
+    if (addr->ss_family == AF_INET) {
+        struct sockaddr_in *addr4 = (struct sockaddr_in *) addr;
+        if (addr4->sin_addr.s_addr == htonl(INADDR_ANY)) {
+            memcpy(result, addr, sizeof(struct sockaddr_in));
+            ((struct sockaddr_in *) result)->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            return 1;
+        }
+    } else if (addr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *) addr;
+        if (memcmp(&addr6->sin6_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
+            memcpy(result, addr, sizeof(struct sockaddr_in6));
+            memcpy(&((struct sockaddr_in6 *) result)->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr));
+            return 1;
+        }
+    }
+    return 0;
+} 
+
+static int is_loopback(struct sockaddr_storage *sockaddr) {
+    if (sockaddr->ss_family == AF_INET) {
+        struct sockaddr_in *addr = (struct sockaddr_in *) sockaddr;
+        return addr->sin_addr.s_addr == htonl(INADDR_LOOPBACK);
+    } else if (sockaddr->ss_family == AF_INET6) {
+        struct sockaddr_in6 *addr = (struct sockaddr_in6 *) sockaddr;
+        return memcmp(&addr->sin6_addr, &in6addr_loopback, sizeof(struct in6_addr)) == 0;
+    } else {
+        return 0;
+    }
+}
+#endif
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0);
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+
+#ifdef _WIN32
+    win32_set_nonblocking(fd);
+
+    // On windows we can't connect to the null address directly. 
+    // To match POSIX behavior, we need to connect to localhost instead.
+    struct sockaddr_storage converted;
+    if (convert_null_addr(addr, &converted)) {
+        addr = &converted;
+    }
+
+    // This sets the socket to fail quickly if no connection can be established to localhost,
+    // instead of waiting for the default 2 seconds. This is necessary because we always try to connect
+    // using IPv6 first, but it's possible that whatever we want to connect to is only listening on IPv4.
+    // see https://github.com/libuv/libuv/blob/bf61390769068de603e6deec8e16623efcbe761a/src/win/tcp.c#L806
+    TCP_INITIAL_RTO_PARAMETERS retransmit_ioctl;
+    DWORD bytes;
+    if (is_loopback(addr)) {
+        memset(&retransmit_ioctl, 0, sizeof(retransmit_ioctl));
+        retransmit_ioctl.Rtt = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
+        retransmit_ioctl.MaxSynRetransmissions = TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS;
+        WSAIoctl(fd,
+                SIO_TCP_INITIAL_RTO,
+                &retransmit_ioctl,
+                sizeof(retransmit_ioctl),
+                NULL,
+                0,
+                &bytes,
+                NULL,
+                NULL);
+    }
+
+#endif
+    int rc = bsd_do_connect_raw(fd, (struct sockaddr*) addr, addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6));
+
+    if (rc != 0) {
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+    return fd;
 }
 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen) {
@@ -1029,16 +1030,10 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (connect(fd, (struct sockaddr *)server_address, addrlen) != 0 && errno != EINPROGRESS) {
-        #if defined(_WIN32)
-          int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
-        #endif
+    win32_set_nonblocking(fd);
+
+    if (bsd_do_connect_raw(fd, (struct sockaddr *)server_address, addrlen) != 0) {
         bsd_close_socket(fd);
-        #if defined(_WIN32)
-            if (shouldSimulateENOENT) {
-                SetLastError(ERROR_PATH_NOT_FOUND);
-            }
-        #endif
         return LIBUS_SOCKET_ERROR;
     }
 

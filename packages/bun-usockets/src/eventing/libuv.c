@@ -145,7 +145,7 @@ struct us_loop_t *us_create_loop(void *hint,
                                  void (*post_cb)(struct us_loop_t *loop),
                                  unsigned int ext_size) {
   struct us_loop_t *loop =
-      (struct us_loop_t *)malloc(sizeof(struct us_loop_t) + ext_size);
+      (struct us_loop_t *)calloc(1, sizeof(struct us_loop_t) + ext_size);
 
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;
@@ -270,6 +270,12 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t),
                   int ms, int repeat_ms) {
   struct us_internal_callback_t *internal_cb =
       (struct us_internal_callback_t *)t;
+
+  // only add the timer to the event loop once
+  if (internal_cb->has_added_timer_to_event_loop) {
+    return;
+  }
+  internal_cb->has_added_timer_to_event_loop = 1;
 
   internal_cb->cb = (void (*)(struct us_internal_callback_t *))cb;
 

@@ -416,7 +416,7 @@ pub const WriteFileWindows = struct {
             },
         }
 
-        write_file.loop().refConcurrently();
+        write_file.event_loop.refConcurrently();
         return write_file;
     }
     pub const ResultType = WriteFile.ResultType;
@@ -492,7 +492,7 @@ pub const WriteFileWindows = struct {
     fn mkdirp(this: *WriteFileWindows) void {
         log("mkdirp", .{});
         this.mkdirp_if_not_exists = false;
-        this.loop().refConcurrently();
+        this.event_loop.refConcurrently();
 
         const path = this.file_blob.store.?.data.file.pathlike.path.slice();
         JSC.Node.Async.AsyncMkdirp.new(.{
@@ -505,7 +505,7 @@ pub const WriteFileWindows = struct {
     }
 
     fn onMkdirpComplete(this: *WriteFileWindows) void {
-        this.loop().unrefConcurrently();
+        this.event_loop.unrefConcurrently();
 
         if (this.err) |err| {
             this.throw(err);
@@ -540,7 +540,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn onFinish(container: *WriteFileWindows) void {
-        container.loop().unrefConcurrently();
+        container.event_loop.unrefConcurrently();
         var event_loop = container.event_loop;
         event_loop.enter();
         defer event_loop.exit();

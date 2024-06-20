@@ -105,6 +105,23 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
+  "darwin-x64": "70.1",
+  "darwin-arm64": "72.1",
+  "linux-x64": "72.1",
+  "linux-arm64": "72.1",
+  "win32-x64": "72.1",
+  "win32-arm64": "72.1",
+};
+
+it("ICU version does not regress", () => {
+  const min = MIN_ICU_VERSIONS_BY_PLATFORM_ARCH[`${process.platform}-${process.arch}`];
+  if (!min) {
+    throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
+  }
+  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
+});
+
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -581,6 +598,11 @@ it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async 
 
 it("catches exceptions with process.on('uncaughtException', fn)", async () => {
   const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtException.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
   expect(await proc.exited).toBe(42);
 });
 

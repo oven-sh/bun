@@ -1,15 +1,15 @@
 import { describe, test, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 import { writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 describe("AbortSignal", () => {
   test("spawn test", async () => {
-    const fileName = `/abort-${Date.now()}.test.ts`;
+    const fileName = `/abort.test.ts`;
     const testFileContents = await Bun.file(join(import.meta.dir, "abort.ts")).arrayBuffer();
 
-    writeFileSync(join(tmpdir(), fileName), testFileContents, "utf8");
+    writeFileSync(join(tmpdirSync(), fileName), testFileContents, "utf8");
     const { stderr } = Bun.spawnSync({
       cmd: [bunExe(), "test", fileName],
       env: bunEnv,
@@ -38,5 +38,36 @@ describe("AbortSignal", () => {
     ]);
 
     expect(exitCode).toBe(0);
+  });
+
+  test("AbortSignal.any() should fire abort event", async () => {
+    async function testAny(signalToAbort: number) {
+      const { promise, resolve } = Promise.withResolvers();
+
+      const a = new AbortController();
+      const b = new AbortController();
+      // @ts-ignore
+      const signal = AbortSignal.any([a.signal, b.signal]);
+      const timeout = setTimeout(() => {
+        resolve(false);
+      }, 100);
+
+      signal.addEventListener("abort", () => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+
+      if (signalToAbort) {
+        b.abort();
+      } else {
+        a.abort();
+      }
+
+      expect(await promise).toBe(true);
+      expect(signal.aborted).toBe(true);
+    }
+
+    await testAny(0);
+    await testAny(1);
   });
 });

@@ -106,7 +106,7 @@ pub const Editor = enum(u8) {
     }
 
     const which = @import("./which.zig").which;
-    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byPATH(env: *DotEnv.Loader, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
         inline for (default_preference_list) |editor| {
@@ -121,7 +121,7 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
+    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) bool {
         const PATH = env.get("PATH") orelse return false;
 
         if (bin_name.get(editor)) |path| {
@@ -152,7 +152,7 @@ pub const Editor = enum(u8) {
         return false;
     }
 
-    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byFallback(env: *DotEnv.Loader, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) ?Editor {
         inline for (default_preference_list) |editor| {
             if (byPATHForEditor(env, editor, buf, cwd, out)) {
                 return editor;
@@ -375,7 +375,7 @@ pub const EditorContext = struct {
 
         var opened = try tmpdir.openFile(basename, .{});
         defer opened.close();
-        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: bun.PathBuffer = undefined;
         try editor_.open(
             path,
             try bun.getFdPath(opened.handle, &path_buf),
@@ -391,7 +391,7 @@ pub const EditorContext = struct {
         }
     }
     pub fn detectEditor(this: *EditorContext, env: *DotEnv.Loader) void {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         var out: string = "";
         // first: choose from user preference

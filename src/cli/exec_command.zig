@@ -24,7 +24,7 @@ pub const ExecCommand = struct {
         );
         try bundle.runEnvLoader(false);
         const mini = bun.JSC.MiniEventLoop.initGlobal(bundle.env);
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         const cwd = switch (bun.sys.getcwd(&buf)) {
             .result => |p| p,

@@ -164,10 +164,10 @@ pub const UpgradeCheckerThread = struct {
 pub const UpgradeCommand = struct {
     pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
-    var github_repository_url_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var current_executable_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var unzip_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var tmpdir_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var github_repository_url_buf: bun.PathBuffer = undefined;
+    var current_executable_buf: bun.PathBuffer = undefined;
+    var unzip_path_buf: bun.PathBuffer = undefined;
+    var tmpdir_path_buf: bun.PathBuffer = undefined;
 
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
@@ -948,20 +948,20 @@ pub const UpgradeCommand = struct {
                     \\
                     \\<b><green>Welcome to Bun v{s}!<r>
                     \\
+                    \\What's new in Bun v{s}:
+                    \\
+                    \\    <cyan>https://bun.sh/blog/release-notes/{s}<r>
+                    \\
                     \\Report any bugs:
                     \\
                     \\    https://github.com/oven-sh/bun/issues
                     \\
-                    \\What's new:
-                    \\
-                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
-                    \\
-                    \\Changelog:
+                    \\Commit log:
                     \\
                     \\    https://github.com/oven-sh/bun/compare/{s}...{s}
                     \\
                 ,
-                    .{ version_name, version.tag, bun_v, version.tag },
+                    .{ version_name, version_name, version.tag, bun_v, version.tag },
                 );
             }
 

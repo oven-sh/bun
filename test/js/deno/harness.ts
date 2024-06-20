@@ -273,7 +273,7 @@ export function createDenoTest(path: string) {
   // https://deno.land/std@0.171.0/bytes/concat.ts
 
   const concat = (...buffers: Uint8Array[]): Uint8Array => {
-    return new Uint8Array(concatArrayBuffers(buffers));
+    return concatArrayBuffers(buffers, Infinity, true);
   };
 
   // https://deno.land/api@v1.31.1?s=Deno.readTextFile

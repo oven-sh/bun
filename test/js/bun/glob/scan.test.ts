@@ -25,7 +25,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
 import * as path from "path";
 import { tempFixturesDir, createTempDirectoryWithBrokenSymlinks, prepareEntries } from "./util";
-import { tempDirWithFiles } from "harness";
+import { tempDirWithFiles, tmpdirSync } from "harness";
 import * as os from "node:os";
 import * as fs from "node:fs";
 
@@ -313,8 +313,7 @@ describe("fast-glob e2e tests", async () => {
   let absolute_pattern_dir: string = "";
   // beforeAll(() => {
   tempFixturesDir();
-  const tmp = os.tmpdir();
-  absolute_pattern_dir = fs.mkdtempSync(path.join(tmp, "absolute_patterns"));
+  absolute_pattern_dir = tmpdirSync();
   // add some more directories so patterns like ../**/* don't break
   absolute_pattern_dir = path.join(absolute_pattern_dir, "ooga/booga");
   fs.mkdirSync(absolute_pattern_dir, { recursive: true })!;
@@ -590,14 +589,9 @@ describe("literal fast path", async () => {
   });
 });
 
-function makeTmpdir(): string {
-  const tmp = os.tmpdir();
-  return fs.mkdtempSync(path.join(tmp, "test_builder"));
-}
-
 describe("trailing directory separator", async () => {
   test("matches directories absolute", async () => {
-    const tmpdir = makeTmpdir();
+    const tmpdir = tmpdirSync();
     const files = [`${tmpdir}${path.sep}bunx-foo`, `${tmpdir}${path.sep}bunx-bar`, `${tmpdir}${path.sep}bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`;
     const glob = new Glob(`${path.join(tmpdir, "bunx-*")}${path.sep}`);
@@ -606,7 +600,7 @@ describe("trailing directory separator", async () => {
   });
 
   test("matches directories relative", async () => {
-    const tmpdir = makeTmpdir();
+    const tmpdir = tmpdirSync();
     const files = [`bunx-foo`, `bunx-bar`, `bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`.cwd(tmpdir);
     const glob = new Glob(`bunx-*/`);
@@ -617,7 +611,7 @@ describe("trailing directory separator", async () => {
 
 describe("absolute path pattern", async () => {
   test("works *", async () => {
-    const tmpdir = makeTmpdir();
+    const tmpdir = tmpdirSync();
     const files = [`${tmpdir}${path.sep}bunx-foo`, `${tmpdir}${path.sep}bunx-bar`, `${tmpdir}${path.sep}bunx-baz`];
     await Bun.$`touch ${files[0]}; touch ${files[1]}; mkdir ${files[2]}`;
     const glob = new Glob(`${path.join(tmpdir, "bunx-*")}`);
@@ -626,7 +620,7 @@ describe("absolute path pattern", async () => {
   });
 
   test("works **/", async () => {
-    const tmpdir = makeTmpdir();
+    const tmpdir = tmpdirSync();
     const files = [
       `${tmpdir}${path.sep}bunx-foo`,
       `${tmpdir}${path.sep}bunx-bar`,
@@ -642,7 +636,7 @@ describe("absolute path pattern", async () => {
   });
 
   test("works **", async () => {
-    const tmpdir = makeTmpdir();
+    const tmpdir = tmpdirSync();
     const files = [
       `${tmpdir}${path.sep}bunx-foo`,
       `${tmpdir}${path.sep}bunx-bar`,
@@ -664,7 +658,7 @@ describe("absolute path pattern", async () => {
   });
 
   test("doesn't exist, file pattern", async () => {
-    const tmpdir = makeTmpdir();
+    const tmpdir = tmpdirSync();
     await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
     const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
     console.log(Array.from(glob.scanSync({ cwd: tmpdir })));

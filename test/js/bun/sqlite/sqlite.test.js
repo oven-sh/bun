@@ -1,14 +1,237 @@
 import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { spawnSync } from "bun";
-import { bunExe, isWindows, tempDirWithFiles } from "harness";
+import { $, spawnSync } from "bun";
+import { BREAKING_CHANGES_BUN_1_2, bunExe, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
 const tmpbase = tmpdir() + path.sep;
 
+describe("as", () => {
+  it("should return an implementation of the class", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO test (name) VALUES ('Hello')");
+    db.run("INSERT INTO test (name) VALUES ('World')");
+
+    const q = db.query("SELECT * FROM test WHERE name = ?");
+    class MyTest {
+      name;
+
+      get isHello() {
+        return this.name === "Hello";
+      }
+    }
+
+    expect(q.get("Hello")).not.toBeInstanceOf(MyTest);
+    q.as(MyTest);
+    expect(q.get("Hello")).toBeInstanceOf(MyTest);
+    expect(q.get("Hello").isHello).toBe(true);
+
+    const list = db.query("SELECT * FROM test");
+    list.as(MyTest);
+    const all = list.all();
+    expect(all[0]).toBeInstanceOf(MyTest);
+    expect(all[0].isHello).toBe(true);
+    expect(all[1]).toBeInstanceOf(MyTest);
+    expect(all[1].isHello).toBe(false);
+  });
+
+  it("should work with more complicated getters", () => {
+    class User {
+      rawBirthdate;
+      get birthdate() {
+        return new Date(this.rawBirthdate);
+      }
+    }
+
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+    db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
+    const query = db.query("SELECT * FROM users");
+    query.as(User);
+    const user = query.get();
+    expect(user.birthdate.getTime()).toBe(new Date("1995-12-19").getTime());
+  });
+
+  it("validates the class", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+    db.run("INSERT INTO test (name) VALUES ('Hello')");
+    expect(() => db.query("SELECT * FROM test").as(null)).toThrow("Expected class to be a constructor or undefined");
+    expect(() => db.query("SELECT * FROM test").as(() => {})).toThrow("Expected a constructor");
+    function BadClass() {}
+    BadClass.prototype = 123;
+    expect(() => db.query("SELECT * FROM test").as(BadClass)).toThrow(
+      "Expected a constructor prototype to be an object",
+    );
+  });
+});
+
+describe("safeIntegers", () => {
+  it("should default to false", () => {
+    const db = Database.open(":memory:");
+    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
+    db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+    const query = db.query("SELECT * FROM foo");
+    expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
+    query.safeIntegers(true);
+    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+  });
+
+  it("should allow overwriting default", () => {
+    const db = Database.open(":memory:", { safeIntegers: true });
+    db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, age INTEGER NOT NULL)");
+    db.run("INSERT INTO foo (age) VALUES (?)", BigInt(Number.MAX_SAFE_INTEGER) + 10n);
+    const query = db.query("SELECT * FROM foo");
+    expect(query.all()).toEqual([{ id: 1n, age: BigInt(Number.MAX_SAFE_INTEGER) + 10n }]);
+    query.safeIntegers(false);
+    query.as;
+    expect(query.all()).toEqual([{ id: 1, age: Number.MAX_SAFE_INTEGER + 10 }]);
+  });
+
+  it("should throw range error if value is out of range", () => {
+    const db = new Database(":memory:", { safeIntegers: true });
+    db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+
+    const query = db.query("INSERT INTO test (value) VALUES ($value)");
+
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+    query.safeIntegers(false);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).not.toThrow(RangeError);
+  });
+});
+
+{
+  const strictInputs = [
+    { name: "myname", age: 42 },
+    { age: 42, name: "myname" },
+    ["myname", 42],
+    { 0: "myname", 1: 42 },
+    { 1: "myname", 0: 42 },
+  ];
+  const queries = ["$name, $age", "$name, $age", "?, ?", "?1, ?2", "?2, ?1"];
+  const uglyInputs = [
+    { $name: "myname", $age: 42 },
+    { $age: 42, $name: "myname" },
+    ["myname", 42],
+    { "?1": "myname", "?2": 42 },
+    { "?2": "myname", "?1": 42 },
+  ];
+
+  for (const strict of [true, false]) {
+    describe(strict ? "strict" : "default", () => {
+      const inputs = strict ? strictInputs : uglyInputs;
+      for (let i = 0; i < strictInputs.length; i++) {
+        const input = inputs[i];
+        const query = queries[i];
+        it(`${JSON.stringify(input)} -> ${query}`, () => {
+          const db = Database.open(":memory:", { strict });
+          db.exec(
+            "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)",
+          );
+          const { changes, lastInsertRowid } = db.run(`INSERT INTO cats (name, age) VALUES (${query})`, input);
+          expect(changes).toBe(1);
+          expect(lastInsertRowid).toBe(1);
+
+          expect(db.query("SELECT * FROM cats").all()).toStrictEqual([{ id: 1, name: "myname", age: 42 }]);
+          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).all(input)).toStrictEqual([
+            { id: 1, name: "myname", age: 42 },
+          ]);
+          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).get(input)).toStrictEqual({
+            id: 1,
+            name: "myname",
+            age: 42,
+          });
+          expect(db.query(`SELECT * FROM cats WHERE (name, age) = (${query})`).values(input)).toStrictEqual([
+            [1, "myname", 42],
+          ]);
+        });
+      }
+
+      if (strict) {
+        describe("throws missing parameter error in", () => {
+          for (let method of ["all", "get", "values", "run"]) {
+            it(`${method}()`, () => {
+              const db = Database.open(":memory:", { strict: true });
+
+              db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+
+              expect(() => {
+                const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age)");
+
+                query[method]({
+                  "name": "Joey",
+                });
+              }).toThrow('Missing parameter "age"');
+            });
+          }
+        });
+      }
+    });
+  }
+}
+
 var encode = text => new TextEncoder().encode(text);
+
+// Use different numbers of columns to ensure we crash if using initializeIndex() on a large array can cause bugs.
+// https://github.com/oven-sh/bun/issues/11747
+it.each([1, 16, 256, 512, 768])("should work with duplicate columns in values() of length %d", columnCount => {
+  const db = new Database(":memory:");
+
+  db.prepare(
+    `create table \`users\` ( id integer primary key autoincrement, name text, reportTo integer, ${Array.from(
+      {
+        length: columnCount,
+      },
+      (_, i) => `column${i} text DEFAULT "make GC happen!!" NOT NULL${i === columnCount - 1 ? "" : ","}`,
+    ).join("")} );`,
+  ).run();
+  const names = [
+    ["dan", null],
+    ["alef", 1],
+    ["bob", 2],
+    ["carl", 3],
+    ["dave", 4],
+    ["eve", 5],
+    ["fred", 6],
+    ["george", 7],
+    ["harry", 8],
+    ["isaac", 9],
+    ["jacob", 10],
+    ["kevin", 11],
+    ["larry", 12],
+    ["mike", 13],
+    ["nathan", 14],
+    ["oscar", 15],
+    ["peter", 16],
+    ["qwerty", 17],
+    ["robert", 18],
+    ["samuel", 19],
+    ["tom", 20],
+    ["william", 21],
+    ["xavier", 22],
+    ["yanny", 23],
+    ["zachary", 24],
+  ];
+  for (const [name, reportTo] of names) {
+    db.prepare("insert into `users` (name, reportTo) values (?, ?);").run(name, reportTo);
+  }
+  const results = db
+    .prepare("select * from 'users' left join 'users' reportee on `users`.id = reportee.reportTo; ")
+    .values();
+  expect(results).toHaveLength(names.length);
+  expect(results[0]).toHaveLength((columnCount + 3) * 2);
+  let prevResult;
+  for (let result of results) {
+    expect(result).toHaveLength((columnCount + 3) * 2);
+    if (prevResult) {
+      expect(prevResult.slice(columnCount + 3, (columnCount + 3) * 2)).toEqual(result.slice(0, columnCount + 3));
+    }
+    prevResult = result;
+  }
+});
 
 it("Database.open", () => {
   // in a folder which doesn't exist
@@ -124,7 +347,10 @@ it("creates", () => {
       },
     ]),
   );
-  expect(stmt2.run()).toBe(undefined);
+  expect(stmt2.run()).toStrictEqual({
+    changes: 0,
+    lastInsertRowid: 3,
+  });
 
   // not necessary to run but it's a good practice
   stmt2.finalize();
@@ -341,7 +567,7 @@ it("db.query()", () => {
   try {
     db.query("SELECT * FROM test where (name = ? OR name = ?)").all("Hello");
   } catch (e) {
-    expect(e.message).toBe("Expected 2 values, got 1");
+    expect(e.message).toBe("SQLite query expected 2 values, received 1");
   }
 
   // named parameters
@@ -377,6 +603,75 @@ it("db.query()", () => {
   db.close();
   db.close();
   db.close();
+});
+
+it("db.run()", () => {
+  const db = Database.open(":memory:");
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+
+  const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+    "@name": "Joey",
+    "@age": 2,
+  });
+});
+
+for (let strict of [false, true]) {
+  it(`strict: ${strict}`, () => {
+    const db = Database.open(":memory:", { strict });
+
+    db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+
+    const result = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+      [(!strict ? "@" : "") + "name"]: "Joey",
+      [(!strict ? "@" : "") + "age"]: 2,
+    });
+    expect(result).toStrictEqual([{ name: "Joey" }]);
+  });
+}
+it("strict: true", () => {
+  const db = Database.open(":memory:", { strict: true });
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, age INTEGER NOT NULL)");
+
+  const insert = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name").all({
+    "name": "Joey",
+    "age": 2,
+  });
+});
+
+describe("does not throw missing parameter error in", () => {
+  for (let method of ["all", "get", "values", "run"]) {
+    it(`${method}()`, () => {
+      it(`${method}()`, () => {
+        const db = Database.open(":memory:");
+
+        db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+
+        expect(() => {
+          const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
+          const result = query[method]({
+            "@name": "Joey",
+          });
+          switch (method) {
+            case "all":
+              expect(result).toHaveLength(1);
+              expect(result[0]).toStrictEqual({ name: "Joey" });
+              break;
+            case "get":
+              expect(result).toStrictEqual({ name: "Joey" });
+              break;
+            case "values":
+              expect(result).toStrictEqual([["Joey"]]);
+              break;
+            case "run":
+              expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
+              break;
+          }
+        }).not.toThrow();
+      });
+    });
+  }
 });
 
 it("db.transaction()", () => {
@@ -955,6 +1250,7 @@ it("can continue to use existing statements after database has been GC'd", async
   });
   function leakTheStatement() {
     const db = new Database(":memory:");
+    console.log("---");
     db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)");
     db.exec("INSERT INTO foo (name) VALUES ('foo')");
     const prepared = db.prepare("SELECT * FROM foo");
@@ -963,6 +1259,7 @@ it("can continue to use existing statements after database has been GC'd", async
   }
 
   const stmt = leakTheStatement();
+
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);

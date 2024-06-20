@@ -1,9 +1,8 @@
 import { spawn } from "bun";
-import { bunExe, bunEnv as env, isWindows, mergeWindowEnvs } from "harness";
+import { bunExe, bunEnv as env, isWindows, mergeWindowEnvs, tmpdirSync } from "harness";
 import { join } from "path";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync } from "fs";
+import { copyFileSync, mkdirSync } from "fs";
 import { writeFile } from "fs/promises";
-import { tmpdir } from "os";
 import { test, expect, describe } from "bun:test";
 
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
@@ -12,7 +11,7 @@ import { test, expect, describe } from "bun:test";
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;
 
-  const packageDir = mkdtempSync(join(realpathSync(tmpdir()), "bun-install-windowsshim-"));
+  const packageDir = tmpdirSync();
   const port = 4873;
 
   await writeFile(
@@ -54,10 +53,11 @@ registry = "http://localhost:${port}/"
   expect(err).not.toContain("not found");
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    " + bunx-bins@1.0.0",
+    "+ bunx-bins@1.0.0",
     "",
     expect.stringContaining("1 package installed"),
   ]);
+  expect(await exited).toBe(0);
 
   const temp_bin_dir = join(packageDir, "temp");
   mkdirSync(temp_bin_dir);

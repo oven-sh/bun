@@ -52,7 +52,7 @@ public:
 
     // static Ref<DOMFormData> create(ScriptExecutionContext*, const PAL::TextEncoding&);
     static Ref<DOMFormData> create(ScriptExecutionContext*);
-    static Ref<DOMFormData> create(ScriptExecutionContext*, StringView urlEncodedString);
+    static Ref<DOMFormData> create(ScriptExecutionContext*, const StringView& urlEncodedString);
 
     const Vector<Item>& items() const { return m_items; }
     // const PAL::TextEncoding& encoding() const { return m_encoding; }

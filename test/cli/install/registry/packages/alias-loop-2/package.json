@@ -1,0 +1,41 @@
+{
+	"name": "alias-loop-2",
+	"versions": {
+		"1.0.0": {
+			"name": "alias-loop-2",
+			"version": "1.0.0",
+			"dependencies": {
+				"alias2": "npm:alias-loop-1@*"
+			},
+			"_id": "alias-loop-2@1.0.0",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-5422abBn4N5dTHw9c7qq+j1mA14UoVIeNQBM+MtemVKw2/S8/uFA3x7OvLyD7Dr7ZT7WMsSp4LC4+11NmzEPxA==",
+				"shasum": "ab24be7e90cf99fbb7dcd8015dcc2bbcc607ec0a",
+				"tarball": "http://localhost:4873/alias-loop-2/-/alias-loop-2-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-05T08:13:29.420Z",
+		"created": "2024-06-05T08:13:29.420Z",
+		"1.0.0": "2024-06-05T08:13:29.420Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"alias-loop-2-1.0.0.tgz": {
+			"shasum": "ab24be7e90cf99fbb7dcd8015dcc2bbcc607ec0a",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "alias-loop-2",
+	"readme": "ERROR: No README data found!"
+}

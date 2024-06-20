@@ -1,0 +1,52 @@
+{
+	"name": "duplicate-optional",
+	"versions": {
+		"1.0.1": {
+			"name": "duplicate-optional",
+			"version": "1.0.1",
+			"dependencies": {
+				"a-dep": "1.0.1",
+				"no-deps": "1.0.0",
+				"what-bin": "1.0.0"
+			},
+			"peerDependencies": {
+				"two-range-deps": "1.0.0"
+			},
+			"optionalDependencies": {
+				"no-deps": "1.0.1"
+			},
+			"devDependencies": {
+				"peer-deps": "1.0.0"
+			},
+			"_id": "duplicate-optional@1.0.1",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-tL28+yJiTPehPLq7QnOu9jbRBpRgfBkyTVveaJojKcyae2khKuLaPRvsiX5gXv+iNGpYiYcNnV1eDBLXS+L85A==",
+				"shasum": "6c37b0b603bf75f51ab9836539a0559e142763ba",
+				"tarball": "http://localhost:4873/duplicate-optional/-/duplicate-optional-1.0.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-02T21:14:27.887Z",
+		"created": "2024-06-02T21:14:27.887Z",
+		"1.0.1": "2024-06-02T21:14:27.887Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"duplicate-optional-1.0.1.tgz": {
+			"shasum": "6c37b0b603bf75f51ab9836539a0559e142763ba",
+			"version": "1.0.1"
+		}
+	},
+	"_rev": "",
+	"_id": "duplicate-optional",
+	"readme": "ERROR: No README data found!"
+}

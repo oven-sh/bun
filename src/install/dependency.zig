@@ -259,10 +259,29 @@ pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
+/// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
+pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[0..second_at_index], if (second_at_index + 1 < str.len) str[second_at_index + 1 ..] else null };
+    }
+
+    return .{ str, null };
+}
+
 pub const Version = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
+
+    pub inline fn npm(this: *const Version) ?NpmInfo {
+        return if (this.tag == .npm) this.value.npm else null;
+    }
 
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
@@ -1152,6 +1171,10 @@ pub const Behavior = packed struct(u8) {
         return this.workspace;
     }
 
+    pub inline fn isWorkspaceOnly(this: Behavior) bool {
+        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
+    }
+
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
         var b = this;
         b.normal = value;
@@ -1238,7 +1261,7 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            this.isWorkspace();
+            (features.workspaces and this.isWorkspaceOnly());
     }
 
     pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

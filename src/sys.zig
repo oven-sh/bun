@@ -349,18 +349,23 @@ pub fn Maybe(comptime ReturnTypeT: type) type {
 
 pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
     const Result = Maybe([]const u8);
-    buf[0] = 0;
-    const rc = std.c.getcwd(buf, bun.MAX_PATH_BYTES);
-    return if (rc != null)
-        Result{ .result = std.mem.sliceTo(rc.?[0..bun.MAX_PATH_BYTES], 0) }
-    else
-        Result.errnoSys(0, .getcwd).?;
+    return switch (getcwdZ(buf)) {
+        .err => |err| Result{ .err = err },
+        .result => |cwd| Result{ .result = cwd },
+    };
 }
 
 pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     const Result = Maybe([:0]const u8);
     buf[0] = 0;
-    buf[buf.len - 1] = 0;
+
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.WPathBuffer = undefined;
+        const len: windows.DWORD = kernel32.GetCurrentDirectoryW(wbuf.len, &wbuf);
+        if (Result.errnoSys(len, .getcwd)) |err| return err;
+        return Result{ .result = bun.strings.fromWPath(buf, wbuf[0..len]) };
+    }
+
     const rc: ?[*:0]u8 = @ptrCast(std.c.getcwd(buf, bun.MAX_PATH_BYTES));
     return if (rc != null)
         Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }

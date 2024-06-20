@@ -2,7 +2,8 @@ import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
-import { bunEnv } from "harness";
+import { bunEnv, tmpdirSync } from "harness";
+import { join } from "path";
 
 const BUN = process.argv0;
 
@@ -74,5 +75,15 @@ describe("bun exec", () => {
     const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
     expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
     expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
+  });
+
+  test("works with latin1 paths", async () => {
+    const tempdir = tmpdirSync();
+    await Bun.write(join(tempdir, "Í", "hi"), "text");
+    const result = await $`bun exec ls`
+      .env({ ...(bunEnv as any) })
+      .cwd(join(tempdir, "Í"))
+      .quiet();
+    expect(result.text()).toBe("hi\n");
   });
 });

@@ -122,7 +122,7 @@ pub const DataURL = struct {
             const len = bun.base64.decodeLen(percent_decoded);
             const buf = try allocator.alloc(u8, len);
             const result = bun.base64.decode(buf, percent_decoded);
-            if (result.fail or result.written != len) {
+            if (!result.isSuccessful() or result.count != len) {
                 return error.Base64DecodeError;
             }
             return buf;

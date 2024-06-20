@@ -1089,7 +1089,7 @@ pub const Encoder = struct {
             },
 
             .base64, .base64url => {
-                return bun.base64.decode(to_ptr[0..to_len], input[0..len]).written;
+                return bun.base64.decode(to_ptr[0..to_len], input[0..len]).count;
             },
         }
     }
@@ -1261,7 +1261,7 @@ pub const Encoder = struct {
                 const outlen = bun.base64.decodeLen(slice);
                 const to = allocator.alloc(u8, outlen) catch return &[_]u8{};
 
-                const wrote = bun.base64.decode(to[0..outlen], slice).written;
+                const wrote = bun.base64.decode(to[0..outlen], slice).count;
                 return to[0..wrote];
             },
         }

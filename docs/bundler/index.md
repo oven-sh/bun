@@ -563,12 +563,12 @@ Specifies the type of sourcemap to generate.
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  sourcemap: true, // default 'false'
+  sourcemap: 'linked', // default 'none'
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --sourcemap
+$ bun build ./index.tsx --outdir ./out --sourcemap=linked
 ```
 
 {% /codetabs %}
@@ -582,7 +582,7 @@ $ bun build ./index.tsx --outdir ./out --sourcemap
 
 ---
 
-- `"linked"`, `true`
+- `"linked"`
 - A separate `*.js.map` file is created alongside each `*.js` bundle using a `//# sourceMappingURL` comment to link the two. Requires `--outdir` to be set. The base URL of this can be customized with `--public-path`.
 
   ```ts
@@ -622,8 +622,6 @@ Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-
   The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
 
 {% /callout %}
-
-If the boolean `true` is passed or `--sourcemap` without a string, Bun will use the `"linked"` option if an `outdir` is specified, otherwise it will use `"inline"` to keep the bundle in a single file.
 
 ### `minify`
 

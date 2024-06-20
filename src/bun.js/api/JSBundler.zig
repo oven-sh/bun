@@ -207,16 +207,13 @@ pub const JSBundler = struct {
             }
 
             if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
-                if (config.isBoolean()) {
-                    // make `sourcemap: true` infer based on if there is an outdir or not
-                    // you cant have .linked / .external without an outdir
+                if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
                     if (source_map_js == .true) {
                         this.source_map = if (has_out_dir)
                             .linked
                         else
                             .@"inline";
                     }
-                    // `sourcemap: false` should not error
                 } else if (!source_map_js.isEmptyOrUndefinedOrNull()) {
                     this.source_map = try source_map_js.toEnum(
                         globalThis,

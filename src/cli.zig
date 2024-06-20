@@ -771,7 +771,11 @@ pub const Arguments = struct {
 
             if (args.option("--sourcemap")) |setting| {
                 if (setting.len == 0) {
-                    opts.source_map = if (output_dir != null) .linked else .@"inline";
+                    // In the future, Bun is going to make this default to .linked
+                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
+                        .linked
+                    else
+                        .@"inline";
                 } else if (strings.eqlComptime(setting, "inline")) {
                     opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {

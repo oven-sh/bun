@@ -460,7 +460,7 @@ pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
     return if (rc != null)
         Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }
     else
-        Result.errnoSys(0, .getcwd).?;
+        Result.errnoSys(@as(c_int, 0), .getcwd).?;
 }
 
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {

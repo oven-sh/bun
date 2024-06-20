@@ -145,7 +145,7 @@ pub const PatchTask = struct {
     ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         defer {
-            if (this.pre) _ = manager.pending_pre_calc_hashes.fetchSub(1, .Monotonic);
+            if (this.pre) _ = manager.pending_pre_calc_hashes.fetchSub(1, .monotonic);
         }
         switch (this.callback) {
             .calc_hash => try this.runFromMainThreadCalcHash(manager, log_level),

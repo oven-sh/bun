@@ -4274,7 +4274,7 @@ pub const PackageManager = struct {
         }
 
         this.patch_task_fifo.writeItemAssumeCapacity(task);
-        _ = this.pending_pre_calc_hashes.fetchAdd(1, .Monotonic);
+        _ = this.pending_pre_calc_hashes.fetchAdd(1, .monotonic);
     }
 
     const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
@@ -10592,7 +10592,7 @@ pub const PackageManager = struct {
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
         // Attempt to open the existing node_modules folder
-        var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), std.os.O.DIRECTORY | std.os.O.RDONLY, 0o755)) {
+        var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
             .result => |fd| std.fs.Dir{ .fd = fd.cast() },
             .err => |e| {
                 Output.prettyError(
@@ -11632,7 +11632,7 @@ pub const PackageManager = struct {
             } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(buf, .posix)}) catch unreachable;
 
             const patch_patch, const patch_contents_hash, const patch_name_and_version_hash, const remove_patch = brk: {
-                if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, null };
+                if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, false };
                 var sfa = std.heap.stackFallback(1024, this.lockfile.allocator);
                 const alloc = sfa.get();
                 const name_and_version = std.fmt.allocPrint(alloc, "{s}@{s}", .{ name, package_version }) catch unreachable;
@@ -13372,7 +13372,7 @@ pub const PackageManager = struct {
                             }
 
                             if (comptime only_pre_patch) {
-                                const pending_patch = this.pending_pre_calc_hashes.load(.Monotonic);
+                                const pending_patch = this.pending_pre_calc_hashes.load(.monotonic);
                                 return pending_patch == 0;
                             }
 

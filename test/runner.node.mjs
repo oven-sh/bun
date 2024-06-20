@@ -301,8 +301,8 @@ async function spawnSafe({
       buffer = stack || message;
     }
   } else if (
-    (error = /thread \d+ panic: (.*)/i.exec(buffer)) ||
-    (error = /panic\(.*\): (.*)/i.exec(buffer)) ||
+    (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n)/i.exec(buffer)) ||
+    (error = /panic\(.*\): (.*)(?:\r\n|\r|\n)/i.exec(buffer)) ||
     (error = /(Segmentation fault) at address/i.exec(buffer)) ||
     (error = /(Internal assertion failure)/i.exec(buffer)) ||
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
@@ -310,7 +310,7 @@ async function spawnSafe({
     (error = /oh no: Bun has crashed/i.exec(buffer))
   ) {
     const [, message] = error || [];
-    error = message ? message.toLowerCase() : "crash";
+    error = message ? message.split("\n").find() : "crash";
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";

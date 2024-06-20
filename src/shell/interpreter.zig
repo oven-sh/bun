@@ -9211,7 +9211,7 @@ pub const Interpreter = struct {
 
             fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
                 if (!this.bltn.stdout.needsIO()) {
-                    _ = this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items[0..]);
+                    _ = this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items);
                     _ = this.state.exec.incrementOutputCount(.output_done);
                     if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
                         this.bltn.done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
@@ -9221,7 +9221,7 @@ pub const Interpreter = struct {
                 }
                 const buf = verbose.takeDeletedEntries();
                 defer buf.deinit();
-                this.bltn.stdout.enqueue(this, buf.items[0..]);
+                this.bltn.stdout.enqueue(this, buf.items);
             }
 
             pub const ShellRmTask = struct {
@@ -9514,8 +9514,10 @@ pub const Interpreter = struct {
                         .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
-                    if (bun.Environment.allow_assert) {
-                        assert(parent_task.subtask_count.fetchAdd(1, .monotonic) > 0);
+
+                    const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
+                    if (comptime bun.Environment.allow_assert) {
+                        assert(count > 0);
                     }
 
                     JSC.WorkPool.schedule(&subtask.task);

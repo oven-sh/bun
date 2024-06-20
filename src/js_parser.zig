@@ -11441,7 +11441,11 @@ fn NewParser_(
                 if (p.lexer.token == .t_string_literal) {
                     value.name = p.lexer.toEString();
                 } else if (p.lexer.isIdentifierOrKeyword()) {
-                    value.name = E.String{ .data = p.lexer.identifier };
+                    const id = p.lexer.identifier;
+                    value.name = if (bun.strings.isAllASCII(id))
+                        .{ .data = id }
+                    else
+                        E.String.init(try bun.strings.toUTF16AllocForReal(p.allocator, id, false, false));
                     needs_symbol = true;
                 } else {
                     try p.lexer.expect(.t_identifier);

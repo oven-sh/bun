@@ -63,11 +63,11 @@ for (let [gcTick, label] of [
 
       it("check exit code", async () => {
         const { exitCode: exitCode1 } = spawnSync({
-          cmd: [shellExe(), "-c", "ls"],
+          cmd: [bunExe(), "-e", "process.exit(0)"],
         });
         gcTick();
         const { exitCode: exitCode2 } = spawnSync({
-          cmd: [shellExe(), "-c", "false"],
+          cmd: [bunExe(), "-e", "process.exit(1)"],
         });
         gcTick();
         expect(exitCode1).toBe(0);

@@ -357,6 +357,17 @@ pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
         Result.errnoSys(0, .getcwd).?;
 }
 
+pub fn getcwdZ(buf: *bun.PathBuffer) Maybe([:0]const u8) {
+    const Result = Maybe([:0]const u8);
+    buf[0] = 0;
+    buf[buf.len - 1] = 0;
+    const rc: ?[*:0]u8 = @ptrCast(std.c.getcwd(buf, bun.MAX_PATH_BYTES));
+    return if (rc != null)
+        Result{ .result = rc.?[0..std.mem.len(rc.?) :0] }
+    else
+        Result.errnoSys(0, .getcwd).?;
+}
+
 pub fn fchmod(fd: bun.FileDescriptor, mode: bun.Mode) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.fchmod(fd, mode);
@@ -1688,6 +1699,55 @@ pub const RenameAt2Flags = packed struct {
     }
 };
 
+// NOTE: that this _does not_ handle moving across filesystems. For that, check if the return error is XDEV and then use `bun.C.moveFileZWithHandle`
+pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8, to_dir_fd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+    var did_atomically_replace = false;
+
+    attempt_atomic_rename_and_fallback_to_racy_delete: {
+        {
+            // Happy path: the folder doesn't exist in the cache dir, so we can
+            // just rename it. We don't need to delete anything.
+            var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+                .exclude = true,
+            })) {
+                .err => |err| err,
+                .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+            };
+
+            // Fallback path: the folder exists in the cache dir, it might be in a strange state
+            // let's attempt to atomically replace it with the temporary folder's version
+            if (if (comptime bun.Environment.isPosix) switch (err.getErrno()) {
+                .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                else => false,
+            } else switch (err.getErrno()) {
+                .EXIST, .NOTEMPTY => true,
+                else => false,
+            }) {
+                did_atomically_replace = true;
+                switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+                    .exchange = true,
+                })) {
+                    .err => {},
+                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                }
+                did_atomically_replace = false;
+            }
+        }
+
+        //  sad path: let's try to delete the folder and then rename it
+        var to_dir = to_dir_fd.asDir();
+        to_dir.deleteTree(from) catch {};
+        switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
+            .err => |err| {
+                return .{ .err = err };
+            },
+            .result => {},
+        }
+    }
+
+    return Maybe(void).success;
+}
+
 pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8, flags: RenameAt2Flags) Maybe(void) {
     if (Environment.isWindows) {
         return renameat(from_dir, from, to_dir, to);
@@ -2905,6 +2965,7 @@ pub const File = struct {
             return self.bytes.items;
         }
     };
+
     pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
         var read_amount: usize = 0;
         while (read_amount < buf.len) {
@@ -2927,6 +2988,7 @@ pub const File = struct {
 
         return .{ .result = buf[0..read_amount] };
     }
+
     pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8)) Maybe(usize) {
         const size = switch (this.getEndPos()) {
             .err => |err| {

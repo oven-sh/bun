@@ -66,38 +66,61 @@ registry = "http://localhost:${port}/"
   );
 });
 
-for (const optional of [true, false]) {
-  test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        [optional ? "optionalDependencies" : "dependencies"]: {
-          "missing-tarball": "1.0.0",
-          "uses-what-bin": "1.0.0",
-        },
-        "trustedDependencies": ["uses-what-bin"],
-      }),
-    );
+describe("optionalDependencies", () => {
+  for (const optional of [true, false]) {
+    test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          [optional ? "optionalDependencies" : "dependencies"]: {
+            "missing-tarball": "1.0.0",
+            "uses-what-bin": "1.0.0",
+          },
+          "trustedDependencies": ["uses-what-bin"],
+        }),
+      );
 
-    const { exited, err } = await runBunInstall(env, packageDir, {
-      [optional ? "allowWarnings" : "allowErrors"]: true,
-      expectedExitCode: optional ? 0 : 1,
-      savesLockfile: false,
+      const { exited, err } = await runBunInstall(env, packageDir, {
+        [optional ? "allowWarnings" : "allowErrors"]: true,
+        expectedExitCode: optional ? 0 : 1,
+        savesLockfile: false,
+      });
+      expect(err).toContain(
+        `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - `,
+      );
+      expect(await exited).toBe(optional ? 0 : 1);
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+        ".bin",
+        ".cache",
+        "uses-what-bin",
+        "what-bin",
+      ]);
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
-    expect(err).toContain(
-      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 500`,
-    );
-    expect(await exited).toBe(optional ? 0 : 1);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bin",
-      ".cache",
-      "uses-what-bin",
-      "what-bin",
-    ]);
-    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-  });
-}
+  }
+
+  for (const rootOptional of [true, false]) {
+    test(`exit code is 0 when ${rootOptional ? "root" : ""} optional dependency does not exist in registry`, async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          [rootOptional ? "optionalDependencies" : "dependencies"]: {
+            [rootOptional ? "this-package-does-not-exist-in-the-registry" : "has-missing-optional-dep"]: "||",
+          },
+        }),
+      );
+
+      const { err } = await runBunInstall(env, packageDir, {
+        allowWarnings: true,
+        savesLockfile: !rootOptional,
+      });
+
+      expect(err).toContain("warn: GET http://localhost:4873/this-package-does-not-exist-in-the-registry - ");
+    });
+  }
+});
 
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";

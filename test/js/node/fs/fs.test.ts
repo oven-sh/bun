@@ -863,15 +863,17 @@ it("promises.readdir on a large folder withFileTypes", async () => {
 });
 
 it("statSync throwIfNoEntry", () => {
-  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
-  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  expect(statSync(path, { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync(path, { throwIfNoEntry: false })).toBeUndefined();
 });
 
 it("statSync throwIfNoEntry: true", () => {
-  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
-  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync(path)).toThrow("No such file or directory");
+  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync(path)).toThrow("No such file or directory");
 });
 
 it("stat == statSync", async () => {
@@ -927,15 +929,17 @@ it("mkdtempSync() empty name", () => {
 });
 
 it("mkdtempSync() non-exist dir #2568", () => {
+  const path = join(tmpdirSync(), "does", "not", "exist");
   try {
-    expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
+    expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
     expect(err?.errno).toBe(-2);
   }
 });
 
 it("mkdtemp() non-exist dir #2568", done => {
-  mkdtemp("/tmp/hello/world", (err, folder) => {
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  mkdtemp(path, (err, folder) => {
     try {
       expect(err?.errno).toBe(-2);
       expect(folder).toBeUndefined();

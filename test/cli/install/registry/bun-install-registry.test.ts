@@ -66,38 +66,61 @@ registry = "http://localhost:${port}/"
   );
 });
 
-for (const optional of [true, false]) {
-  test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        [optional ? "optionalDependencies" : "dependencies"]: {
-          "missing-tarball": "1.0.0",
-          "uses-what-bin": "1.0.0",
-        },
-        "trustedDependencies": ["uses-what-bin"],
-      }),
-    );
+describe("optionalDependencies", () => {
+  for (const optional of [true, false]) {
+    test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          [optional ? "optionalDependencies" : "dependencies"]: {
+            "missing-tarball": "1.0.0",
+            "uses-what-bin": "1.0.0",
+          },
+          "trustedDependencies": ["uses-what-bin"],
+        }),
+      );
 
-    const { exited, err } = await runBunInstall(env, packageDir, {
-      [optional ? "allowWarnings" : "allowErrors"]: true,
-      expectedExitCode: optional ? 0 : 1,
-      savesLockfile: false,
+      const { exited, err } = await runBunInstall(env, packageDir, {
+        [optional ? "allowWarnings" : "allowErrors"]: true,
+        expectedExitCode: optional ? 0 : 1,
+        savesLockfile: false,
+      });
+      expect(err).toContain(
+        `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - `,
+      );
+      expect(await exited).toBe(optional ? 0 : 1);
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+        ".bin",
+        ".cache",
+        "uses-what-bin",
+        "what-bin",
+      ]);
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
-    expect(err).toContain(
-      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 500`,
-    );
-    expect(await exited).toBe(optional ? 0 : 1);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bin",
-      ".cache",
-      "uses-what-bin",
-      "what-bin",
-    ]);
-    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-  });
-}
+  }
+
+  for (const rootOptional of [true, false]) {
+    test(`exit code is 0 when ${rootOptional ? "root" : ""} optional dependency does not exist in registry`, async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          [rootOptional ? "optionalDependencies" : "dependencies"]: {
+            [rootOptional ? "this-package-does-not-exist-in-the-registry" : "has-missing-optional-dep"]: "||",
+          },
+        }),
+      );
+
+      const { err } = await runBunInstall(env, packageDir, {
+        allowWarnings: true,
+        savesLockfile: !rootOptional,
+      });
+
+      expect(err).toContain("warn: GET http://localhost:4873/this-package-does-not-exist-in-the-registry - ");
+    });
+  }
+});
 
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
@@ -822,6 +845,93 @@ test("package added after install", async () => {
     "3 packages installed",
   ]);
   expect(await exited).toBe(0);
+});
+
+test("--production excludes devDependencies in workspaces", async () => {
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+        devDependencies: {
+          "a1": "npm:no-deps@1.0.0",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          "a-dep": "1.0.2",
+        },
+        devDependencies: {
+          "a2": "npm:a-dep@1.0.2",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        devDependencies: {
+          "a3": "npm:a-dep@1.0.3",
+          "a4": "npm:a-dep@1.0.4",
+          "a5": "npm:a-dep@1.0.5",
+        },
+      }),
+    ),
+  ]);
+
+  // without lockfile
+  const expectedResults = [
+    [".cache", "a-dep", "no-deps", "pkg1", "pkg2"],
+    { name: "no-deps", version: "1.0.0" },
+    { name: "a-dep", version: "1.0.2" },
+  ];
+  let { out } = await runBunInstall(env, packageDir, { production: true });
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "4 packages installed",
+  ]);
+  let results = await Promise.all([
+    readdirSorted(join(packageDir, "node_modules")),
+    file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+  ]);
+
+  expect(results).toMatchObject(expectedResults);
+
+  // create non-production lockfile, then install with --production
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out } = await runBunInstall(env, packageDir));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ a1@1.0.0",
+    "+ no-deps@1.0.0",
+    "",
+    "7 packages installed",
+  ]);
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out } = await runBunInstall(env, packageDir, { production: true }));
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "4 packages installed",
+  ]);
+  results = await Promise.all([
+    readdirSorted(join(packageDir, "node_modules")),
+    file(join(packageDir, "node_modules", "no-deps", "package.json")).json(),
+    file(join(packageDir, "node_modules", "a-dep", "package.json")).json(),
+  ]);
+  expect(results).toMatchObject(expectedResults);
 });
 
 test("--production without a lockfile will install and not save lockfile", async () => {

@@ -198,7 +198,7 @@ pub const SavedSourceMap = struct {
             if (seen_invalid) return;
             if (path) |note| {
                 Output.note("missing sourcemaps for {s}", .{note});
-                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+                Output.note("consider bundling with '--sourcemap' to get unminified traces", .{});
             }
         }
     };
@@ -3835,13 +3835,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") }
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } }
                 else
                     .{ .hot = @This().Watcher.init(
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") };
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } };
 
                 if (reload_immediately) {
                     this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
@@ -3853,7 +3859,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     reloader,
                     this.bundler.fs,
                     bun.default_allocator,
-                ) catch @panic("Failed to enable File Watcher");
+                ) catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                };
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 

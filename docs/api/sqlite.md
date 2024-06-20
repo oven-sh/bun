@@ -70,17 +70,27 @@ By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or
 
 To instead throw an error when a parameter is missing and allow binding without a prefix, set `strict: true` on the `Database` constructor:
 
+<!-- prettier-ignore -->
 ```ts
 import { Database } from "bun:sqlite";
 
-const strict = new Database(":memory:", { strict: true });
-const notStrict = new Database(":memory:");
-
-// does not throw error:
-notStrict.query("SELECT $message;").all({ messag: "Hello world" });
+const strict = new Database(
+  ":memory:", 
+  { strict: true }
+);
 
 // throws error because of the typo:
-const query = strict.query("SELECT $message;").all({ messag: "Hello world" });
+const query = strict
+  .query("SELECT $message;")
+  .all({ messag: "Hello world" });
+
+const notStrict = new Database(
+  ":memory:"
+);
+// does not throw error:
+notStrict
+  .query("SELECT $message;")
+  .all({ messag: "Hello world" });
 ```
 
 ### Load via ES module import

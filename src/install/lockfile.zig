@@ -714,17 +714,28 @@ pub fn maybeCloneFilteringRootPackages(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    const old_root_dependencies_list = old.packages.items(.dependencies)[0];
-    var old_root_resolutions = old.packages.items(.resolutions)[0];
-    const root_dependencies = old_root_dependencies_list.get(old.buffers.dependencies.items);
-    const resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
+    const old_packages = old.packages.slice();
+    const old_dependencies_lists = old_packages.items(.dependencies);
+    const old_resolutions_lists = old_packages.items(.resolutions);
+    const old_resolutions = old_packages.items(.resolution);
     var any_changes = false;
-    const end = @as(PackageID, @truncate(old.packages.len));
+    const end: PackageID = @truncate(old.packages.len);
 
-    for (root_dependencies, resolutions) |dependency, *resolution| {
-        if (!dependency.behavior.isEnabled(features) and resolution.* < end) {
-            resolution.* = invalid_package_id;
-            any_changes = true;
+    // set all disabled dependencies of workspaces to `invalid_package_id`
+    for (0..end) |package_id| {
+        if (package_id != 0 and old_resolutions[package_id].tag != .workspace) continue;
+
+        const old_workspace_dependencies_list = old_dependencies_lists[package_id];
+        var old_workspace_resolutions_list = old_resolutions_lists[package_id];
+
+        const old_workspace_dependencies = old_workspace_dependencies_list.get(old.buffers.dependencies.items);
+        const old_workspace_resolutions = old_workspace_resolutions_list.mut(old.buffers.resolutions.items);
+
+        for (old_workspace_dependencies, old_workspace_resolutions) |dependency, *resolution| {
+            if (!dependency.behavior.isEnabled(features) and resolution.* < end) {
+                resolution.* = invalid_package_id;
+                any_changes = true;
+            }
         }
     }
 
@@ -852,6 +863,7 @@ pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
     return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
 }
 
+/// Returns the package id of the workspace the install is taking place in.
 pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
     return if (workspace_name_hash) |workspace_name_hash_| brk: {
         const packages = this.packages.slice();
@@ -1974,52 +1986,6 @@ pub fn verifyData(this: *const Lockfile) !void {
             assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
         }
     }
-}
-
-pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_features: Features, comptime log_level: PackageManager.Options.LogLevel) void {
-    const resolutions_lists: []const DependencyIDSlice = this.packages.items(.resolutions);
-    const dependency_lists: []const DependencySlice = this.packages.items(.dependencies);
-    const dependencies_buffer = this.buffers.dependencies.items;
-    const resolutions_buffer = this.buffers.resolutions.items;
-    const end = @as(PackageID, @truncate(this.packages.len));
-
-    var any_failed = false;
-    const string_buf = this.buffers.string_bytes.items;
-
-    const root_list = resolutions_lists[0];
-    for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
-        for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
-            if (package_id < end) continue;
-            if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
-                if (root_list.contains(@truncate(parent_id)))
-                    local_features
-                else
-                    remote_features,
-            )) continue;
-            if (log_level != .silent) {
-                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
-                } else {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.name.slice(string_buf),
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
-                }
-            }
-            // track this so we can log each failure instead of just the first
-            any_failed = true;
-        }
-    }
-
-    if (any_failed) Global.crash();
 }
 
 pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
@@ -3799,6 +3765,10 @@ pub const Package = extern struct {
                             entry.value_ptr.path.slice(to_lockfile.buffers.string_bytes.items),
                         )) break :patched_dependencies_changed true;
                     } else break :patched_dependencies_changed true;
+                }
+                iter = from_lockfile.patched_dependencies.iterator();
+                while (iter.next()) |entry| {
+                    if (!to_lockfile.patched_dependencies.contains(entry.key_ptr.*)) break :patched_dependencies_changed true;
                 }
                 break :patched_dependencies_changed false;
             };

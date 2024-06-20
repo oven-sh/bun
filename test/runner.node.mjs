@@ -695,12 +695,12 @@ function getTmpdir() {
   if (isWindows) {
     for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
       const tmpdir = process.env[key] || "";
-      if (!/^\/[a-z]\//i.test(tmpdir)) {
-        continue;
-      }
       // HACK: There are too many bugs with cygwin directories.
       // We should probably run Windows tests in both cygwin and powershell.
       if (/cygwin|cygdrive/i.test(tmpdir)) {
+        continue;
+      }
+      if (!/^[a-z]/i.test(tmpdir)) {
         continue;
       }
       const driveLetter = tmpdir[1];

@@ -1321,8 +1321,8 @@ pub const Interpreter = struct {
         };
 
         var pathbuf: bun.PathBuffer = undefined;
-        const cwd: [:0]const u8 = switch (Syscall.getcwd(&pathbuf)) {
-            .result => |cwd| cwd.ptr[0..cwd.len :0],
+        const cwd: [:0]const u8 = switch (Syscall.getcwdZ(&pathbuf)) {
+            .result => |cwd| cwd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
             },

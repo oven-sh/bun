@@ -11453,7 +11453,6 @@ fn NewParser_(
                 try p.lexer.next();
 
                 // Identifiers can be referenced by other values
-
                 if (!opts.is_typescript_declare and needs_symbol) {
                     value.ref = try p.declareSymbol(.other, value.loc, try value.name.string(p.allocator));
                 }

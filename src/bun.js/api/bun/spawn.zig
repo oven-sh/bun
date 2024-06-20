@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const string = bun.string;
 const std = @import("std");
 const Output = bun.Output;
+
 fn _getSystem() type {
     // this is a workaround for a Zig stage1 bug
     // the "usingnamespace" is evaluating in dead branches
@@ -10,12 +11,12 @@ fn _getSystem() type {
         if (comptime bun.Environment.isLinux) {
             const Type = bun.C.linux;
             break :brk struct {
-                pub usingnamespace std.os.system;
+                pub usingnamespace std.posix.system;
                 pub usingnamespace Type;
             };
         }
 
-        break :brk std.os.system;
+        break :brk std.posix.system;
     };
 }
 
@@ -24,12 +25,12 @@ const system = _getSystem();
 
 const Maybe = JSC.Maybe;
 
-const fd_t = std.os.fd_t;
-const pid_t = std.os.pid_t;
-const toPosixPath = std.os.toPosixPath;
-const errno = std.os.errno;
-const mode_t = std.os.mode_t;
-const unexpectedErrno = std.os.unexpectedErrno;
+const fd_t = std.posix.fd_t;
+const pid_t = std.posix.pid_t;
+const toPosixPath = std.posix.toPosixPath;
+const errno = std.posix.errno;
+const mode_t = std.posix.mode_t;
+const unexpectedErrno = std.posix.unexpectedErrno;
 
 pub const BunSpawn = struct {
     pub const Action = extern struct {
@@ -387,7 +388,7 @@ pub const PosixSpawn = struct {
             });
 
         // Unlike most syscalls, posix_spawn returns 0 on success and an errno on failure.
-        // That is why std.c.getErrno() is not used here, since that checks for -1.
+        // That is why bun.C.getErrno() is not used here, since that checks for -1.
         if (rc == 0) {
             return Maybe(pid_t){ .result = pid };
         }
@@ -403,7 +404,7 @@ pub const PosixSpawn = struct {
 
     /// Use this version of the `waitpid` wrapper if you spawned your child process using `posix_spawn`
     /// or `posix_spawnp` syscalls.
-    /// See also `std.os.waitpid` for an alternative if your child process was spawned via `fork` and
+    /// See also `std.posix.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
     pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
         const PidStatus = c_int;
@@ -425,7 +426,7 @@ pub const PosixSpawn = struct {
     }
 
     /// Same as waitpid, but also returns resource usage information.
-    pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.os.rusage) Maybe(WaitPidResult) {
+    pub fn wait4(pid: pid_t, flags: u32, usage: ?*std.posix.rusage) Maybe(WaitPidResult) {
         const PidStatus = c_int;
         var status: PidStatus = 0;
         while (true) {

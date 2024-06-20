@@ -200,7 +200,10 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
         };
         var parent = try dir.makeOpenPath(dir_path[root_len..], .{});
         defer parent.close();
-        parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
+        parent.writeFile(.{
+            .sub_path = std.fs.path.basename(specifier),
+            .data = written,
+        }) catch |e| {
             Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
@@ -237,7 +240,10 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             try bufw.flush();
         }
     } else {
-        dir.writeFile(std.fs.path.basename(specifier), written) catch return;
+        dir.writeFile(.{
+            .sub_path = std.fs.path.basename(specifier),
+            .data = written,
+        }) catch return;
     }
 }
 
@@ -274,7 +280,7 @@ pub const RuntimeTranspilerStore = struct {
         } else {
             return;
         }
-        var vm = @fieldParentPtr(JSC.VirtualMachine, "transpiler_store", this);
+        var vm: *JSC.VirtualMachine = @fieldParentPtr("transpiler_store", this);
         const event_loop = vm.eventLoop();
         const global = vm.global;
         const jsc_vm = vm.jsc;
@@ -419,7 +425,7 @@ pub const RuntimeTranspilerStore = struct {
         }
 
         pub fn runFromWorkerThread(work_task: *JSC.WorkPoolTask) void {
-            @fieldParentPtr(TranspilerJob, "work_task", work_task).run();
+            @as(*TranspilerJob, @fieldParentPtr("work_task", work_task)).run();
         }
 
         pub fn run(this: *TranspilerJob) void {
@@ -428,7 +434,7 @@ pub const RuntimeTranspilerStore = struct {
             const allocator = arena.allocator();
 
             defer this.dispatchToMainThread();
-            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
+            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.monotonic)) {
                 this.parse_error = error.TranspilerJobGenerationMismatch;
                 return;
             }
@@ -1024,7 +1030,7 @@ pub const ModuleLoader = struct {
 
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
-                if (pm.pending_tasks.load(.Monotonic) > 0) return;
+                if (pm.pending_tasks.load(.monotonic) > 0) return;
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -1107,7 +1113,7 @@ pub const ModuleLoader = struct {
             }
 
             pub fn vm(this: *Queue) *VirtualMachine {
-                return @fieldParentPtr(VirtualMachine, "modules", this);
+                return @alignCast(@fieldParentPtr("modules", this));
             }
         };
 

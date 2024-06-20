@@ -99,7 +99,7 @@ pub fn main() anyerror!void {
     const id_continue_data = std.mem.asBytes(&id_continue.masks);
     const id_start_data = std.mem.asBytes(&id_start.masks);
 
-    try std.os.chdir(std.fs.path.dirname(@src().file).?);
+    try std.posix.chdir(std.fs.path.dirname(@src().file).?);
     var start = try std.fs.cwd().createFileZ("id_start_bitset.meta.blob", .{ .truncate = true });
     try start.writeAll(std.mem.asBytes(&id_start_cached));
     start.close();
@@ -120,7 +120,7 @@ pub fn main() anyerror!void {
 test "Check" {
     const id_start_cached_correct = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
     const id_continue_cached_correct = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
-    try std.os.chdir(std.fs.path.dirname(@src().file).?);
+    try std.posix.chdir(std.fs.path.dirname(@src().file).?);
     var start_cached = try std.fs.cwd().openFileZ("id_start_bitset.meta.blob", .{ .mode = .read_only });
     const start_cached_data = try start_cached.readToEndAlloc(std.heap.c_allocator, 4096);
 
@@ -143,7 +143,7 @@ test "Check" {
 test "Check #2" {
     const id_start_cached_correct = Cache.CachedBitset{ .range = id_start_range, .len = id_start_count + 1 };
     const id_continue_cached_correct = Cache.CachedBitset{ .range = id_end_range, .len = id_end_count + 1 };
-    try std.os.chdir(std.fs.path.dirname(@src().file).?);
+    try std.posix.chdir(std.fs.path.dirname(@src().file).?);
     const start_cached_data = std.mem.asBytes(&Cache.id_start_meta);
 
     try std.testing.expectEqualSlices(u8, start_cached_data, std.mem.asBytes(&id_start_cached_correct));

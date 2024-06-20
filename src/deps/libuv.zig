@@ -19,7 +19,7 @@ const LPFN_CONNECTEX = *const anyopaque;
 const FILE = std.c.FILE;
 const CRITICAL_SECTION = std.os.windows.CRITICAL_SECTION;
 const INPUT_RECORD = windows.INPUT_RECORD;
-const sockaddr = std.os.sockaddr;
+const sockaddr = std.posix.sockaddr;
 const sockaddr_storage = std.os.linux.sockaddr_storage;
 const sockaddr_un = std.os.linux.sockaddr_un;
 const BOOL = windows.BOOL;
@@ -211,16 +211,17 @@ pub const O = struct {
     pub const SYMLINK = UV_FS_O_SYMLINK;
     pub const SYNC = UV_FS_O_SYNC;
 
-    pub fn fromStd(c_flags: i32) i32 {
+    pub fn fromBunO(c_flags: i32) i32 {
         var flags: i32 = 0;
-        if (c_flags & std.os.O.NONBLOCK != 0) flags |= NONBLOCK;
-        if (c_flags & std.os.O.CREAT != 0) flags |= CREAT;
-        if (c_flags & std.os.O.NOFOLLOW != 0) flags |= NOFOLLOW;
-        if (c_flags & std.os.O.WRONLY != 0) flags |= WRONLY;
-        if (c_flags & std.os.O.RDONLY != 0) flags |= RDONLY;
-        if (c_flags & std.os.O.RDWR != 0) flags |= RDWR;
-        if (c_flags & std.os.O.TRUNC != 0) flags |= TRUNC;
-        if (c_flags & std.os.O.APPEND != 0) flags |= APPEND;
+
+        if (c_flags & bun.O.NONBLOCK != 0) flags |= NONBLOCK;
+        if (c_flags & bun.O.CREAT != 0) flags |= CREAT;
+        if (c_flags & bun.O.NOFOLLOW != 0) flags |= NOFOLLOW;
+        if (c_flags & bun.O.WRONLY != 0) flags |= WRONLY;
+        if (c_flags & bun.O.RDONLY != 0) flags |= RDONLY;
+        if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
+        if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
+        if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
 
         return flags;
     }
@@ -240,7 +241,7 @@ const _O_SHORT_LIVED = 0x1000;
 const _O_SEQUENTIAL = 0x0020;
 const _O_RANDOM = 0x0010;
 
-// These **do not** map to std.os.O!
+// These **do not** map to std.posix.O/bun.O!
 pub const UV_FS_O_APPEND = 0x0008;
 pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
@@ -1828,7 +1829,7 @@ pub const fs_t = extern struct {
     ///
     /// It is assumed that if UV overwrites the .loop, it probably overwrote the rest of the struct.
     pub const uninitialized: fs_t = if (bun.Environment.allow_assert) value: {
-        comptime var value = std.mem.zeroes(fs_t);
+        var value = std.mem.zeroes(fs_t);
         value.loop = @ptrFromInt(0xAAAAAAAAAAAA0000);
         break :value value;
     } else undefined;
@@ -2953,7 +2954,7 @@ pub fn StreamWriterMixin(comptime Type: type, comptime pipe_field_name: std.meta
         }
 
         fn uv_on_write_cb(req: *uv_write_t, status: ReturnCode) callconv(.C) void {
-            var this: *Type = @fieldParentPtr(Type, @tagName(uv_write_t_field_name), req);
+            var this: *Type = @fieldParentPtr(@tagName(uv_write_t_field_name), req);
             this.onWrite(if (status.toError(.send)) |err| .{ .err = err } else .{ .result = @intCast(status.int()) });
         }
 

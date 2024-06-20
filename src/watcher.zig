@@ -50,11 +50,11 @@ const INotify = struct {
 
     pub fn watchPath(this: *INotify, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
         bun.assert(this.loaded_inotify);
-        const old_count = this.watch_count.fetchAdd(1, .Release);
+        const old_count = this.watch_count.fetchAdd(1, .release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
         const watch_file_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.MOVED_TO | std.os.linux.IN.MODIFY;
         return .{
-            .result = std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask) catch |err| return .{
+            .result = std.posix.inotify_add_watchZ(this.inotify_fd, pathname, watch_file_mask) catch |err| return .{
                 .err = .{
                     .errno = @truncate(@intFromEnum(switch (err) {
                         error.FileNotFound => bun.C.E.NOENT,
@@ -74,11 +74,11 @@ const INotify = struct {
 
     pub fn watchDir(this: *INotify, pathname: [:0]const u8) bun.JSC.Maybe(EventListIndex) {
         bun.assert(this.loaded_inotify);
-        const old_count = this.watch_count.fetchAdd(1, .Release);
+        const old_count = this.watch_count.fetchAdd(1, .release);
         defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
         const watch_dir_mask = std.os.linux.IN.EXCL_UNLINK | std.os.linux.IN.DELETE | std.os.linux.IN.DELETE_SELF | std.os.linux.IN.CREATE | std.os.linux.IN.MOVE_SELF | std.os.linux.IN.ONLYDIR | std.os.linux.IN.MOVED_TO;
         return .{
-            .result = std.os.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask) catch |err| return .{
+            .result = std.posix.inotify_add_watchZ(this.inotify_fd, pathname, watch_dir_mask) catch |err| return .{
                 .err = .{
                     .errno = @truncate(@intFromEnum(switch (err) {
                         error.FileNotFound => bun.C.E.NOENT,
@@ -98,7 +98,7 @@ const INotify = struct {
 
     pub fn unwatch(this: *INotify, wd: EventListIndex) void {
         bun.assert(this.loaded_inotify);
-        _ = this.watch_count.fetchSub(1, .Release);
+        _ = this.watch_count.fetchSub(1, .release);
         std.os.inotify_rm_watch(this.inotify_fd, wd);
     }
 
@@ -110,7 +110,7 @@ const INotify = struct {
             this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 
-        this.inotify_fd = try std.os.inotify_init1(std.os.linux.IN.CLOEXEC);
+        this.inotify_fd = try std.posix.inotify_init1(std.os.linux.IN.CLOEXEC);
     }
 
     pub fn read(this: *INotify) bun.JSC.Maybe([]*const INotifyEvent) {
@@ -121,13 +121,13 @@ const INotify = struct {
                 error.TimedOut => unreachable, // timeout is infinite
             };
 
-            const rc = std.os.system.read(
+            const rc = std.posix.system.read(
                 this.inotify_fd,
                 @as([*]u8, @ptrCast(@alignCast(&this.eventlist))),
                 @sizeOf(EventListBuffer),
             );
 
-            const errno = std.os.errno(rc);
+            const errno = std.posix.errno(rc);
             switch (errno) {
                 .SUCCESS => {
                     var len = @as(usize, @intCast(rc));
@@ -137,20 +137,20 @@ const INotify = struct {
                     // IN_MODIFY is very noisy
                     // we do a 0.1ms sleep to try to coalesce events better
                     if (len < (@sizeOf(EventListBuffer) / 2)) {
-                        var fds = [_]std.os.pollfd{.{
+                        var fds = [_]std.posix.pollfd{.{
                             .fd = this.inotify_fd,
-                            .events = std.os.POLL.IN | std.os.POLL.ERR,
+                            .events = std.posix.POLL.IN | std.posix.POLL.ERR,
                             .revents = 0,
                         }};
-                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
-                        if ((std.os.ppoll(&fds, &timespec, null) catch 0) > 0) {
+                        var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };
+                        if ((std.posix.ppoll(&fds, &timespec, null) catch 0) > 0) {
                             while (true) {
-                                const new_rc = std.os.system.read(
+                                const new_rc = std.posix.system.read(
                                     this.inotify_fd,
                                     @as([*]u8, @ptrCast(@alignCast(&this.eventlist))) + len,
                                     @sizeOf(EventListBuffer) - len,
                                 );
-                                const e = std.os.errno(new_rc);
+                                const e = std.posix.errno(new_rc);
                                 switch (e) {
                                     .SUCCESS => {
                                         len += @as(usize, @intCast(new_rc));
@@ -222,7 +222,7 @@ const DarwinWatcher = struct {
     fd: bun.FileDescriptor = bun.invalid_fd,
 
     pub fn init(this: *DarwinWatcher, _: []const u8) !void {
-        const fd = try std.os.kqueue();
+        const fd = try std.posix.kqueue();
         if (fd == 0) return error.KQueueError;
         this.fd = bun.toFD(fd);
     }
@@ -281,6 +281,7 @@ const WindowsWatcher = struct {
                     .syscall = .watch,
                 } };
             }
+            log("read directory changes!", .{});
             return .{ .result = {} };
         }
     };
@@ -367,7 +368,10 @@ const WindowsWatcher = struct {
     // wait until new events are available
     pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.JSC.Maybe(?EventIterator) {
         switch (this.watcher.prepare()) {
-            .err => |err| return .{ .err = err },
+            .err => |err| {
+                log("prepare() returned error", .{});
+                return .{ .err = err };
+            },
             .result => {},
         }
 
@@ -378,7 +382,7 @@ const WindowsWatcher = struct {
             const rc = w.kernel32.GetQueuedCompletionStatus(this.iocp, &nbytes, &key, &overlapped, @intFromEnum(timeout));
             if (rc == 0) {
                 const err = w.kernel32.GetLastError();
-                if (err == w.Win32Error.IMEOUT) {
+                if (err == .TIMEOUT or err == .WAIT_TIMEOUT) {
                     return .{ .result = null };
                 } else {
                     log("GetQueuedCompletionStatus failed: {s}", .{@tagName(err)});
@@ -397,6 +401,7 @@ const WindowsWatcher = struct {
                 if (nbytes == 0) {
                     // shutdown notification
                     // TODO close handles?
+                    log("shutdown notification in WindowsWatcher.next", .{});
                     return .{ .err = .{
                         .errno = @intFromEnum(bun.C.SystemErrno.ESHUTDOWN),
                         .syscall = .watch,
@@ -685,7 +690,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 while (true) {
                     defer Output.flush();
 
-                    var count_ = std.os.system.kevent(
+                    var count_ = std.posix.system.kevent(
                         this.platform.fd.cast(),
                         @as([*]KEvent, changelist),
                         0,
@@ -698,8 +703,8 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     // Give the events more time to coallesce
                     if (count_ < 128 / 2) {
                         const remain = 128 - count_;
-                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
-                        const extra = std.os.system.kevent(
+                        var timespec = std.posix.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
+                        const extra = std.posix.system.kevent(
                             this.platform.fd.cast(),
                             @as([*]KEvent, changelist[@as(usize, @intCast(count_))..].ptr),
                             0,
@@ -822,6 +827,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     }
                 }
             } else if (Environment.isWindows) {
+                log("_watchLoop", .{});
                 var buf: bun.PathBuffer = undefined;
                 const root = this.fs.top_level_dir;
                 @memcpy(buf[0..root.len], root);
@@ -976,7 +982,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // Basically:
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
-                _ = std.os.system.kevent(
+                _ = std.posix.system.kevent(
                     this.platform.fd.cast(),
                     @as([]KEvent, events[0..1]).ptr,
                     1,
@@ -1072,7 +1078,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // Basically:
                 // - We register the event here.
                 // our while(true) loop above receives notification of changes to any of the events created here.
-                _ = std.os.system.kevent(
+                _ = std.posix.system.kevent(
                     this.platform.fd.cast(),
                     @as([]KEvent, events[0..1]).ptr,
                     1,

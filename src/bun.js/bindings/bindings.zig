@@ -10,7 +10,7 @@ const ErrorableZigString = Exports.ErrorableZigString;
 const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
 const ZigException = Exports.ZigException;
 const ZigStackTrace = Exports.ZigStackTrace;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = bun.JSC;
 const Shimmer = JSC.Shimmer;
@@ -4700,7 +4700,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("fromUInt64NoTruncate", .{ globalObject, i });
     }
 
-    /// This always returns a JS BigInt using std.os.timeval from std.os.rusage
+    /// This always returns a JS BigInt using std.posix.timeval from std.posix.rusage
     pub fn fromTimevalNoTruncate(globalObject: *JSGlobalObject, nsec: i64, sec: i64) JSValue {
         return cppFn("fromTimevalNoTruncate", .{ globalObject, nsec, sec });
     }

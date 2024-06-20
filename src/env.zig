@@ -25,7 +25,6 @@ pub const isAarch64 = @import("builtin").target.cpu.arch.isAARCH64();
 pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == @import("builtin").mode;
-pub const analytics_url = if (isDebug) "http://localhost:4000/events" else "http://i.bun.sh/events";
 
 const BuildOptions = if (isTest) struct {
     pub const baseline = false;
@@ -44,7 +43,7 @@ pub const is_canary = BuildOptions.is_canary;
 pub const canary_revision = if (is_canary) BuildOptions.canary_revision else "";
 pub const dump_source = isDebug and !isTest;
 pub const base_path = BuildOptions.base_path ++ "/";
-pub const allow_logs = BuildOptions.enable_logs;
+pub const enable_logs = BuildOptions.enable_logs;
 
 pub const version: std.SemanticVersion = BuildOptions.version;
 pub const version_string = std.fmt.comptimePrint("{d}.{d}.{d}", .{ version.major, version.minor, version.patch });
@@ -103,7 +102,16 @@ pub const OperatingSystem = enum {
         };
     }
 
-    /// npm package name
+    pub fn stdOSTag(self: OperatingSystem) std.Target.Os.Tag {
+        return switch (self) {
+            .mac => .macos,
+            .linux => .linux,
+            .windows => .windows,
+            .wasm => unreachable,
+        };
+    }
+
+    /// npm package name, `@oven-sh/bun-{os}-{arch}`
     pub fn npmName(self: OperatingSystem) []const u8 {
         return switch (self) {
             .mac => "darwin",
@@ -130,6 +138,7 @@ pub const Archictecture = enum {
     arm64,
     wasm,
 
+    /// npm package name, `@oven-sh/bun-{os}-{arch}`
     pub fn npmName(this: Archictecture) []const u8 {
         return switch (this) {
             .x64 => "x64",

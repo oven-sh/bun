@@ -20,7 +20,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const string = []const u8;
 const bun = @import("root").bun;
-const os = std.os;
+const posix = std.posix;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
@@ -887,7 +887,7 @@ pub const Interpreter = struct {
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
-        const pid_t = if (bun.Environment.isPosix) std.os.pid_t else uv.uv_pid_t;
+        const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 
         const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
 
@@ -1073,7 +1073,7 @@ pub const Interpreter = struct {
             const new_cwd_fd = switch (ShellSyscall.openat(
                 this.cwd_fd,
                 new_cwd,
-                std.os.O.DIRECTORY | std.os.O.RDONLY,
+                bun.O.DIRECTORY | bun.O.RDONLY,
                 0,
             )) {
                 .result => |fd| fd,
@@ -1327,7 +1327,8 @@ pub const Interpreter = struct {
                 return .{ .err = .{ .sys = err.toSystemError() } };
             },
         };
-        const cwd_fd = switch (Syscall.open(cwd, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+
+        const cwd_fd = switch (Syscall.open(cwd, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
             .result => |fd| fd,
             .err => |err| {
                 return .{ .err = .{ .sys = err.toSystemError() } };
@@ -1594,8 +1595,9 @@ pub const Interpreter = struct {
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
+
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
-        this.started.store(true, .SeqCst);
+        this.started.store(true, .seq_cst);
         root.start();
 
         return Maybe(void).success;
@@ -1611,9 +1613,11 @@ pub const Interpreter = struct {
             return .undefined;
         }
         incrPendingActivityFlag(&this.has_pending_activity);
+
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
-        this.started.store(true, .SeqCst);
+        this.started.store(true, .seq_cst);
         root.start();
+
         return .undefined;
     }
 
@@ -1801,7 +1805,7 @@ pub const Interpreter = struct {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
-        return JSC.JSValue.jsBoolean(this.started.load(.SeqCst));
+        return JSC.JSValue.jsBoolean(this.started.load(.seq_cst));
     }
 
     pub fn getBufferedStdout(
@@ -1826,20 +1830,20 @@ pub const Interpreter = struct {
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) callconv(.C) bool {
-        @fence(.SeqCst);
-        return this.has_pending_activity.load(.SeqCst) > 0;
+        @fence(.seq_cst);
+        return this.has_pending_activity.load(.seq_cst) > 0;
     }
 
     fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-        @fence(.SeqCst);
-        _ = has_pending_activity.fetchAdd(1, .SeqCst);
-        log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.SeqCst)});
+        @fence(.seq_cst);
+        _ = has_pending_activity.fetchAdd(1, .seq_cst);
+        log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
 
     fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-        @fence(.SeqCst);
-        _ = has_pending_activity.fetchSub(1, .SeqCst);
-        log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.SeqCst)});
+        @fence(.seq_cst);
+        _ = has_pending_activity.fetchSub(1, .seq_cst);
+        log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
 
     pub fn rootIO(this: *const Interpreter) *const IO {
@@ -2636,7 +2640,7 @@ pub const Interpreter = struct {
 
             pub fn runFromThreadPool(task: *WorkPoolTask) void {
                 debug("runFromThreadPool", .{});
-                var this = @fieldParentPtr(This, "task", task);
+                var this: *This = @fieldParentPtr("task", task);
                 switch (this.walkImpl()) {
                     .result => {},
                     .err => |e| {
@@ -3553,14 +3557,14 @@ pub const Interpreter = struct {
                 } else {
                     const fds: [2]bun.FileDescriptor = brk: {
                         var fds_: [2]std.c.fd_t = undefined;
-                        const rc = std.c.socketpair(std.os.AF.UNIX, std.os.SOCK.STREAM, 0, &fds_);
+                        const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);
                         if (rc != 0) {
                             return bun.sys.Maybe(void).errno(bun.sys.getErrno(rc), .socketpair);
                         }
 
-                        var before = std.c.fcntl(fds_[0], std.os.F.GETFL);
+                        var before = std.c.fcntl(fds_[0], std.posix.F.GETFL);
 
-                        const result = std.c.fcntl(fds_[0], std.os.F.SETFL, before | os.O.CLOEXEC);
+                        const result = std.c.fcntl(fds_[0], std.posix.F.SETFL, before | bun.O.CLOEXEC);
                         if (result == -1) {
                             _ = bun.sys.close(bun.toFD(fds_[0]));
                             _ = bun.sys.close(bun.toFD(fds_[1]));
@@ -3570,7 +3574,7 @@ pub const Interpreter = struct {
                         if (comptime bun.Environment.isMac) {
                             // SO_NOSIGPIPE
                             before = 1;
-                            _ = std.c.setsockopt(fds_[0], std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &before, @sizeOf(c_int));
+                            _ = std.c.setsockopt(fds_[0], std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, &before, @sizeOf(c_int));
                         }
 
                         break :brk .{ bun.toFD(fds_[0]), bun.toFD(fds_[1]) };
@@ -5682,13 +5686,13 @@ pub const Interpreter = struct {
         }
 
         pub inline fn parentCmd(this: *const Builtin) *const Cmd {
-            const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
-            return @fieldParentPtr(Cmd, "exec", union_ptr);
+            const union_ptr: *const Cmd.Exec = @fieldParentPtr("bltn", this);
+            return @fieldParentPtr("exec", union_ptr);
         }
 
         pub inline fn parentCmdMut(this: *Builtin) *Cmd {
-            const union_ptr = @fieldParentPtr(Cmd.Exec, "bltn", this);
-            return @fieldParentPtr(Cmd, "exec", union_ptr);
+            const union_ptr: *Cmd.Exec = @fieldParentPtr("bltn", this);
+            return @fieldParentPtr("exec", union_ptr);
         }
 
         pub fn done(this: *Builtin, exit_code: anytype) void {
@@ -5940,7 +5944,7 @@ pub const Interpreter = struct {
                         const arg = std.mem.span(exec.args[exec.idx]);
                         exec.idx += 1;
                         const dir = this.bltn.parentCmd().base.shell.cwd_fd;
-                        const fd = switch (ShellSyscall.openat(dir, arg, os.O.RDONLY, 0)) {
+                        const fd = switch (ShellSyscall.openat(dir, arg, bun.O.RDONLY, 0)) {
                             .result => |fd| fd,
                             .err => |e| {
                                 const buf = this.bltn.taskErrorToString(.cat, e);
@@ -6406,7 +6410,7 @@ pub const Interpreter = struct {
                 }
 
                 fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
-                    var this: *ShellTouchTask = @fieldParentPtr(ShellTouchTask, "task", task);
+                    var this: *ShellTouchTask = @fieldParentPtr("task", task);
                     debug("{} runFromThreadPool", .{this});
 
                     // We have to give an absolute path
@@ -6434,7 +6438,7 @@ pub const Interpreter = struct {
                     if (node_fs.utimes(args, .callback).asErr()) |err| out: {
                         if (err.getErrno() == bun.C.E.NOENT) {
                             const perm = 0o664;
-                            switch (Syscall.open(filepath, std.os.O.CREAT | std.os.O.WRONLY, perm)) {
+                            switch (Syscall.open(filepath, bun.O.CREAT | bun.O.WRONLY, perm)) {
                                 .result => |fd| {
                                     _ = bun.sys.close(fd);
                                     break :out;
@@ -6810,7 +6814,7 @@ pub const Interpreter = struct {
                 }
 
                 fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
-                    var this: *ShellMkdirTask = @fieldParentPtr(ShellMkdirTask, "task", task);
+                    var this: *ShellMkdirTask = @fieldParentPtr("task", task);
                     debug("{} runFromThreadPool", .{this});
 
                     // We have to give an absolute path to our mkdir
@@ -7542,11 +7546,11 @@ pub const Interpreter = struct {
                             log("Ls(0x{x}, state=exec) Check: tasks_done={d} task_count={d} output_done={d} output_waiting={d}", .{
                                 @intFromPtr(this),
                                 this.state.exec.tasks_done,
-                                this.state.exec.task_count.load(.Monotonic),
+                                this.state.exec.task_count.load(.monotonic),
                                 this.state.exec.output_done,
                                 this.state.exec.output_waiting,
                             });
-                            if (this.state.exec.tasks_done >= this.state.exec.task_count.load(.Monotonic) and this.state.exec.output_done >= this.state.exec.output_waiting) {
+                            if (this.state.exec.tasks_done >= this.state.exec.task_count.load(.monotonic) and this.state.exec.output_done >= this.state.exec.output_waiting) {
                                 const exit_code: ExitCode = if (this.state.exec.err != null) 1 else 0;
                                 this.state = .done;
                                 this.bltn.done(exit_code);
@@ -7696,7 +7700,7 @@ pub const Interpreter = struct {
                     );
 
                     var subtask = @This().create(this.ls, this.opts, this.task_count, this.cwd, new_path, this.event_loop);
-                    _ = this.task_count.fetchAdd(1, .Monotonic);
+                    _ = this.task_count.fetchAdd(1, .monotonic);
                     subtask.is_root = false;
                     subtask.schedule();
                 }
@@ -7715,7 +7719,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn run(this: *@This()) void {
-                    const fd = switch (ShellSyscall.openat(this.cwd, this.path, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                    const fd = switch (ShellSyscall.openat(this.cwd, this.path, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
                         .err => |e| {
                             switch (e.getErrno()) {
                                 bun.C.E.NOENT => {
@@ -7793,7 +7797,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                    var this: *@This() = @fieldParentPtr(@This(), "task", task);
+                    var this: *@This() = @fieldParentPtr("task", task);
                     this.run();
                     this.doneLogic();
                 }
@@ -8286,7 +8290,7 @@ pub const Interpreter = struct {
                 task: ShellTask(@This(), runFromThreadPool, runFromMainThread, debug),
 
                 pub fn runFromThreadPool(this: *@This()) void {
-                    const fd = switch (ShellSyscall.openat(this.cwd, this.target, os.O.RDONLY | os.O.DIRECTORY, 0)) {
+                    const fd = switch (ShellSyscall.openat(this.cwd, this.target, bun.O.RDONLY | bun.O.DIRECTORY, 0)) {
                         .err => |e| {
                             switch (e.getErrno()) {
                                 bun.C.E.NOTDIR => {
@@ -8382,7 +8386,7 @@ pub const Interpreter = struct {
                     var fixed_alloc = std.heap.FixedBufferAllocator.init(buf[0..bun.MAX_PATH_BYTES]);
 
                     for (this.sources) |src_raw| {
-                        if (this.error_signal.load(.SeqCst)) return;
+                        if (this.error_signal.load(.seq_cst)) return;
                         defer fixed_alloc.reset();
 
                         const src = src_raw[0..std.mem.len(src_raw) :0];
@@ -8604,7 +8608,7 @@ pub const Interpreter = struct {
                 var exec = &this.state.executing;
 
                 if (task.err) |err| {
-                    exec.error_signal.store(true, .SeqCst);
+                    exec.error_signal.store(true, .seq_cst);
                     if (exec.err == null) {
                         exec.err = err;
                     } else {
@@ -8776,17 +8780,17 @@ pub const Interpreter = struct {
                     },
 
                     fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) void {
-                        @fence(.SeqCst);
+                        @fence(.seq_cst);
                         var atomicvar = &@field(this, @tagName(thevar));
-                        const result = atomicvar.fetchAdd(1, .SeqCst);
+                        const result = atomicvar.fetchAdd(1, .seq_cst);
                         log("[rm] {s}: {d} + 1", .{ @tagName(thevar), result });
                         return;
                     }
 
                     fn getOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) usize {
-                        @fence(.SeqCst);
+                        @fence(.seq_cst);
                         var atomicvar = &@field(this, @tagName(thevar));
-                        return atomicvar.load(.SeqCst);
+                        return atomicvar.load(.seq_cst);
                     }
                 },
                 done: struct { exit_code: ExitCode },
@@ -9052,7 +9056,7 @@ pub const Interpreter = struct {
                 log("Rm(0x{x}).onIOWriterChunk()", .{@intFromPtr(this)});
                 if (comptime bun.Environment.allow_assert) {
                     assert((this.state == .parse_opts and this.state.parse_opts.state == .wait_write_err) or
-                        (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.SeqCst) > 0));
+                        (this.state == .exec and this.state.exec.state == .waiting and this.state.exec.output_count.load(.seq_cst) > 0));
                 }
 
                 if (this.state == .exec and this.state.exec.state == .waiting) {
@@ -9207,7 +9211,7 @@ pub const Interpreter = struct {
 
             fn writeVerbose(this: *Rm, verbose: *ShellRmTask.DirTask) void {
                 if (!this.bltn.stdout.needsIO()) {
-                    _ = this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items[0..]);
+                    _ = this.bltn.writeNoIO(.stdout, verbose.deleted_entries.items);
                     _ = this.state.exec.incrementOutputCount(.output_done);
                     if (this.state.exec.state.tasksDone() >= this.state.exec.total_tasks and this.state.exec.getOutputCount(.output_done) >= this.state.exec.getOutputCount(.output_count)) {
                         this.bltn.done(if (this.state.exec.err != null) @as(ExitCode, 1) else @as(ExitCode, 0));
@@ -9217,7 +9221,7 @@ pub const Interpreter = struct {
                 }
                 const buf = verbose.takeDeletedEntries();
                 defer buf.deinit();
-                this.bltn.stdout.enqueue(this, buf.items[0..]);
+                this.bltn.stdout.enqueue(this, buf.items);
             }
 
             pub const ShellRmTask = struct {
@@ -9300,13 +9304,13 @@ pub const Interpreter = struct {
                     }
 
                     pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
-                        var this: *DirTask = @fieldParentPtr(DirTask, "task", task);
+                        var this: *DirTask = @fieldParentPtr("task", task);
                         this.runFromThreadPoolImpl();
                     }
 
                     fn runFromThreadPoolImpl(this: *DirTask) void {
                         defer {
-                            if (!this.deleting_after_waiting_for_children.load(.SeqCst)) {
+                            if (!this.deleting_after_waiting_for_children.load(.seq_cst)) {
                                 this.postRun();
                             }
                         }
@@ -9323,7 +9327,7 @@ pub const Interpreter = struct {
                                         defer this.task_manager.err_mutex.unlock();
                                         if (this.task_manager.err == null) {
                                             this.task_manager.err = err;
-                                            this.task_manager.error_signal.store(true, .SeqCst);
+                                            this.task_manager.error_signal.store(true, .seq_cst);
                                         }
                                         return;
                                     },
@@ -9341,7 +9345,7 @@ pub const Interpreter = struct {
                                 defer this.task_manager.err_mutex.unlock();
                                 if (this.task_manager.err == null) {
                                     this.task_manager.err = err;
-                                    this.task_manager.error_signal.store(true, .SeqCst);
+                                    this.task_manager.error_signal.store(true, .seq_cst);
                                 } else {
                                     bun.default_allocator.free(err.path);
                                 }
@@ -9356,7 +9360,7 @@ pub const Interpreter = struct {
                         defer this.task_manager.err_mutex.unlock();
                         if (this.task_manager.err == null) {
                             this.task_manager.err = err;
-                            this.task_manager.error_signal.store(true, .SeqCst);
+                            this.task_manager.error_signal.store(true, .seq_cst);
                         } else {
                             bun.default_allocator.free(err.path);
                         }
@@ -9366,10 +9370,10 @@ pub const Interpreter = struct {
                         debug("DirTask(0x{x}, path={s}) postRun", .{ @intFromPtr(this), this.path });
                         // // This is true if the directory has subdirectories
                         // // that need to be deleted
-                        if (this.need_to_wait.load(.SeqCst)) return;
+                        if (this.need_to_wait.load(.seq_cst)) return;
 
                         // We have executed all the children of this task
-                        if (this.subtask_count.fetchSub(1, .SeqCst) == 1) {
+                        if (this.subtask_count.fetchSub(1, .seq_cst) == 1) {
                             defer {
                                 if (this.task_manager.opts.verbose)
                                     this.queueForWrite()
@@ -9381,8 +9385,8 @@ pub const Interpreter = struct {
                             if (this.parent_task != null) {
                                 // It's possible that we queued this subdir task and it finished, while the parent
                                 // was still in the `removeEntryDir` function
-                                const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .SeqCst);
-                                const parent_still_in_remove_entry_dir = !this.parent_task.?.need_to_wait.load(.Monotonic);
+                                const tasks_left_before_decrement = this.parent_task.?.subtask_count.fetchSub(1, .seq_cst);
+                                const parent_still_in_remove_entry_dir = !this.parent_task.?.need_to_wait.load(.monotonic);
                                 if (!parent_still_in_remove_entry_dir and tasks_left_before_decrement == 2) {
                                     this.parent_task.?.deleteAfterWaitingForChildren();
                                 }
@@ -9399,13 +9403,13 @@ pub const Interpreter = struct {
                     pub fn deleteAfterWaitingForChildren(this: *DirTask) void {
                         debug("DirTask(0x{x}, path={s}) deleteAfterWaitingForChildren", .{ @intFromPtr(this), this.path });
                         // `runFromMainThreadImpl` has a `defer this.postRun()` so need to set this to true to skip that
-                        this.deleting_after_waiting_for_children.store(true, .SeqCst);
-                        this.need_to_wait.store(false, .SeqCst);
+                        this.deleting_after_waiting_for_children.store(true, .seq_cst);
+                        this.need_to_wait.store(false, .seq_cst);
                         var do_post_run = true;
                         defer {
                             if (do_post_run) this.postRun();
                         }
-                        if (this.task_manager.error_signal.load(.SeqCst)) {
+                        if (this.task_manager.error_signal.load(.seq_cst)) {
                             return;
                         }
 
@@ -9479,7 +9483,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn enqueue(this: *ShellRmTask, parent_dir: *DirTask, path: [:0]const u8, is_absolute: bool, kind_hint: DirTask.EntryKindHint) void {
-                    if (this.error_signal.load(.SeqCst)) {
+                    if (this.error_signal.load(.seq_cst)) {
                         return;
                     }
                     const new_path = this.join(
@@ -9496,7 +9500,7 @@ pub const Interpreter = struct {
                 pub fn enqueueNoJoin(this: *ShellRmTask, parent_task: *DirTask, path: [:0]const u8, kind_hint: DirTask.EntryKindHint) void {
                     defer debug("enqueue: {s} {s}", .{ path, @tagName(kind_hint) });
 
-                    if (this.error_signal.load(.SeqCst)) {
+                    if (this.error_signal.load(.seq_cst)) {
                         return;
                     }
 
@@ -9510,7 +9514,11 @@ pub const Interpreter = struct {
                         .deleted_entries = std.ArrayList(u8).init(bun.default_allocator),
                         .concurrent_task = JSC.EventLoopTask.fromEventLoop(this.event_loop),
                     };
-                    assert(parent_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+
+                    const count = parent_task.subtask_count.fetchAdd(1, .monotonic);
+                    if (comptime bun.Environment.allow_assert) {
+                        assert(count > 0);
+                    }
 
                     JSC.WorkPool.schedule(&subtask.task);
                 }
@@ -9600,7 +9608,7 @@ pub const Interpreter = struct {
                         return Maybe(void).initErr(Syscall.Error.fromCode(bun.C.E.ISDIR, .TODO).withPath(bun.default_allocator.dupeZ(u8, dir_task.path) catch bun.outOfMemory()));
                     }
 
-                    const flags = os.O.DIRECTORY | os.O.RDONLY;
+                    const flags = bun.O.DIRECTORY | bun.O.RDONLY;
                     const fd = switch (ShellSyscall.openat(dirfd, path, flags, 0)) {
                         .result => |fd| fd,
                         .err => |e| {
@@ -9626,7 +9634,7 @@ pub const Interpreter = struct {
                         }
                     }
 
-                    if (this.error_signal.load(.SeqCst)) {
+                    if (this.error_signal.load(.seq_cst)) {
                         return Maybe(void).success;
                     }
 
@@ -9647,7 +9655,7 @@ pub const Interpreter = struct {
                     }) |current| : (entry = iterator.next()) {
                         debug("dir({s}) entry({s}, {s})", .{ path, current.name.slice(), @tagName(current.kind) });
                         // TODO this seems bad maybe better to listen to kqueue/epoll event
-                        if (fastMod(i, 4) == 0 and this.error_signal.load(.SeqCst)) return Maybe(void).success;
+                        if (fastMod(i, 4) == 0 and this.error_signal.load(.seq_cst)) return Maybe(void).success;
 
                         defer i += 1;
                         switch (current.kind) {
@@ -9677,13 +9685,13 @@ pub const Interpreter = struct {
                     }
 
                     // Need to wait for children to finish
-                    if (dir_task.subtask_count.load(.SeqCst) > 1) {
+                    if (dir_task.subtask_count.load(.seq_cst) > 1) {
                         close_fd = true;
-                        dir_task.need_to_wait.store(true, .SeqCst);
+                        dir_task.need_to_wait.store(true, .seq_cst);
                         return Maybe(void).success;
                     }
 
-                    if (this.error_signal.load(.SeqCst)) return Maybe(void).success;
+                    if (this.error_signal.load(.seq_cst)) return Maybe(void).success;
 
                     if (bun.Environment.isWindows) {
                         close_fd = false;
@@ -9691,7 +9699,7 @@ pub const Interpreter = struct {
                     }
 
                     debug("[removeEntryDir] remove after children {s}", .{path});
-                    switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.os.AT.REMOVEDIR)) {
+                    switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.posix.AT.REMOVEDIR)) {
                         .result => {
                             switch (this.verboseDeleted(dir_task, path)) {
                                 .err => |e| return .{ .err = e },
@@ -9875,7 +9883,7 @@ pub const Interpreter = struct {
                                             // If `path` points to a directory, then it is deleted (if empty) or we handle it as a directory
                                             // If it's actually a file, we get an error so we don't need to call `stat` to check that.
                                             if (this.opts.recursive or this.opts.remove_empty_dirs) {
-                                                return switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.os.AT.REMOVEDIR)) {
+                                                return switch (ShellSyscall.unlinkatWithFlags(this.getcwd(), path, std.posix.AT.REMOVEDIR)) {
                                                     // it was empty, we saved a syscall
                                                     .result => return this.verboseDeleted(parent_dir_task, path),
                                                     .err => |e2| {
@@ -9927,7 +9935,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                    var this: *ShellRmTask = @fieldParentPtr(ShellRmTask, "task", task);
+                    var this: *ShellRmTask = @alignCast(@fieldParentPtr("task", task));
                     this.root_task.runFromThreadPoolImpl();
                 }
 
@@ -10126,7 +10134,7 @@ pub const Interpreter = struct {
                 }
 
                 pub fn runFromMainThread(this: *@This()) void {
-                    const yes = @fieldParentPtr(Yes, "task", this);
+                    const yes: *Yes = @fieldParentPtr("task", this);
 
                     yes.bltn.stdout.enqueue(yes, yes.expletive);
                     yes.bltn.stdout.enqueue(yes, "\n");
@@ -10824,7 +10832,7 @@ pub const Interpreter = struct {
                             return .{ .err = e };
                         },
                     };
-                    return .{ .result = os.S.ISDIR(stat.mode) };
+                    return .{ .result = bun.S.ISDIR(stat.mode) };
                 }
 
                 fn enqueueToEventLoop(this: *ShellCpTask) void {
@@ -10846,7 +10854,7 @@ pub const Interpreter = struct {
 
                 pub fn runFromThreadPool(task: *WorkPoolTask) void {
                     debug("runFromThreadPool", .{});
-                    var this = @fieldParentPtr(@This(), "task", task);
+                    var this: *@This() = @fieldParentPtr("task", task);
                     if (this.runFromThreadPoolImpl()) |e| {
                         this.err = e;
                         this.enqueueToEventLoop();
@@ -11376,12 +11384,11 @@ pub const Interpreter = struct {
         }
 
         pub fn writer(this: *@This()) *IOWriter {
-            return @fieldParentPtr(IOWriter, "async_deinit", this);
+            return @alignCast(@fieldParentPtr("async_deinit", this));
         }
 
         pub fn runFromMainThread(this: *@This()) void {
-            const ioreader = @fieldParentPtr(IOWriter, "async_deinit", this);
-            ioreader.__deinit();
+            this.writer().__deinit();
         }
 
         pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
@@ -11405,11 +11412,11 @@ pub const Interpreter = struct {
         }
 
         pub fn reader(this: *AsyncDeinitReader) *IOReader {
-            return @fieldParentPtr(IOReader, "async_deinit", this);
+            return @alignCast(@fieldParentPtr("async_deinit", this));
         }
 
         pub fn runFromMainThread(this: *AsyncDeinitReader) void {
-            const ioreader = @fieldParentPtr(IOReader, "async_deinit", this);
+            const ioreader: *IOReader = @alignCast(@fieldParentPtr("async_deinit", this));
             ioreader.__deinit();
         }
 
@@ -12088,7 +12095,7 @@ pub fn ShellTask(
         pub fn onFinish(this: *@This()) void {
             debug("onFinish", .{});
             if (this.event_loop == .js) {
-                const ctx = @fieldParentPtr(Ctx, "task", this);
+                const ctx: *Ctx = @fieldParentPtr("task", this);
                 this.event_loop.js.enqueueTaskConcurrent(this.concurrent_task.js.from(ctx, .manual_deinit));
             } else {
                 const ctx = this;
@@ -12098,15 +12105,15 @@ pub fn ShellTask(
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
             debug("runFromThreadPool", .{});
-            var this = @fieldParentPtr(@This(), "task", task);
-            const ctx = @fieldParentPtr(Ctx, "task", this);
+            var this: *@This() = @fieldParentPtr("task", task);
+            const ctx: *Ctx = @fieldParentPtr("task", this);
             runFromThreadPool_(ctx);
             this.onFinish();
         }
 
         pub fn runFromMainThread(this: *@This()) void {
             debug("runFromJS", .{});
-            const ctx = @fieldParentPtr(Ctx, "task", this);
+            const ctx: *Ctx = @fieldParentPtr("task", this);
             this.ref.unref(this.event_loop);
             runFromMainThread_(ctx);
         }
@@ -12278,19 +12285,19 @@ const ShellSyscall = struct {
 
     fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
-            if (flags & os.O.DIRECTORY != 0) {
+            if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
                     var buf: bun.PathBuffer = undefined;
                     const p = switch (getPath(dir, path, &buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
                     };
-                    return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & os.O.NOFOLLOW != 0 })) {
+                    return switch (Syscall.openDirAtWindowsA(dir, p, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
                         .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
                         .err => |e| .{ .err = e.withPath(path) },
                     };
                 }
-                return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & os.O.NOFOLLOW != 0 })) {
+                return switch (Syscall.openDirAtWindowsA(dir, path, .{ .iterable = true, .no_follow = flags & bun.O.NOFOLLOW != 0 })) {
                     .result => |fd| bun.sys.toLibUVOwnedFD(fd, .open, .close_on_fail),
                     .err => |e| .{ .err = e.withPath(path) },
                 };
@@ -12525,7 +12532,7 @@ pub fn FlagParser(comptime Opts: type) type {
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     if (bun.Environment.isWindows) return false;
-    if (bun.Environment.isLinux) return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int());
+    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int());
     // macos allows regular files to be pollable: ISREG(mode) == true
-    return os.S.ISFIFO(mode) or os.S.ISSOCK(mode) or os.isatty(fd.int()) or os.S.ISREG(mode);
+    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int()) or posix.S.ISREG(mode);
 }

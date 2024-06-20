@@ -198,7 +198,7 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
             };
 
-            var dir = bun.openDirForPath(&(try std.os.toPosixPath(path))) catch |err| {
+            var dir = bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };
@@ -514,7 +514,7 @@ pub const BuildCommand = struct {
                         try writer.writeAll(rel_path);
                         try writer.writeByteNTimes(' ', padding_count);
                         const size = @as(f64, @floatFromInt(f.size)) / 1000.0;
-                        try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
+                        try std.fmt.formatType(size, "d", .{ .precision = 2 }, writer, 1);
                         try writer.writeAll(" KB\n");
                     }
 

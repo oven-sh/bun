@@ -4912,7 +4912,7 @@ pub const Process = struct {
 
         // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
         // it isn't worth doing this as a part of the CLI
-        for (bun.argv[1..]) |arg| {
+        for (bun.argv[@min(1, bun.argv.len)..]) |arg| {
             defer prev = arg;
 
             if (arg.len >= 1 and arg[0] == '-') {

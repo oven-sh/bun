@@ -1342,11 +1342,13 @@ pub const SourceMapOption = enum {
     none,
     @"inline",
     external,
+    linked,
 
     pub fn fromApi(source_map: ?Api.SourceMapMode) SourceMapOption {
-        return switch (source_map orelse Api.SourceMapMode._none) {
-            Api.SourceMapMode.external => .external,
-            Api.SourceMapMode.inline_into_file => .@"inline",
+        return switch (source_map orelse .none) {
+            .external => .external,
+            .@"inline" => .@"inline",
+            .linked => .linked,
             else => .none,
         };
     }
@@ -1354,8 +1356,16 @@ pub const SourceMapOption = enum {
     pub fn toAPI(source_map: ?SourceMapOption) Api.SourceMapMode {
         return switch (source_map orelse .none) {
             .external => .external,
-            .@"inline" => .inline_into_file,
-            else => ._none,
+            .@"inline" => .@"inline",
+            .linked => .linked,
+            .none => .none,
+        };
+    }
+
+    pub fn hasExternalFiles(mode: SourceMapOption) bool {
+        return switch (mode) {
+            .linked, .external => true,
+            else => false,
         };
     }
 
@@ -1363,6 +1373,7 @@ pub const SourceMapOption = enum {
         .{ "none", .none },
         .{ "inline", .@"inline" },
         .{ "external", .external },
+        .{ "linked", .linked },
     });
 };
 
@@ -1724,7 +1735,7 @@ pub const BundleOptions = struct {
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
-        opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
+        opts.source_map = SourceMapOption.fromApi(transform.source_map orelse .none);
 
         opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;

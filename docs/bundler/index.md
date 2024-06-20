@@ -563,12 +563,12 @@ Specifies the type of sourcemap to generate.
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  sourcemap: "external", // default "none"
+  sourcemap: 'linked', // default 'none'
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --sourcemap=external
+$ bun build ./index.tsx --outdir ./out --sourcemap=linked
 ```
 
 {% /codetabs %}
@@ -582,19 +582,19 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=external
 
 ---
 
-- `"inline"`
-- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload.
+- `"linked"`
+- A separate `*.js.map` file is created alongside each `*.js` bundle using a `//# sourceMappingURL` comment to link the two. Requires `--outdir` to be set. The base URL of this can be customized with `--public-path`.
 
   ```ts
   // <bundled code here>
 
-  //# sourceMappingURL=data:application/json;base64,<encoded sourcemap here>
+  //# sourceMappingURL=bundle.js.map
   ```
 
 ---
 
 - `"external"`
-- A separate `*.js.map` file is created alongside each `*.js` bundle.
+- A separate `*.js.map` file is created alongside each `*.js` bundle without inserting a `//# sourceMappingURL` comment.
 
 {% /table %}
 
@@ -608,7 +608,18 @@ Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-
 //# debugId=<DEBUG ID>
 ```
 
-The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
+---
+
+- `"inline"`
+- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload.
+
+  ```ts
+  // <bundled code here>
+
+  //# sourceMappingURL=data:application/json;base64,<encoded sourcemap here>
+  ```
+
+  The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
 
 {% /callout %}
 
@@ -1246,7 +1257,7 @@ interface BuildOptions {
   loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
   manifest?: boolean; // false
   external?: string[]; // []
-  sourcemap?: "none" | "inline" | "external"; // "none"
+  sourcemap?: "none" | "inline" | "linked" | "external" | boolean; // "none"
   root?: string; // computed from entrypoints
   naming?:
     | string

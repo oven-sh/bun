@@ -1904,7 +1904,7 @@ pub const DebugIDFormatter = struct {
         // We fill the end of the id with "bun!bun!" hex encoded
         var buf: [32]u8 = undefined;
         const formatter = bun.fmt.hexIntUpper(self.id);
-        _ = std.fmt.bufPrint(&buf, "{}64756e2164756e21", .{formatter}) catch unreachable;
+        _ = std.fmt.bufPrint(&buf, "{}64756E2164756E21", .{formatter}) catch unreachable;
         try writer.writeAll(&buf);
     }
 };

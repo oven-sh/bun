@@ -759,6 +759,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
+        generator.linker.options.public_path = bundler.options.public_path;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -3801,7 +3802,7 @@ const LinkerContext = struct {
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
-    options: LinkerOptions = LinkerOptions{},
+    options: LinkerOptions = .{},
 
     wait_group: ThreadPoolLib.WaitGroup = undefined,
 
@@ -9293,7 +9294,7 @@ const LinkerContext = struct {
 
         var output_files = std.ArrayList(options.OutputFile).initCapacity(
             bun.default_allocator,
-            (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(
+            (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) + @as(
                 usize,
                 @intFromBool(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
             ),
@@ -9336,11 +9337,30 @@ const LinkerContext = struct {
                 );
 
                 switch (c.options.source_maps) {
-                    .external => {
+                    .external, .linked => |tag| {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
                         bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                         bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
+
+                        if (tag == .linked) {
+                            const a, const b = if (c.options.public_path.len > 0)
+                                cheapPrefixNormalizer(c.options.public_path, source_map_final_rel_path)
+                            else
+                                .{ "", std.fs.path.basename(source_map_final_rel_path) };
+
+                            const source_map_start = "//# sourceMappingURL=";
+                            const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
+                            var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                            buf.appendSliceAssumeCapacity(code_result.buffer);
+                            buf.appendSliceAssumeCapacity(source_map_start);
+                            buf.appendSliceAssumeCapacity(a);
+                            buf.appendSliceAssumeCapacity(b);
+                            buf.appendAssumeCapacity('\n');
+
+                            Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                            code_result.buffer = buf.items;
+                        }
 
                         sourcemap_output_file = options.OutputFile.init(
                             options.OutputFile.Options{
@@ -9520,12 +9540,29 @@ const LinkerContext = struct {
             );
 
             switch (c.options.source_maps) {
-                .external => {
+                .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
                         chunk.final_rel_path,
                         ".map",
                     }) catch @panic("Failed to allocate memory for external source map path");
+
+                    if (tag == .linked) {
+                        const a, const b = if (c.options.public_path.len > 0)
+                            cheapPrefixNormalizer(c.options.public_path, source_map_final_rel_path)
+                        else
+                            .{ "", std.fs.path.basename(source_map_final_rel_path) };
+
+                        const source_map_start = "//# sourceMappingURL=";
+                        const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
+                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                        buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(source_map_start);
+                        buf.appendSliceAssumeCapacity(a);
+                        buf.appendSliceAssumeCapacity(b);
+                        buf.appendAssumeCapacity('\n');
+                        code_result.buffer = buf.items;
+                    }
 
                     switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,

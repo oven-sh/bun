@@ -2219,6 +2219,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         DO_REBIND(arg0);
     }
 
+    int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);
+
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
         castedThis->version_db->version++;
@@ -2227,8 +2229,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
-
-    int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);
 
     while (status == SQLITE_ROW) {
         status = sqlite3_step(stmt);

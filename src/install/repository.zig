@@ -153,16 +153,31 @@ pub const Repository = extern struct {
         env: *DotEnv.Loader,
         argv: []const string,
     ) !string {
-        var std_map = try env.map.stdEnvMap(allocator);
-        // Run git clone in non-interactive mode and
-        // error if ssh or https asks for a password
-        // so that we can fallback to ssh mode
-        try std_map.unsafe_map.put("GIT_TERMINAL_PROMPT", "0");
-        try std_map.unsafe_map.put("GIT_ASKPASS", "echo");
-        try std_map.unsafe_map.put("SSH_ASKPASS", "echo");
-        try std_map.unsafe_map.put("GCM_INTERACTIVE", "never");
+        // Note: currently if the user sets this to some value that causes
+        // a prompt for a password, the stdout of the prompt will be masked
+        // by further output of the rest of the install process.
+        // A value can still be entered, but we need to find a workaround
+        // so the user can see what is being prompted. By default the settings
+        // below will cause no prompt and throw instead.
+        const originalAskPass = env.map.get("GIT_ASKPASS");
+        const originalSSHCommand = env.map.get("GIT_SSH_COMMAND");
 
-        defer std_map.deinit();
+        try env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", "echo");
+        try env.map.putAllocKeyAndValue(allocator, "SSH_ASKPASS", "echo");
+        try env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new");
+
+        var std_map = try env.map.stdEnvMap(allocator);
+
+        defer {
+            _ = if (originalAskPass) |value| env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", value) catch void
+            else env.map.remove("GIT_ASKPASS");
+
+            _ = if (originalSSHCommand) |value| env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", value) catch void
+            else env.map.remove("GIT_SSH_COMMAND");
+
+            // Remove the previous environment variables if they were set
+            std_map.deinit();
+        }
 
         const result = if (comptime Environment.isWindows)
             try std.process.Child.run(.{

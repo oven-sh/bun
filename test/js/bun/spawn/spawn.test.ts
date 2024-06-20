@@ -1,6 +1,6 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { closeSync, fstatSync, openSync } from "fs";
+import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import {
   gcTick as _gcTick,
   bunEnv,
@@ -9,12 +9,13 @@ import {
   isMacOS,
   isPosix,
   isWindows,
+  shellExe,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { rmSync, writeFileSync } from "node:fs";
-import path from "path";
-let tmp;
+import path, { join } from "path";
+
+let tmp: string;
 
 beforeAll(() => {
   tmp = tmpdirSync();
@@ -47,7 +48,7 @@ for (let [gcTick, label] of [
 
       it("Uint8Array works as stdin", async () => {
         const { stdout, stderr } = spawnSync({
-          cmd: ["cat"],
+          cmd: [shellExe(), "-c", "cat"],
           stdin: new TextEncoder().encode(hugeString),
         });
         gcTick();
@@ -62,11 +63,11 @@ for (let [gcTick, label] of [
 
       it("check exit code", async () => {
         const { exitCode: exitCode1 } = spawnSync({
-          cmd: ["ls"],
+          cmd: [shellExe(), "-c", "ls"],
         });
         gcTick();
         const { exitCode: exitCode2 } = spawnSync({
-          cmd: ["false"],
+          cmd: [shellExe(), "-c", "false"],
         });
         gcTick();
         expect(exitCode1).toBe(0);
@@ -121,26 +122,26 @@ for (let [gcTick, label] of [
       });
 
       it("Uint8Array works as stdin", async () => {
-        rmSync(tmp + "out.123.txt", { force: true });
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();
         const { exited } = spawn({
-          cmd: ["cat"],
+          cmd: [shellExe(), "-c", "cat"],
           stdin: new TextEncoder().encode(hugeString),
-          stdout: Bun.file(tmp + "out.123.txt"),
+          stdout: Bun.file(stdinPath),
         });
         gcTick();
         await exited;
-        expect(require("fs").readFileSync(tmp + "out.123.txt", "utf8") == hugeString).toBeTrue();
+        expect(readFileSync(stdinPath, "utf8")).toBe(hugeString);
         gcTick();
       });
 
       it("check exit code", async () => {
         const exitCode1 = await spawn({
-          cmd: ["ls"],
+          cmd: [shellExe(), "-c", "ls"],
         }).exited;
         gcTick();
         const exitCode2 = await spawn({
-          cmd: ["false"],
+          cmd: [shellExe(), "-c", "false"],
         }).exited;
         gcTick();
         expect(exitCode1).toBe(0);
@@ -150,7 +151,7 @@ for (let [gcTick, label] of [
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
         const proc = spawn({
-          cmd: ["sleep", "0.1"],
+          cmd: [shellExe(), "-c", "sleep", "0.1"],
         });
         gcTick();
         for await (const _ of proc.stdout) {
@@ -167,7 +168,7 @@ for (let [gcTick, label] of [
           await new Promise<void>(resolve => {
             var counter = 0;
             spawn({
-              cmd: ["ls"],
+              cmd: [shellExe(), "-c", "ls"],
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -181,7 +182,7 @@ for (let [gcTick, label] of [
             });
 
             spawn({
-              cmd: ["false"],
+              cmd: [shellExe(), "-c", "false"],
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -267,16 +268,16 @@ for (let [gcTick, label] of [
       });
 
       it("Blob works as stdin", async () => {
-        rmSync(tmp + "out.123.txt", { force: true });
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();
         const { exited } = spawn({
-          cmd: ["cat"],
+          cmd: [shellExe(), "-c", "cat"],
           stdin: new Blob([new TextEncoder().encode(hugeString)]),
-          stdout: Bun.file(tmp + "out.123.txt"),
+          stdout: Bun.file(stdinPath),
         });
 
         await exited;
-        expect((await Bun.file(tmp + "out.123.txt").text()) == hugeString).toBeTrue();
+        expect(readFileSync(stdinPath, "utf8")).toBe(hugeString);
       });
 
       it("Bun.file() works as stdout", async () => {
@@ -293,43 +294,47 @@ for (let [gcTick, label] of [
       });
 
       it("Bun.file() works as stdin", async () => {
-        await write(Bun.file(tmp + "out.456.txt"), "hello there!");
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "hello there!");
         gcTick();
         const { stdout } = spawn({
-          cmd: ["cat"],
+          cmd: [shellExe(), "-c", "cat"],
           stdout: "pipe",
-          stdin: Bun.file(tmp + "out.456.txt"),
+          stdin: Bun.file(stdinPath),
         });
         gcTick();
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
       });
 
       it("Bun.file() works as stdin and stdout", async () => {
-        writeFileSync(tmp + "out.456.txt", "hello!");
+        const stdinPath = join(tmpdirSync(), "stdout.txt");
+        writeFileSync(stdinPath, "hello!");
         gcTick();
-        writeFileSync(tmp + "out.123.txt", "wrong!");
+        const stdoutPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdoutPath, "wrong!");
         gcTick();
 
         const { exited } = spawn({
-          cmd: ["cat"],
-          stdout: Bun.file(tmp + "out.123.txt"),
-          stdin: Bun.file(tmp + "out.456.txt"),
+          cmd: [shellExe(), "-c", "cat"],
+          stdout: Bun.file(stdoutPath),
+          stdin: Bun.file(stdinPath),
         });
         gcTick();
         await exited;
-        expect(await Bun.file(tmp + "out.456.txt").text()).toBe("hello!");
+        expect(await Bun.file(stdinPath).text()).toBe("hello!");
         gcTick();
-        expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello!");
+        expect(await Bun.file(stdoutPath).text()).toBe("hello!");
       });
 
       it("stdout can be read", async () => {
-        await Bun.write(tmp + "out.txt", hugeString);
+        const filePath = join(tmpdirSync(), "out.txt");
+        await Bun.write(filePath, hugeString);
         gcTick();
         const promises = new Array(10);
         const statusCodes = new Array(10);
         for (let i = 0; i < promises.length; i++) {
           const { stdout, exited } = spawn({
-            cmd: ["cat", tmp + "out.txt"],
+            cmd: [shellExe(), "-c", "cat", filePath],
             stdout: "pipe",
             stdin: "ignore",
             stderr: "inherit",
@@ -360,7 +365,7 @@ for (let [gcTick, label] of [
 
       it("kill(SIGKILL) works", async () => {
         const process = spawn({
-          cmd: ["sleep", "1000"],
+          cmd: [shellExe(), "-c", "sleep", "1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -371,7 +376,7 @@ for (let [gcTick, label] of [
 
       it("kill() works", async () => {
         const process = spawn({
-          cmd: ["sleep", "1000"],
+          cmd: [shellExe(), "-c", "sleep", "1000"],
           stdout: "pipe",
         });
         gcTick();
@@ -418,7 +423,7 @@ for (let [gcTick, label] of [
       describe("pipe", () => {
         function huge() {
           return spawn({
-            cmd: ["cat"],
+            cmd: [shellExe(), "-c", "cat"],
             stdout: "pipe",
             stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
@@ -545,11 +550,13 @@ if (!process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD && isPosix && !isMacOS) {
 }
 
 describe("spawn unref and kill should not hang", () => {
+  const cmd = [shellExe(), "-c", "sleep", "0.001"];
+
   it("kill and await exited", async () => {
     const promises = new Array(10);
     for (let i = 0; i < promises.length; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd,
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -565,7 +572,7 @@ describe("spawn unref and kill should not hang", () => {
   it("unref", async () => {
     for (let i = 0; i < 10; i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd,
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -580,7 +587,7 @@ describe("spawn unref and kill should not hang", () => {
   it("kill and unref", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd,
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -598,7 +605,7 @@ describe("spawn unref and kill should not hang", () => {
   it("unref and kill", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
       const proc = spawn({
-        cmd: ["sleep", "0.001"],
+        cmd,
         stdout: "ignore",
         stderr: "ignore",
         stdin: "ignore",
@@ -627,7 +634,7 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
   console.log("running", order.join(","), "x 100");
   for (let i = 0; i < (isWindows ? 10 : 100); i++) {
     const proc = spawn({
-      cmd: ["sleep", sleep],
+      cmd: [shellExe(), "-c", "sleep", sleep],
       stdout: "ignore",
       stderr: "ignore",
       stdin: "ignore",

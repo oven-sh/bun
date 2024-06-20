@@ -4892,7 +4892,8 @@ pub const Process = struct {
     }
 
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const allocator = globalObject.allocator();
+        var sfb = std.heap.stackFallback(4096, globalObject.allocator());
+        const temp_alloc = sfb.get();
         const vm = globalObject.bunVM();
 
         if (vm.worker) |worker| {
@@ -4906,32 +4907,62 @@ pub const Process = struct {
             }
         }
 
-        var args = allocator.alloc(
-            JSC.ZigString,
-            // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
-            // argv also omits the script name
-            bun.argv.len -| 1,
-        ) catch bun.outOfMemory();
-        defer allocator.free(args);
-        var used: usize = 0;
-        const offset = 1;
+        var args = std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1) catch bun.outOfMemory();
+        defer args.deinit();
 
-        for (bun.argv[@min(bun.argv.len, offset)..]) |arg| {
-            if (arg.len == 0)
+        var seen_run = false;
+        var prev: ?[]const u8 = null;
+
+        // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
+        // it isn't worth doing this as a part of the CLI
+        for (bun.argv[@min(1, bun.argv.len)..]) |arg| {
+            defer prev = arg;
+
+            if (arg.len >= 1 and arg[0] == '-') {
+                args.append(bun.String.createUTF8(arg)) catch bun.outOfMemory();
                 continue;
+            }
 
-            if (arg[0] != '-')
+            if (!seen_run and bun.strings.eqlComptime(arg, "run")) {
+                seen_run = true;
                 continue;
+            }
 
-            if (vm.argv.len > 0 and strings.eqlLong(vm.argv[0], arg, true))
-                break;
+            // A set of execArgv args consume an extra argument, so we do not want to
+            // confuse these with script names.
+            const map = bun.ComptimeStringMap(void, comptime brk: {
+                const auto_params = bun.CLI.Arguments.auto_params;
+                const KV = struct { []const u8, void };
+                var entries: [auto_params.len]KV = undefined;
+                var i = 0;
+                for (auto_params) |param| {
+                    if (param.takes_value != .none) {
+                        if (param.names.long) |name| {
+                            entries[i] = .{ "--" ++ name, {} };
+                            i += 1;
+                        }
+                        if (param.names.short) |name| {
+                            entries[i] = .{ &[_]u8{ '-', name }, {} };
+                            i += 1;
+                        }
+                    }
+                }
 
-            args[used] = JSC.ZigString.fromUTF8(arg);
+                var result: [i]KV = undefined;
+                @memcpy(&result, entries[0..i]);
+                break :brk result;
+            });
 
-            used += 1;
+            if (prev) |p| if (map.has(p)) {
+                args.append(bun.String.createUTF8(arg)) catch @panic("OOM");
+                continue;
+            };
+
+            // we hit the script name
+            break;
         }
 
-        return JSC.JSValue.createStringArray(globalObject, args.ptr, used, true);
+        return bun.String.toJSArray(globalObject, args.items);
     }
 
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

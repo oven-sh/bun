@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = join(import.meta.dir, "process-sleep.js");
@@ -542,12 +542,13 @@ for (const stub of emptyArrayStubs) {
 }
 
 it("dlopen args parsing", () => {
-  expect(() => process.dlopen({ module: "42" }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: 42 }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: "42" } }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: 42 } }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: Symbol() }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
+  const notFound = join(tmp, "not-found.so");
+  expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: 42 }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: "42" } }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: 42 } }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: Symbol() }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, notFound)).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
 });
 

@@ -325,6 +325,7 @@ pub const Repository = extern struct {
             _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
+                "-c core.longpaths=true",
                 "--quiet",
                 "--bare",
                 url,
@@ -401,6 +402,7 @@ pub const Repository = extern struct {
             _ = exec(allocator, env, &[_]string{
                 "git",
                 "clone",
+                "-c core.longpaths=true",
                 "--quiet",
                 "--no-checkout",
                 try bun.getFdPath(repo_dir.fd, &final_path_buf),

@@ -697,14 +697,10 @@ function getTmpdir() {
       const tmpdir = process.env[key] || "";
       // HACK: There are too many bugs with cygwin directories.
       // We should probably run Windows tests in both cygwin and powershell.
-      if (/cygwin|cygdrive/i.test(tmpdir)) {
+      if (/cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
         continue;
       }
-      if (!/^[a-z]/i.test(tmpdir)) {
-        continue;
-      }
-      const driveLetter = tmpdir[1];
-      return normalizeWindows(`${driveLetter.toUpperCase()}:${tmpdir.substring(2)}`);
+      return normalizeWindows(tmpdir);
     }
     const appData = process.env["LOCALAPPDATA"];
     if (appData) {

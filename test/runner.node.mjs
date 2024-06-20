@@ -301,15 +301,15 @@ async function spawnSafe({
       buffer = stack || message;
     }
   } else if (
-    (error = /thread \d+ panic: (.*)/i.test(buffer)) ||
-    (error = /panic\(.*\): (.*)/i.test(buffer)) ||
-    (error = /(Segmentation fault) at address/i.test(buffer)) ||
-    (error = /(Internal assertion failure)/i.test(buffer)) ||
-    (error = /(Illegal instruction) at address/i.test(buffer)) ||
-    (error = /panic: (.*) at address/i.test(buffer)) ||
-    (error = /oh no: Bun has crashed/i.test(buffer))
+    (error = /thread \d+ panic: (.*)/i.exec(buffer)) ||
+    (error = /panic\(.*\): (.*)/i.exec(buffer)) ||
+    (error = /(Segmentation fault) at address/i.exec(buffer)) ||
+    (error = /(Internal assertion failure)/i.exec(buffer)) ||
+    (error = /(Illegal instruction) at address/i.exec(buffer)) ||
+    (error = /panic: (.*) at address/i.exec(buffer)) ||
+    (error = /oh no: Bun has crashed/i.exec(buffer))
   ) {
-    const [, message] = error;
+    const [, message] = error || [];
     error = message ? `crash: ${message}` : "crash";
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {

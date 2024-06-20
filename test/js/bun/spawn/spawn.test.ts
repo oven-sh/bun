@@ -105,7 +105,8 @@ for (let [gcTick, label] of [
 
       it("as an array with options object", async () => {
         gcTick();
-        const { stdout } = spawn(["printenv", "FOO"], {
+        const { stdout } = spawn({
+          cmd: [bunExe(), "-e", "console.log(process.env.FOO)"],
           cwd: tmp,
           env: {
             ...process.env,
@@ -334,7 +335,7 @@ for (let [gcTick, label] of [
         const statusCodes = new Array(10);
         for (let i = 0; i < promises.length; i++) {
           const { stdout, exited } = spawn({
-            cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+            cmd: [bunExe(), "-e", `require('fs').createReadStream(${JSON.stringify(filePath)}).pipe(process.stdout)`],
             stdout: "pipe",
             stdin: "ignore",
             stderr: "inherit",

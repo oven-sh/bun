@@ -57,30 +57,8 @@ export function nodeExe(): string | null {
   return which("node") || null;
 }
 
-export function bashExe(): string {
-  const bash = which("bash");
-  if (!bash) {
-    throw new Error("Failed to find 'bash'");
-  }
-  return bash;
-}
-
-export function pwshExe(): string {
-  if (!isWindows) {
-    throw new Error("Powershell is only supported on Windows");
-  }
-  const pwsh = which("pwsh") || which("powershell");
-  if (!pwsh) {
-    throw new Error("Failed to find 'pwsh' or 'powershell'");
-  }
-  return pwsh;
-}
-
 export function shellExe(): string {
-  if (isWindows) {
-    return bashExe() || pwshExe();
-  }
-  return bashExe();
+  return isWindows ? "pwsh" : "bash";
 }
 
 export function gc(force = true) {

@@ -542,7 +542,7 @@ for (const stub of emptyArrayStubs) {
 }
 
 it("dlopen args parsing", () => {
-  const notFound = join(tmp, "not-found.so");
+  const notFound = join(tmpdirSync(), "not-found.so");
   expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();
   expect(() => process.dlopen({ module: 42 }, notFound)).toThrow();
   expect(() => process.dlopen({ module: { exports: "42" } }, notFound)).toThrow();

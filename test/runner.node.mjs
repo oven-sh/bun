@@ -1267,13 +1267,16 @@ function reportAnnotationToBuildKite(label, content, attempt = 0) {
   if (status === 0) {
     return;
   }
-  const cause = error ?? signal ?? `code ${status}`;
   if (attempt > 0) {
+    const cause = error ?? signal ?? `code ${status}`;
     throw new Error(`Failed to create annotation: ${label}`, { cause });
   }
-  let message = `Failed to create annotation for \`${label}\`: ${cause}`;
+  const buildLabel = getBuildLabel();
+  const buildUrl = getBuildUrl();
+  const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
+  let message = `<details><summary>\`${label}\` - annotation error on ${platform}</summary>`;
   if (stderr) {
-    message += `\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\``;
+    message += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }
   reportAnnotationToBuildKite(`${label}-error`, message, attempt + 1);
 }

@@ -105,7 +105,7 @@ it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
   const tmpFile = join(tmpdirSync(), "file.txt");
-  expect(Bun.inspect(Bun.file(tmpFile))).toBe(`FileRef (${JSON.stringify(tmpFile)}) {
+  expect(Bun.inspect(Bun.file(tmpFile))).toBe(`FileRef ("${tmpFile}") {
   type: "text/plain;charset=utf-8"
 }`);
   expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {

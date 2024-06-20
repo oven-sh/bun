@@ -58,6 +58,11 @@ describe("napi", () => {
       expect(result).toEndWith("str:");
     });
   });
+
+  it("#1288", async () => {
+    const result = checkSameOutput("self", []);
+    expect(result).toBe("hello world!");
+  });
 });
 
 function checkSameOutput(test: string, args: any[]) {

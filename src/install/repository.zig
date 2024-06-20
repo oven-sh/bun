@@ -163,7 +163,6 @@ pub const Repository = extern struct {
         const originalSSHCommand = env.map.get("GIT_SSH_COMMAND");
 
         try env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", "echo");
-        try env.map.putAllocKeyAndValue(allocator, "SSH_ASKPASS", "echo");
         try env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new");
 
         var std_map = try env.map.stdEnvMap(allocator);

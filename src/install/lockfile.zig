@@ -1993,52 +1993,6 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_features: Features, comptime log_level: PackageManager.Options.LogLevel) void {
-    const resolutions_lists: []const DependencyIDSlice = this.packages.items(.resolutions);
-    const dependency_lists: []const DependencySlice = this.packages.items(.dependencies);
-    const dependencies_buffer = this.buffers.dependencies.items;
-    const resolutions_buffer = this.buffers.resolutions.items;
-    const end = @as(PackageID, @truncate(this.packages.len));
-
-    var any_failed = false;
-    const string_buf = this.buffers.string_bytes.items;
-
-    const root_list = resolutions_lists[0];
-    for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
-        for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
-            if (package_id < end) continue;
-            if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
-                if (root_list.contains(@truncate(parent_id)))
-                    local_features
-                else
-                    remote_features,
-            )) continue;
-            if (log_level != .silent) {
-                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
-                } else {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.name.slice(string_buf),
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
-                }
-            }
-            // track this so we can log each failure instead of just the first
-            any_failed = true;
-        }
-    }
-
-    if (any_failed) Global.crash();
-}
-
 pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {

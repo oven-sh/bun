@@ -1030,7 +1030,7 @@ it("Bun.file().stream() read text from large file", async () => {
     written += sink.write(Bun.SHA1.hash((i++).toString(10), "hex"));
   }
   const hugely = Buffer.from(sink.end()).toString();
-  const tmpfile = join(realpathSync(tmpdir()), "bun-streams-test.txt");
+  const tmpfile = join(realpathSync(tmpdirSync()), "bun-streams-test.txt");
   writeFileSync(tmpfile, hugely);
   try {
     const chunks = [];

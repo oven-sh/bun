@@ -1,8 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "bun:test";
-import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { describe, it, expect, afterAll, beforeEach } from "bun:test";
+import { ChildProcess, spawn, execFile, exec, spawnSync, execFileSync, execSync } from "node:child_process";
 import { promisify } from "node:util";
-import { bunExe, bunEnv, isWindows, tmpdirSync } from "harness";
+import { bunExe, bunEnv, isWindows, tmpdirSync, nodeExe, shellExe } from "harness";
 import path from "path";
 import { semver } from "bun";
 import fs from "fs";
@@ -23,10 +22,8 @@ afterAll(() => {
   process.env = originalProcessEnv;
 });
 
-const platformTmpDir = require("fs").realpathSync(tmpdir());
-
-function isValidSemver(str) {
-  const cmp = str.replaceAll("-debug", "").trim();
+function isValidSemver(string: string): boolean {
+  const cmp = string.replaceAll("-debug", "").trim();
   const valid = semver.satisfies(cmp, "*");
 
   if (!valid) {
@@ -65,21 +62,16 @@ describe("ChildProcess.spawn()", () => {
 
 describe("spawn()", () => {
   it("should spawn a process", () => {
-    const child = spawn("echo", ["hello"]);
+    const child = spawn("bun", ["-v"]);
     expect(!!child).toBe(true);
   });
 
   it("should disallow invalid filename", () => {
-    let child;
-    let child2;
-    try {
-      // @ts-ignore
-      child = spawn(123);
-      // @ts-ignore
-      child2 = spawn(["echo", "hello"]);
-    } catch (e) {}
-    expect(!!child).toBe(false);
-    expect(!!child2).toBe(false);
+    // @ts-ignore
+    expect(() => spawn(123)).toThrow({
+      message: 'The "file" argument must be of type string. Received 123',
+      code: "ERR_INVALID_ARG_TYPE",
+    });
   });
 
   it("should allow stdout to be read via Node stream.Readable `data` events", async () => {
@@ -138,18 +130,19 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set cwd", async () => {
-    const child = spawn(bunExe(), ["-e", "console.log(process.cwd())"], { cwd: platformTmpDir, env: bunEnv });
+    const tmpdir = tmpdirSync();
     const result: string = await new Promise(resolve => {
+      const child = spawn(bunExe(), ["-e", "console.log(process.cwd())"], { cwd: tmpdir, env: bunEnv });
       child.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
-    expect(result.trim()).toBe(platformTmpDir);
+    expect(result.trim()).toBe(tmpdir);
   });
 
   it("should allow us to write to stdin", async () => {
-    const child = spawn("tee");
     const result: string = await new Promise(resolve => {
+      const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], { env: bunEnv });
       child.stdin.write("hello");
       child.stdout.on("data", data => {
         resolve(data.toString());
@@ -159,7 +152,7 @@ describe("spawn()", () => {
   });
 
   it("should allow us to timeout hanging processes", async () => {
-    const child = spawn("sleep", ["2"], { timeout: 3 });
+    const child = spawn(shellExe(), ["-c", "sleep", "2"], { timeout: 3 });
     const start = performance.now();
     let end: number;
     await new Promise(resolve => {
@@ -174,22 +167,13 @@ describe("spawn()", () => {
 
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
-      const child = spawn("printenv", {
-        env: env,
-        stdio: ["inherit", "pipe", "inherit"],
-      });
-      const result: object = await new Promise(resolve => {
-        let output = "";
+      const result: string = await new Promise(resolve => {
+        const child = spawn(bunExe(), ["-e", "process.stdout.write(JSON.stringify(process.env))"], { env });
         child.stdout.on("data", data => {
-          output += data;
-        });
-        child.stdout.on("end", () => {
-          const envs = output.split("\n").map(env => [env.slice(0, env.indexOf("=")), env.slice(env.indexOf("=") + 1)]);
-          const obj = Object.fromEntries(envs);
-          resolve(obj);
+          resolve(data.toString());
         });
       });
-      return result;
+      return JSON.parse(result);
     }
 
     // on Windows, there's a set of environment variables which are always set
@@ -199,10 +183,10 @@ describe("spawn()", () => {
       expect(await getChildEnv(undefined)).not.toStrictEqual({});
       expect(await getChildEnv(null)).not.toStrictEqual({});
     } else {
-      expect(await getChildEnv({ TEST: "test" })).toMatchObject({ TEST: "test" });
-      expect(await getChildEnv({})).toMatchObject({});
-      expect(await getChildEnv(undefined)).toMatchObject(process.env);
-      expect(await getChildEnv(null)).toMatchObject(process.env);
+      expect(await getChildEnv({ TEST: "test" })).toStrictEqual({ TEST: "test" });
+      expect(await getChildEnv({})).toStrictEqual({});
+      expect(await getChildEnv(undefined)).toStrictEqual(process.env);
+      expect(await getChildEnv(null)).toStrictEqual(process.env);
     }
   });
 
@@ -212,11 +196,13 @@ describe("spawn()", () => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
+    const node = nodeExe();
+    const bun = bunExe();
     const child = spawn(
-      "node",
+      node || bun,
       ["-e", "console.log(JSON.stringify([process.argv0, fs.realpathSync(process.argv[0])]))"],
       {
-        argv0: bunExe(),
+        argv0: bun,
         stdio: ["inherit", "pipe", "inherit"],
       },
     );
@@ -232,32 +218,33 @@ describe("spawn()", () => {
     });
 
     const result = await promise;
-    expect(JSON.parse(result)).toStrictEqual([bunExe(), fs.realpathSync(Bun.which("node"))]);
+    expect(JSON.parse(result)).toStrictEqual([bun, fs.realpathSync(node || bun)]);
   });
 
-  it("should allow us to spawn in a shell", async () => {
-    const result1: string = await new Promise(resolve => {
-      const child1 = spawn("echo", ["$0"], { shell: true });
-      child1.stdout.on("data", data => {
-        resolve(data.toString());
+  it("should allow us to spawn in the default shell", async () => {
+    const shellPath: string = await new Promise(resolve => {
+      const child = spawn("echo", [isWindows ? "$env:SHELL" : "$SHELL"], { shell: true });
+      child.stdout.on("data", data => {
+        resolve(data.toString().trim());
       });
     });
-    const result2: string = await new Promise(resolve => {
-      const child2 = spawn("echo", ["$0"], { shell: "bash" });
-      child2.stdout.on("data", data => {
-        resolve(data.toString());
-      });
-    });
-
-    // on Windows it will run in comamnd prompt
-    // we know it's command prompt because it's the only shell that doesn't support $0.
-    expect(result1.trim()).toBe(isWindows ? "$0" : "/bin/sh");
-
-    expect(result2.trim()).toBe("bash");
+    expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
   });
+
+  it("should allow us to spawn in a specified shell", async () => {
+    const shell = shellExe();
+    const shellPath: string = await new Promise(resolve => {
+      const child = spawn("echo", [isWindows ? "$env:SHELL" : "$SHELL"], { shell });
+      child.stdout.on("data", data => {
+        resolve(data.toString().trim());
+      });
+    });
+    expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
+  });
+
   it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+    const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
+    expect(isValidSemver(stdout.trim())).toBe(true);
   });
 });
 
@@ -302,8 +289,8 @@ describe("exec()", () => {
 
 describe("spawnSync()", () => {
   it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+    const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
+    expect(isValidSemver(stdout.trim())).toBe(true);
   });
 });
 

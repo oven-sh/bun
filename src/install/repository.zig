@@ -174,7 +174,6 @@ pub const Repository = extern struct {
             _ = if (originalSSHCommand) |value| env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", value) catch void
             else env.map.remove("GIT_SSH_COMMAND");
 
-            // Remove the previous environment variables if they were set
             std_map.deinit();
         }
 

@@ -138,11 +138,11 @@ for (let [gcTick, label] of [
 
       it("check exit code", async () => {
         const exitCode1 = await spawn({
-          cmd: [shellExe(), "-c", "ls"],
+          cmd: [bunExe(), "-e", "process.exit(0)"],
         }).exited;
         gcTick();
         const exitCode2 = await spawn({
-          cmd: [shellExe(), "-c", "false"],
+          cmd: [bunExe(), "-e", "process.exit(1)"],
         }).exited;
         gcTick();
         expect(exitCode1).toBe(0);

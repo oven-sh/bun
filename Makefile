@@ -449,8 +449,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-ldecrepit \
 	-lssl \
 	-lcrypto \
-	-llolhtml \
-	-lbase64
+	-llolhtml
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -1971,11 +1970,6 @@ copy-to-bun-release-dir-bin:
 
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
-.PHONY: base64
-base64:
-	cd $(BUN_DEPS_DIR)/base64 && make clean && rm -rf CMakeCache.txt CMakeFiles && cmake $(CMAKE_FLAGS) . && make
-	cp $(BUN_DEPS_DIR)/base64/libbase64.a $(BUN_DEPS_OUT_DIR)/libbase64.a
-
 .PHONY: cold-jsc-start
 cold-jsc-start:
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
@@ -1993,7 +1987,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd base64
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd
 
 
 .PHONY: vendor-without-check

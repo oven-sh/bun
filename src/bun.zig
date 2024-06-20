@@ -784,23 +784,37 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
     }
 }
 pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
-pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
-    return struct {
+pub const TriState = enum(u8) { no, yes, unset };
+pub fn getRuntimeFeatureFlagState(comptime flag: [:0]const u8) TriState {
+    const Flag = struct {
+        pub var is_enabled = std.atomic.Value(TriState).init(.unset);
         const flag_ = flag;
-        const state = enum(u8) { idk, disabled, enabled };
-        var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
-        pub fn get() bool {
-            return switch (is_enabled.load(.SeqCst)) {
-                .enabled => true,
-                .disabled => false,
-                .idk => {
-                    const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .SeqCst);
-                    return enabled;
-                },
+        pub var once = std.once(get);
+        pub fn get() void {
+            const val = getenvZ(flag_) orelse {
+                is_enabled.store(.unset, .SeqCst);
+                return;
             };
+
+            if (strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")) {
+                is_enabled.store(.yes, .SeqCst);
+            } else {
+                is_enabled.store(.no, .SeqCst);
+            }
         }
-    }.get();
+    };
+
+    Flag.once.call();
+    return Flag.is_enabled.load(.SeqCst);
+}
+
+/// Returns true if the feature flag is enabled
+///
+/// If false or unset, returns false
+///
+/// To check if a feature flag is unset, use `getRuntimeFeatureFlagState` instead.
+pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
+    return getRuntimeFeatureFlagState(flag) == .yes;
 }
 
 /// This wrapper exists to avoid the call to sliceTo(0)

@@ -6,11 +6,11 @@ import {
   readableStreamToText,
   ArrayBufferSink,
 } from "bun";
-import { expect, it, beforeEach, afterEach, describe, test } from "bun:test";
+import { expect, it, describe, test } from "bun:test";
 import { mkfifo } from "mkfifo";
 import { realpathSync, unlinkSync, writeFileSync, createReadStream } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "os";
+import { tmpdirSync } from "harness";
 
 const isWindows = process.platform === "win32";
 
@@ -428,12 +428,13 @@ it("ReadableStream.prototype.values", async () => {
 });
 
 it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
+  const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {
-    unlinkSync("/tmp/fifo");
-  } catch (e) {}
+    unlinkSync(fifoPath);
+  } catch {}
 
   console.log("here");
-  mkfifo("/tmp/fifo", 0o666);
+  mkfifo(fifoPath, 0o666);
 
   // 65k so its less than the max on linux
   const large = "HELLO!".repeat((((1024 * 65) / "HELLO!".length) | 0) + 1);
@@ -441,7 +442,7 @@ it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
   const chunks = [];
 
   const proc = Bun.spawn({
-    cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), "/tmp/fifo"],
+    cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), fifoPath],
     stderr: "inherit",
     stdout: "pipe",
     stdin: null,
@@ -454,7 +455,7 @@ it.skipIf(isWindows)("Bun.file() read text from pipe", async () => {
 
   const prom = (async function () {
     while (chunks.length === 0) {
-      var out = Bun.file("/tmp/fifo").stream();
+      var out = Bun.file(fifoPath).stream();
       for await (const chunk of out) {
         chunks.push(chunk);
       }
@@ -737,8 +738,9 @@ it("ReadableStream for empty blob closes immediately", async () => {
 });
 
 it("ReadableStream for empty file closes immediately", async () => {
-  writeFileSync("/tmp/bun-empty-file-123456", "");
-  var blob = file("/tmp/bun-empty-file-123456");
+  const emptyFile = join(tmpdirSync(), "empty");
+  writeFileSync(emptyFile, "");
+  var blob = file(emptyFile);
   var stream;
   try {
     stream = blob.stream();

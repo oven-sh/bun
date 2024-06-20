@@ -1,7 +1,10 @@
+import { shellExe } from "../../../harness";
+
 const string = Buffer.alloc(1024 * 1024, "zombo.com\n").toString();
 process.exitCode = 1;
+
 const proc = Bun.spawn({
-  cmd: ["cat"],
+  cmd: [shellExe(), "-c", "cat"],
   stdio: ["pipe", "pipe", "inherit"],
 });
 

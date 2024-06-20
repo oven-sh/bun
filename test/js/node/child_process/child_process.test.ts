@@ -228,7 +228,13 @@ describe("spawn()", () => {
         resolve(data.toString().trim());
       });
     });
-    expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
+
+    // On Windows, the default shell is cmd.exe, which does not support this
+    if (isWindows) {
+      expect(shellPath).not.toBeEmpty();
+    } else {
+      expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
+    }
   });
 
   it("should allow us to spawn in a specified shell", async () => {

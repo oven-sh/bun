@@ -369,7 +369,6 @@ pub const ByteRangeMapping = struct {
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
-        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
 
         var functions = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
         try functions.ensureTotalCapacityPrecise(allocator, function_blocks.len);
@@ -386,6 +385,11 @@ pub const ByteRangeMapping = struct {
         errdefer executable_lines.deinit(allocator);
         errdefer lines_which_have_executed.deinit(allocator);
         var line_count: u32 = 0;
+
+        var vm = bun.JSC.VirtualMachine.get();
+        vm.source_mappings.lock();
+        defer vm.source_mappings.unlock();
+        const parsed_mappings_ = vm.source_mappings.get(source_url.slice());
 
         if (ignore_sourcemap or parsed_mappings_ == null) {
             line_count = @truncate(line_starts.len);

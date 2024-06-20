@@ -499,6 +499,8 @@ function getTestTimeout(testPath) {
 function pipeTestStdout(io, chunk) {
   if (isGitHubAction) {
     io.write(chunk.replace(/\:\:(?:end)?group\:\:.*(?:\r\n|\r|\n)/gim, ""));
+  } else if (isBuildKite) {
+    io.write(chunk.replace(/(?:---|\+\+\+|~~~|\^\^\^) /gim, " ").replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
   } else {
     io.write(chunk.replace(/\:\:.*(?:\r\n|\r|\n)/gim, ""));
   }

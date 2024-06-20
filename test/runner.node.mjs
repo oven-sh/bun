@@ -1429,7 +1429,7 @@ function isExecutable(execPath) {
   return true;
 }
 
-const [target, ...filters] = process.argv.slice(2);
+const [target, ...filters] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
 if (!target) {
   const filename = relative(cwd, import.meta.filename);
   throw new Error(`Usage: ${process.argv0} ${filename} <target> [...filters]`);

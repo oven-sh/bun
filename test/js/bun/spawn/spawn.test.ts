@@ -48,7 +48,7 @@ for (let [gcTick, label] of [
 
       it("Uint8Array works as stdin", async () => {
         const { stdout, stderr } = spawnSync({
-          cmd: [shellExe(), "-c", "cat"],
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdin: new TextEncoder().encode(hugeString),
         });
         gcTick();
@@ -125,7 +125,7 @@ for (let [gcTick, label] of [
         const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();
         const { exited } = spawn({
-          cmd: [shellExe(), "-c", "cat"],
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdin: new TextEncoder().encode(hugeString),
           stdout: Bun.file(stdinPath),
         });
@@ -271,7 +271,7 @@ for (let [gcTick, label] of [
         const stdinPath = join(tmpdirSync(), "stdin.txt");
         gcTick();
         const { exited } = spawn({
-          cmd: [shellExe(), "-c", "cat"],
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdin: new Blob([new TextEncoder().encode(hugeString)]),
           stdout: Bun.file(stdinPath),
         });
@@ -298,7 +298,7 @@ for (let [gcTick, label] of [
         writeFileSync(stdinPath, "hello there!");
         gcTick();
         const { stdout } = spawn({
-          cmd: [shellExe(), "-c", "cat"],
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdout: "pipe",
           stdin: Bun.file(stdinPath),
         });
@@ -315,7 +315,7 @@ for (let [gcTick, label] of [
         gcTick();
 
         const { exited } = spawn({
-          cmd: [shellExe(), "-c", "cat"],
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
           stdout: Bun.file(stdoutPath),
           stdin: Bun.file(stdinPath),
         });
@@ -334,7 +334,7 @@ for (let [gcTick, label] of [
         const statusCodes = new Array(10);
         for (let i = 0; i < promises.length; i++) {
           const { stdout, exited } = spawn({
-            cmd: [shellExe(), "-c", "cat", filePath],
+            cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
             stdout: "pipe",
             stdin: "ignore",
             stderr: "inherit",
@@ -423,7 +423,7 @@ for (let [gcTick, label] of [
       describe("pipe", () => {
         function huge() {
           return spawn({
-            cmd: [shellExe(), "-c", "cat"],
+            cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
             stdout: "pipe",
             stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",

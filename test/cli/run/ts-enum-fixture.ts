@@ -5,10 +5,10 @@ enum Enum {
   aa郭 = "快速串行",
   安全并行 = "安全并行",
   平衡并行 = "平衡并行",
-  '快速并行' = "快速并行",
-  aaaa\u5FEBé\u00E9 = 1,
+  "快速并行" = "快速并行",
+  aaaa快éé = 1,
   Français = 123,
   bbb = Français,
 }
 
-console.log(Enum)
+console.log(Enum);

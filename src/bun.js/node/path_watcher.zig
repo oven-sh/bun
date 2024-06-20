@@ -450,6 +450,7 @@ pub const PathWatcherManager = struct {
                             error.SystemResources => bun.C.E.NOMEM,
                             error.Unexpected,
                             error.InvalidUtf8,
+                            error.InvalidWtf8,
                             => bun.C.E.INVAL,
                         })),
                         .syscall = .watch,
@@ -987,6 +988,7 @@ pub fn watch(
                 error.NameTooLong,
                 error.BadPathName,
                 error.InvalidUtf8,
+                error.InvalidWtf8,
                 => bun.C.E.INVAL,
 
                 error.OutOfMemory,

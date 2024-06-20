@@ -310,7 +310,7 @@ async function spawnSafe({
     (error = /oh no: Bun has crashed/i.exec(buffer))
   ) {
     const [, message] = error || [];
-    error = message ? message.split("\n").find() : "crash";
+    error = message ? message.split("\n")[0] : "crash";
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";

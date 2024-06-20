@@ -36,16 +36,16 @@ pub const malloc_zone_t = opaque {
             pub var zone_t: std.atomic.Value(?*malloc_zone_t) = std.atomic.Value(?*malloc_zone_t).init(null);
             pub var zone_t_lock: bun.Lock = bun.Lock.init();
         };
-        return Holder.zone_t.load(.Monotonic) orelse brk: {
+        return Holder.zone_t.load(.monotonic) orelse brk: {
             Holder.zone_t_lock.lock();
             defer Holder.zone_t_lock.unlock();
 
-            if (Holder.zone_t.load(.Monotonic)) |z| {
+            if (Holder.zone_t.load(.monotonic)) |z| {
                 break :brk z;
             }
 
             const z = malloc_zone_t.create(T);
-            Holder.zone_t.store(z, .Monotonic);
+            Holder.zone_t.store(z, .monotonic);
             break :brk z;
         };
     }

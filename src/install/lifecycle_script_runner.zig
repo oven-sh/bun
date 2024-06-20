@@ -94,13 +94,13 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;
-            _ = alive_count.fetchAdd(1, .Monotonic);
+            _ = alive_count.fetchAdd(1, .monotonic);
         }
 
         errdefer {
             if (this.has_incremented_alive_count) {
                 this.has_incremented_alive_count = false;
-                _ = alive_count.fetchSub(1, .Monotonic);
+                _ = alive_count.fetchSub(1, .monotonic);
             }
         }
 
@@ -133,7 +133,7 @@ pub const LifecycleScriptSubprocess = struct {
                 PackageManager.ProgressStrings.script_emoji,
                 true,
             );
-            if (manager.finished_installing.load(.Monotonic)) {
+            if (manager.finished_installing.load(.monotonic)) {
                 scripts_node.activate();
                 manager.progress.refresh();
             }
@@ -293,7 +293,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (this.has_incremented_alive_count) {
             this.has_incremented_alive_count = false;
-            _ = alive_count.fetchSub(1, .Monotonic);
+            _ = alive_count.fetchSub(1, .monotonic);
         }
 
         switch (status) {
@@ -313,10 +313,10 @@ pub const LifecycleScriptSubprocess = struct {
                 }
 
                 if (!this.foreground and this.manager.scripts_node != null) {
-                    if (this.manager.finished_installing.load(.Monotonic)) {
+                    if (this.manager.finished_installing.load(.monotonic)) {
                         this.manager.scripts_node.?.completeOne();
                     } else {
-                        _ = @atomicRmw(usize, &this.manager.scripts_node.?.unprotected_completed_items, .Add, 1, .Monotonic);
+                        _ = @atomicRmw(usize, &this.manager.scripts_node.?.unprotected_completed_items, .Add, 1, .monotonic);
                     }
                 }
 
@@ -348,7 +348,7 @@ pub const LifecycleScriptSubprocess = struct {
                 }
 
                 // the last script finished
-                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                 this.deinit();
             },
             .signaled => |signal| {
@@ -443,7 +443,7 @@ pub const LifecycleScriptSubprocess = struct {
             });
         }
 
-        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .monotonic);
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{

@@ -1,13 +1,13 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
-const errno = os.errno;
+const errno = posix.errno;
 const zeroes = mem.zeroes;
 const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
@@ -142,7 +142,7 @@ pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_in
 
 // benchmarking this did nothing on macOS
 // i verified it wasn't returning -1
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
+pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {
     //     pub const struct_fstore = extern struct {
     //     fst_flags: c_uint,
     //     fst_posmode: c_int,
@@ -492,7 +492,7 @@ pub fn getTotalMemory() u64 {
     var memory_: [32]c_ulonglong = undefined;
     var size: usize = memory_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "hw.memsize",
         &memory_,
         &size,
@@ -512,7 +512,7 @@ pub fn getSystemUptime() u64 {
     var uptime_: [16]struct_BootTime = undefined;
     var size: usize = uptime_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "kern.boottime",
         &uptime_,
         &size,
@@ -533,7 +533,7 @@ pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "vm.loadavg",
         &loadavg_,
         &size,
@@ -567,8 +567,8 @@ pub const PROCESSOR_INFO_MAX = 1024;
 
 pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t, out_processor_count: *std.c.natural_t, out_processor_info: *processor_info_array_t, out_processor_infoCnt: *std.c.mach_msg_type_number_t) std.c.E;
 
-pub extern fn getuid(...) std.os.uid_t;
-pub extern fn getgid(...) std.os.gid_t;
+pub extern fn getuid(...) std.posix.uid_t;
+pub extern fn getgid(...) std.posix.gid_t;
 
 pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
@@ -734,9 +734,9 @@ pub const ifaddrs = extern struct {
     ifa_next: ?*ifaddrs,
     ifa_name: [*:0]u8,
     ifa_flags: c_uint,
-    ifa_addr: ?*std.os.sockaddr,
-    ifa_netmask: ?*std.os.sockaddr,
-    ifa_dstaddr: ?*std.os.sockaddr,
+    ifa_addr: ?*std.posix.sockaddr,
+    ifa_netmask: ?*std.posix.sockaddr,
+    ifa_dstaddr: ?*std.posix.sockaddr,
     ifa_data: *anyopaque,
 };
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
@@ -779,13 +779,19 @@ pub const F = struct {
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
 
-pub const Mode = std.os.mode_t;
+pub const Mode = std.posix.mode_t;
 
-pub const E = std.os.E;
-pub const S = std.os.S;
+pub const E = std.posix.E;
+pub const S = std.posix.S;
+
 pub fn getErrno(rc: anytype) E {
-    return std.c.getErrno(rc);
+    if (rc == -1) {
+        return @enumFromInt(std.c._errno().*);
+    } else {
+        return .SUCCESS;
+    }
 }
+
 pub extern "c" fn umask(Mode) Mode;
 
 // #define RENAME_SECLUDE                  0x00000001

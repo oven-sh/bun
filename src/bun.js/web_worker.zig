@@ -54,11 +54,11 @@ pub const WebWorker = struct {
     }
 
     pub fn hasRequestedTerminate(this: *const WebWorker) bool {
-        return this.requested_terminate.load(.Monotonic);
+        return this.requested_terminate.load(.monotonic);
     }
 
     pub fn setRequestedTerminate(this: *WebWorker) bool {
-        return this.requested_terminate.swap(true, .Release);
+        return this.requested_terminate.swap(true, .release);
     }
 
     export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
@@ -181,8 +181,9 @@ pub const WebWorker = struct {
             return;
         }
 
-        assert(this.status.load(.Acquire) == .start);
+        assert(this.status.load(.acquire) == .start);
         assert(this.vm == null);
+
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
             .allocator = this.arena.allocator(),
@@ -205,6 +206,16 @@ pub const WebWorker = struct {
             this.exitAndDeinit();
             return;
         };
+
+        // TODO: we may have to clone other parts of vm state. this will be more
+        // important when implementing vm.deinit()
+        const map = try vm.allocator.create(bun.DotEnv.Map);
+        map.* = try vm.bundler.env.map.cloneWithAllocator(vm.allocator);
+
+        const loader = try vm.allocator.create(bun.DotEnv.Loader);
+        loader.* = bun.DotEnv.Loader.init(map, vm.allocator);
+
+        vm.bundler.env = loader;
 
         vm.loadExtraEnv();
         vm.is_main_thread = false;
@@ -283,7 +294,7 @@ pub const WebWorker = struct {
     fn setStatus(this: *WebWorker, status: Status) void {
         log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
-        this.status.store(status, .Release);
+        this.status.store(status, .release);
     }
 
     fn unhandledError(this: *WebWorker, _: anyerror) void {
@@ -294,7 +305,7 @@ pub const WebWorker = struct {
         log("[{d}] spin start", .{this.execution_context_id});
 
         var vm = this.vm.?;
-        assert(this.status.load(.Acquire) == .start);
+        assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
@@ -372,7 +383,7 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
-        if (this.status.load(.Acquire) == .terminated) {
+        if (this.status.load(.acquire) == .terminated) {
             return;
         }
         if (this.setRequestedTerminate()) {

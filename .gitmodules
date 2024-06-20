@@ -79,7 +79,6 @@ fetchRecurseSubmodules = false
 [submodule "zig"]
 path = src/deps/zig
 url = https://github.com/oven-sh/zig
-branch = bun
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false

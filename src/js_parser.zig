@@ -42,7 +42,6 @@ pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
-const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
 
@@ -824,7 +823,7 @@ pub const TypeScript = struct {
                 else => return null,
             }
         }
-        pub const IMap = ComptimeStringMap(Kind, .{
+        pub const IMap = std.StaticStringMap(Kind).initComptime(.{
             .{ "unique", .unique },
             .{ "abstract", .abstract },
             .{ "asserts", .asserts },
@@ -2338,7 +2337,7 @@ const AsyncPrefixExpression = enum(u2) {
     is_async,
     is_await,
 
-    const map = ComptimeStringMap(AsyncPrefixExpression, .{
+    const map = std.StaticStringMap(AsyncPrefixExpression).initComptime(.{
         .{ "yield", .is_yield },
         .{ "await", .is_await },
         .{ "async", .is_async },

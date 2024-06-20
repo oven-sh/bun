@@ -50,6 +50,7 @@ _napi_create_uint32
 _napi_define_class
 _napi_define_properties
 _napi_delete_async_work
+_napi_delete_element
 _napi_delete_property
 _napi_delete_reference
 _napi_detach_arraybuffer
@@ -66,7 +67,6 @@ _napi_get_cb_info
 _napi_get_dataview_info
 _napi_get_date_value
 _napi_get_element
-_napi_delete_element
 _napi_get_global
 _napi_get_instance_data
 _napi_get_last_error_info
@@ -143,11 +143,11 @@ _napi_typeof
 _napi_unref_threadsafe_function
 _napi_unwrap
 _napi_wrap
+_node_api_create_external_string_latin1
+_node_api_create_external_string_utf16
 _node_api_create_syntax_error
 _node_api_symbol_for
 _node_api_throw_syntax_error
-_node_api_create_external_string_latin1
-_node_api_create_external_string_utf16
 __ZN2v87Isolate10GetCurrentEv
 __ZN2v87Isolate13TryGetCurrentEv
 __ZN2v87Isolate17GetCurrentContextEv

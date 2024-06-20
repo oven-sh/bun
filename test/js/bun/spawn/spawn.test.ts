@@ -169,7 +169,7 @@ for (let [gcTick, label] of [
           await new Promise<void>(resolve => {
             var counter = 0;
             spawn({
-              cmd: [shellExe(), "-c", "ls"],
+              cmd: [bunExe(), "-e", "process.exit(0)"],
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",
@@ -183,7 +183,7 @@ for (let [gcTick, label] of [
             });
 
             spawn({
-              cmd: [shellExe(), "-c", "false"],
+              cmd: [bunExe(), "-e", "process.exit(1)"],
               stdin: "ignore",
               stdout: "ignore",
               stderr: "ignore",

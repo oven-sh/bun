@@ -254,18 +254,21 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("coverageReporters")) |expr| {
+                        // Disable all first
+                        this.ctx.test_options.coverage.reporters = .{ .console = false, .lcov = false };
                         try this.expect(expr, .e_array);
                         const items = expr.data.e_array.items.slice();
-                        const reporters = try this.allocator.alloc(TestCommand.Reporter, items.len);
-                        for (items, 0..) |item, i| {
+                        for (items) |item| {
                             try this.expectString(item);
                             if (TestCommand.ReporterMap.get(item.asString(bun.default_allocator) orelse "")) |reporter| {
-                                reporters[i] = reporter;
+                                switch (reporter) {
+                                   .console => this.ctx.test_options.coverage.reporters.console = true,
+                                   .lcov => this.ctx.test_options.coverage.reporters.lcov = true,
+                                }
                             } else {
                                 try this.addError(item.loc, "Invalid reporter.");
                             }
                         }
-                        this.ctx.test_options.coverage.reporters = reporters;
                     }
 
                     if (test_.get("coverageReportsDir")) |expr| {

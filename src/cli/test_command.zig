@@ -613,7 +613,7 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
-        reporters: []const Reporter = &.{ Reporter.console },
+        reporters: Reporters = .{ .console = true, .lcov = false },
         reports_directory: string = "coverage",
         fractions: bun.sourcemap.CoverageFraction = .{},
         ignore_sourcemap: bool = false,
@@ -623,6 +623,10 @@ pub const TestCommand = struct {
     pub const Reporter = enum {
         console,
         lcov,
+    };
+    const Reporters = struct {
+        console: bool,
+        lcov: bool,
     };
     pub const ReporterMap = bun.ComptimeStringMap(Reporter, .{
         &.{ "console", Reporter.console },
@@ -909,17 +913,13 @@ pub const TestCommand = struct {
             Output.prettyError("\n", .{});
 
             if (coverage.enabled) {
-                for (coverage.reporters) |reporter_opt| {
-                    switch (reporter_opt) {
-                        .console => {
-                            switch (Output.enable_ansi_colors_stderr) {
-                                inline else => |colors| reporter.printCodeCoverage(vm, &coverage, colors) catch {},
-                            }
-                        },
-                        .lcov => {
-                            reporter.writeCodeCoverageInLcov(vm, &coverage) catch {};
-                        }
+                if (coverage.reporters.console) {
+                    switch (Output.enable_ansi_colors_stderr) {
+                        inline else => |colors| reporter.printCodeCoverage(vm, &coverage, colors) catch {},
                     }
+                }
+                if (coverage.reporters.lcov) {
+                    reporter.writeCodeCoverageInLcov(vm, &coverage) catch {};
                 }
             }
 

@@ -298,8 +298,6 @@ pub const CommandLineReporter = struct {
 
         std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
 
-        iter = map.valueIterator();
-
         var coverage_buffer = bun.MutableString.initEmpty(bun.default_allocator);
         var coverage_buffer_buffer = coverage_buffer.bufferedWriter();
         const coverage_writer = coverage_buffer_buffer.writer();

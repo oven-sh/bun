@@ -577,7 +577,6 @@ pub const Version = struct {
                                 }
                             }
 
-
                             if (url.len > 4 and strings.eqlComptime(url[0.."git@".len], "git@")) {
                                 url = url["git@".len..];
                             }

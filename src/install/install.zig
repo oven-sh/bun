@@ -3348,17 +3348,192 @@ pub const PackageManager = struct {
         };
     }
 
+    fn testSameFileSystem(
+        dir_with_file_to_rename: std.fs.Dir,
+        dir_to_rename_file_to: std.fs.Dir,
+        tmpname: [:0]const u8,
+    ) bool {
+        // Make sure cachedir and cwd are in the same filesystem
+        std.posix.renameatZ(dir_with_file_to_rename.fd, tmpname, dir_to_rename_file_to.fd, tmpname) catch return false;
+        return true;
+    }
+
+    fn testSameFileSystemPaths(
+        dir_with_file_to_rename: std.fs.Dir,
+        abspath: [:0]const u8,
+        tmpname: [:0]const u8,
+    ) bool {
+        std.posix.renameatZ(dir_with_file_to_rename.fd, tmpname, std.fs.cwd().fd, abspath) catch return false;
+        return true;
+    }
+
+    const PosixPathComponentIter = struct {
+        path_to_iterate: []const u8,
+        start: usize = 0,
+
+        pub fn next(this: *PosixPathComponentIter) ?[]const u8 {
+            if (this.start >= this.path_to_iterate.len) return null;
+            const slash_idx = this.start + (std.mem.indexOfScalar(u8, this.path_to_iterate[this.start..], '/') orelse {
+                const remaining = this.path_to_iterate[this.start..];
+                if (remaining.len == 0) return null;
+                this.start = this.path_to_iterate.len;
+                return remaining;
+            });
+            if (slash_idx == 0) {
+                this.start = 1;
+                return "/";
+            }
+            this.start = slash_idx + 1;
+            return this.path_to_iterate[0..slash_idx];
+        }
+    };
+
+    const cache_debug = bun.Output.scoped(.install_cache, false);
+
+    /// Invariants:
+    ///
+    /// - node_modules_folder_path is absolute path with no relative syntax
+    fn findBestDirectoryInSameFileSystem(
+        node_modules_folder_path: []u8,
+        node_modules_dir: std.fs.Dir,
+        tmpname: [:0]const u8,
+        buf: *bun.PathBuffer,
+    ) ?struct { std.fs.Dir, []const u8 } {
+        if (bun.Environment.isWindows) bun.path.platformToPosixInPlace(u8, node_modules_folder_path);
+        const path_to_iterate = node_modules_folder_path;
+        bun.debugAssert(bun.path.Platform.isAbsolute(.posix, path_to_iterate));
+
+        var iter = PosixPathComponentIter{
+            .path_to_iterate = path_to_iterate,
+        };
+
+        while (iter.next()) |abspath| {
+            const abspath_to_tmpname = brk: {
+                if (abspath.len + tmpname.len + 1 >= bun.MAX_PATH_BYTES) @panic("Name too long");
+                break :brk bun.path.joinZBuf(buf[0..], &[_][]const u8{ abspath, tmpname }, .auto);
+            };
+
+            cache_debug("testing same filepath: {s}/{s} -> {s}", .{ node_modules_folder_path, tmpname, abspath_to_tmpname });
+
+            if (testSameFileSystemPaths(node_modules_dir, abspath_to_tmpname, tmpname)) {
+                defer std.fs.cwd().deleteFileZ(abspath_to_tmpname) catch {};
+                cache_debug("  that worked!", .{});
+                const dir = std.fs.cwd().openDir(abspath, .{}) catch continue;
+                return .{ dir, abspath };
+            }
+            cache_debug("  that didn't work!", .{});
+        }
+
+        return null;
+    }
+
+    /// We try to get a cache directory on the same filesystem as the
+    /// project's node_modules directory (if the user didn't explicitly
+    /// set the cache directory).
+    ///
+    /// This is important for performance, cross-device copying/moving/renaming is slow.
+    ///
+    /// To test if cache_dir is in the same FS as node_modules we first try to
+    /// create a dummy file in cache_dir and rename it to node_modules
+    ///
+    /// If that fails we try to create a new cache_dir at the highest possible directory,
+    /// to make it more likely that projects in different directories will share the cache
+    /// folder.
+    ///
+    /// Let's say the user's project is at `/Volumes/Untitled/myapp`, where `/Volumes/Untitled`
+    /// is a mounted filesystem or something.
+    ///
+    /// We'll first start at `/` and try our same FS test. If that fails we try it with
+    /// `/Volumes/`, then `/Volumes/Untitled/`, which should succeed.
+    ///
+    /// Our new cache dir will be something like: `/Volumes/Untitled/.bun/install/cache`.
+    ///
+    /// Note how this ensures that any other projects in `/Volumes/Untitled/` will share
+    /// the same cache dir.
     noinline fn ensureCacheDirectory(this: *PackageManager) std.fs.Dir {
+        const TmpBuf = bun.fs.FileSystem.TmpnameBuf("hm");
+
+        var tmpbuf: TmpBuf = undefined;
+        const node_modules = std.fs.cwd().makeOpenPath("node_modules", .{}) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: bun is unable to create the node_modules folder: {s}", .{@errorName(err)});
+            Global.crash();
+        };
+        const tmpname: [:0]const u8 = bun.span(Fs.FileSystem.instance.tmpname("hm", &tmpbuf, bun.fastRandom()) catch unreachable);
+        const tmp = node_modules.createFileZ(tmpname, .{ .truncate = true }) catch |err| {
+            Output.prettyErrorln("<r><red>error<r>: bun is unable to create files in the node_modules folder: {s}", .{@errorName(err)});
+            Global.crash();
+        };
+        defer tmp.close();
+        defer node_modules.deleteFileZ(tmpname) catch {};
+
         loop: while (true) {
             if (this.options.enable.cache) {
-                const cache_dir = fetchCacheDirectoryPath(this.env);
-                this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
+                var cache_dir_set_kind: CacheDirSetKind = .auto;
+                const cache_dir = fetchCacheDirectoryPathImpl(this.env, &cache_dir_set_kind);
 
-                return std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
+                var dir = std.fs.cwd().makeOpenPath(cache_dir.path, .{}) catch {
                     this.options.enable.cache = false;
-                    this.allocator.free(this.cache_directory_path);
                     continue :loop;
                 };
+
+                if (!testSameFileSystem(node_modules, dir, tmpname)) {
+                    if (cache_dir_set_kind.didExplicitlySet()) {
+                        Output.warn(
+                            "Bun's install cache directory was set to <cyan>{s}<r>, by the environment variable <b>{s}<r>.\n\nHowever, this directory exists <b>outside<r> of the filesystem the current project is located in. Moving files across filesystems is much slower than normal.\n\nIf you want to change this, set the environment variable to a path on the same filesystem as the project, or unset it and Bun will automatically do this for you.",
+                            .{
+                                cache_dir.path,
+                                @tagName(cache_dir_set_kind),
+                            },
+                        );
+                    } else {
+                        dir.close();
+                        var buf: bun.PathBuffer = undefined;
+                        var buf2: bun.PathBuffer = undefined;
+                        const node_modules_folder_path = switch (bun.sys.getFdPath(bun.toFD(node_modules.fd), &buf2)) {
+                            .result => |p| p,
+                            .err => |err| {
+                                Output.prettyErrorln("<r><red>error<r>: bun is unable to get the node_modules path: {}", .{err});
+                                Global.crash();
+                            },
+                        };
+
+                        if (findBestDirectoryInSameFileSystem(node_modules_folder_path, node_modules, tmpname, &buf)) |result| out: {
+                            const bestdir: std.fs.Dir = result[0];
+                            const bestdir_path: []const u8 = result[1];
+                            const is_node_modules = bun.strings.eql(node_modules_folder_path, bestdir_path);
+                            const is_inside_cwd = brk: {
+                                const cwd_path = node_modules_folder_path[0 .. node_modules_folder_path.len - ("node_modules".len + 1)];
+                                break :brk bun.strings.eql(cwd_path, bestdir_path);
+                            };
+
+                            const best_cache_dir = (if (is_node_modules)
+                                bestdir.makeOpenPath(".cache", .{})
+                            else if (is_inside_cwd)
+                                bestdir.makeOpenPath("node_modules/.cache", .{})
+                            else
+                                bestdir.makeOpenPath(".bun/install/cache", .{})) catch break :out;
+
+                            const best_cache_dir_path = if (is_node_modules)
+                                bun.path.joinZBuf(buf2[0..], &[_][]const u8{ bestdir_path, ".cache" }, .auto)
+                            else if (is_inside_cwd)
+                                bun.path.joinZBuf(buf2[0..], &[_][]const u8{ bestdir_path, "node_modules", ".cache" }, .auto)
+                            else
+                                bun.path.joinZBuf(buf2[0..], &[_][]const u8{ bestdir_path, ".bun", "install", "cache" }, .auto);
+
+                            this.cache_directory_path = this.allocator.dupeZ(u8, best_cache_dir_path) catch bun.outOfMemory();
+                            return best_cache_dir;
+                        }
+
+                        this.options.enable.cache = false;
+                        continue :loop;
+                    }
+                }
+                // make sure to delete the file we just moved
+                else dir.deleteFileZ(tmpname) catch {};
+
+                this.cache_directory_path = this.allocator.dupeZ(u8, cache_dir.path) catch bun.outOfMemory();
+
+                return dir;
             }
 
             this.cache_directory_path = this.allocator.dupeZ(u8, Path.joinAbsString(
@@ -3387,6 +3562,7 @@ pub const PackageManager = struct {
     //   Error RenameAcrossMountPoints moving react-is to cache dir:
     noinline fn ensureTemporaryDirectory(this: *PackageManager) std.fs.Dir {
         var cache_directory = this.getCacheDirectory();
+
         // The chosen tempdir must be on the same filesystem as the cache directory
         // This makes renameat() work
         this.temp_dir_name = Fs.FileSystem.RealFS.getDefaultTempDir();
@@ -3425,6 +3601,7 @@ pub const PackageManager = struct {
             };
             file.close();
 
+            // Make sure tempdir and cachedir are in the same filesystem
             std.posix.renameatZ(tempdir.fd, tmpname, cache_directory.fd, tmpname) catch |err| {
                 if (!tried_dot_tmp) {
                     tried_dot_tmp = true;
@@ -6004,26 +6181,49 @@ pub const PackageManager = struct {
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
+    const CacheDirSetKind = enum {
+        BUN_INSTALL_CACHE_DIR,
+        BUN_INSTALL,
+        XDG_CACHE_HOME,
+        auto,
+
+        pub fn didExplicitlySet(this: CacheDirSetKind) bool {
+            return this != .auto;
+        }
+    };
     pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader) CacheDir {
-        if (env.get("BUN_INSTALL_CACHE_DIR")) |dir| {
+        var set_kind: CacheDirSetKind = .auto;
+        return fetchCacheDirectoryPathImpl(env, &set_kind);
+    }
+
+    fn fetchCacheDirectoryPathImpl(env: *DotEnv.Loader, explicitly_set_install_dir: *CacheDirSetKind) CacheDir {
+        if (env.getTruthy("BUN_INSTALL_CACHE_DIR")) |dir| {
+            explicitly_set_install_dir.* = .BUN_INSTALL_CACHE_DIR;
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&[_]string{dir}), .is_node_modules = false };
         }
 
-        if (env.get("BUN_INSTALL")) |dir| {
+        if (env.getTruthy("BUN_INSTALL")) |dir| {
+            explicitly_set_install_dir.* = .BUN_INSTALL;
             var parts = [_]string{ dir, "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.get("XDG_CACHE_HOME")) |dir| {
+        if (env.getTruthy("XDG_CACHE_HOME")) |dir| {
+            explicitly_set_install_dir.* = .XDG_CACHE_HOME;
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
-        if (env.get(bun.DotEnv.home_env)) |dir| {
+        if (env.getTruthy(bun.DotEnv.home_env)) |dir| {
             var parts = [_]string{ dir, ".bun/", "install/", "cache/" };
             return CacheDir{ .path = Fs.FileSystem.instance.abs(&parts), .is_node_modules = false };
         }
 
+        var fallback_parts = [_]string{"node_modules/.bun-cache"};
+        return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
+    }
+
+    fn fallbackCacheDir() CacheDir {
         var fallback_parts = [_]string{"node_modules/.bun-cache"};
         return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
     }
@@ -10437,7 +10637,19 @@ pub const PackageManager = struct {
                             entrypathZ,
                             bun.toFD(destination_dir_.fd),
                             tmpname,
-                        ).asErr()) |e| {
+                        ).asErr()) |e| ok: {
+                            if (e.getErrno() == .XDEV) {
+                                bun.C.moveFileZ(
+                                    bun.toFD(destination_dir_.fd),
+                                    entrypathZ,
+                                    bun.toFD(destination_dir_.fd),
+                                    tmpname,
+                                ) catch |ee| {
+                                    Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(ee)});
+                                    Global.crash();
+                                };
+                                break :ok;
+                            }
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e});
                             Global.crash();
                         }
@@ -10777,7 +10989,18 @@ pub const PackageManager = struct {
                     "node_modules",
                     bun.toFD(root_node_modules.fd),
                     random_tempdir,
-                ).asErr()) |_| break :has_nested_node_modules false;
+                ).asErr()) |e| ok: {
+                    if (e.getErrno() == .XDEV) {
+                        bun.C.moveFileZSlow(
+                            bun.toFD(new_folder_handle.fd),
+                            "node_modules",
+                            bun.toFD(root_node_modules.fd),
+                            random_tempdir,
+                        ) catch break :has_nested_node_modules false;
+                        break :ok;
+                    }
+                    break :has_nested_node_modules false;
+                }
 
                 break :has_nested_node_modules true;
             };
@@ -10817,7 +11040,19 @@ pub const PackageManager = struct {
                     patch_tag,
                     bun.toFD(root_node_modules.fd),
                     patch_tag_tmpname,
-                ).asErr()) |e| {
+                ).asErr()) |e| ok: {
+                    if (e.getErrno() == .XDEV) {
+                        bun.C.moveFileZSlow(
+                            bun.toFD(new_folder_handle.fd),
+                            patch_tag,
+                            bun.toFD(root_node_modules.fd),
+                            patch_tag_tmpname,
+                        ) catch |ee| {
+                            Output.warn("failed renaming the bun patch tag, this may cause issues: {s}", .{@errorName(ee)});
+                            break :has_bun_patch_tag null;
+                        };
+                        break :ok;
+                    }
                     Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                     break :has_bun_patch_tag null;
                 }
@@ -10841,7 +11076,16 @@ pub const PackageManager = struct {
                             bun.toFD(new_folder_handle.fd),
                             "node_modules",
                         ).asErr()) |e| {
-                            Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+                            if (e.getErrno() == .XDEV) {
+                                bun.C.moveFileZSlow(
+                                    bun.toFD(root_node_modules.fd),
+                                    random_tempdir,
+                                    bun.toFD(new_folder_handle.fd),
+                                    "node_modules",
+                                ) catch |ee| {
+                                    Output.warn("failed renaming the bun patch tag, this may cause issues: {s}", .{@errorName(ee)});
+                                };
+                            } else Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
                         }
                     }
 
@@ -10852,7 +11096,16 @@ pub const PackageManager = struct {
                             bun.toFD(new_folder_handle.fd),
                             patch_tag,
                         ).asErr()) |e| {
-                            Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                            if (e.getErrno() == .XDEV) {
+                                bun.C.moveFileZSlow(
+                                    bun.toFD(root_node_modules.fd),
+                                    patch_tag_tmpname,
+                                    bun.toFD(new_folder_handle.fd),
+                                    patch_tag,
+                                ) catch |ee| {
+                                    Output.warn("failed renaming the bun patch tag, this may cause issues: {s}", .{@errorName(ee)});
+                                };
+                            } else Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                         }
                     }
                 }
@@ -11008,11 +11261,26 @@ pub const PackageManager = struct {
             bun.FD.cwd(),
             path_in_patches_dir,
         ).asErr()) |e| {
-            Output.prettyError(
-                "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
-                .{e.toSystemError()},
-            );
-            Global.crash();
+            if (e.getErrno() == .XDEV) {
+                bun.C.moveFileZSlow(
+                    bun.toFD(tmpdir.fd),
+                    tempfile_name,
+                    bun.FD.cwd(),
+                    path_in_patches_dir,
+                ) catch |ee| {
+                    Output.prettyError(
+                        "<r><red>error<r>: failed renaming patch file to patches dir {s}<r>\n",
+                        .{@errorName(ee)},
+                    );
+                    Global.crash();
+                };
+            } else {
+                Output.prettyError(
+                    "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
+                    .{e.toSystemError()},
+                );
+                Global.crash();
+            }
         }
 
         const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();

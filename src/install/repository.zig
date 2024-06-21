@@ -159,19 +159,29 @@ pub const Repository = extern struct {
         // A value can still be entered, but we need to find a workaround
         // so the user can see what is being prompted. By default the settings
         // below will cause no prompt and throw instead.
-        const originalAskPass = env.map.get("GIT_ASKPASS");
-        const originalSSHCommand = env.map.get("GIT_SSH_COMMAND");
+        const askpass_entry = env.map.getOrPutWithoutValue("GIT_ASKPASS") catch bun.outOfMemory();
+        if (!askpass_entry.found_existing) {
+            askpass_entry.key_ptr.* = allocator.dupe(u8, "GIT_ASKPASS") catch bun.outOfMemory();
+            askpass_entry.value_ptr.* = .{
+                .value = allocator.dupe(u8, "echo") catch bun.outOfMemory(),
+                .conditional = false,
+            };
+        }
 
-        try env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", "echo");
-        try env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", "ssh -oStrictHostKeyChecking=accept-new");
+        const ssh_command_entry = env.map.getOrPutWithoutValue("GIT_SSH_COMMAND") catch bun.outOfMemory();
+        if (!ssh_command_entry.found_existing) {
+            ssh_command_entry.key_ptr.* = allocator.dupe(u8, "GIT_SSH_COMMAND") catch bun.outOfMemory();
+            ssh_command_entry.value_ptr.* = .{
+                .value = allocator.dupe(u8, "ssh -oStrictHostKeyChecking=accept-new") catch bun.outOfMemory(),
+                .conditional = false,
+            };
+        }
 
         var std_map = try env.map.stdEnvMap(allocator);
 
         defer {
-            _ = if (originalAskPass) |value| env.map.put(allocator, "GIT_ASKPASS", value) catch void else env.map.remove("GIT_ASKPASS");
-
-            _ = if (originalSSHCommand) |value| env.map.put(allocator, "GIT_SSH_COMMAND", value) catch void else env.map.remove("GIT_SSH_COMMAND");
-
+            if (!askpass_entry.found_existing) env.map.remove("GIT_ASKPASS");
+            if (!ssh_command_entry.found_existing) env.map.remove("GIT_SSH_COMMAND");
             std_map.deinit();
         }
 

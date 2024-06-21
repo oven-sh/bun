@@ -484,3 +484,14 @@ describe("Functions with names", () => {
     });
   }
 });
+
+it("Bun.inspect array with non-indexed properties", () => {
+  const a = [1, 2, 3];
+  a.length = 42;
+  a[18] = 24;
+  a.potato = "hello";
+  console.log(a);
+  expect(Bun.inspect(a)).toBe(`[
+  1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
+]`);
+});

@@ -259,7 +259,6 @@ pub const Bunfig = struct {
                     }
 
                     if (test_.get("coverageReporters")) |expr| {
-                        // Disable all first
                         this.ctx.test_options.coverage.reporters = .{ .console = false, .lcov = false };
                         try this.expect(expr, .e_array);
                         const items = expr.data.e_array.items.slice();

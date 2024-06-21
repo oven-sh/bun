@@ -1078,6 +1078,7 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
@@ -1097,12 +1098,12 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
-            return writer.writeAll(" KB");
-        } else {
-            try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
+            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            return;
         }
-        return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
+        const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
+        try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
+        try writer.writeAll(&.{ ' ', suffix, 'B' });
     }
 };
 
@@ -1111,7 +1112,7 @@ pub fn size(value: anytype) SizeFormatter {
         f64, f32, f128 => SizeFormatter{
             .value = @as(u64, @intFromFloat(value)),
         },
-        else => SizeFormatter{ .value = @as(u64, @intCast(value)) },
+        else => SizeFormatter{ .value = value },
     };
 }
 
@@ -1281,7 +1282,7 @@ pub fn fmtDouble(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern "C" fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
+    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
 
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
         WTF__dtoa(buf, number);

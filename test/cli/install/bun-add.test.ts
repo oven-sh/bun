@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { bunExe, bunEnv as env, toHaveBins, toBeValidBin, toBeWorkspaceLink, tmpdirSync } from "harness";
-import { access, mkdir, readlink, rm, writeFile, copyFile, appendFile } from "fs/promises";
+import { access, mkdir, readlink, rm, writeFile, copyFile, appendFile, readFile } from "fs/promises";
 import { join, relative } from "path";
 import {
   dummyAfterAll,
@@ -169,6 +169,7 @@ for (const pathType of ["absolute", "relative"]) {
         "",
         "1 package installed",
       ]);
+
       expect(await exited).toBe(0);
     },
   );
@@ -246,7 +247,7 @@ it("should handle semver-like names", async () => {
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: package "1.2.3" not found localhost:${port}/1.2.3 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/1.2.3 - 404`);
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/1.2.3`]);
@@ -287,7 +288,7 @@ it("should handle @scoped names", async () => {
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: package "@bar/baz" not found localhost:${port}/@bar%2fbaz 404`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET http://localhost:${port}/@bar%2fbaz - 404`);
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([`${root_url}/@bar%2fbaz`]);
@@ -613,7 +614,7 @@ it("should add dependency (GitHub)", async () => {
   expect(requested).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -828,14 +829,14 @@ it("should add aliased dependency (GitHub)", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
-    "@GH@mishoo-UglifyJS-e219a9a",
+    "@GH@mishoo-UglifyJS-e219a9a@@@1",
     "uglify",
   ]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
-    "mishoo-UglifyJS-e219a9a",
+    "mishoo-UglifyJS-e219a9a@@@1",
   ]);
-  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a"))).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a"),
+  expect(await readlink(join(package_dir, "node_modules", ".cache", "uglify", "mishoo-UglifyJS-e219a9a@@@1"))).toBe(
+    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a@@@1"),
   );
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
@@ -1526,7 +1527,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   expect(await exited1).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -1586,7 +1587,7 @@ it("should add dependency without duplication (GitHub)", async () => {
   expect(await exited2).toBe(0);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["uglifyjs"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual(["@GH@mishoo-UglifyJS-e219a9a@@@1"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
     ".bun-tag",
     ".gitattributes",
@@ -1621,18 +1622,18 @@ it("should add dependency without duplication (GitHub)", async () => {
 });
 
 it("should add dependencies to workspaces directly", async () => {
-  const foo_package = JSON.stringify({
+  const fooPackage = {
     name: "foo",
     version: "0.1.0",
     workspaces: ["moo"],
-  });
-  await writeFile(join(add_dir, "package.json"), foo_package);
-  const bar_package = JSON.stringify({
+  };
+  await writeFile(join(add_dir, "package.json"), JSON.stringify(fooPackage));
+  const barPackage = JSON.stringify({
     name: "bar",
     version: "0.2.0",
     workspaces: ["moo"],
   });
-  await writeFile(join(package_dir, "package.json"), bar_package);
+  await writeFile(join(package_dir, "package.json"), barPackage);
   await mkdir(join(package_dir, "moo"));
   await writeFile(
     join(package_dir, "moo", "package.json"),
@@ -1670,8 +1671,16 @@ it("should add dependencies to workspaces directly", async () => {
     "node_modules",
     "package.json",
   ]);
-  expect(await file(join(package_dir, "package.json")).text()).toEqual(bar_package);
-  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "package.json"]);
+  expect(await file(join(package_dir, "package.json")).text()).toEqual(barPackage);
+  expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "node_modules", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
+  if (process.platform === "win32") {
+    expect(await file(await readlink(join(package_dir, "moo", "node_modules", "foo", "package.json"))).json()).toEqual(
+      fooPackage,
+    );
+  } else {
+    expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
+  }
   expect(await file(join(package_dir, "moo", "package.json")).json()).toEqual({
     name: "moo",
     version: "0.3.0",
@@ -1679,9 +1688,7 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "foo", "moo"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "foo"))).toEqual(["package.json"]);
-  expect(await file(join(package_dir, "node_modules", "foo", "package.json")).text()).toEqual(foo_package);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "moo"]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {

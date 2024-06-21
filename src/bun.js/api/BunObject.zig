@@ -39,10 +39,11 @@ pub const BunObject = struct {
     pub const stringWidth = Bun.stringWidth;
     pub const braces = Bun.braces;
     pub const shellEscape = Bun.shellEscape;
+    pub const createParsedShellScript = bun.shell.ParsedShellScript.createParsedShellScript;
+    pub const createShellInterpreter = bun.shell.Interpreter.createShellInterpreter;
     // --- Callbacks ---
 
     // --- Getters ---
-    pub const ShellInterpreter = Bun.getShellConstructor;
     pub const CryptoHasher = Crypto.CryptoHasher.getter;
     pub const FFI = Bun.FFIObject.getter;
     pub const FileSystemRouter = Bun.getFileSystemRouter;
@@ -90,7 +91,6 @@ pub const BunObject = struct {
         }
 
         // --- Getters ---
-        @export(BunObject.ShellInterpreter, .{ .name = getterName("ShellInterpreter") });
         @export(BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
         @export(BunObject.FFI, .{ .name = getterName("FFI") });
         @export(BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
@@ -121,6 +121,8 @@ pub const BunObject = struct {
         // --- Getters --
 
         // -- Callbacks --
+        @export(BunObject.createParsedShellScript, .{ .name = callbackName("createParsedShellScript") });
+        @export(BunObject.createShellInterpreter, .{ .name = callbackName("createShellInterpreter") });
         @export(BunObject.allocUnsafe, .{ .name = callbackName("allocUnsafe") });
         @export(BunObject.braces, .{ .name = callbackName("braces") });
         @export(BunObject.build, .{ .name = callbackName("build") });
@@ -315,11 +317,15 @@ pub fn shell(
         return JSC.JSValue.jsUndefined();
     };
 
-    const template_args = callframe.argumentsPtr()[1..callframe.argumentsCount()];
+    const template_args_js = arguments.nextEat() orelse {
+        globalThis.throw("shell: expected 2 arguments, got 0", .{});
+        return .undefined;
+    };
+    var template_args = template_args_js.arrayIterator(globalThis);
     var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
     var script = std.ArrayList(u8).init(arena.allocator());
 
-    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, template_args, &jsobjs, &script) catch {
+    if (!(bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &script) catch {
         if (!globalThis.hasException())
             globalThis.throwOutOfMemory();
         return JSValue.undefined;
@@ -848,7 +854,7 @@ pub fn getMain(
                 vm.main,
 
                 // Open with the minimum permissions necessary for resolving the file path.
-                if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY,
+                if (comptime Environment.isLinux) bun.O.PATH else bun.O.RDONLY,
 
                 0,
             ).unwrap() catch break :use_resolved_path;
@@ -1500,7 +1506,7 @@ pub const Crypto = struct {
                 pub usingnamespace bun.New(@This());
 
                 pub fn runTask(task: *JSC.WorkPoolTask) void {
-                    const job = @fieldParentPtr(PBKDF2.Job, "task", task);
+                    const job: *PBKDF2.Job = @fieldParentPtr("task", task);
                     defer job.vm.enqueueTaskConcurrent(JSC.ConcurrentTask.create(job.any_task.task()));
                     job.output = bun.default_allocator.alloc(u8, @as(usize, @intCast(job.pbkdf2.length))) catch {
                         job.err = BoringSSL.EVP_R_MEMORY_LIMIT_EXCEEDED;
@@ -2192,7 +2198,7 @@ pub const Crypto = struct {
             }
 
             pub fn run(task: *bun.ThreadPool.Task) void {
-                var this = @fieldParentPtr(HashJob, "task", task);
+                var this: *HashJob = @fieldParentPtr("task", task);
 
                 var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
                 result.* = Result{
@@ -2434,7 +2440,7 @@ pub const Crypto = struct {
             }
 
             pub fn run(task: *bun.ThreadPool.Task) void {
-                var this = @fieldParentPtr(VerifyJob, "task", task);
+                var this: *VerifyJob = @fieldParentPtr("task", task);
 
                 var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
                 result.* = Result{
@@ -2884,6 +2890,14 @@ pub const Crypto = struct {
             .{ "shake256", std.crypto.hash.sha3.Shake256 },
         };
 
+        inline fn digestLength(Algorithm: type) comptime_int {
+            return switch (Algorithm) {
+                std.crypto.hash.sha3.Shake128 => 16,
+                std.crypto.hash.sha3.Shake256 => 32,
+                else => Algorithm.digest_length,
+            };
+        }
+
         pub fn hashByName(
             globalThis: *JSGlobalObject,
             algorithm: ZigString,
@@ -2923,7 +2937,7 @@ pub const Crypto = struct {
             }
 
             var h = Algorithm.init(.{});
-            const digest_length_comptime = Algorithm.digest_length;
+            const digest_length_comptime = digestLength(Algorithm);
 
             if (output) |output_buf| {
                 if (output_buf.byteSlice().len < digest_length_comptime) {
@@ -2938,7 +2952,7 @@ pub const Crypto = struct {
                 h.final(output_buf.slice()[0..digest_length_comptime]);
                 return output_buf.value;
             } else {
-                var out: [Algorithm.digest_length]u8 = undefined;
+                var out: [digestLength(Algorithm)]u8 = undefined;
                 h.final(&out);
                 // Clone to GC-managed memory
                 return JSC.ArrayBuffer.createBuffer(globalThis, &out);
@@ -2950,8 +2964,8 @@ pub const Crypto = struct {
                 if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
                     return CryptoHasher.new(.{ .zig = .{
                         .algorithm = @field(EVP.Algorithm, item[0]),
-                        .state = bun.new(item[1], .{}),
-                        .digest_length = item[1].digest_length,
+                        .state = bun.new(item[1], item[1].init(.{})),
+                        .digest_length = digestLength(item[1]),
                     } });
                 }
             }
@@ -3534,19 +3548,24 @@ pub fn mmapFile(
 
     const buf_z: [:0]const u8 = buf[0..path.len :0];
 
-    const sync_flags: u32 = if (@hasDecl(std.os.MAP, "SYNC")) std.os.MAP.SYNC | std.os.MAP.SHARED_VALIDATE else 0;
-    const file_flags: u32 = if (@hasDecl(std.os.MAP, "FILE")) std.os.MAP.FILE else 0;
+    var flags: std.c.MAP = .{ .TYPE = .SHARED };
 
     // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
     var offset: usize = 0;
-    var flags = file_flags;
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        const sync = opts.get(globalThis, "sync") orelse JSC.JSValue.jsBoolean(false);
-        const shared = opts.get(globalThis, "shared") orelse JSC.JSValue.jsBoolean(true);
-        flags |= @as(u32, if (sync.toBoolean()) sync_flags else 0);
-        flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
+        flags.TYPE = if ((opts.get(globalThis, "shared") orelse JSValue.true).toBoolean())
+            .SHARED
+        else
+            .PRIVATE;
+
+        if (@hasField(std.c.MAP, "SYNC")) {
+            if ((opts.get(globalThis, "sync") orelse JSValue.false).toBoolean()) {
+                flags.TYPE = .SHARED_VALIDATE;
+                flags.SYNC = true;
+            }
+        }
 
         if (opts.get(globalThis, "size")) |value| {
             map_size = @as(usize, @intCast(value.toInt64()));
@@ -3556,8 +3575,6 @@ pub fn mmapFile(
             offset = @as(usize, @intCast(value.toInt64()));
             offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
-    } else {
-        flags |= std.os.MAP.SHARED;
     }
 
     const map = switch (bun.sys.mmapFile(buf_z, flags, map_size, offset)) {
@@ -3718,13 +3735,6 @@ pub fn getTOMLObject(
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
     return TOMLObject.create(globalThis);
-}
-
-pub fn getShellConstructor(
-    globalThis: *JSC.JSGlobalObject,
-    _: *JSC.JSObject,
-) callconv(.C) JSC.JSValue {
-    return JSC.API.Shell.Interpreter.getConstructor(globalThis);
 }
 
 pub fn getGlobConstructor(

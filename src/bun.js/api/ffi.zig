@@ -71,7 +71,6 @@ const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
-const ComptimeStringMap = @import("../../comptime_string_map.zig").ComptimeStringMap;
 
 const TCC = @import("../../tcc.zig");
 
@@ -959,12 +958,12 @@ pub const FFI = struct {
             const ffi_wrapper = Bun__createFFICallbackFunction(js_context, js_function);
             try this.printCallbackSourceCode(js_context, ffi_wrapper, &source_code_writer);
 
-            if (comptime Environment.allow_assert and Environment.isPosix) {
+            if (comptime Environment.isDebug and Environment.isPosix) {
                 debug_write: {
-                    const fd = std.os.open("/tmp/bun-ffi-callback-source.c", std.os.O.WRONLY | std.os.O.CREAT, 0o644) catch break :debug_write;
-                    _ = std.os.write(fd, source_code.items) catch break :debug_write;
-                    std.os.ftruncate(fd, source_code.items.len) catch break :debug_write;
-                    std.os.close(fd);
+                    const fd = std.posix.open("/tmp/bun-ffi-callback-source.c", .{ .CREAT = true, .ACCMODE = .WRONLY }, 0o644) catch break :debug_write;
+                    _ = std.posix.write(fd, source_code.items) catch break :debug_write;
+                    std.posix.ftruncate(fd, source_code.items.len) catch break :debug_write;
+                    std.posix.close(fd);
                 }
             }
 
@@ -1416,7 +1415,7 @@ pub const FFI = struct {
             .{ "callback", ABIType.function },
             .{ "fn", ABIType.function },
         };
-        pub const label = ComptimeStringMap(ABIType, map);
+        pub const label = bun.ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
             name: []const u8,
             entry: ABIType,

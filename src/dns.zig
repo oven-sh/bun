@@ -142,9 +142,9 @@ pub const GetAddrInfo = struct {
         pub fn toLibC(this: Family) i32 {
             return switch (this) {
                 .unspecified => 0,
-                .inet => std.os.AF.INET,
-                .inet6 => std.os.AF.INET6,
-                .unix => std.os.AF.UNIX,
+                .inet => std.posix.AF.INET,
+                .inet6 => std.posix.AF.INET6,
+                .unix => std.posix.AF.UNIX,
             };
         }
     };
@@ -164,8 +164,8 @@ pub const GetAddrInfo = struct {
         pub fn toLibC(this: SocketType) i32 {
             switch (this) {
                 .unspecified => return 0,
-                .stream => return std.os.SOCK.STREAM,
-                .dgram => return std.os.SOCK.DGRAM,
+                .stream => return std.posix.SOCK.STREAM,
+                .dgram => return std.posix.SOCK.DGRAM,
             }
         }
 
@@ -234,8 +234,8 @@ pub const GetAddrInfo = struct {
         pub fn toLibC(this: Protocol) i32 {
             switch (this) {
                 .unspecified => return 0,
-                .tcp => return std.os.IPPROTO.TCP,
-                .udp => return std.os.IPPROTO.UDP,
+                .tcp => return std.posix.IPPROTO.TCP,
+                .udp => return std.posix.IPPROTO.UDP,
             }
         }
     };
@@ -342,8 +342,8 @@ pub const GetAddrInfo = struct {
             const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
             obj.put(globalThis, JSC.ZigString.static("address"), addressToJS(&this.address, globalThis));
             obj.put(globalThis, JSC.ZigString.static("family"), switch (this.address.any.family) {
-                std.os.AF.INET => JSValue.jsNumber(4),
-                std.os.AF.INET6 => JSValue.jsNumber(6),
+                std.posix.AF.INET => JSValue.jsNumber(4),
+                std.posix.AF.INET6 => JSValue.jsNumber(6),
                 else => JSValue.jsNumber(0),
             });
             obj.put(globalThis, JSC.ZigString.static("ttl"), JSValue.jsNumber(this.ttl));
@@ -357,7 +357,7 @@ pub fn addressToString(
     address: *const std.net.Address,
 ) !bun.String {
     switch (address.any.family) {
-        std.os.AF.INET => {
+        std.posix.AF.INET => {
             var self = address.in;
             const bytes = @as(*const [4]u8, @ptrCast(&self.sa.addr));
             return String.createFormat("{}.{}.{}.{}", .{
@@ -367,7 +367,7 @@ pub fn addressToString(
                 bytes[3],
             });
         },
-        std.os.AF.INET6 => {
+        std.posix.AF.INET6 => {
             var stack = std.heap.stackFallback(512, default_allocator);
             const allocator = stack.get();
             var out = try std.fmt.allocPrint(allocator, "{any}", .{address.*});
@@ -377,7 +377,7 @@ pub fn addressToString(
             //              ^  ^^^^^^
             return String.createLatin1(out[1 .. out.len - 1 - std.fmt.count("{d}", .{address.in6.getPort()}) - 1]);
         },
-        std.os.AF.UNIX => {
+        std.posix.AF.UNIX => {
             if (comptime std.net.has_unix_sockets) {
                 return String.createLatin1(&address.un.path);
             }

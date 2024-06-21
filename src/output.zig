@@ -23,7 +23,7 @@ var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
 const File = bun.sys.File;
-pub var terminal_size: std.os.winsize = .{
+pub var terminal_size: std.posix.winsize = .{
     .ws_row = 0,
     .ws_col = 0,
     .ws_xpixel = 0,
@@ -138,6 +138,9 @@ pub const Source = struct {
     const WindowsStdio = struct {
         const w = bun.windows;
 
+        /// At program start, we snapshot the console modes of standard in, out, and err
+        /// so that we can restore them at program exit if they change. Restoration is
+        /// best-effort, and may not be applied if the process is killed abruptly.
         pub var console_mode = [3]?u32{ null, null, null };
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
@@ -196,7 +199,11 @@ pub const Source = struct {
             if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
-                _ = w.SetConsoleMode(stdin, mode | w.ENABLE_VIRTUAL_TERMINAL_INPUT);
+                // There are no flags to set on standard in, but just in case something
+                // later modifies the mode, we can still reset it at the end of program run
+                //
+                // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
+                // intentionally set for any purpose, and instead only caused problems.
             }
 
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
@@ -241,7 +248,7 @@ pub const Source = struct {
             Output.Source.init(stdout, stderr)
                 .set();
 
-            if (comptime Environment.isDebug or Environment.allow_logs) {
+            if (comptime Environment.isDebug or Environment.enable_logs) {
                 initScopedDebugWriterAtStartup();
             }
         }
@@ -569,7 +576,7 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         else => tag,
     };
 
-    if (comptime !Environment.isDebug and !Environment.allow_logs) {
+    if (comptime !Environment.isDebug and !Environment.enable_logs) {
         return struct {
             pub fn isVisible() bool {
                 return false;
@@ -619,9 +626,9 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
                 return;
             }
 
-            if (Environment.allow_logs) ScopedDebugWriter.disable_inside_log += 1;
+            if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
-                if (Environment.allow_logs)
+                if (Environment.enable_logs)
                     ScopedDebugWriter.disable_inside_log -= 1;
             }
 
@@ -771,7 +778,8 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         }
     };
 
-    return comptime new_fmt[0..new_fmt_i];
+    const fmt_data = comptime new_fmt[0..new_fmt_i].*;
+    return &fmt_data;
 }
 
 pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
@@ -855,17 +863,12 @@ pub const DebugTimer = struct {
 
     pub const WriteError = error{};
 
-    pub fn format(self: DebugTimer, comptime _: []const u8, opts: std.fmt.FormatOptions, writer_: anytype) WriteError!void {
+    pub fn format(self: DebugTimer, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) WriteError!void {
         if (comptime Environment.isDebug) {
             var timer = self.timer;
-            var _opts = opts;
-            _opts.precision = 3;
-            std.fmt.formatFloatDecimal(
-                @as(f64, @floatCast(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms)),
-                _opts,
-                writer_,
-            ) catch unreachable;
-            writer_.writeAll("ms") catch {};
+            w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms}) catch unreachable;
+        } else {
+            @compileError("DebugTimer.format() should only be called in debug mode");
         }
     }
 };
@@ -988,14 +991,10 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.os.openat(
-                std.fs.cwd().fd,
-                path_fmt,
-                std.os.O.CREAT | std.os.O.WRONLY,
-                // on windows this is u0
-                if (Environment.isWindows) 0 else 0o644,
-            ) catch |err_| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
+            const fd = std.fs.cwd().createFile(path_fmt, .{
+                .mode = if (Environment.isPosix) 0o644 else 0,
+            }) catch |open_err| {
+                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
             };
             _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();
@@ -1006,7 +1005,7 @@ pub fn initScopedDebugWriterAtStartup() void {
     ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
 }
 fn scopedWriter() File.QuietWriter {
-    if (comptime !Environment.isDebug and !Environment.allow_logs) {
+    if (comptime !Environment.isDebug and !Environment.enable_logs) {
         @compileError("scopedWriter() should only be called in debug mode");
     }
 

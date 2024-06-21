@@ -2987,8 +2987,6 @@ pub extern fn LoadLibraryA(
     [*:0]const u8,
 ) ?*anyopaque;
 
-pub extern fn LoadLibraryExW([*:0]const u16, ?HANDLE, DWORD) ?*anyopaque;
-
 pub const CreateHardLinkW = struct {
     pub fn wrapper(newFileName: LPCWSTR, existingFileName: LPCWSTR, securityAttributes: ?*win32.SECURITY_ATTRIBUTES) BOOL {
         const run = struct {
@@ -3165,7 +3163,7 @@ pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
 
 pub fn exePathW() [:0]const u16 {
     const image_path_unicode_string = &std.os.windows.peb().ProcessParameters.ImagePathName;
-    return image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2 :0];
+    return image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2 :0];
 }
 
 pub const KEY_EVENT_RECORD = extern struct {
@@ -3442,8 +3440,7 @@ pub const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
 pub const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
 pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
-// TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
-pub extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
+const SetConsoleMode = kernel32.SetConsoleMode;
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;

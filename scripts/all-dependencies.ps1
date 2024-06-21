@@ -48,9 +48,6 @@ function Build-Dependency {
 }
 
 Build-Dependency `
-  -Script "base64" `
-  -Outputs @("base64.lib")
-Build-Dependency `
   -Script "boringssl" `
   -Outputs @("crypto.lib", "ssl.lib", "decrepit.lib")
 Build-Dependency `

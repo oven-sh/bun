@@ -42,7 +42,7 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
                 allocator: std.mem.Allocator,
 
                 pub fn callback(task: *Task) void {
-                    var this_task = @fieldParentPtr(@This(), "task", task);
+                    var this_task: *@This() = @fieldParentPtr("task", task);
                     function(this_task.context);
                     this_task.allocator.destroy(this_task);
                 }

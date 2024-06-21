@@ -46,7 +46,7 @@ const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Fs = bun.fs;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 

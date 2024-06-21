@@ -78,14 +78,14 @@ pub const FileSystem = struct {
 
         return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
             bun.fmt.hexIntLower(hex_value),
-            bun.fmt.hexIntUpper(tmpname_id_number.fetchAdd(1, .Monotonic)),
+            bun.fmt.hexIntUpper(tmpname_id_number.fetchAdd(1, .monotonic)),
             extname,
         });
     }
 
-    pub var max_fd: std.os.fd_t = 0;
+    pub var max_fd: std.posix.fd_t = 0;
 
-    pub inline fn setMaxFd(fd: std.os.fd_t) void {
+    pub inline fn setMaxFd(fd: std.posix.fd_t) void {
         if (Environment.isWindows) {
             return;
         }
@@ -274,12 +274,13 @@ pub const FileSystem = struct {
         }
 
         pub fn getComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) ?Entry.Lookup {
-            comptime var query: [query_str.len]u8 = undefined;
+            comptime var query_var: [query_str.len]u8 = undefined;
             comptime for (query_str, 0..) |c, i| {
-                query[i] = std.ascii.toLower(c);
+                query_var[i] = std.ascii.toLower(c);
             };
 
-            const query_hashed = comptime std.hash_map.hashString(&query);
+            const query_hashed = comptime std.hash_map.hashString(&query_var);
+            const query = query_var[0..query_str.len].*;
 
             const result = entry.data.getAdapted(
                 @as([]const u8, &query),
@@ -311,10 +312,11 @@ pub const FileSystem = struct {
         }
 
         pub fn hasComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) bool {
-            comptime var query: [query_str.len]u8 = undefined;
+            comptime var query_var: [query_str.len]u8 = undefined;
             comptime for (query_str, 0..) |c, i| {
-                query[i] = std.ascii.toLower(c);
+                query_var[i] = std.ascii.toLower(c);
             };
+            const query = query_var[0..query_str.len].*;
 
             const query_hashed = comptime std.hash_map.hashString(&query);
 
@@ -326,7 +328,7 @@ pub const FileSystem = struct {
                     }
 
                     pub fn eql(_: @This(), _: []const u8, b: []const u8) bool {
-                        return strings.eqlComptime(b, query);
+                        return strings.eqlComptime(b, &query);
                     }
                 }{},
             );
@@ -513,11 +515,11 @@ pub const FileSystem = struct {
     }
 
     pub fn printLimits() void {
-        const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
+        const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
         Output.print("{{\n", .{});
 
         inline for (LIMITS, 0..) |limit_type, i| {
-            const limit = std.os.getrlimit(limit_type) catch return;
+            const limit = std.posix.getrlimit(limit_type) catch return;
 
             if (i == 0) {
                 Output.print("  \"stack\": [{d}, {d}],\n", .{ limit.cur, limit.max });
@@ -561,7 +563,7 @@ pub const FileSystem = struct {
                         }
 
                         var tmp_buf: bun.PathBuffer = undefined;
-                        const cwd = std.os.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
+                        const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
                         const root = bun.path.windowsFilesystemRoot(cwd);
                         break :brk bun.fmt.allocPrint(
                             bun.default_allocator,
@@ -672,10 +674,10 @@ pub const FileSystem = struct {
                 // We originally used a temporary directory, but it caused EXDEV.
                 const dir_fd = std.fs.cwd().fd;
 
-                const flags = std.os.O.CREAT | std.os.O.RDWR | std.os.O.CLOEXEC;
+                const flags = bun.O.CREAT | bun.O.RDWR | bun.O.CLOEXEC;
                 this.dir_fd = bun.toFD(dir_fd);
 
-                const result = try bun.sys.openat(bun.toFD(dir_fd), name, flags, std.os.S.IRWXU).unwrap();
+                const result = try bun.sys.openat(bun.toFD(dir_fd), name, flags, std.posix.S.IRWXU).unwrap();
                 this.fd = bun.toFD(result);
             }
 
@@ -717,7 +719,7 @@ pub const FileSystem = struct {
             pub fn create(this: *TmpfileWindows, rfs: *RealFS, name: [:0]const u8) !void {
                 const tmpdir_ = try rfs.openTmpDir();
 
-                const flags = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.CLOEXEC;
+                const flags = bun.O.CREAT | bun.O.WRONLY | bun.O.CLOEXEC;
 
                 this.fd = try bun.sys.openat(bun.toFD(tmpdir_.fd), name, flags, 0).unwrap();
                 var buf: bun.PathBuffer = undefined;
@@ -798,16 +800,16 @@ pub const FileSystem = struct {
                 return std.math.maxInt(usize);
             }
 
-            const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
+            const LIMITS = [_]std.posix.rlimit_resource{ std.posix.rlimit_resource.STACK, std.posix.rlimit_resource.NOFILE };
             inline for (LIMITS, 0..) |limit_type, i| {
-                const limit = try std.os.getrlimit(limit_type);
+                const limit = try std.posix.getrlimit(limit_type);
 
                 if (limit.cur < limit.max) {
-                    var new_limit = std.mem.zeroes(std.os.rlimit);
+                    var new_limit = std.mem.zeroes(std.posix.rlimit);
                     new_limit.cur = limit.max;
                     new_limit.max = limit.max;
 
-                    if (std.os.setrlimit(limit_type, new_limit)) {
+                    if (std.posix.setrlimit(limit_type, new_limit)) {
                         if (i == 1) {
                             Limit.handles = limit.max;
                         } else {
@@ -949,7 +951,7 @@ pub const FileSystem = struct {
             else
                 bun.sys.openA(
                     unsafe_dir_string,
-                    std.os.O.DIRECTORY,
+                    bun.O.DIRECTORY,
                     0,
                 );
             const fd = try dirfd.unwrap();
@@ -1704,10 +1706,6 @@ pub const Path = struct {
         is_parent_package: bool = false,
     };
 
-    pub inline fn textZ(this: *const Path) [:0]const u8 {
-        return @as([:0]const u8, this.text.ptr[0..this.text.len :0]);
-    }
-
     pub inline fn sourceDir(this: *const Path) string {
         return this.name.dirWithTrailingSlash();
     }
@@ -1880,7 +1878,7 @@ pub const Path = struct {
 };
 
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
-//     var opened = try std.os.open(path, if (Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY, 0);
-//     defer std.os.close(opened);
+//     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
+//     defer std.posix.close(opened);
 
 // }

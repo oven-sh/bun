@@ -265,7 +265,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DUSE_LTO=ON \
             -DBUN_LINK_ONLY=1 \
-            -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
+            -DBUN_ZIG_OBJ_DIR="${{ runner.temp }}/release" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
             -DBUN_DEPS_OUT_DIR="${{ runner.temp }}/bun-deps" \
             -DNO_CONFIGURE_DEPENDS=1

@@ -198,7 +198,7 @@ pub const SavedSourceMap = struct {
             if (seen_invalid) return;
             if (path) |note| {
                 Output.note("missing sourcemaps for {s}", .{note});
-                Output.note("consider bundling with '--sourcemap' to get an unminified traces", .{});
+                Output.note("consider bundling with '--sourcemap' to get unminified traces", .{});
             }
         }
     };
@@ -523,7 +523,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -532,7 +532,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        const vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnBeforeExit(vm.global, this.exit_code);
     }
 };
@@ -602,11 +602,15 @@ export fn Bun__getTLSRejectUnauthorizedValue() i32 {
 }
 
 export fn Bun__setVerboseFetchValue(value: i32) void {
-    VirtualMachine.get().default_verbose_fetch = value != 0;
+    VirtualMachine.get().default_verbose_fetch = if (value == 1) .headers else if (value == 2) .curl else .none;
 }
 
 export fn Bun__getVerboseFetchValue() i32 {
-    return if (JSC.VirtualMachine.get().getVerboseFetch()) 1 else 0;
+    return switch (JSC.VirtualMachine.get().getVerboseFetch()) {
+        .none => 0,
+        .headers => 1,
+        .curl => 2,
+    };
 }
 
 /// TODO: rename this to ScriptExecutionContext
@@ -652,7 +656,7 @@ pub const VirtualMachine = struct {
     exit_handler: ExitHandler = .{},
 
     default_tls_reject_unauthorized: ?bool = null,
-    default_verbose_fetch: ?bool = null,
+    default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -781,16 +785,19 @@ pub const VirtualMachine = struct {
         return this.default_tls_reject_unauthorized orelse this.bundler.env.getTLSRejectUnauthorized();
     }
 
-    pub fn getVerboseFetch(this: *VirtualMachine) bool {
+    pub fn getVerboseFetch(this: *VirtualMachine) bun.http.HTTPVerboseLevel {
         return this.default_verbose_fetch orelse {
             if (this.bundler.env.get("BUN_CONFIG_VERBOSE_FETCH")) |verbose_fetch| {
                 if (strings.eqlComptime(verbose_fetch, "true") or strings.eqlComptime(verbose_fetch, "1")) {
-                    this.default_verbose_fetch = true;
-                    return true;
+                    this.default_verbose_fetch = .headers;
+                    return .headers;
+                } else if (strings.eqlComptime(verbose_fetch, "curl")) {
+                    this.default_verbose_fetch = .curl;
+                    return .curl;
                 }
             }
-            this.default_verbose_fetch = false;
-            return false;
+            this.default_verbose_fetch = .none;
+            return .none;
         };
     }
 
@@ -1223,7 +1230,9 @@ pub const VirtualMachine = struct {
             }
 
             debug("spin", .{});
-            while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
+            while (futex_atomic.load(.monotonic) > 0) {
+                std.Thread.Futex.wait(&futex_atomic, 1);
+            }
             if (comptime Environment.allow_assert)
                 debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
@@ -1295,7 +1304,7 @@ pub const VirtualMachine = struct {
             }
 
             debug("wake", .{});
-            futex_atomic.store(0, .Monotonic);
+            futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
             this.eventLoop().tick();
@@ -3826,13 +3835,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") }
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } }
                 else
                     .{ .hot = @This().Watcher.init(
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") };
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } };
 
                 if (reload_immediately) {
                     this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
@@ -3844,7 +3859,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     reloader,
                     this.bundler.fs,
                     bun.default_allocator,
-                ) catch @panic("Failed to enable File Watcher");
+                ) catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                };
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
@@ -3875,6 +3893,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             err: bun.sys.Error,
         ) void {
             Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
+            if (bun.Environment.isDebug) {
+                @panic("Watcher crash");
+            }
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {
@@ -3982,7 +4003,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                         if (parent_hash == id) {
                                             const affected_path = file_paths[entry_id];
                                             const was_deleted = check: {
-                                                std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                                std.posix.access(affected_path, std.posix.F_OK) catch break :check true;
                                                 break :check false;
                                             };
                                             if (!was_deleted) continue;

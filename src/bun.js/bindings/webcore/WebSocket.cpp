@@ -403,7 +403,8 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     auto headers = headersOrException.releaseReturnValue();
     headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
-    auto iterator = headers.get().createIterator();
+    // lowerCaseKeys = false so we dont touch the keys casing
+    auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
         headerNames.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->key));
         headerValues.unsafeAppendWithoutCapacityCheck(Zig::toZigString(value->value));

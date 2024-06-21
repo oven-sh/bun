@@ -20,11 +20,12 @@ export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor")
 export const patchInternals = {
   parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
   apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
+  makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
 };
 
 export const shellInternals = {
-  lex: $newZigFunction("shell.zig", "TestingAPIs.shellLex", 1),
-  parse: $newZigFunction("shell.zig", "TestingAPIs.shellParse", 1),
+  lex: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2)(a.raw, b),
+  parse: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2)(a.raw, b),
   /**
    * Checks if the given builtin is disabled on the current platform
    *

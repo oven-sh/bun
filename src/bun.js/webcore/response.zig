@@ -773,12 +773,12 @@ pub const Fetch = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
         pub fn ref(this: *FetchTasklet) void {
-            const count = this.ref_count.fetchAdd(1, .Monotonic);
+            const count = this.ref_count.fetchAdd(1, .monotonic);
             bun.debugAssert(count > 0);
         }
 
         pub fn deref(this: *FetchTasklet) void {
-            const count = this.ref_count.fetchSub(1, .Monotonic);
+            const count = this.ref_count.fetchSub(1, .monotonic);
             bun.debugAssert(count > 0);
 
             if (count == 1) {
@@ -881,7 +881,7 @@ pub const Fetch = struct {
         fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
-            bun.assert(this.ref_count.load(.Monotonic) == 0);
+            bun.assert(this.ref_count.load(.monotonic) == 0);
 
             this.clearData();
 
@@ -1060,7 +1060,7 @@ pub const Fetch = struct {
             log("onProgressUpdate", .{});
             defer this.deref();
             this.mutex.lock();
-            this.has_schedule_callback.store(false, .Monotonic);
+            this.has_schedule_callback.store(false, .monotonic);
 
             if (this.is_waiting_body) {
                 this.onBodyReceived();
@@ -1228,7 +1228,7 @@ pub const Fetch = struct {
                             check_result.ensureStillAlive();
                             check_result.protect();
                             this.abort_reason = check_result;
-                            this.signal_store.aborted.store(true, .Monotonic);
+                            this.signal_store.aborted.store(true, .monotonic);
                             this.tracker.didCancel(this.global_this);
 
                             // we need to abort the request
@@ -1387,7 +1387,7 @@ pub const Fetch = struct {
             if (this.http) |http_| {
                 http_.enableBodyStreaming();
             }
-            if (this.signal_store.aborted.load(.Monotonic)) {
+            if (this.signal_store.aborted.load(.monotonic)) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
                 };
@@ -1609,7 +1609,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
-                fetch_tasklet.signal_store.cert_errors.store(true, .Monotonic);
+                fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
             } else {
                 fetch_tasklet.signals.cert_errors = null;
             }
@@ -1649,7 +1649,7 @@ pub const Fetch = struct {
             }
 
             // we want to return after headers are received
-            fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
+            fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
                 bun.assert(fetch_options.url.isHTTP());
@@ -1668,7 +1668,7 @@ pub const Fetch = struct {
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
-            this.signal_store.aborted.store(true, .Monotonic);
+            this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
@@ -1686,7 +1686,7 @@ pub const Fetch = struct {
             disable_decompression: bool,
             reject_unauthorized: bool,
             url: ZigURL,
-            verbose: bool = false,
+            verbose: http.HTTPVerboseLevel = .none,
             redirect_type: FetchRedirect = FetchRedirect.follow,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
@@ -1786,7 +1786,7 @@ pub const Fetch = struct {
                 task.response_buffer.reset();
             }
 
-            if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
+            if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
                     task.deref();
                     return;
@@ -1889,8 +1889,8 @@ pub const Fetch = struct {
         var disable_timeout = false;
         var disable_keepalive = false;
         var disable_decompression = false;
-        var verbose = vm.log.level.atLeast(.debug);
-        if (!verbose) {
+        var verbose: http.HTTPVerboseLevel = if (vm.log.level.atLeast(.debug)) .headers else .none;
+        if (verbose == .none) {
             verbose = vm.getVerboseFetch();
         }
 
@@ -2069,8 +2069,17 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(globalThis, "verbose")) |verb| {
-                            verbose = verb.toBoolean();
+                        if (options.get(globalThis, "verbose")) |verb| verbose: {
+                            if (verb.isString()) {
+                                if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                                    verbose = .curl;
+                                    break :verbose;
+                                }
+                            }
+
+                            if (verb.isBoolean()) {
+                                verbose = if (verb.toBoolean()) .headers else .none;
+                            }
                         }
 
                         if (options.get(globalThis, "signal")) |signal_arg| {
@@ -2365,8 +2374,17 @@ pub const Fetch = struct {
                             }
                         }
 
-                        if (options.get(globalThis, "verbose")) |verb| {
-                            verbose = verb.toBoolean();
+                        if (options.get(globalThis, "verbose")) |verb| verbose: {
+                            if (verb.isString()) {
+                                if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                                    verbose = .curl;
+                                    break :verbose;
+                                }
+                            }
+
+                            if (verb.isBoolean()) {
+                                verbose = if (verb.toBoolean()) .headers else .none;
+                            }
                         }
 
                         if (options.get(globalThis, "signal")) |signal_arg| {
@@ -2524,7 +2542,7 @@ pub const Fetch = struct {
                     }
 
                     var cwd_buf: bun.PathBuffer = undefined;
-                    const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                    const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
                         globalThis.throwError(err, "Failed to resolve file url");
                         return .zero;
                     }) else globalThis.bunVM().bundler.fs.top_level_dir;
@@ -2610,7 +2628,7 @@ pub const Fetch = struct {
             prepare_body: {
                 const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
-                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) std.os.O.RDONLY else std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {

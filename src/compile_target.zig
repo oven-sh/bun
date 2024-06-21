@@ -138,7 +138,7 @@ const MutableString = bun.MutableString;
 const Global = bun.Global;
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
     try HTTP.HTTPThread.init();
-    var refresher = std.Progress{};
+    var refresher = bun.Progress{};
 
     {
         refresher.refresh();
@@ -269,10 +269,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                     null,
                     void,
                     {},
-                    // "package/bin"
-                    2,
-                    true,
-                    false,
+                    .{
+                        // "package/bin"
+                        .depth_to_skip = 2,
+                    },
                 ) catch |err| {
                     node.end();
                     Output.err(err,

@@ -276,7 +276,7 @@ pub const Subprocess = struct {
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
-        @fence(.SeqCst);
+        @fence(.seq_cst);
         if (comptime Environment.isDebug) {
             log("updateHasPendingActivity() {any} -> {any}", .{
                 this.has_pending_activity.raw,
@@ -285,7 +285,7 @@ pub const Subprocess = struct {
         }
         this.has_pending_activity.store(
             this.hasPendingActivityNonThreadsafe(),
-            .Monotonic,
+            .monotonic,
         );
     }
 
@@ -339,8 +339,8 @@ pub const Subprocess = struct {
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_activity.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_activity.load(.acquire);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -1179,7 +1179,7 @@ pub const Subprocess = struct {
         // When the stream has closed we need to be notified to prevent a use-after-free
         // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
         pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
-            const process = @fieldParentPtr(Subprocess, "stdin", this);
+            const process: *Subprocess = @fieldParentPtr("stdin", this);
 
             if (process.this_jsvalue != .zero) {
                 if (Subprocess.stdinGetCached(process.this_jsvalue)) |existing_value| {
@@ -1352,7 +1352,7 @@ pub const Subprocess = struct {
         }
 
         pub fn finalize(this: *Writable) void {
-            const subprocess = @fieldParentPtr(Subprocess, "stdin", this);
+            const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
             if (subprocess.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
                     JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
@@ -2247,8 +2247,6 @@ pub const Subprocess = struct {
 
         return sync_value;
     }
-
-    const os = std.os;
 
     pub fn handleIPCMessage(
         this: *Subprocess,

@@ -45,10 +45,10 @@ pub const WriteFile = struct {
     pub usingnamespace FileOpenerMixin(WriteFile);
     pub usingnamespace FileCloserMixin(WriteFile);
 
-    pub const open_flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC | std.os.O.NONBLOCK;
+    pub const open_flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC | bun.O.NONBLOCK;
 
     pub fn onWritable(request: *io.Request) void {
-        var this: *WriteFile = @fieldParentPtr(WriteFile, "io_request", request);
+        var this: *WriteFile = @fieldParentPtr("io_request", request);
         this.onReady();
     }
 
@@ -69,7 +69,7 @@ pub const WriteFile = struct {
     pub fn onRequestWritable(request: *io.Request) io.Action {
         bloblog("WriteFile.onRequestWritable()", .{});
         request.scheduled = false;
-        var this: *WriteFile = @fieldParentPtr(WriteFile, "io_request", request);
+        var this: *WriteFile = @fieldParentPtr("io_request", request);
         return io.Action{
             .writable = .{
                 .onError = @ptrCast(&onIOError),
@@ -83,7 +83,7 @@ pub const WriteFile = struct {
 
     pub fn waitForWritable(this: *WriteFile) void {
         this.close_after_io = true;
-        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestWritable, .SeqCst);
+        @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &onRequestWritable, .seq_cst);
         if (!this.io_request.scheduled)
             io.Loop.get().schedule(&this.io_request);
     }
@@ -295,7 +295,7 @@ pub const WriteFile = struct {
     }
 
     fn doWriteLoopTask(task: *JSC.WorkPoolTask) void {
-        var this: *WriteFile = @fieldParentPtr(WriteFile, "task", task);
+        var this: *WriteFile = @fieldParentPtr("task", task);
         // On macOS, we use one-shot mode, so we don't need to unregister.
         if (comptime Environment.isMac) {
             this.close_after_io = false;
@@ -308,7 +308,7 @@ pub const WriteFile = struct {
     }
 
     fn doWriteLoop(this: *WriteFile) void {
-        while (this.state.load(.Monotonic) == .running) {
+        while (this.state.load(.monotonic) == .running) {
             var remain = this.bytes_blob.sharedView();
 
             remain = remain[@min(this.total_written, remain.len)..];
@@ -432,7 +432,7 @@ pub const WriteFileWindows = struct {
         const rc = uv.uv_fs_open(
             this.loop(),
             &this.io_request,
-            &(std.os.toPosixPath(path) catch {
+            &(std.posix.toPosixPath(path) catch {
                 this.throw(bun.sys.Error{
                     .errno = @intFromEnum(bun.C.E.NAMETOOLONG),
                     .syscall = .open,
@@ -459,7 +459,7 @@ pub const WriteFileWindows = struct {
     }
 
     pub fn onOpen(req: *uv.fs_t) callconv(.C) void {
-        var this: *WriteFileWindows = @fieldParentPtr(WriteFileWindows, "io_request", req);
+        var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
         bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (comptime Environment.allow_assert)
@@ -524,7 +524,7 @@ pub const WriteFileWindows = struct {
     }
 
     fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
-        var this: *WriteFileWindows = @fieldParentPtr(WriteFileWindows, "io_request", req);
+        var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
         bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {

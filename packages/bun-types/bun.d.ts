@@ -1520,7 +1520,7 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "inline" | "external"; // default: "none"
+    sourcemap?: "none" | "linked" | "inline" | "external"; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *

@@ -489,7 +489,7 @@ pub const FSWatcher = struct {
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
-            _ = this.pending_activity_count.fetchAdd(1, .Monotonic);
+            _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         }
 
         const js_this = FSWatcher.toJS(this, this.globalThis);
@@ -523,7 +523,7 @@ pub const FSWatcher = struct {
 
     pub fn emitAbort(this: *FSWatcher, err: JSC.JSValue) void {
         if (this.closed) return;
-        _ = this.pending_activity_count.fetchAdd(1, .Monotonic);
+        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         defer this.close();
         defer this.unrefTask();
 
@@ -632,28 +632,25 @@ pub const FSWatcher = struct {
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
-        {
-            @fence(.Acquire);
-            this.mutex.lock();
-            defer this.mutex.unlock();
-            if (this.closed) return false;
-            _ = this.pending_activity_count.fetchAdd(1, .Monotonic);
-        }
+        @fence(.acquire);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        if (this.closed) return false;
+        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
 
         return true;
     }
 
     pub fn hasPendingActivity(this: *FSWatcher) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.pending_activity_count.load(.Acquire) > 0;
+        @fence(.acquire);
+        return this.pending_activity_count.load(.acquire) > 0;
     }
 
     pub fn unrefTask(this: *FSWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-
         // JSC eventually will free it
-        _ = this.pending_activity_count.fetchSub(1, .Monotonic);
+        _ = this.pending_activity_count.fetchSub(1, .monotonic);
     }
 
     pub fn close(this: *FSWatcher) void {

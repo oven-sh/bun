@@ -971,196 +971,216 @@ test("--production without a lockfile will install and not save lockfile", async
   expect(await exists(join(packageDir, "node_modules", "no-deps", "index.js"))).toBeTrue();
 });
 
-test("it should correctly link binaries after deleting node_modules", async () => {
-  const json: any = {
-    name: "foo",
-    version: "1.0.0",
-    dependencies: {
-      "what-bin": "1.0.0",
-      "uses-what-bin": "1.5.0",
-    },
-  };
-  await writeFile(join(packageDir, "package.json"), JSON.stringify(json));
+describe("binaries", () => {
+  test("existing non-symlink", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "what-bin": "1.0.0",
+          },
+        }),
+      ),
+      write(join(packageDir, "node_modules", ".bin", "what-bin"), "hi"),
+    ]);
 
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
+    // should replace
+    await runBunInstall(env, packageDir);
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+  });
+  test("it should correctly link binaries after deleting node_modules", async () => {
+    const json: any = {
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "what-bin": "1.0.0",
+        "uses-what-bin": "1.5.0",
+      },
+    };
+    await writeFile(join(packageDir, "package.json"), JSON.stringify(json));
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ uses-what-bin@1.5.0",
+      "+ what-bin@1.0.0",
+      "",
+      expect.stringContaining("3 packages installed"),
+      "",
+      "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+      "",
+    ]);
+    expect(await exited).toBe(0);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ uses-what-bin@1.5.0",
+      "+ what-bin@1.0.0",
+      "",
+      expect.stringContaining("3 packages installed"),
+      "",
+      "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+      "",
+    ]);
+    expect(await exited).toBe(0);
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
-    "",
-    expect.stringContaining("3 packages installed"),
-    "",
-    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-    "",
-  ]);
-  expect(await exited).toBe(0);
+  test("will link binaries for packages installed multiple times", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "uses-what-bin": "1.5.0",
+          },
+          workspaces: ["packages/*"],
+          trustedDependencies: ["uses-what-bin"],
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      ),
+    ]);
 
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    // Root dependends on `uses-what-bin@1.5.0` and both packages depend on `uses-what-bin@1.0.0`.
+    // This test makes sure the binaries used by `pkg1` and `pkg2` are the correct version (`1.0.0`)
+    // instead of using the root version (`1.5.0`).
 
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
+    await runBunInstall(env, packageDir);
+    const results = await Promise.all([
+      file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+      file(join(packageDir, "packages", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+      file(join(packageDir, "packages", "pkg2", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+    ]);
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
-  expect(err).not.toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
-    "",
-    expect.stringContaining("3 packages installed"),
-    "",
-    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-    "",
-  ]);
-  expect(await exited).toBe(0);
-});
+    expect(results).toEqual(["what-bin@1.5.0", "what-bin@1.0.0", "what-bin@1.0.0"]);
+  });
 
-test("will link binaries for packages installed multiple times", async () => {
-  await Promise.all([
-    write(
+  test("it should re-symlink binaries that become invalid when updating package versions", async () => {
+    await writeFile(
       join(packageDir, "package.json"),
       JSON.stringify({
         name: "foo",
         version: "1.0.0",
         dependencies: {
-          "uses-what-bin": "1.5.0",
+          "bin-change-dir": "1.0.0",
         },
-        workspaces: ["packages/*"],
-        trustedDependencies: ["uses-what-bin"],
+        scripts: {
+          postinstall: "bin-change-dir",
+        },
       }),
-    ),
-    write(
-      join(packageDir, "packages", "pkg1", "package.json"),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bin-change-dir@1.0.0",
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
+    expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
+
+    await writeFile(
+      join(packageDir, "package.json"),
       JSON.stringify({
-        name: "pkg1",
+        name: "foo",
+        version: "1.0.0",
         dependencies: {
-          "uses-what-bin": "1.0.0",
+          "bin-change-dir": "1.0.1",
+        },
+        scripts: {
+          postinstall: "bin-change-dir",
         },
       }),
-    ),
-    write(
-      join(packageDir, "packages", "pkg2", "package.json"),
-      JSON.stringify({
-        name: "pkg2",
-        dependencies: {
-          "uses-what-bin": "1.0.0",
-        },
-      }),
-    ),
-  ]);
+    );
 
-  // Root dependends on `uses-what-bin@1.5.0` and both packages depend on `uses-what-bin@1.0.0`.
-  // This test makes sure the binaries used by `pkg1` and `pkg2` are the correct version (`1.0.0`)
-  // instead of using the root version (`1.5.0`).
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
 
-  await runBunInstall(env, packageDir);
-  const results = await Promise.all([
-    file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text(),
-    file(join(packageDir, "packages", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
-    file(join(packageDir, "packages", "pkg2", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
-  ]);
-
-  expect(results).toEqual(["what-bin@1.5.0", "what-bin@1.0.0", "what-bin@1.0.0"]);
-});
-
-test("it should re-symlink binaries that become invalid when updating package versions", async () => {
-  await writeFile(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "bin-change-dir": "1.0.0",
-      },
-      scripts: {
-        postinstall: "bin-change-dir",
-      },
-    }),
-  );
-
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bin-change-dir@1.0.1",
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
+    expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
   });
-
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bin-change-dir@1.0.0",
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
-  expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
-
-  await writeFile(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "bin-change-dir": "1.0.1",
-      },
-      scripts: {
-        postinstall: "bin-change-dir",
-      },
-    }),
-  );
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bin-change-dir@1.0.1",
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
-  expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
 });
 
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {

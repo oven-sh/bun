@@ -343,13 +343,6 @@ pub const Bin = extern struct {
                 entry.key_ptr.* = seen.allocator.dupe(u8, dest_path) catch bun.outOfMemory();
             }
 
-            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L1-L5
-            // 1. if the thing isn't there, skip
-            // 2. if there's a non-symlink there already, delete and create symlink if clobber, else error
-            // 3. if there's a symlink already, pointing into our pkg, and the same target, skip
-            // 4. if there's a symlink already, pointing somewhere else, delete and create symlink if clobber, else error
-            // 5. if there's a symlink already, pointing into our pkg, remove it first then create the symlink
-
             const destination_dir = if (comptime Environment.isWindows)
                 if (link_global)
                     this.global_bin_dir
@@ -362,6 +355,14 @@ pub const Bin = extern struct {
                 target_path[3..]
             else
                 target_path;
+
+            // Slightly modified from npm's bin-links
+            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L1-L5
+            // 1. if the thing isn't there, skip
+            // 2. if there's a non-symlink there already, delete and create symlink if clobber, else error
+            // 3. if there's a symlink already, pointing into our pkg, and the same target, skip
+            // 4. if there's a symlink already, pointing somewhere else, delete and create symlink if clobber, else error
+            // 5. if there's a symlink already, pointing into our pkg, remove it first then create the symlink
 
             // 1
             if (!bun.sys.existsAt(bun.toFD(destination_dir.fd), target_path_trim)) {
@@ -433,11 +434,6 @@ pub const Bin = extern struct {
             } else {
                 const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
-                const node_modules = if (link_global)
-                    this.global_bin_dir
-                else
-                    this.destination_node_modules.asDir();
-
                 var shim_buf: [65536]u8 = undefined;
                 var read_in_buf: [WinBinLinkingShim.Shebang.max_shebang_input_length]u8 = undefined;
                 var filename1_buf: bun.WPathBuffer = undefined;
@@ -454,14 +450,14 @@ pub const Bin = extern struct {
                 destination_wpath.len += 5;
                 @memcpy(destination_wpath[destination_wpath.len - 5 ..], &[_]u16{ '.', 'b', 'u', 'n', 'x' });
                 {
-                    const file = node_modules.createFileW(destination_wpath, .{
+                    const file = destination_dir.createFileW(destination_wpath, .{
                         .truncate = true,
                         .exclusive = true,
                     }) catch |open_err| fd: {
                         if (open_err == error.PathAlreadyExists) {
                             // we need to verify this link is valid, otherwise regenerate it
-                            if (PackageInstall.isDanglingWindowsBinLink(bun.toFD(node_modules.fd), destination_wpath, &shim_buf)) {
-                                break :fd node_modules.createFileW(destination_wpath, .{
+                            if (PackageInstall.isDanglingWindowsBinLink(bun.toFD(destination_dir.fd), destination_wpath, &shim_buf)) {
+                                break :fd destination_dir.createFileW(destination_wpath, .{
                                     .truncate = true,
                                 }) catch |second_open_err| {
                                     this.err = second_open_err;
@@ -537,7 +533,7 @@ pub const Bin = extern struct {
                 // truncate=false is intentional so that the exe is always rewritten. this helps
                 // - you upgrade to a new version of bin_shim_impl (unlikely but possible)
                 // - if otherwise corrupt it yourself
-                if (node_modules.createFileW(destination_wpath, .{})) |exe_file| {
+                if (destination_dir.createFileW(destination_wpath, .{})) |exe_file| {
                     defer exe_file.close();
                     exe_file.writer().writeAll(WinBinLinkingShim.embedded_executable_data) catch |err| {
                         this.err = err;

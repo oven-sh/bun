@@ -1796,12 +1796,12 @@ pub fn renameatConcurrently(
     from: [:0]const u8,
     to_dir_fd: bun.FileDescriptor,
     to: [:0]const u8,
-    comptime opts: struct { copy_fallback: bool = false },
+    comptime opts: struct { move_fallback: bool = false },
 ) Maybe(void) {
     switch (renameatConcurrentlyImpl(from_dir_fd, from, to_dir_fd, to)) {
         .result => return Maybe(void).success,
         .err => |e| {
-            if (opts.copy_fallback and e.getErrno() == bun.C.E.XDEV) return bun.C.moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
+            if (opts.move_fallback and e.getErrno() == bun.C.E.XDEV) return bun.C.moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
             return .{ .err = e };
         },
     }

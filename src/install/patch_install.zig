@@ -386,7 +386,7 @@ pub const PatchTask = struct {
             path_in_tmpdir,
             bun.toFD(this.callback.apply.cache_dir.fd),
             this.callback.apply.cache_dir_subpath,
-            .{ .copy_fallback = true },
+            .{ .move_fallback = true },
         ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
     }
 

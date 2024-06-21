@@ -8,6 +8,7 @@ const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
+const Progress = bun.Progress;
 
 const logger = bun.logger;
 const Loc = logger.Loc;
@@ -23,7 +24,6 @@ pub const PatchedDep = Lockfile.PatchedDep;
 const ThreadPool = bun.ThreadPool;
 
 pub const Resolution = @import("./resolution.zig").Resolution;
-const Progress = std.Progress;
 
 pub const PackageInstall = bun.install.PackageInstall;
 pub const PreparePatchPackageInstall = bun.install.PreparePatchPackageInstall;
@@ -118,7 +118,7 @@ pub const PatchTask = struct {
     }
 
     pub fn runFromThreadPool(task: *ThreadPool.Task) void {
-        var patch_task: *PatchTask = @fieldParentPtr(PatchTask, "task", task);
+        var patch_task: *PatchTask = @fieldParentPtr("task", task);
         patch_task.runFromThreadPoolImpl();
     }
 
@@ -145,7 +145,7 @@ pub const PatchTask = struct {
     ) !void {
         debug("runFromThreadMainThread {s}", .{@tagName(this.callback)});
         defer {
-            if (this.pre) _ = manager.pending_pre_calc_hashes.fetchSub(1, .Monotonic);
+            if (this.pre) _ = manager.pending_pre_calc_hashes.fetchSub(1, .monotonic);
         }
         switch (this.callback) {
             .calc_hash => try this.runFromMainThreadCalcHash(manager, log_level),
@@ -158,7 +158,7 @@ pub const PatchTask = struct {
         if (this.callback.apply.logger.errors > 0) {
             defer this.callback.apply.logger.deinit();
             Output.errGeneric("failed to apply patchfile ({s})", .{this.callback.apply.patchfilepath});
-            this.callback.apply.logger.printForLogLevel(Output.writer()) catch {};
+            this.callback.apply.logger.printForLogLevel(Output.errorWriter()) catch {};
         }
     }
 
@@ -183,7 +183,7 @@ pub const PatchTask = struct {
             }
             if (calc_hash.logger.errors > 0) {
                 Output.prettyErrorln("\n\n", .{});
-                calc_hash.logger.printForLogLevel(Output.writer()) catch {};
+                calc_hash.logger.printForLogLevel(Output.errorWriter()) catch {};
             }
             Output.flush();
             Global.crash();
@@ -359,7 +359,12 @@ pub const PatchTask = struct {
         @memcpy(buntagbuf[0..bun_tag_prefix.len], bun_tag_prefix);
         const hashlen = (std.fmt.bufPrint(buntagbuf[bun_tag_prefix.len..], "{x}", .{this.callback.apply.patch_hash}) catch unreachable).len;
         buntagbuf[bun_tag_prefix.len + hashlen] = 0;
-        const buntagfd = switch (bun.sys.openat(bun.toFD(patch_pkg_dir.fd), buntagbuf[0 .. bun_tag_prefix.len + hashlen :0], std.os.O.RDWR | std.os.O.CREAT, 0o666)) {
+        const buntagfd = switch (bun.sys.openat(
+            bun.toFD(patch_pkg_dir.fd),
+            buntagbuf[0 .. bun_tag_prefix.len + hashlen :0],
+            bun.O.RDWR | bun.O.CREAT,
+            0o666,
+        )) {
             .result => |fd| fd,
             .err => |e| {
                 return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
@@ -431,7 +436,7 @@ pub const PatchTask = struct {
             return null;
         }
 
-        const fd = switch (bun.sys.open(absolute_patchfile_path, std.os.O.RDONLY, 0)) {
+        const fd = switch (bun.sys.open(absolute_patchfile_path, bun.O.RDONLY, 0)) {
             .err => |e| {
                 log.addErrorFmt(
                     null,

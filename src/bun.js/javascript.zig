@@ -523,7 +523,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -532,7 +532,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        const vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnBeforeExit(vm.global, this.exit_code);
     }
 };
@@ -1230,7 +1230,9 @@ pub const VirtualMachine = struct {
             }
 
             debug("spin", .{});
-            while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
+            while (futex_atomic.load(.monotonic) > 0) {
+                std.Thread.Futex.wait(&futex_atomic, 1);
+            }
             if (comptime Environment.allow_assert)
                 debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
@@ -1302,7 +1304,7 @@ pub const VirtualMachine = struct {
             }
 
             debug("wake", .{});
-            futex_atomic.store(0, .Monotonic);
+            futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
             this.eventLoop().tick();
@@ -3833,13 +3835,19 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") }
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } }
                 else
                     .{ .hot = @This().Watcher.init(
                         reloader,
                         this.bundler.fs,
                         bun.default_allocator,
-                    ) catch @panic("Failed to enable File Watcher") };
+                    ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                        Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                    } };
 
                 if (reload_immediately) {
                     this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.watch);
@@ -3851,7 +3859,10 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     reloader,
                     this.bundler.fs,
                     bun.default_allocator,
-                ) catch @panic("Failed to enable File Watcher");
+                ) catch |err| {
+                    bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                    Output.panic("Failed to enable File Watcher: {s}", .{@errorName(err)});
+                };
                 this.bundler.resolver.watcher = Resolver.ResolveWatcher(*@This().Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
@@ -3882,6 +3893,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             err: bun.sys.Error,
         ) void {
             Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
+            if (bun.Environment.isDebug) {
+                @panic("Watcher crash");
+            }
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {
@@ -3989,7 +4003,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                         if (parent_hash == id) {
                                             const affected_path = file_paths[entry_id];
                                             const was_deleted = check: {
-                                                std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                                std.posix.access(affected_path, std.posix.F_OK) catch break :check true;
                                                 break :check false;
                                             };
                                             if (!was_deleted) continue;

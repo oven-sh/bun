@@ -352,7 +352,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                     .pathlike = .{
                         .fd = fd,
                     },
-                    .is_atty = if (bun.STDIN_FD.isValid()) std.os.isatty(bun.STDIN_FD.cast()) else false,
+                    .is_atty = if (bun.STDIN_FD.isValid()) std.posix.isatty(bun.STDIN_FD.cast()) else false,
                     .mode = mode,
                 },
             },

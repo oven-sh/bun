@@ -16,9 +16,9 @@ const std = @import("std");
 const struct_archive = lib.struct_archive;
 const JSC = bun.JSC;
 pub const Seek = enum(c_int) {
-    set = std.os.SEEK_SET,
-    current = std.os.SEEK_CUR,
-    end = std.os.SEEK_END,
+    set = std.posix.SEEK_SET,
+    current = std.posix.SEEK_CUR,
+    end = std.posix.SEEK_END,
 };
 
 pub const Flags = struct {
@@ -599,24 +599,24 @@ pub const Archive = struct {
                             if (comptime Environment.isWindows) {
                                 try bun.MakePath.makePath(u16, dir, path);
                             } else {
-                                std.os.mkdiratZ(dir_fd, path, @as(u32, @intCast(mode))) catch |err| {
+                                std.posix.mkdiratZ(dir_fd, pathname, @as(u32, @intCast(mode))) catch |err| {
                                     // It's possible for some tarballs to return a directory twice, with and
                                     // without `./` in the beginning. So if it already exists, continue to the
                                     // next entry.
                                     if (err == error.PathAlreadyExists or err == error.NotDir) continue;
                                     bun.makePath(dir, std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                    std.os.mkdiratZ(dir_fd, path, 0o777) catch {};
+                                    std.posix.mkdiratZ(dir_fd, pathname, 0o777) catch {};
                                 };
                             }
                         },
                         Kind.sym_link => {
                             const link_target = lib.archive_entry_symlink(entry).?;
                             if (Environment.isPosix) {
-                                std.os.symlinkatZ(link_target, dir_fd, path) catch |err| brk: {
+                                std.posix.symlinkatZ(link_target, dir_fd, path) catch |err| brk: {
                                     switch (err) {
                                         error.AccessDenied, error.FileNotFound => {
                                             dir.makePath(std.fs.path.dirname(path_slice) orelse return err) catch {};
-                                            break :brk try std.os.symlinkatZ(link_target, dir_fd, path);
+                                            break :brk try std.posix.symlinkatZ(link_target, dir_fd, path);
                                         },
                                         else => {
                                             return err;
@@ -630,7 +630,7 @@ pub const Archive = struct {
 
                             const file_handle_native = brk: {
                                 if (Environment.isWindows) {
-                                    const flags = std.os.O.WRONLY | std.os.O.CREAT | std.os.O.TRUNC;
+                                    const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
                                     switch (bun.sys.openatWindows(bun.toFD(dir_fd), path, flags)) {
                                         .result => |fd| break :brk fd,
                                         .err => |e| switch (e.errno) {

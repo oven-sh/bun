@@ -1,6 +1,5 @@
 const std = @import("std");
-const os = std.os;
-const linux = os.linux;
+const posix = std.posix;
 
 const bun = @import("root").bun;
 const env = bun.Environment;
@@ -68,7 +67,7 @@ pub const FDImpl = packed struct {
         .value = .{ .as_system = invalid_value },
     };
 
-    pub const System = std.os.fd_t;
+    pub const System = posix.fd_t;
 
     pub const SystemAsInt = switch (env.os) {
         .windows => u63,
@@ -227,18 +226,18 @@ pub const FDImpl = packed struct {
             .linux => result: {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
-                bun.assert(fd.cast() > -1);
-                break :result switch (linux.getErrno(linux.close(fd.cast()))) {
-                    .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
+                bun.assert(fd.cast() >= 0);
+                break :result switch (bun.C.getErrno(bun.sys.system.close(fd.cast()))) {
+                    .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .mac => result: {
                 const fd = this.encode();
                 bun.assert(fd != bun.invalid_fd);
-                bun.assert(fd.cast() > -1);
-                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
-                    .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
+                bun.assert(fd.cast() >= 0);
+                break :result switch (bun.C.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
+                    .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
@@ -272,7 +271,7 @@ pub const FDImpl = packed struct {
 
         if (env.isDebug) {
             if (result) |err| {
-                if (err.errno == @intFromEnum(os.E.BADF)) {
+                if (err.errno == @intFromEnum(posix.E.BADF)) {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{this_fmt});
                 } else {

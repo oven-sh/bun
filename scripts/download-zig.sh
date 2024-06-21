@@ -14,8 +14,6 @@ else
   zig_version=$(grep 'recommended_zig_version = "' "build.zig" | cut -d'"' -f2)
 fi
 
-zig_version_short=$(echo "$zig_version" | cut -d'+' -f1)
-
 case $(uname -ms) in
 'Darwin x86_64')
   target='macos'
@@ -39,7 +37,7 @@ case $(uname -ms) in
   ;;
 esac
 
-url="https://github.com/oven-sh/zig/releases/download/${zig_version_short}/zig-${target}-${arch}-${zig_version}.tar.xz"
+url="https://ziglang.org/builds/zig-${target}-${arch}-${zig_version}.tar.xz"
 dest="$(pwd)/.cache/zig-${zig_version}.tar.xz"
 extract_at="$(pwd)/.cache/zig"
 
@@ -57,7 +55,7 @@ update_repo_if_needed() {
     zig_version_previous=$(grep 'recommended_zig_version = "' "build.zig" | cut -d'"' -f2)
 
     for file in ${files[@]}; do
-      sed -i '' 's/'"${zig_version_previous}"'/'"${zig_version}"'/g' "$file"
+      sed -i 's/'"${zig_version_previous}"'/'"${zig_version}"'/g' "$file"
     done
 
     printf "Zig was updated to ${zig_version}. Please commit new files."

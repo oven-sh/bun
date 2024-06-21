@@ -4,18 +4,18 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 FORCE=
 
 while getopts "f" opt; do
-  case ${opt} in
-    f )
-      FORCE=1
-      ;;
-    \? )
-      echo "Usage: all-dependencies.sh [-h] [-f]"
-      echo "Options:"
-      echo " h     Print this help message"
-      echo " f     Set force to 1"
-      exit 1
-      ;;
-  esac
+    case ${opt} in
+    f)
+        FORCE=1
+        ;;
+    \?)
+        echo "Usage: all-dependencies.sh [-h] [-f]"
+        echo "Options:"
+        echo " h     Print this help message"
+        echo " f     Set force to 1"
+        exit 1
+        ;;
+    esac
 done
 
 BUILT_ANY=0
@@ -52,7 +52,6 @@ dep() {
     BUILT_ANY=1
 }
 
-dep base64 libbase64.a
 dep boringssl libcrypto.a libssl.a libdecrepit.a
 dep cares libcares.a
 dep libarchive libarchive.a

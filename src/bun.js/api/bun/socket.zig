@@ -224,7 +224,7 @@ const Handlers = struct {
         this.active_connections -= 1;
         if (this.active_connections == 0) {
             if (this.is_server) {
-                var listen_socket: *Listener = @fieldParentPtr(Listener, "handlers", this);
+                var listen_socket: *Listener = @fieldParentPtr("handlers", this);
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == null) {
                     listen_socket.strong_self.clear();
@@ -652,7 +652,7 @@ pub const Listener = struct {
                 hostname_or_unix.deinit();
             }
 
-            const errno = @intFromEnum(std.c.getErrno(-1));
+            const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -752,7 +752,7 @@ pub const Listener = struct {
                     bun.span(hostname_or_unix.slice()),
                 },
             );
-            const errno = @intFromEnum(std.c.getErrno(-1));
+            const errno = @intFromEnum(bun.C.getErrno(@as(c_int, -1)));
             if (errno != 0) {
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
                 if (bun.C.SystemErrno.init(errno)) |str| {
@@ -1217,9 +1217,9 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
-            @fence(.Acquire);
+            @fence(.acquire);
 
-            return this.has_pending_activity.load(.Acquire);
+            return this.has_pending_activity.load(.acquire);
         }
 
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
@@ -1369,7 +1369,7 @@ fn NewSocket(comptime ssl: bool) type {
                 var promise = val.asPromise().?;
                 const err_ = err.toErrorInstance(globalObject);
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
-                this.has_pending_activity.store(false, .Release);
+                this.has_pending_activity.store(false, .release);
             }
         }
         pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
@@ -1381,7 +1381,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (!this.is_active) {
                 this.handlers.markActive();
                 this.is_active = true;
-                this.has_pending_activity.store(true, .Release);
+                this.has_pending_activity.store(true, .release);
             }
         }
 
@@ -1402,7 +1402,7 @@ fn NewSocket(comptime ssl: bool) type {
                 const vm = this.handlers.vm;
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
-                this.has_pending_activity.store(false, .Release);
+                this.has_pending_activity.store(false, .release);
             }
         }
 
@@ -1707,7 +1707,8 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            return @fieldParentPtr(Listener, "handlers", this.handlers).strong_self.get() orelse JSValue.jsUndefined();
+            const l: *Listener = @fieldParentPtr("handlers", this.handlers);
+            return l.strong_self.get() orelse JSValue.jsUndefined();
         }
 
         pub fn getReadyState(
@@ -3124,7 +3125,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
                 this.handlers.markInactive(ssl, old_context, this.wrapped);
                 this.poll_ref.unref(vm);
-                this.has_pending_activity.store(false, .Release);
+                this.has_pending_activity.store(false, .release);
             }
 
             const array = JSC.JSValue.createEmptyArray(globalObject, 2);

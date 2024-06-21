@@ -10,7 +10,6 @@ describe("bundler", () => {
     target: "bun",
     outfile: "",
     outdir: "/out",
-
     files: {
       "/entry.ts": /* js */ `
         import db from './db.sqlite' with {type: "sqlite", embed: "true"};

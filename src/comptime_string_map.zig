@@ -76,7 +76,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             for (kvs, 0..) |kv, i| {
                 k[i] = kv.key;
             }
-            break :blk k[0..];
+            const final = k;
+            break :blk &final;
         };
 
         pub const Value = V;

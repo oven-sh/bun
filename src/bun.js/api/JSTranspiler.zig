@@ -573,15 +573,15 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     if (object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
-                transpiler.transform.source_map = Api.SourceMapMode.external;
+                transpiler.transform.source_map = .@"inline";
             } else {
-                transpiler.transform.source_map = Api.SourceMapMode.inline_into_file;
+                transpiler.transform.source_map = .none;
             }
         } else {
             if (options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
-                JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"external\", or \"none\"", .{}, globalObject, exception);
+                JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{}, globalObject, exception);
                 return transpiler;
             }
         }

@@ -1,5 +1,3 @@
-
-
 #include "node_api.h"
 #include "root.h"
 
@@ -65,6 +63,7 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include "CommonJSModuleRecord.h"
 
 // #include <iostream>
 using namespace JSC;
@@ -877,16 +876,31 @@ extern "C" void napi_module_register(napi_module* mod)
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
 
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::Strong<JSC::JSObject> strongExportsObject;
+
     if (!object) {
-        object = JSC::constructEmptyObject(globalObject);
+        auto* exportsObject = JSC::constructEmptyObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
+        strongExportsObject = { vm, exportsObject };
     } else {
         globalObject->pendingNapiModule = JSC::JSValue();
+        JSValue exportsObject = object->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+        RETURN_IF_EXCEPTION(scope, void());
+
+        if (exportsObject && exportsObject.isObject()) {
+            strongExportsObject = { vm, exportsObject.getObject() };
+        }
     }
 
-    EnsureStillAliveScope ensureAlive(object);
+    JSC::Strong<JSC::JSObject> strongObject = { vm, object };
+
     JSValue resultValue = toJS(mod->nm_register_func(toNapi(globalObject), toNapi(object)));
 
-    EnsureStillAliveScope ensureAlive2(resultValue);
+    RETURN_IF_EXCEPTION(scope, void());
+
     if (resultValue.isEmpty()) {
         JSValue errorInstance = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
         globalObject->pendingNapiModule = errorInstance;
@@ -903,19 +917,14 @@ extern "C" void napi_module_register(napi_module* mod)
         return;
     }
 
-    // std::cout << "loaded " << mod->nm_modname << std::endl;
-
-    auto source = JSC::SourceCode(
-        JSC::SyntheticSourceProvider::create(generateObjectModuleSourceCode(
-                                                 globalObject,
-                                                 object),
-            JSC::SourceOrigin(), keyStr));
-
-    // Add it to the ESM registry
-    globalObject->moduleLoader()->provideFetch(globalObject, JSC::jsString(vm, WTFMove(keyStr)), WTFMove(source));
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
+    // https://github.com/oven-sh/bun/issues/1288
+    if (!scope.exception() && strongExportsObject && strongExportsObject.get() != resultValue) {
+        PutPropertySlot slot(strongObject.get(), false);
+        strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
+    }
 
     globalObject->pendingNapiModule = object;
-    vm.writeBarrier(globalObject, object);
 }
 
 extern "C" napi_status napi_wrap(napi_env env,
@@ -1063,6 +1072,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     auto method = reinterpret_cast<Zig::FFIFunction>(cb);
     auto* function = NAPIFunction::create(vm, globalObject, length, name, method, data);
 
+    ASSERT(function->isCallable());
     *result = toNapi(JSC::JSValue(function));
 
     return napi_ok;

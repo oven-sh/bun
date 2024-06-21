@@ -4,10 +4,10 @@ const bun = @import("root").bun;
 const meta = bun.meta;
 const windows = bun.windows;
 const heap_allocator = bun.default_allocator;
-const is_bindgen: bool = meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const kernel32 = windows.kernel32;
 const logger = bun.logger;
-const os = std.os;
+const posix = std.posix;
 const path_handler = bun.path;
 const strings = bun.strings;
 const string = bun.string;
@@ -93,7 +93,7 @@ pub const Buffer = JSC.MarkedArrayBuffer;
 
 /// On windows, this is what libuv expects
 /// On unix it is what the utimens api expects
-pub const TimeLike = if (Environment.isWindows) f64 else std.os.timespec;
+pub const TimeLike = if (Environment.isWindows) f64 else std.posix.timespec;
 
 pub const Flavor = enum {
     sync,
@@ -219,9 +219,9 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub inline fn getErrno(this: @This()) os.E {
+        pub inline fn getErrno(this: @This()) posix.E {
             return switch (this) {
-                .result => os.E.SUCCESS,
+                .result => posix.E.SUCCESS,
                 .err => |e| @enumFromInt(e.errno),
             };
         }
@@ -274,7 +274,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         }
 
         pub inline fn errnoSysP(rc: anytype, syscall: Syscall.Tag, path: anytype) ?@This() {
-            if (meta.Child(@TypeOf(path)) == u16) {
+            if (bun.meta.Item(@TypeOf(path)) == u16) {
                 @compileError("Do not pass WString path to errnoSysP, it needs the path encoded as utf8");
             }
             if (comptime Environment.isWindows) {
@@ -557,7 +557,7 @@ pub const StringOrBuffer = union(enum) {
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
-// and various issues with std.os that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
+// and various issues with std.posix that make it too unstable for arbitrary user input (e.g. how .BADF is marked as unreachable)
 
 /// https://github.com/nodejs/node/blob/master/lib/buffer.js#L587
 pub const Encoding = enum(u8) {
@@ -1275,44 +1275,44 @@ pub const PathOrFileDescriptor = union(Tag) {
 
 pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
-    a = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
+    a = bun.O.APPEND | bun.O.WRONLY | bun.O.CREAT,
     /// Like 'a' but fails if the path exists.
-    // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
+    // @"ax" = bun.O.APPEND | bun.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
-    // @"a+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"a+" = bun.O.APPEND | bun.O.RDWR,
     /// Like 'a+' but fails if the path exists.
-    // @"ax+" = std.os.O.APPEND | std.os.O.RDWR | std.os.O.EXCL,
+    // @"ax+" = bun.O.APPEND | bun.O.RDWR | bun.O.EXCL,
     /// Open file for appending in synchronous mode. The file is created if it does not exist.
-    // @"as" = std.os.O.APPEND,
+    // @"as" = bun.O.APPEND,
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
-    // @"as+" = std.os.O.APPEND | std.os.O.RDWR,
+    // @"as+" = bun.O.APPEND | bun.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    r = std.os.O.RDONLY,
+    r = bun.O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
-    // @"r+" = std.os.O.RDWR,
+    // @"r+" = bun.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
     /// This is primarily useful for opening files on NFS mounts as it allows skipping the potentially stale local cache. It has a very real impact on I/O performance so using this flag is not recommended unless it is needed.
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
-    // @"rs+" = std.os.O.RDWR,
+    // @"rs+" = bun.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    w = std.os.O.WRONLY | std.os.O.CREAT,
+    w = bun.O.WRONLY | bun.O.CREAT,
     /// Like 'w' but fails if the path exists.
-    // @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
+    // @"wx" = bun.O.WRONLY | bun.O.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
-    // @"w+" = std.os.O.RDWR | std.os.O.CREAT,
+    // @"w+" = bun.O.RDWR | bun.O.CREAT,
     // ///  Like 'w+' but fails if the path exists.
-    // @"wx+" = std.os.O.RDWR | std.os.O.EXCL,
+    // @"wx+" = bun.O.RDWR | bun.O.EXCL,
 
     _,
 
-    const O_RDONLY: Mode = std.os.O.RDONLY;
-    const O_RDWR: Mode = std.os.O.RDWR;
-    const O_APPEND: Mode = std.os.O.APPEND;
-    const O_CREAT: Mode = std.os.O.CREAT;
-    const O_WRONLY: Mode = std.os.O.WRONLY;
-    const O_EXCL: Mode = std.os.O.EXCL;
+    const O_RDONLY: Mode = bun.O.RDONLY;
+    const O_RDWR: Mode = bun.O.RDWR;
+    const O_APPEND: Mode = bun.O.APPEND;
+    const O_CREAT: Mode = bun.O.CREAT;
+    const O_WRONLY: Mode = bun.O.WRONLY;
+    const O_EXCL: Mode = bun.O.EXCL;
     const O_SYNC: Mode = 0;
-    const O_TRUNC: Mode = std.os.O.TRUNC;
+    const O_TRUNC: Mode = bun.O.TRUNC;
 
     const map = bun.ComptimeStringMap(Mode, .{
         .{ "r", O_RDONLY },
@@ -1483,7 +1483,7 @@ pub fn StatType(comptime Big: bool) type {
 
         const This = @This();
 
-        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.os.timespec;
+        const StatTimespec = if (Environment.isWindows) bun.windows.libuv.uv_timespec_t else std.posix.timespec;
 
         inline fn toNanoseconds(ts: StatTimespec) Timestamp {
             const tv_sec: i64 = @intCast(ts.tv_sec);
@@ -1584,7 +1584,7 @@ pub fn StatType(comptime Big: bool) type {
             return @truncate(this.mode);
         }
 
-        const S = if (Environment.isWindows) bun.C.S else os.system.S;
+        const S = if (Environment.isWindows) bun.C.S else posix.system.S;
 
         pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(S.ISBLK(@intCast(this.modeInternal())));
@@ -2084,7 +2084,10 @@ pub const Path = struct {
 
     pub fn getCwdU8(buf: []u8) MaybeBuf(u8) {
         const result = bun.getcwd(buf) catch {
-            return MaybeBuf(u8).errnoSys(0, Syscall.Tag.getcwd).?;
+            return MaybeBuf(u8).errnoSys(
+                @as(c_int, 0),
+                Syscall.Tag.getcwd,
+            ).?;
         };
         return MaybeBuf(u8){ .result = result };
     }
@@ -4414,12 +4417,12 @@ pub const Path = struct {
                             break :brk u16Buf[0..bufSize :0];
                         }
                     };
-                    // Zig's std.os.getenvW has logic to support keys like `=${resolvedDevice}`:
+                    // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
                     // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130
                     //
                     // TODO: Enable test once spawnResult.stdout works on Windows.
                     // test/js/node/path/resolve.test.js
-                    if (std.os.getenvW(key_w)) |r| {
+                    if (std.process.getenvW(key_w)) |r| {
                         if (T == u16) {
                             bufSize = r.len;
                             @memcpy(buf2[0..bufSize], r);
@@ -4889,7 +4892,8 @@ pub const Process = struct {
     }
 
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const allocator = globalObject.allocator();
+        var sfb = std.heap.stackFallback(4096, globalObject.allocator());
+        const temp_alloc = sfb.get();
         const vm = globalObject.bunVM();
 
         if (vm.worker) |worker| {
@@ -4903,32 +4907,62 @@ pub const Process = struct {
             }
         }
 
-        var args = allocator.alloc(
-            JSC.ZigString,
-            // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
-            // argv also omits the script name
-            bun.argv.len -| 1,
-        ) catch bun.outOfMemory();
-        defer allocator.free(args);
-        var used: usize = 0;
-        const offset = 1;
+        var args = std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1) catch bun.outOfMemory();
+        defer args.deinit();
 
-        for (bun.argv[@min(bun.argv.len, offset)..]) |arg| {
-            if (arg.len == 0)
+        var seen_run = false;
+        var prev: ?[]const u8 = null;
+
+        // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
+        // it isn't worth doing this as a part of the CLI
+        for (bun.argv[@min(1, bun.argv.len)..]) |arg| {
+            defer prev = arg;
+
+            if (arg.len >= 1 and arg[0] == '-') {
+                args.append(bun.String.createUTF8(arg)) catch bun.outOfMemory();
                 continue;
+            }
 
-            if (arg[0] != '-')
+            if (!seen_run and bun.strings.eqlComptime(arg, "run")) {
+                seen_run = true;
                 continue;
+            }
 
-            if (vm.argv.len > 0 and strings.eqlLong(vm.argv[0], arg, true))
-                break;
+            // A set of execArgv args consume an extra argument, so we do not want to
+            // confuse these with script names.
+            const map = bun.ComptimeStringMap(void, comptime brk: {
+                const auto_params = bun.CLI.Arguments.auto_params;
+                const KV = struct { []const u8, void };
+                var entries: [auto_params.len]KV = undefined;
+                var i = 0;
+                for (auto_params) |param| {
+                    if (param.takes_value != .none) {
+                        if (param.names.long) |name| {
+                            entries[i] = .{ "--" ++ name, {} };
+                            i += 1;
+                        }
+                        if (param.names.short) |name| {
+                            entries[i] = .{ &[_]u8{ '-', name }, {} };
+                            i += 1;
+                        }
+                    }
+                }
 
-            args[used] = JSC.ZigString.fromUTF8(arg);
+                var result: [i]KV = undefined;
+                @memcpy(&result, entries[0..i]);
+                break :brk result;
+            });
 
-            used += 1;
+            if (prev) |p| if (map.has(p)) {
+                args.append(bun.String.createUTF8(arg)) catch @panic("OOM");
+                continue;
+            };
+
+            // we hit the script name
+            break;
         }
 
-        return JSC.JSValue.createStringArray(globalObject, args.ptr, used, true);
+        return bun.String.toJSArray(globalObject, args.items);
     }
 
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

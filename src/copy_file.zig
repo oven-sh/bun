@@ -2,7 +2,7 @@
 // The copy starts at offset 0, the initial offsets are preserved.
 // No metadata is transferred over.
 const std = @import("std");
-const os = std.os;
+const posix = std.posix;
 const math = std.math;
 const bun = @import("root").bun;
 const strings = bun.strings;
@@ -20,11 +20,11 @@ pub const CopyFileRangeError = error{
     Unseekable,
     PermissionDenied,
     FileBusy,
-} || os.PReadError || os.PWriteError || os.UnexpectedError;
+} || posix.PReadError || posix.PWriteError || posix.UnexpectedError;
 
-const CopyFileError = error{SystemResources} || CopyFileRangeError || os.SendFileError;
+const CopyFileError = error{SystemResources} || CopyFileRangeError || posix.SendFileError;
 
-const InputType = if (Environment.isWindows) bun.OSPathSliceZ else os.fd_t;
+const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
 
 /// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
 ///
@@ -60,14 +60,14 @@ const EmptyCopyFileState = struct {};
 pub const CopyFileState = if (Environment.isLinux) LinuxCopyFileState else EmptyCopyFileState;
 pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFileState) CopyFileError!void {
     if (comptime Environment.isMac) {
-        const rc = os.system.fcopyfile(in, out, null, os.system.COPYFILE_DATA);
-        switch (os.errno(rc)) {
+        const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE_DATA);
+        switch (posix.errno(rc)) {
             .SUCCESS => return,
             .NOMEM => return error.SystemResources,
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
             .OPNOTSUPP => {},
-            else => |err| return os.unexpectedErrno(err),
+            else => |err| return posix.unexpectedErrno(err),
         }
     }
 
@@ -78,7 +78,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             const rc = bun.C.linux.ioctl_ficlone(bun.toFD(out), bun.toFD(in));
             // the ordering is flipped but it is consistent with other system calls.
             bun.sys.syslog("ioctl_ficlone({d}, {d}) = {d}", .{ in, out, rc });
-            switch (std.os.linux.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .SUCCESS => return,
                 .XDEV => {
                     copy_file_state.has_seen_exdev = true;
@@ -89,7 +89,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
 
                 .ACCES, .BADF, .INVAL, .OPNOTSUPP, .NOSYS, .PERM => {
                     bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
-                    can_use_ioctl_ficlone_.store(-1, .Monotonic);
+                    can_use_ioctl_ficlone_.store(-1, .monotonic);
                     copy_file_state.has_ioctl_ficlone_failed = true;
                 },
                 else => {
@@ -135,10 +135,10 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
 
     // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
     // fallback code will copy the contents chunk by chunk.
-    const empty_iovec = [0]os.iovec_const{};
+    const empty_iovec = [0]posix.iovec_const{};
     var offset: u64 = 0;
     sendfile_loop: while (true) {
-        const amt = try os.sendfile(out, in, offset, 0, &empty_iovec, &empty_iovec, 0);
+        const amt = try posix.sendfile(out, in, offset, 0, &empty_iovec, &empty_iovec, 0);
         // Terminate when no data was copied
         if (amt == 0) break :sendfile_loop;
         offset += amt;
@@ -155,26 +155,26 @@ pub inline fn disableCopyFileRangeSyscall() void {
     if (comptime !Environment.isLinux) {
         return;
     }
-    can_use_copy_file_range.store(-1, .Monotonic);
+    can_use_copy_file_range.store(-1, .monotonic);
 }
 pub fn canUseCopyFileRangeSyscall() bool {
-    const result = can_use_copy_file_range.load(.Monotonic);
+    const result = can_use_copy_file_range.load(.monotonic);
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.
         if (bun.getenvZ("BUN_CONFIG_DISABLE_COPY_FILE_RANGE") != null) {
             bun.Output.debug("copy_file_range is disabled by BUN_CONFIG_DISABLE_COPY_FILE_RANGE", .{});
-            can_use_copy_file_range.store(-1, .Monotonic);
+            can_use_copy_file_range.store(-1, .monotonic);
             return false;
         }
 
         const kernel = Platform.kernelVersion();
         if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
             bun.Output.debug("copy_file_range is supported", .{});
-            can_use_copy_file_range.store(1, .Monotonic);
+            can_use_copy_file_range.store(1, .monotonic);
             return true;
         } else {
             bun.Output.debug("copy_file_range is NOT supported", .{});
-            can_use_copy_file_range.store(-1, .Monotonic);
+            can_use_copy_file_range.store(-1, .monotonic);
             return false;
         }
     }
@@ -187,26 +187,26 @@ pub inline fn disable_ioctl_ficlone() void {
     if (comptime !Environment.isLinux) {
         return;
     }
-    can_use_ioctl_ficlone_.store(-1, .Monotonic);
+    can_use_ioctl_ficlone_.store(-1, .monotonic);
 }
 pub fn can_use_ioctl_ficlone() bool {
-    const result = can_use_ioctl_ficlone_.load(.Monotonic);
+    const result = can_use_ioctl_ficlone_.load(.monotonic);
     if (result == 0) {
         // This flag mostly exists to make other code more easily testable.
         if (bun.getenvZ("BUN_CONFIG_DISABLE_ioctl_ficlonerange") != null) {
             bun.Output.debug("ioctl_ficlonerange is disabled by BUN_CONFIG_DISABLE_ioctl_ficlonerange", .{});
-            can_use_ioctl_ficlone_.store(-1, .Monotonic);
+            can_use_ioctl_ficlone_.store(-1, .monotonic);
             return false;
         }
 
         const kernel = Platform.kernelVersion();
         if (kernel.orderWithoutTag(.{ .major = 4, .minor = 5 }).compare(.gte)) {
             bun.Output.debug("ioctl_ficlonerange is supported", .{});
-            can_use_ioctl_ficlone_.store(1, .Monotonic);
+            can_use_ioctl_ficlone_.store(1, .monotonic);
             return true;
         } else {
             bun.Output.debug("ioctl_ficlonerange is NOT supported", .{});
-            can_use_ioctl_ficlone_.store(-1, .Monotonic);
+            can_use_ioctl_ficlone_.store(-1, .monotonic);
             return false;
         }
     }
@@ -214,14 +214,14 @@ pub fn can_use_ioctl_ficlone() bool {
     return result == 1;
 }
 
-const fd_t = std.os.fd_t;
+const fd_t = std.posix.fd_t;
 
 pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_state: *CopyFileState) CopyFileRangeError!usize {
     if (canUseCopyFileRangeSyscall() and !copy_file_state.has_seen_exdev and !copy_file_state.has_copy_file_range_failed) {
         while (true) {
             const rc = std.os.linux.copy_file_range(in, null, out, null, len, flags);
             bun.sys.syslog("copy_file_range({d}, {d}, {d}) = {d}", .{ in, out, len, rc });
-            switch (std.os.linux.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .SUCCESS => return @as(usize, @intCast(rc)),
                 // these may not be regular files, try fallback
                 .INVAL => {
@@ -237,7 +237,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
                 .OPNOTSUPP, .NOSYS => {
                     copy_file_state.has_copy_file_range_failed = true;
                     bun.Output.debug("copy_file_range is NOT supported", .{});
-                    can_use_copy_file_range.store(-1, .Monotonic);
+                    can_use_copy_file_range.store(-1, .monotonic);
                 },
                 .INTR => continue,
                 else => {
@@ -252,7 +252,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
     while (!copy_file_state.has_sendfile_failed) {
         const rc = std.os.linux.sendfile(@intCast(out), @intCast(in), null, len);
         bun.sys.syslog("sendfile({d}, {d}, {d}) = {d}", .{ in, out, len, rc });
-        switch (std.os.linux.getErrno(rc)) {
+        switch (bun.C.getErrno(rc)) {
             .SUCCESS => return @as(usize, @intCast(rc)),
             .INTR => continue,
             // these may not be regular files, try fallback
@@ -278,7 +278,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
 
     var buf: [8 * 4096]u8 = undefined;
     const adjusted_count = @min(buf.len, len);
-    const amt_read = try os.read(in, buf[0..adjusted_count]);
+    const amt_read = try posix.read(in, buf[0..adjusted_count]);
     if (amt_read == 0) return 0;
-    return os.write(out, buf[0..amt_read]);
+    return posix.write(out, buf[0..amt_read]);
 }

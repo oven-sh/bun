@@ -11,7 +11,6 @@ const C = bun.C;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {

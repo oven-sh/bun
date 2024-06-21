@@ -24,7 +24,7 @@ pub const Mutex = struct {
     inline fn acquireFast(self: *Mutex, comptime strong: bool) bool {
         // On x86, "lock bts" uses less i-cache & can be faster than "lock cmpxchg" below.
         if (comptime is_x86) {
-            return self.state.bitSet(@ctz(@as(u32, LOCKED)), .Acquire) == UNLOCKED;
+            return self.state.bitSet(@ctz(@as(u32, LOCKED)), .acquire) == UNLOCKED;
         }
 
         const cas_fn = comptime switch (strong) {
@@ -36,8 +36,8 @@ pub const Mutex = struct {
             &self.state,
             UNLOCKED,
             LOCKED,
-            .Acquire,
-            .Monotonic,
+            .acquire,
+            .monotonic,
         ) == null;
     }
 
@@ -51,12 +51,12 @@ pub const Mutex = struct {
         while (spin > 0) : (spin -= 1) {
             std.atomic.spinLoopHint();
 
-            switch (self.state.load(.Monotonic)) {
+            switch (self.state.load(.monotonic)) {
                 UNLOCKED => _ = self.state.cmpxchgWeak(
                     UNLOCKED,
                     LOCKED,
-                    .Acquire,
-                    .Monotonic,
+                    .acquire,
+                    .monotonic,
                 ) orelse return,
                 LOCKED => continue,
                 CONTENDED => break,
@@ -73,18 +73,18 @@ pub const Mutex = struct {
         while (true) : (Futex.wait(&self.state, CONTENDED, null) catch unreachable) {
             // On x86, "xchg" can be faster than "lock cmpxchg" below.
             if (comptime is_x86) {
-                switch (self.state.swap(CONTENDED, .Acquire)) {
+                switch (self.state.swap(CONTENDED, .acquire)) {
                     UNLOCKED => return,
                     LOCKED, CONTENDED => continue,
                     else => unreachable, // invalid Mutex state
                 }
             }
 
-            var state = self.state.load(.Monotonic);
+            var state = self.state.load(.monotonic);
             while (state != CONTENDED) {
                 state = switch (state) {
-                    UNLOCKED => self.state.cmpxchgWeak(state, CONTENDED, .Acquire, .Monotonic) orelse return,
-                    LOCKED => self.state.cmpxchgWeak(state, CONTENDED, .Monotonic, .Monotonic) orelse break,
+                    UNLOCKED => self.state.cmpxchgWeak(state, CONTENDED, .acquire, .monotonic) orelse return,
+                    LOCKED => self.state.cmpxchgWeak(state, CONTENDED, .monotonic, .monotonic) orelse break,
                     CONTENDED => unreachable, // checked above
                     else => unreachable, // invalid Mutex state
                 };
@@ -93,7 +93,7 @@ pub const Mutex = struct {
     }
 
     pub fn release(self: *Mutex) void {
-        switch (self.state.swap(UNLOCKED, .Release)) {
+        switch (self.state.swap(UNLOCKED, .release)) {
             UNLOCKED => unreachable, // released without being acquired
             LOCKED => {},
             CONTENDED => Futex.wake(&self.state, 1),
@@ -118,7 +118,7 @@ pub const Lock = struct {
     }
 
     pub inline fn assertUnlocked(this: *Lock, comptime message: []const u8) void {
-        if (this.mutex.state.load(.Monotonic) != 0) {
+        if (this.mutex.state.load(.monotonic) != 0) {
             @panic(message);
         }
     }

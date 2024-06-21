@@ -2248,6 +2248,17 @@ pub const Formatter = struct {
                             writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
                         }
                     }
+
+                    const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                    var iter = Iterator{
+                        .formatter = this,
+                        .writer = writer_,
+                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                        .single_line = this.single_line,
+                        .parent = value,
+                        .i = i,
+                    };
+                    value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
                 }
 
                 if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {
@@ -3097,7 +3108,9 @@ pub const Formatter = struct {
         else
             "<r><d>, ... {d} more<r>";
 
-        writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{slice[0]});
+        writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
+            if (@typeInfo(Number) == .Float) bun.fmt.fmtDouble(@floatCast(slice[0])) else slice[0],
+        });
         var leftover = slice[1..];
         const max = 512;
         leftover = leftover[0..@min(leftover.len, max)];
@@ -3105,7 +3118,9 @@ pub const Formatter = struct {
             this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
             writer.space();
 
-            writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});
+            writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
+                if (@typeInfo(Number) == .Float) bun.fmt.fmtDouble(@floatCast(el)) else el,
+            });
         }
 
         if (slice.len > max + 1) {

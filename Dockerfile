@@ -25,8 +25,9 @@ ARG CMAKE_BUILD_TYPE=Release
 
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
-ARG ZIG_VERSION="0.12.0-dev.1828+225fe6ddb"
-ARG ZIG_VERSION_SHORT="0.12.0-dev.1828"
+
+ARG ZIG_VERSION="0.13.0"
+ARG ZIG_VERSION_SHORT="0.13.0"
 
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION
@@ -144,7 +145,7 @@ ARG ZIG_VERSION_SHORT
 ARG BUILD_MACHINE_ARCH
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
 ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
-ARG ZIG_URL=https://github.com/oven-sh/zig/releases/download/${ZIG_VERSION_SHORT}/zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}.tar.xz
+ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG ZIG_LOCAL_CACHE_DIR=/zig-cache
 ENV ZIG_LOCAL_CACHE_DIR=${ZIG_LOCAL_CACHE_DIR}
 
@@ -459,7 +460,7 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   -DWEBKIT_DIR="omit" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
-  -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="/tmp" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
   -DZIG_LIB_DIR=$BUN_DIR/src/deps/zig/lib \
@@ -515,7 +516,7 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="${BUN_DIR}/build" \
   -DUSE_LTO=ON \
   -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
@@ -577,7 +578,7 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="${BUN_DIR}/build" \
   -DUSE_DEBUG_JSC=ON \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \

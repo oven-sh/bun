@@ -758,16 +758,16 @@ pub fn normalizeStringGenericTZ(
     if (isWindows and !options.allow_above_root) {
         if (volLen > 0) {
             if (options.add_nt_prefix) {
-                @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "\\??\\"));
+                @memcpy(buf[buf_i .. buf_i + 4], comptime strings.literal(T, "\\??\\"));
                 buf_i += 4;
             }
             if (path_[1] != ':') {
                 // UNC paths
                 if (options.add_nt_prefix) {
-                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "UNC" ++ sep_str));
+                    @memcpy(buf[buf_i .. buf_i + 4], comptime strings.literal(T, "UNC" ++ sep_str));
                     buf_i += 2;
                 } else {
-                    @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                    @memcpy(buf[buf_i .. buf_i + 2], comptime strings.literal(T, sep_str ++ sep_str));
                 }
                 @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                 buf[buf_i + indexOfThirdUNCSlash] = options.separator;
@@ -866,10 +866,10 @@ pub fn normalizeStringGenericTZ(
                 }
             } else if (options.allow_above_root) {
                 if (buf_i > buf_start) {
-                    buf[buf_i..][0..3].* = comptime strings.literalBuf(T, sep_str ++ "..");
+                    buf[buf_i..][0..3].* = (comptime strings.literal(T, sep_str ++ "..")).*;
                     buf_i += 3;
                 } else {
-                    buf[buf_i..][0..2].* = comptime strings.literalBuf(T, "..");
+                    buf[buf_i..][0..2].* = (comptime strings.literal(T, "..")).*;
                     buf_i += 2;
                 }
                 dotdot = buf_i;
@@ -1915,7 +1915,7 @@ pub const PosixToWinNormalizer = struct {
             if (root.len == 1) {
                 assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
-                    const cwd = try std.os.getcwd(buf);
+                    const cwd = try std.posix.getcwd(buf);
                     assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
                     assert(source_root.ptr == source_root.ptr);
@@ -1941,7 +1941,7 @@ pub const PosixToWinNormalizer = struct {
             if (root.len == 1) {
                 assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
-                    const cwd = try std.os.getcwd(buf);
+                    const cwd = try std.posix.getcwd(buf);
                     assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
                     assert(source_root.ptr == source_root.ptr);

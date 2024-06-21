@@ -3,11 +3,13 @@
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
+#include "CommonJSModuleRecord.h"
 #include "JavaScriptCore/CatchScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Protect.h"
+#include "JavaScriptCore/PutPropertySlot.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
@@ -285,9 +287,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     globalObject->pendingNapiModule = exports;
+    Strong<JSC::Unknown> strongExports;
+
     if (exports.isCell()) {
-        vm.writeBarrier(globalObject, exports.asCell());
+        strongExports = { vm, exports.asCell() };
     }
+
+    Strong<JSC::JSObject> strongModule = { vm, moduleObject };
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
     if (filename.isEmpty()) {
@@ -344,17 +350,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     }
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        JSValue pendingModule = globalObject->pendingNapiModule;
+        JSValue resultValue = globalObject->pendingNapiModule;
         globalObject->pendingNapiModule = JSValue {};
         globalObject->napiModuleRegisterCallCount = 0;
 
-        if (pendingModule) {
-            if (pendingModule.isCell() && pendingModule.getObject()->isErrorInstance()) {
-                JSC::throwException(globalObject, scope, pendingModule);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (resultValue && resultValue != strongModule.get()) {
+            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
+                JSC::throwException(globalObject, scope, resultValue);
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
-            return JSC::JSValue::encode(pendingModule);
         }
+
+        return JSValue::encode(jsUndefined());
     }
 
     JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject* globalObject,
@@ -381,7 +390,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    return napi_register_module_v1(globalObject, JSC::JSValue::encode(exports));
+    EncodedJSValue exportsValue = JSC::JSValue::encode(exports);
+    JSC::JSValue resultValue = JSValue::decode(napi_register_module_v1(globalObject, exportsValue));
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
+    // https://github.com/oven-sh/bun/issues/1288
+    if (!resultValue.isEmpty() && !scope.exception() && (!strongExports || resultValue != strongExports.get())) {
+        PutPropertySlot slot(strongModule.get(), false);
+        strongModule->put(strongModule.get(), globalObject, builtinNames(vm).exportsPublicName(), resultValue, slot);
+    }
+
+    return JSValue::encode(resultValue);
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,

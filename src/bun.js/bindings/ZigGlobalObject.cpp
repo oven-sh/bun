@@ -414,7 +414,7 @@ WTF::String Bun::formatStackTrace(
                 sb.append(remappedFrame.source_url.toWTFString());
 
                 if (remappedFrame.remapped) {
-                    errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(originalLine.oneBasedInt()), 0);
+                    errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
                     hasSet = true;
                     line = remappedFrame.position.line();
                 }
@@ -485,12 +485,13 @@ WTF::String Bun::formatStackTrace(
         }
 
         if (frame.hasLineAndColumnInfo()) {
-            LineColumn lineColumn = frame.computeLineAndColumn();
-            OrdinalNumber thisLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-            OrdinalNumber thisColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
             ZigStackFrame remappedFrame = {};
-            remappedFrame.position.line_zero_based = thisLine.zeroBasedInt();
-            remappedFrame.position.column_zero_based = thisColumn.zeroBasedInt();
+            LineColumn lineColumn = frame.computeLineAndColumn();
+            OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+            OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+
+            remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
+            remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
 
             String sourceURLForFrame = frame.sourceURL(vm);
 
@@ -509,14 +510,14 @@ WTF::String Bun::formatStackTrace(
 
             if (!hasSet) {
                 hasSet = true;
-                line = thisLine;
-                column = thisColumn;
+                line = remappedFrame.position.line();
+                column = remappedFrame.position.column();
                 sourceURL = frame.sourceURL(vm);
 
                 if (remappedFrame.remapped) {
                     if (errorInstance) {
-                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalLine"_s), jsNumber(thisLine.oneBasedInt()), 0);
-                        errorInstance->putDirect(vm, Identifier::fromString(vm, "originalColumn"_s), jsNumber(thisColumn.oneBasedInt()), 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), 0);
+                        errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), 0);
                     }
                 }
             }
@@ -627,14 +628,11 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
     return String();
 }
 
-static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned& line_in, unsigned& column_in, String& sourceURL, JSObject* errorInstance)
+static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
     if (skipNextComputeErrorInfo) {
         return String();
     }
-
-    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
-    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
     Zig::GlobalObject* globalObject = nullptr;
 
@@ -663,6 +661,20 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsi
     }
 
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, stackTrace, line, column, sourceURL, errorInstance);
+}
+
+// TODO: @paperdave: remove this wrapper and make the WTF::Function from JavaScriptCore expeect OrdinalNumber instead of unsigned.
+static String computeErrorInfoWrapper(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
+{
+    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
+    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
+
+    WTF::String result = computeErrorInfo(vm, stackTrace, line, column, sourceURL, errorInstance);
+
+    line_in = line.oneBasedInt();
+    column_in = column.oneBasedInt();
+
+    return result;
 }
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
@@ -756,7 +768,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
-    vm.setOnComputeErrorInfo(computeErrorInfo);
+    vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
 
     JSC::gcProtect(globalObject);
 

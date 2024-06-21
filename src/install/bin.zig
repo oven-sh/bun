@@ -291,7 +291,7 @@ pub const Bin = extern struct {
 
         pub const Error = error{
             NotImplementedYet,
-        } || std.os.SymLinkError || std.os.OpenError || std.os.RealPathError;
+        } || std.posix.SymLinkError || bun.OpenError || std.posix.RealPathError;
 
         pub fn ensureUmask() void {
             if (!has_set_umask) {
@@ -307,7 +307,7 @@ pub const Bin = extern struct {
             return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
         }
 
-        fn setPermissions(folder: std.os.fd_t, target: [:0]const u8) void {
+        fn setPermissions(folder: std.posix.fd_t, target: [:0]const u8) void {
             // we use fchmodat to avoid any issues with current working directory
             _ = C.fchmodat(folder, target, @intCast(umask | 0o777), 0);
         }
@@ -315,7 +315,7 @@ pub const Bin = extern struct {
         fn setSymlinkAndPermissions(this: *Linker, target_path: [:0]const u8, dest_path: [:0]const u8, link_global: bool) void {
             if (comptime !Environment.isWindows) {
                 const node_modules = this.package_installed_node_modules.asDir();
-                std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
+                std.posix.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err| {
                     // Silently ignore PathAlreadyExists if the symlink is valid.
                     // Most likely, the symlink was already created by another package
                     if (err == error.PathAlreadyExists) {
@@ -326,7 +326,7 @@ pub const Bin = extern struct {
                                 return;
                             };
 
-                            std.os.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err2| {
+                            std.posix.symlinkatZ(target_path, node_modules.fd, dest_path) catch |err2| {
                                 this.err = err2;
                                 return;
                             };
@@ -407,7 +407,7 @@ pub const Bin = extern struct {
                                     )
                                 else
                                     target_wpath,
-                                std.os.O.RDONLY,
+                                bun.O.RDONLY,
                             ).unwrap() catch break :contents null;
                             defer _ = bun.sys.close(fd);
                             const reader = fd.asFile().reader();
@@ -484,7 +484,7 @@ pub const Bin = extern struct {
                 const from = root_dir.realpath(dot_bin, &target_buf) catch |realpath_err| brk: {
                     if (realpath_err == error.FileNotFound) {
                         if (comptime Environment.isWindows) {
-                            std.os.mkdiratW(root_dir.fd, comptime bun.OSPathLiteral(".bin"), 0) catch |err| {
+                            std.posix.mkdiratW(root_dir.fd, comptime bun.OSPathLiteral(".bin"), 0) catch |err| {
                                 this.err = err;
                                 return;
                             };
@@ -750,7 +750,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
+                    std.posix.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                 },
                 .named_file => {
                     const name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
@@ -759,7 +759,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
+                    std.posix.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -787,7 +787,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         const dest_path: [:0]u8 = target_buf[0 .. @intFromPtr(from_remain.ptr) - @intFromPtr(&target_buf) :0];
 
-                        std.os.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
+                        std.posix.unlinkatZ(this.root_node_modules_folder.cast(), dest_path, 0) catch {};
                     }
                 },
                 .dir => {
@@ -835,7 +835,7 @@ pub const Bin = extern struct {
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
-                                std.os.unlinkatZ(
+                                std.posix.unlinkatZ(
                                     this.root_node_modules_folder.cast(),
                                     to_path,
                                     0,

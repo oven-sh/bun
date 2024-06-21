@@ -11,7 +11,7 @@ const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
 const Flavor = JSC.Node.Flavor;
-const system = std.os.system;
+const system = std.posix.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
@@ -23,9 +23,9 @@ const Syscall = if (Environment.isWindows) bun.sys.sys_uv else bun.sys;
 
 const Constants = @import("./node_fs_constant.zig").Constants;
 const builtin = @import("builtin");
-const os = @import("std").os;
-const darwin = os.darwin;
-const linux = os.linux;
+const posix = std.posix;
+const darwin = std.os.darwin;
+const linux = std.os.linux;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
@@ -36,9 +36,8 @@ const TimeLike = JSC.Node.TimeLike;
 const Mode = bun.Mode;
 const uv = bun.windows.libuv;
 const E = C.E;
-const uid_t = if (Environment.isPosix) std.os.uid_t else bun.windows.libuv.uv_uid_t;
-const gid_t = if (Environment.isPosix) std.os.gid_t else bun.windows.libuv.uv_gid_t;
-/// u63 to allow one null bit
+const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
+const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
 const ReadPosition = i64;
 
 const Stats = JSC.Node.Stats;
@@ -117,7 +116,7 @@ pub const Async = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            var this: *AsyncMkdirp = @fieldParentPtr(AsyncMkdirp, "task", task);
+            var this: *AsyncMkdirp = @fieldParentPtr("task", task);
 
             var node_fs = NodeFS{};
             const result = node_fs.mkdirRecursive(
@@ -180,7 +179,7 @@ pub const Async = struct {
             }
 
             fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                var this: *Task = @fieldParentPtr(Task, "task", task);
+                var this: *Task = @alignCast(@fieldParentPtr("task", task));
 
                 var node_fs = NodeFS{};
                 this.result = Function(&node_fs, this.args, .promise);
@@ -295,7 +294,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-                var this: *ThisSingleTask = @fieldParentPtr(ThisSingleTask, "task", task);
+                var this: *ThisSingleTask = @fieldParentPtr("task", task);
 
                 // TODO: error strings on node_fs will die
                 var node_fs = NodeFS{};
@@ -325,7 +324,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     }
                 }
 
-                const old_count = this.cp_task.subtask_count.fetchSub(1, .Monotonic);
+                const old_count = this.cp_task.subtask_count.fetchSub(1, .monotonic);
                 if (old_count == 1) {
                     this.cp_task.finishConcurrently(Maybe(Return.Cp).success);
                 }
@@ -424,7 +423,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            const this: *ThisAsyncCpTask = @fieldParentPtr(ThisAsyncCpTask, "task", task);
+            const this: *ThisAsyncCpTask = @alignCast(@fieldParentPtr("task", task));
 
             var node_fs = NodeFS{};
             ThisAsyncCpTask.cpAsync(&node_fs, this);
@@ -432,7 +431,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
         /// May be called from any thread (the subtasks)
         fn finishConcurrently(this: *ThisAsyncCpTask, result: Maybe(Return.Cp)) void {
-            if (this.has_result.cmpxchgStrong(false, true, .Monotonic, .Monotonic)) |_| {
+            if (this.has_result.cmpxchgStrong(false, true, .monotonic, .monotonic)) |_| {
                 return;
             }
 
@@ -554,7 +553,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     },
                 };
 
-                if (!os.S.ISDIR(stat_.mode)) {
+                if (!bun.S.ISDIR(stat_.mode)) {
                     // This is the only file, there is no point in dispatching subtasks
                     const r = nodefs._copySingleFileSync(
                         src,
@@ -583,7 +582,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             }
 
             const success = ThisAsyncCpTask._cpAsyncDirectory(nodefs, args.flags, this, &src_buf, @intCast(src.len), &dest_buf, @intCast(dest.len));
-            const old_count = this.subtask_count.fetchSub(1, .Monotonic);
+            const old_count = this.subtask_count.fetchSub(1, .monotonic);
             if (success and old_count == 1) {
                 this.finishConcurrently(Maybe(Return.Cp).success);
             }
@@ -624,7 +623,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                 }
             }
 
-            const open_flags = os.O.DIRECTORY | os.O.RDONLY;
+            const open_flags = bun.O.DIRECTORY | bun.O.RDONLY;
             const fd = switch (Syscall.openatOSPath(bun.FD.cwd(), src, open_flags, 0)) {
                 .err => |err| {
                     this.finishConcurrently(.{ .err = err.withPath(nodefs.osPathIntoSyncErrorBuf(src)) });
@@ -692,7 +691,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                         if (!should_continue) return false;
                     },
                     else => {
-                        _ = this.subtask_count.fetchAdd(1, .Monotonic);
+                        _ = this.subtask_count.fetchAdd(1, .monotonic);
 
                         const cname = current.name.slice();
 
@@ -805,7 +804,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         pub usingnamespace bun.New(@This());
 
         pub fn call(task: *JSC.WorkPoolTask) void {
-            var this: *Subtask = @fieldParentPtr(Subtask, "task", task);
+            var this: *Subtask = @alignCast(@fieldParentPtr("task", task));
             defer {
                 bun.default_allocator.free(this.basename.sliceAssumeZ());
                 this.destroy();
@@ -825,7 +824,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 .basename = bun.PathString.init(bun.default_allocator.dupeZ(u8, basename) catch bun.outOfMemory()),
             },
         );
-        bun.assert(readdir_task.subtask_count.fetchAdd(1, .Monotonic) > 0);
+        bun.assert(readdir_task.subtask_count.fetchAdd(1, .monotonic) > 0);
         JSC.WorkPool.schedule(&task.task);
     }
 
@@ -900,7 +899,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                             }
                         }
 
-                        if (this.subtask_count.fetchSub(1, .Monotonic) == 1) {
+                        if (this.subtask_count.fetchSub(1, .monotonic) == 1) {
                             this.finishConcurrently();
                         }
                     },
@@ -913,7 +912,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     }
 
     fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *AsyncReaddirRecursiveTask = @fieldParentPtr(AsyncReaddirRecursiveTask, "task", task);
+        var this: *AsyncReaddirRecursiveTask = @alignCast(@fieldParentPtr("task", task));
         var buf: bun.PathBuffer = undefined;
         this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
     }
@@ -932,23 +931,23 @@ pub const AsyncReaddirRecursiveTask = struct {
             }
             var clone = std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len) catch bun.outOfMemory();
             clone.appendSliceAssumeCapacity(result.items);
-            _ = this.result_list_count.fetchAdd(clone.items.len, .Monotonic);
+            _ = this.result_list_count.fetchAdd(clone.items.len, .monotonic);
             list.* = ResultListEntry{ .next = null, .value = @unionInit(ResultListEntry.Value, @tagName(Field), clone) };
             this.result_list_queue.push(list);
         }
 
-        if (this.subtask_count.fetchSub(1, .Monotonic) == 1) {
+        if (this.subtask_count.fetchSub(1, .monotonic) == 1) {
             this.finishConcurrently();
         }
     }
 
     /// May be called from any thread (the subtasks)
     pub fn finishConcurrently(this: *AsyncReaddirRecursiveTask) void {
-        if (this.has_result.cmpxchgStrong(false, true, .Monotonic, .Monotonic)) |_| {
+        if (this.has_result.cmpxchgStrong(false, true, .monotonic, .monotonic)) |_| {
             return;
         }
 
-        bun.assert(this.subtask_count.load(.Monotonic) == 0);
+        bun.assert(this.subtask_count.load(.monotonic) == 0);
 
         const root_fd = this.root_fd;
         if (root_fd != bun.invalid_fd) {
@@ -973,7 +972,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             switch (this.args.tag()) {
                 inline else => |tag| {
                     var results = &@field(this.result_list, @tagName(tag));
-                    results.ensureTotalCapacityPrecise(this.result_list_count.swap(0, .Monotonic)) catch bun.outOfMemory();
+                    results.ensureTotalCapacityPrecise(this.result_list_count.swap(0, .monotonic)) catch bun.outOfMemory();
                     while (iter.next()) |val| {
                         if (to_destroy) |dest| {
                             bun.default_allocator.destroy(dest);
@@ -1011,7 +1010,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         if (to_destroy) |dest| {
             bun.default_allocator.destroy(dest);
         }
-        this.result_list_count.store(0, .Monotonic);
+        this.result_list_count.store(0, .monotonic);
     }
 
     pub fn runFromJSThread(this: *AsyncReaddirRecursiveTask) void {
@@ -4232,7 +4231,7 @@ pub const NodeFS = struct {
                     .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
                 };
 
-                if (!os.S.ISREG(stat_.mode)) {
+                if (!posix.S.ISREG(stat_.mode)) {
                     return Maybe(Return.CopyFile){ .err = .{
                         .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
                         .syscall = .copyfile,
@@ -4252,7 +4251,7 @@ pub const NodeFS = struct {
                         return ret.success;
                     }
                 } else {
-                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                    const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0o644)) {
                         .result => |result| result,
                         .err => |err| return .{ .err = err.withPath(args.src.slice()) },
                     };
@@ -4260,10 +4259,10 @@ pub const NodeFS = struct {
                         _ = Syscall.close(src_fd);
                     }
 
-                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                    var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
                     var wrote: usize = 0;
                     if (args.mode.shouldntOverwrite()) {
-                        flags |= std.os.O.EXCL;
+                        flags |= bun.O.EXCL;
                     }
 
                     const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
@@ -4297,7 +4296,7 @@ pub const NodeFS = struct {
             const src = args.src.sliceZ(&src_buf);
             const dest = args.dest.sliceZ(&dest_buf);
 
-            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0o644)) {
                 .result => |result| result,
                 .err => |err| return .{ .err = err },
             };
@@ -4310,14 +4309,14 @@ pub const NodeFS = struct {
                 .err => |err| return Maybe(Return.CopyFile){ .err = err },
             };
 
-            if (!os.S.ISREG(stat_.mode)) {
+            if (!posix.S.ISREG(stat_.mode)) {
                 return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .syscall = .copyfile } };
             }
 
-            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+            var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
             var wrote: usize = 0;
             if (args.mode.shouldntOverwrite()) {
-                flags |= std.os.O.EXCL;
+                flags |= bun.O.EXCL;
             }
 
             const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
@@ -4341,7 +4340,7 @@ pub const NodeFS = struct {
             }
 
             // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
+            if (posix.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
                     _ = C.fchmod(dest_fd.cast(), stat_.mode);
@@ -4445,14 +4444,14 @@ pub const NodeFS = struct {
 
         // Use libuv access on windows
         if (Environment.isWindows) {
-            return .{ .result = Syscall.access(slice, std.os.F_OK) != .err };
+            return .{ .result = Syscall.access(slice, std.posix.F_OK) != .err };
         }
 
         // access() may not work correctly on NFS file systems with UID
         // mapping enabled, because UID mapping is done on the server and
         // hidden from the client, which checks permissions. Similar
         // problems can occur to FUSE mounts.
-        const rc = (system.access(slice, std.os.F_OK));
+        const rc = (system.access(slice, std.posix.F_OK));
         return Ret{ .result = rc == 0 };
     }
 
@@ -4538,7 +4537,7 @@ pub const NodeFS = struct {
                 Maybe(Return.Futimes).success;
         }
 
-        var times = [2]std.os.timespec{
+        var times = [2]std.posix.timespec{
             args.mtime,
             args.atime,
         };
@@ -4641,7 +4640,7 @@ pub const NodeFS = struct {
                 break :brk strings.toWPath(&buf, utf8);
             } else {
                 var cwd_buf: bun.PathBuffer = undefined;
-                const cwd = std.os.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
+                const cwd = std.posix.getcwd(&cwd_buf) catch return .{ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOMEM), .syscall = .getcwd } };
                 break :brk strings.toWPath(&buf, bun.path.joinAbsStringBuf(cwd, &joined_buf, &.{args.path.slice()}, .windows));
             }
         };
@@ -4837,12 +4836,15 @@ pub const NodeFS = struct {
                 .result = JSC.ZigString.dupeForJS(bun.sliceTo(ptr, 0), bun.default_allocator) catch bun.outOfMemory(),
             };
         }
-        // std.c.getErrno(rc) returns SUCCESS if rc is null so we call std.c._errno() directly
+
+        // bun.C.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
         const errno = @as(std.c.E, @enumFromInt(std.c._errno().*));
-        return .{ .err = Syscall.Error{
-            .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))),
-            .syscall = .mkdtemp,
-        } };
+        return .{
+            .err = Syscall.Error{
+                .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(errno))),
+                .syscall = .mkdtemp,
+            },
+        };
     }
 
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime _: Flavor) Maybe(Return.Open) {
@@ -5129,7 +5131,7 @@ pub const NodeFS = struct {
         comptime is_root: bool,
     ) Maybe(void) {
         const root_basename = async_task.root_path.slice();
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const flags = bun.O.DIRECTORY | bun.O.RDONLY;
         const atfd = if (comptime is_root) bun.FD.cwd() else async_task.root_fd;
         const fd = switch (switch (Environment.os) {
             else => Syscall.openat(atfd, basename, flags, 0),
@@ -5289,7 +5291,7 @@ pub const NodeFS = struct {
                 }
             }
 
-            const flags = os.O.DIRECTORY | os.O.RDONLY;
+            const flags = bun.O.DIRECTORY | bun.O.RDONLY;
             const fd = switch (Syscall.openat(if (root_fd == bun.invalid_fd) bun.FD.cwd() else root_fd, basename, flags, 0)) {
                 .err => |err| {
                     if (root_fd == bun.invalid_fd) {
@@ -5444,7 +5446,7 @@ pub const NodeFS = struct {
             @panic("This code path should never be reached. It should only go through readdirWithEntriesRecursiveAsync.");
         }
 
-        const flags = os.O.DIRECTORY | os.O.RDONLY;
+        const flags = bun.O.DIRECTORY | bun.O.RDONLY;
         const fd = switch (switch (Environment.os) {
             else => Syscall.open(path, flags, 0),
             // windows bun.sys.open does not pass iterable=true,
@@ -5524,7 +5526,7 @@ pub const NodeFS = struct {
 
                 break :brk switch (bun.sys.open(
                     path,
-                    os.O.RDONLY | os.O.NOCTTY,
+                    bun.O.RDONLY | bun.O.NOCTTY,
                     0,
                 )) {
                     .err => |err| return .{
@@ -5541,7 +5543,7 @@ pub const NodeFS = struct {
 
             return .{
                 .err = .{
-                    .errno = @intFromEnum(os.E.MFILE),
+                    .errno = @intFromEnum(posix.E.MFILE),
                     .syscall = .open,
                 },
             };
@@ -5683,7 +5685,7 @@ pub const NodeFS = struct {
                 const open_result = Syscall.openat(
                     args.dirfd,
                     path,
-                    @intFromEnum(args.flag) | os.O.NOCTTY,
+                    @intFromEnum(args.flag) | bun.O.NOCTTY,
                     args.mode,
                 );
 
@@ -5717,7 +5719,7 @@ pub const NodeFS = struct {
                         // on linux, it's absolutely positioned
                         const pos = bun.sys.system.lseek(
                             fd.cast(),
-                            @as(std.os.off_t, @intCast(0)),
+                            @as(std.posix.off_t, @intCast(0)),
                             std.os.linux.SEEK.CUR,
                         );
 
@@ -5729,8 +5731,8 @@ pub const NodeFS = struct {
 
                     bun.C.preallocate_file(
                         fd.cast(),
-                        @as(std.os.off_t, @intCast(offset)),
-                        @as(std.os.off_t, @intCast(buf.len)),
+                        @as(std.posix.off_t, @intCast(offset)),
+                        @as(std.posix.off_t, @intCast(buf.len)),
                     ) catch {};
                 }
             }
@@ -5770,7 +5772,7 @@ pub const NodeFS = struct {
             // https://github.com/oven-sh/bun/issues/2931
             // https://github.com/oven-sh/bun/issues/10222
             // only truncate if we're not appending and writing to a path
-            if ((@intFromEnum(args.flag) & std.os.O.APPEND) == 0 and args.file != .fd) {
+            if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0 and args.file != .fd) {
                 _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
             }
         }
@@ -5864,9 +5866,9 @@ pub const NodeFS = struct {
 
         const flags = if (comptime Environment.isLinux)
             // O_PATH is faster
-            std.os.O.PATH
+            bun.O.PATH
         else
-            std.os.O.RDONLY;
+            bun.O.RDONLY;
 
         const fd = switch (bun.sys.open(path, flags, 0)) {
             .err => |err| return .{ .err = err.withPath(path) },
@@ -5922,7 +5924,6 @@ pub const NodeFS = struct {
         if (args.recursive) {
             std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                 const errno: bun.C.E = switch (err) {
-                    error.InvalidHandle => .BADF,
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,
@@ -5940,6 +5941,7 @@ pub const NodeFS = struct {
                     error.NotDir => .NOTDIR,
                     // On Windows, file paths must be valid Unicode.
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
 
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
@@ -5969,7 +5971,7 @@ pub const NodeFS = struct {
             // TODO: switch to an implementation which does not use any "unreachable"
             std.fs.cwd().deleteTree(args.path.slice()) catch |err| {
                 const errno: E = switch (err) {
-                    error.InvalidHandle => .BADF,
+                    // error.InvalidHandle => .BADF,
                     error.AccessDenied => .PERM,
                     error.FileTooBig => .FBIG,
                     error.SymLinkLoop => .LOOP,
@@ -5985,8 +5987,9 @@ pub const NodeFS = struct {
                     // One of the path components was not a directory.
                     // This error is unreachable if `sub_path` does not contain a path separator.
                     error.NotDir => .NOTDIR,
-                    // On Windows, file paths must be valid Unicode.
+                    // On Windows, file paths must be valid WTF-8.
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
 
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
@@ -6006,13 +6009,13 @@ pub const NodeFS = struct {
 
         const dest = args.path.sliceZ(&this.sync_error_buf);
 
-        std.os.unlinkZ(dest) catch |er| {
+        std.posix.unlinkZ(dest) catch |er| {
             // empircally, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
             if (args.recursive and
                 (er == error.IsDir or er == error.NotDir or er == error.AccessDenied))
             {
-                std.os.rmdirZ(dest) catch |err| {
+                std.posix.rmdirZ(dest) catch |err| {
                     if (args.force) {
                         return Maybe(Return.Rm).success;
                     }
@@ -6026,6 +6029,7 @@ pub const NodeFS = struct {
                         error.FileBusy => .BUSY,
                         error.FileNotFound => .NOENT,
                         error.InvalidUtf8 => .INVAL,
+                        error.InvalidWtf8 => .INVAL,
                         error.BadPathName => .INVAL,
                         else => .FAULT,
                     };
@@ -6054,6 +6058,7 @@ pub const NodeFS = struct {
                     error.ReadOnlyFileSystem => .ROFS,
                     error.FileBusy => .BUSY,
                     error.InvalidUtf8 => .INVAL,
+                    error.InvalidWtf8 => .INVAL,
                     error.BadPathName => .INVAL,
                     error.FileNotFound => .NOENT,
                     else => .FAULT,
@@ -6120,7 +6125,7 @@ pub const NodeFS = struct {
         if (comptime Environment.isWindows) {
             const file = bun.sys.open(
                 path.sliceZ(&this.sync_error_buf),
-                os.O.WRONLY | flags,
+                bun.O.WRONLY | flags,
                 0o644,
             );
             if (file == .err)
@@ -6349,7 +6354,7 @@ pub const NodeFS = struct {
                 },
             };
 
-            if (!os.S.ISDIR(stat_.mode)) {
+            if (!posix.S.ISDIR(stat_.mode)) {
                 const r = this._copySingleFileSync(
                     src,
                     dest,
@@ -6398,7 +6403,7 @@ pub const NodeFS = struct {
         const fd = switch (Syscall.openatOSPath(
             bun.toFD((std.fs.cwd().fd)),
             src,
-            os.O.DIRECTORY | os.O.RDONLY,
+            bun.O.DIRECTORY | bun.O.RDONLY,
             0,
         )) {
             .err => |err| {
@@ -6512,7 +6517,7 @@ pub const NodeFS = struct {
         dest: bun.OSPathSliceZ,
         mode: Constants.Copyfile,
         /// Stat on posix, file attributes on windows
-        reuse_stat: ?if (Environment.isWindows) windows.DWORD else std.os.Stat,
+        reuse_stat: ?if (Environment.isWindows) windows.DWORD else std.posix.Stat,
         args: Arguments.Cp,
     ) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
@@ -6531,8 +6536,8 @@ pub const NodeFS = struct {
                     },
                 };
 
-                if (!os.S.ISREG(stat_.mode)) {
-                    if (os.S.ISLNK(stat_.mode)) {
+                if (!posix.S.ISREG(stat_.mode)) {
+                    if (posix.S.ISLNK(stat_.mode)) {
                         var mode_: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
                         if (mode.shouldntOverwrite()) {
                             mode_ |= C.darwin.COPYFILE_EXCL;
@@ -6561,7 +6566,7 @@ pub const NodeFS = struct {
                         return ret.success;
                     }
                 } else {
-                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
+                    const src_fd = switch (Syscall.open(src, bun.O.RDONLY, 0o644)) {
                         .result => |result| result,
                         .err => |err| {
                             @memcpy(this.sync_error_buf[0..src.len], src);
@@ -6572,10 +6577,10 @@ pub const NodeFS = struct {
                         _ = Syscall.close(src_fd);
                     }
 
-                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                    var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
                     var wrote: usize = 0;
                     if (mode.shouldntOverwrite()) {
-                        flags |= std.os.O.EXCL;
+                        flags |= bun.O.EXCL;
                     }
 
                     const dest_fd = dest_fd: {
@@ -6639,7 +6644,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile).todo();
             }
 
-            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY | std.os.O.NOFOLLOW, 0o644)) {
+            const src_fd = switch (Syscall.open(src, bun.O.RDONLY | bun.O.NOFOLLOW, 0o644)) {
                 .result => |result| result,
                 .err => |err| {
                     if (err.getErrno() == .LOOP) {
@@ -6660,17 +6665,17 @@ pub const NodeFS = struct {
                 .err => |err| return Maybe(Return.CopyFile){ .err = err },
             };
 
-            if (!os.S.ISREG(stat_.mode)) {
+            if (!posix.S.ISREG(stat_.mode)) {
                 return Maybe(Return.CopyFile){ .err = .{
                     .errno = @intFromEnum(C.SystemErrno.ENOTSUP),
                     .syscall = .copyfile,
                 } };
             }
 
-            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+            var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
             var wrote: usize = 0;
             if (mode.shouldntOverwrite()) {
-                flags |= std.os.O.EXCL;
+                flags |= bun.O.EXCL;
             }
 
             const dest_fd = dest_fd: {
@@ -6705,7 +6710,7 @@ pub const NodeFS = struct {
 
             var size: usize = @intCast(@max(stat_.size, 0));
 
-            if (os.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
+            if (posix.S.ISREG(stat_.mode) and bun.can_use_ioctl_ficlone()) {
                 const rc = bun.C.linux.ioctl_ficlone(dest_fd, src_fd);
                 if (rc == 0) {
                     _ = C.fchmod(dest_fd.cast(), stat_.mode);
@@ -6804,7 +6809,7 @@ pub const NodeFS = struct {
                 }
                 return ret.success;
             } else {
-                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, os.O.RDONLY)) {
+                const handle = switch (bun.sys.openatWindows(bun.invalid_fd, src, bun.O.RDONLY)) {
                     .err => |err| return .{ .err = err },
                     .result => |src_fd| src_fd,
                 };

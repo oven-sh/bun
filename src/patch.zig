@@ -1,3 +1,5 @@
+const Output = bun.Output;
+const Global = bun.Global;
 const std = @import("std");
 const bun = @import("root").bun;
 const JSC = bun.JSC;
@@ -8,6 +10,8 @@ const WHITESPACE: []const u8 = " \t\n\r";
 
 // TODO: calculate this for different systems
 const PAGE_SIZE = 16384;
+
+const debug = bun.Output.scoped(.patch, false);
 
 /// All strings point to the original patch file text
 pub const PatchFilePart = union(enum) {
@@ -128,7 +132,7 @@ pub const PatchFile = struct {
                     const newfile_fd = switch (bun.sys.openat(
                         patch_dir,
                         filepath.sliceAssumeZ(),
-                        std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+                        bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC,
                         mode.toBunMode(),
                     )) {
                         .result => |fd| fd,
@@ -200,7 +204,7 @@ pub const PatchFile = struct {
                             .result => |p| p,
                             .err => |e| return e.toSystemError(),
                         };
-                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), std.os.O.RDWR, 0)) {
+                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), bun.O.RDWR, 0)) {
                             .err => |e| return e.toSystemError(),
                             .result => |f| f,
                         };
@@ -329,7 +333,7 @@ pub const PatchFile = struct {
         const file_fd = switch (bun.sys.openat(
             patch_dir,
             file_path,
-            std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+            bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC,
             @intCast(stat.mode),
         )) {
             .err => |e| return .{ .err = e.withPath(file_path) },
@@ -534,7 +538,6 @@ pub const PatchFilePartKind = enum {
 };
 
 const ParseErr = error{
-    empty_patchfile,
     unrecognized_pragma,
     no_newline_at_eof_pragma_encountered_without_context,
     hunk_lines_encountered_before_hunk_header,
@@ -755,7 +758,7 @@ const PatchLinesParser = struct {
         file_: []const u8,
         opts: struct { support_legacy_diffs: bool = false },
     ) ParseErr!void {
-        if (file_.len == 0) return ParseErr.empty_patchfile;
+        if (file_.len == 0) return;
         const end = brk: {
             var iter = std.mem.splitBackwardsScalar(u8, file_, '\n');
             var prev: usize = file_.len;
@@ -1088,6 +1091,45 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
+    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments_ = callframe.arguments(2);
+        var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+
+        const old_folder_jsval = arguments.nextEat() orelse {
+            globalThis.throw("expected 2 strings", .{});
+            return .undefined;
+        };
+        const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
+        defer old_folder_bunstr.deref();
+
+        const new_folder_jsval = arguments.nextEat() orelse {
+            globalThis.throw("expected 2 strings", .{});
+            return .undefined;
+        };
+        const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
+        defer new_folder_bunstr.deref();
+
+        const old_folder = old_folder_bunstr.toUTF8(bun.default_allocator);
+        defer old_folder.deinit();
+
+        const new_folder = new_folder_bunstr.toUTF8(bun.default_allocator);
+        defer new_folder.deinit();
+
+        return switch (gitDiffInternal(bun.default_allocator, old_folder.slice(), new_folder.slice()) catch |e| {
+            globalThis.throwError(e, "failed to make diff");
+            return .undefined;
+        }) {
+            .result => |s| {
+                defer s.deinit();
+                return bun.String.fromBytes(s.items).toJS(globalThis);
+            },
+            .err => |e| {
+                defer e.deinit();
+                globalThis.throw("failed to make diff: {s}", .{e.items});
+                return .undefined;
+            },
+        };
+    }
     const ApplyArgs = struct {
         patchfile_txt: JSC.ZigString.Slice,
         patchfile: PatchFile,
@@ -1159,7 +1201,7 @@ pub const TestingAPIs = struct {
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
 
-            break :brk switch (bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
                     globalThis.throwValue(e.withPath(path).toJSC(globalThis));
                     return .{ .err = .undefined };
@@ -1192,31 +1234,146 @@ pub const TestingAPIs = struct {
     }
 };
 
-pub fn gitDiff(
+pub fn spawnOpts(
+    old_folder: []const u8,
+    new_folder: []const u8,
+    cwd: [:0]const u8,
+    git: [:0]const u8,
+    loop: *JSC.AnyEventLoop,
+) bun.spawn.sync.Options {
+    const argv: []const []const u8 = brk: {
+        const ARGV = &[_][:0]const u8{
+            "git",
+            "-c",
+            "core.safecrlf=false",
+            "diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            "--ignore-cr-at-eol",
+            "--irreversible-delete",
+            "--full-index",
+            "--no-index",
+        };
+        const argv_buf = bun.default_allocator.alloc([]const u8, ARGV.len + 2) catch bun.outOfMemory();
+        argv_buf[0] = git;
+        for (1..ARGV.len) |i| {
+            argv_buf[i] = ARGV[i];
+        }
+        argv_buf[ARGV.len] = old_folder;
+        argv_buf[ARGV.len + 1] = new_folder;
+        break :brk argv_buf;
+    };
+
+    const envp: [:null]?[*:0]const u8 = brk: {
+        const env_arr = &[_][:0]const u8{
+            "GIT_CONFIG_NOSYSTEM",
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "USERPROFILE",
+        };
+        const PATH = bun.getenvZ("PATH");
+        const envp_buf = bun.default_allocator.allocSentinel(?[*:0]const u8, env_arr.len + @as(usize, if (PATH != null) 1 else 0), null) catch bun.outOfMemory();
+        for (0..env_arr.len) |i| {
+            envp_buf[i] = env_arr[i].ptr;
+        }
+        if (PATH) |p| {
+            envp_buf[envp_buf.len - 1] = @ptrCast(p.ptr);
+        }
+        break :brk envp_buf;
+    };
+
+    return bun.spawn.sync.Options{
+        .stdout = .buffer,
+        .stderr = .buffer,
+        .cwd = cwd,
+        .envp = envp,
+        .argv = argv,
+        .windows = if (bun.Environment.isWindows) .{ .loop = switch (loop.*) {
+            .js => |x| .{ .js = x },
+            .mini => |*x| .{ .mini = x },
+        } } else {},
+    };
+}
+
+pub fn diffPostProcess(result: *bun.spawn.sync.Result, old_folder: []const u8, new_folder: []const u8) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
+    var stdout = std.ArrayList(u8).init(bun.default_allocator);
+    var stderr = std.ArrayList(u8).init(bun.default_allocator);
+
+    std.mem.swap(std.ArrayList(u8), &stdout, &result.stdout);
+    std.mem.swap(std.ArrayList(u8), &stderr, &result.stderr);
+
+    var deinit_stdout = true;
+    var deinit_stderr = true;
+    defer {
+        if (deinit_stdout) stdout.deinit();
+        if (deinit_stderr) stderr.deinit();
+    }
+
+    if (stderr.items.len > 0) {
+        deinit_stderr = false;
+        return .{ .err = stderr };
+    }
+
+    debug("Before postprocess: {s}\n", .{stdout.items});
+    try gitDiffPostprocess(&stdout, old_folder, new_folder);
+    deinit_stdout = false;
+    return .{ .result = stdout };
+}
+
+pub fn gitDiffPreprocessPaths(
+    allocator: std.mem.Allocator,
+    old_folder_: []const u8,
+    new_folder_: []const u8,
+    comptime sentinel: bool,
+) [2]if (sentinel) [:0]const u8 else []const u8 {
+    const bump = if (sentinel) 1 else 0;
+    const old_folder = if (comptime bun.Environment.isWindows) brk: {
+        // backslash in the path fucks everything up
+        const cpy = allocator.alloc(u8, old_folder_.len + bump) catch bun.outOfMemory();
+        @memcpy(cpy[0..old_folder_.len], old_folder_);
+        std.mem.replaceScalar(u8, cpy, '\\', '/');
+        if (sentinel) {
+            cpy[old_folder_.len] = 0;
+            break :brk cpy[0..old_folder_.len :0];
+        }
+        break :brk cpy;
+    } else old_folder_;
+    const new_folder = if (comptime bun.Environment.isWindows) brk: {
+        const cpy = allocator.alloc(u8, new_folder_.len + bump) catch bun.outOfMemory();
+        @memcpy(cpy[0..new_folder_.len], new_folder_);
+        std.mem.replaceScalar(u8, cpy, '\\', '/');
+        if (sentinel) {
+            cpy[new_folder_.len] = 0;
+            break :brk cpy[0..new_folder_.len :0];
+        }
+        break :brk cpy;
+    } else new_folder_;
+
+    if (bun.Environment.isPosix and sentinel) {
+        return .{
+            allocator.dupeZ(u8, old_folder) catch bun.outOfMemory(),
+            allocator.dupeZ(u8, new_folder) catch bun.outOfMemory(),
+        };
+    }
+
+    return .{ old_folder, new_folder };
+}
+
+pub fn gitDiffInternal(
     allocator: std.mem.Allocator,
     old_folder_: []const u8,
     new_folder_: []const u8,
 ) !bun.JSC.Node.Maybe(std.ArrayList(u8), std.ArrayList(u8)) {
-    const old_folder: []const u8 = if (comptime bun.Environment.isWindows) brk: {
-        // backslash in the path fucks everything up
-        const cpy = allocator.alloc(u8, old_folder_.len) catch bun.outOfMemory();
-        @memcpy(cpy, old_folder_);
-        std.mem.replaceScalar(u8, cpy, '\\', '/');
-        break :brk cpy;
-    } else old_folder_;
-    const new_folder = if (comptime bun.Environment.isWindows) brk: {
-        const cpy = allocator.alloc(u8, new_folder_.len) catch bun.outOfMemory();
-        @memcpy(cpy, new_folder_);
-        std.mem.replaceScalar(u8, cpy, '\\', '/');
-        break :brk cpy;
-    } else new_folder_;
+    const paths = gitDiffPreprocessPaths(allocator, old_folder_, new_folder_, false);
+    const old_folder = paths[0];
+    const new_folder = paths[1];
 
     defer if (comptime bun.Environment.isWindows) {
         allocator.free(old_folder);
         allocator.free(new_folder);
     };
 
-    var child_proc = std.ChildProcess.init(
+    var child_proc = std.process.Child.init(
         &[_][]const u8{
             "git",
             "-c",
@@ -1262,6 +1419,7 @@ pub fn gitDiff(
         return .{ .err = stderr };
     }
 
+    debug("Before postprocess: {s}\n", .{stdout.items});
     try gitDiffPostprocess(&stdout, old_folder, new_folder);
     deinit_stdout = false;
     return .{ .result = stdout };
@@ -1288,8 +1446,10 @@ pub fn gitDiff(
 /// - b/src/index.js
 ///
 /// The operations look roughy like the following sequence of substitutions and regexes:
-///     .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
-///     .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
+///   .replace(new RegExp(`(a|b)(${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(aFolder)}/`)})`, "g"), "$1/")
+///   .replace(new RegExp(`(a|b)${escapeStringRegexp(`/${removeTrailingAndLeadingSlash(bFolder)}/`)}`, "g"), "$1/")
+///   .replace(new RegExp(escapeStringRegexp(`${aFolder}/`), "g"), "")
+///   .replace(new RegExp(escapeStringRegexp(`${bFolder}/`), "g"), "");
 fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_folder: []const u8) !void {
     const old_folder_trimmed = std.mem.trim(u8, old_folder, "/");
     const new_folder_trimmed = std.mem.trim(u8, new_folder, "/");
@@ -1308,25 +1468,65 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
         @memcpy(new_buf[2..][0..new_folder_trimmed.len], new_folder_trimmed);
         new_buf[2 + new_folder_trimmed.len] = '/';
 
-        break :brk .{ old_buf[0 .. 2 + old_folder_trimmed.len + 1], new_buf[0 .. 2 + old_folder_trimmed.len + 1] };
+        break :brk .{ old_buf[0 .. 2 + old_folder_trimmed.len + 1], new_buf[0 .. 2 + new_folder_trimmed.len + 1] };
     };
+
+    // const @"$old_folder/" = @"a/$old_folder/"[2..];
+    // const @"$new_folder/" = @"b/$new_folder/"[2..];
+
+    // these vars are here to disambguate `a/$OLD_FOLDER` when $OLD_FOLDER itself contains "a/"
+    // basically if $OLD_FOLDER contains "a/" then the code will replace it
+    // so we need to not run that code path
+    var saw_a_folder: ?usize = null;
+    var saw_b_folder: ?usize = null;
+    var line_idx: u32 = 0;
 
     var line_iter = std.mem.splitScalar(u8, stdout.items, '\n');
     while (line_iter.next()) |line| {
-        if (shouldSkipLine(line)) continue;
-        if (std.mem.indexOf(u8, line, @"a/$old_folder/")) |idx| {
-            const @"$old_folder/ start" = idx + 2;
-            const line_start = line_iter.index.? - 1 - line.len;
-            line_iter.index.? -= 1 + line.len;
-            try stdout.replaceRange(line_start + @"$old_folder/ start", old_folder_trimmed.len + 1, "");
-            continue;
+        if (!shouldSkipLine(line)) {
+            if (std.mem.indexOf(u8, line, @"a/$old_folder/")) |idx| {
+                const @"$old_folder/ start" = idx + 2;
+                const line_start = line_iter.index.? - 1 - line.len;
+                line_iter.index.? -= 1 + line.len;
+                try stdout.replaceRange(line_start + @"$old_folder/ start", old_folder_trimmed.len + 1, "");
+                saw_a_folder = line_idx;
+                continue;
+            }
+            if (std.mem.indexOf(u8, line, @"b/$new_folder/")) |idx| {
+                const @"$new_folder/ start" = idx + 2;
+                const line_start = line_iter.index.? - 1 - line.len;
+                try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
+                line_iter.index.? -= new_folder_trimmed.len + 1;
+                saw_b_folder = line_idx;
+                continue;
+            }
+            if (saw_a_folder == null or saw_a_folder.? != line_idx) {
+                if (std.mem.indexOf(u8, line, old_folder)) |idx| {
+                    if (idx + old_folder.len < line.len and line[idx + old_folder.len] == '/') {
+                        const line_start = line_iter.index.? - 1 - line.len;
+                        line_iter.index.? -= 1 + line.len;
+                        try stdout.replaceRange(line_start + idx, old_folder.len + 1, "");
+                        saw_a_folder = line_idx;
+                        continue;
+                    }
+                }
+            }
+            if (saw_b_folder == null or saw_b_folder.? != line_idx) {
+                if (std.mem.indexOf(u8, line, new_folder)) |idx| {
+                    if (idx + new_folder.len < line.len and line[idx + new_folder.len] == '/') {
+                        const line_start = line_iter.index.? - 1 - line.len;
+                        line_iter.index.? -= 1 + line.len;
+                        try stdout.replaceRange(line_start + idx, new_folder.len + 1, "");
+                        saw_b_folder = line_idx;
+                        continue;
+                    }
+                }
+            }
         }
-        if (std.mem.indexOf(u8, line, @"b/$new_folder/")) |idx| {
-            const @"$new_folder/ start" = idx + 2;
-            const line_start = line_iter.index.? - 1 - line.len;
-            try stdout.replaceRange(line_start + @"$new_folder/ start", new_folder_trimmed.len + 1, "");
-            line_iter.index.? -= new_folder_trimmed.len + 1;
-        }
+
+        line_idx += 1;
+        saw_a_folder = null;
+        saw_b_folder = null;
     }
 }
 

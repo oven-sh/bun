@@ -1,5 +1,5 @@
 const std = @import("std");
-const Progress = std.Progress;
+const Progress = bun.Progress;
 const bun = @import("root").bun;
 const logger = bun.logger;
 const Environment = bun.Environment;
@@ -340,9 +340,9 @@ pub const TrustCommand = struct {
                 for (entry.items) |info| {
                     if (info.skip) continue;
 
-                    while (LifecycleScriptSubprocess.alive_count.load(.Monotonic) >= pm.options.max_concurrent_lifecycle_scripts) {
+                    while (LifecycleScriptSubprocess.alive_count.load(.monotonic) >= pm.options.max_concurrent_lifecycle_scripts) {
                         if (pm.options.log_level.isVerbose()) {
-                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.Monotonic)});
+                            if (PackageManager.hasEnoughTimePassedBetweenWaitingMessages()) Output.prettyErrorln("<d>[PackageManager]<r> waiting for {d} scripts\n", .{LifecycleScriptSubprocess.alive_count.load(.monotonic)});
                         }
 
                         pm.sleep();
@@ -359,7 +359,7 @@ pub const TrustCommand = struct {
                     }
                 }
 
-                while (pm.pending_lifecycle_script_tasks.load(.Monotonic) > 0) {
+                while (pm.pending_lifecycle_script_tasks.load(.monotonic) > 0) {
                     pm.sleep();
                 }
             }
@@ -439,7 +439,7 @@ pub const TrustCommand = struct {
         const new_package_json_contents = package_json_writer.ctx.writtenWithoutTrailingZero();
 
         try pm.root_package_json_file.pwriteAll(new_package_json_contents, 0);
-        std.os.ftruncate(pm.root_package_json_file.handle, new_package_json_contents.len) catch {};
+        std.posix.ftruncate(pm.root_package_json_file.handle, new_package_json_contents.len) catch {};
         pm.root_package_json_file.close();
 
         if (comptime Environment.allow_assert) {

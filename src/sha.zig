@@ -84,7 +84,7 @@ pub const EVP = struct {
     pub const SHA512 = NewEVP(std.crypto.hash.sha2.Sha512.digest_length, "EVP_sha512");
     pub const SHA384 = NewEVP(std.crypto.hash.sha2.Sha384.digest_length, "EVP_sha384");
     pub const SHA256 = NewEVP(std.crypto.hash.sha2.Sha256.digest_length, "EVP_sha256");
-    pub const SHA512_256 = NewEVP(std.crypto.hash.sha2.Sha512256.digest_length, "EVP_sha512_256");
+    pub const SHA512_256 = NewEVP(std.crypto.hash.sha2.Sha512T256.digest_length, "EVP_sha512_256");
     pub const MD5_SHA1 = NewEVP(std.crypto.hash.Sha1.digest_length, "EVP_md5_sha1");
     pub const Blake2 = NewEVP(256 / 8, "EVP_blake2b256");
 };
@@ -138,7 +138,7 @@ pub const Hashers = struct {
     );
 
     pub const SHA512_256 = NewHasher(
-        std.crypto.hash.sha2.Sha512256.digest_length,
+        std.crypto.hash.sha2.Sha512T256.digest_length,
         BoringSSL.SHA512_CTX,
         BoringSSL.SHA512_256,
         BoringSSL.SHA512_256_Init,
@@ -172,7 +172,7 @@ const zig = [_]type{
     std.crypto.hash.sha2.Sha512,
     std.crypto.hash.sha2.Sha384,
     std.crypto.hash.sha2.Sha256,
-    std.crypto.hash.sha2.Sha512256,
+    std.crypto.hash.sha2.Sha512T256,
     std.crypto.hash.blake2.Blake2b256,
     std.crypto.hash.Blake3,
 };

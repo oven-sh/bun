@@ -461,7 +461,7 @@ pub const StreamStart = union(Tag) {
         pub fn flags(this: *const FileSinkOptions) bun.Mode {
             _ = this;
 
-            return std.os.O.NONBLOCK | std.os.O.CLOEXEC | std.os.O.CREAT | std.os.O.WRONLY;
+            return bun.O.NONBLOCK | bun.O.CLOEXEC | bun.O.CREAT | bun.O.WRONLY;
         }
     };
 
@@ -3117,7 +3117,7 @@ pub const FileSink = struct {
             .fd => |fd_| brk: {
                 if (comptime Environment.isPosix and FeatureFlags.nonblocking_stdout_and_stderr_on_posix) {
                     if (bun.FDTag.get(fd_) != .none) {
-                        const rc = bun.C.open_as_nonblocking_tty(@intCast(fd_.cast()), std.os.O.WRONLY);
+                        const rc = bun.C.open_as_nonblocking_tty(@intCast(fd_.cast()), bun.O.WRONLY);
                         if (rc > -1) {
                             isatty = true;
                             is_nonblocking_tty = true;
@@ -3126,7 +3126,7 @@ pub const FileSink = struct {
                     }
                 }
 
-                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) std.os.O.NONBLOCK else 0);
+                break :brk bun.sys.dupWithFlags(fd_, if (bun.FDTag.get(fd_) == .none and !this.force_sync_on_windows) bun.O.NONBLOCK else 0);
             },
         }) {
             .err => |err| return .{ .err = err },
@@ -3142,7 +3142,7 @@ pub const FileSink = struct {
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode);
                     if (!this.pollable and isatty == null) {
-                        isatty = std.os.isatty(fd.int());
+                        isatty = std.posix.isatty(fd.int());
                     }
 
                     if (isatty) |is| {
@@ -3151,7 +3151,7 @@ pub const FileSink = struct {
                     }
 
                     this.fd = fd;
-                    this.is_socket = std.os.S.ISSOCK(stat.mode);
+                    this.is_socket = std.posix.S.ISSOCK(stat.mode);
                     this.nonblocking = is_nonblocking_tty or (this.pollable and switch (options.input_path) {
                         .path => true,
                         .fd => |fd_| bun.FDTag.get(fd_) == .none,
@@ -3503,7 +3503,7 @@ pub const FileReader = struct {
             const fd = if (file.pathlike == .fd)
                 if (file.pathlike.fd.isStdio()) brk: {
                     if (comptime Environment.isPosix) {
-                        const rc = bun.C.open_as_nonblocking_tty(@intCast(file.pathlike.fd.int()), std.os.O.RDONLY);
+                        const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.int(), bun.O.RDONLY);
                         if (rc > -1) {
                             is_nonblocking_tty = true;
                             file.is_atty = true;
@@ -3514,7 +3514,7 @@ pub const FileReader = struct {
                 } else switch (Syscall.dupWithFlags(file.pathlike.fd, brk: {
                     if (comptime Environment.isPosix) {
                         if (bun.FDTag.get(file.pathlike.fd) == .none and !(file.is_atty orelse false)) {
-                            break :brk std.os.O.NONBLOCK;
+                            break :brk bun.O.NONBLOCK;
                         }
                     }
 
@@ -3530,7 +3530,7 @@ pub const FileReader = struct {
                         return .{ .err = err.withFd(file.pathlike.fd) };
                     },
                 }
-            else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), bun.O.RDONLY | bun.O.NONBLOCK | bun.O.CLOEXEC, 0)) {
                 .result => |fd| fd,
                 .err => |err| {
                     return .{ .err = err.withPath(file.pathlike.path.slice()) };
@@ -3539,15 +3539,15 @@ pub const FileReader = struct {
 
             if (comptime Environment.isPosix) {
                 if ((file.is_atty orelse false) or
-                    (fd.int() < 3 and std.os.isatty(fd.cast())) or
+                    (fd.int() < 3 and std.posix.isatty(fd.cast())) or
                     (file.pathlike == .fd and
                     bun.FDTag.get(file.pathlike.fd) != .none and
-                    std.os.isatty(file.pathlike.fd.cast())))
+                    std.posix.isatty(file.pathlike.fd.cast())))
                 {
-                    // var termios = std.mem.zeroes(std.os.termios);
+                    // var termios = std.mem.zeroes(std.posix.termios);
                     // _ = std.c.tcgetattr(fd.cast(), &termios);
                     // bun.C.cfmakeraw(&termios);
-                    // _ = std.c.tcsetattr(fd.cast(), std.os.TCSA.NOW, &termios);
+                    // _ = std.c.tcsetattr(fd.cast(), std.posix.TCSA.NOW, &termios);
                     file.is_atty = true;
                 }
 
@@ -3715,7 +3715,7 @@ pub const FileReader = struct {
     }
 
     pub fn parent(this: *@This()) *Source {
-        return @fieldParentPtr(Source, "context", this);
+        return @fieldParentPtr("context", this);
     }
 
     pub fn onCancel(this: *FileReader) void {
@@ -4093,7 +4093,7 @@ pub const ByteBlobLoader = struct {
     pub const tag = ReadableStream.Tag.Blob;
 
     pub fn parent(this: *@This()) *Source {
-        return @fieldParentPtr(Source, "context", this);
+        return @fieldParentPtr("context", this);
     }
 
     pub fn setup(
@@ -4283,7 +4283,7 @@ pub const ByteStream = struct {
     }
 
     pub fn isCancelled(this: *const @This()) bool {
-        return @fieldParentPtr(Source, "context", this).cancelled;
+        return this.parent().cancelled;
     }
 
     pub fn unpipeWithoutDeref(this: *@This()) void {
@@ -4419,7 +4419,7 @@ pub const ByteStream = struct {
     }
 
     pub fn parent(this: *@This()) *Source {
-        return @fieldParentPtr(Source, "context", this);
+        return @fieldParentPtr("context", this);
     }
 
     pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {

@@ -4,8 +4,8 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const strings = bun.strings;
 const iovec = @import("std").os.iovec;
-const struct_in_addr = std.os.sockaddr.in;
-const struct_sockaddr = std.os.sockaddr;
+const struct_in_addr = std.posix.sockaddr.in;
+const struct_sockaddr = std.posix.sockaddr;
 pub const socklen_t = c.socklen_t;
 const ares_socklen_t = c.socklen_t;
 pub const ares_ssize_t = isize;
@@ -15,7 +15,7 @@ pub const struct_apattern = opaque {};
 const fd_set = c.fd_set;
 const libuv = bun.windows.libuv;
 
-pub const AF = std.os.AF;
+pub const AF = std.posix.AF;
 
 pub const NSClass = enum(c_int) {
     /// Cookie.
@@ -404,8 +404,8 @@ pub const AddrInfo = extern struct {
                     GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
-                                AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.os.sockaddr.in, this_node.addr.?).* } },
-                                AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.os.sockaddr.in6, this_node.addr.?).* } },
+                                AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.posix.sockaddr.in, this_node.addr.?).* } },
+                                AF.INET6 => std.net.Address{ .in6 = .{ .sa = bun.cast(*const std.posix.sockaddr.in6, this_node.addr.?).* } },
                                 else => unreachable,
                             },
                             .ttl = this_node.ttl,
@@ -630,11 +630,11 @@ pub const Channel = opaque {
     }
 
     // https://c-ares.org/ares_getnameinfo.html
-    pub fn getNameInfo(this: *Channel, sa: *std.os.sockaddr, comptime Type: type, ctx: *Type, comptime callback: struct_nameinfo.Callback(Type)) void {
+    pub fn getNameInfo(this: *Channel, sa: *std.posix.sockaddr, comptime Type: type, ctx: *Type, comptime callback: struct_nameinfo.Callback(Type)) void {
         return ares_getnameinfo(
             this,
             sa,
-            if (sa.*.family == AF.INET) @sizeOf(std.os.sockaddr.in) else @sizeOf(std.os.sockaddr.in6),
+            if (sa.*.family == AF.INET) @sizeOf(std.posix.sockaddr.in) else @sizeOf(std.posix.sockaddr.in6),
             // node returns ENOTFOUND for addresses like 255.255.255.255:80
             // So, it requires setting the ARES_NI_NAMEREQD flag
             ARES_NI_NAMEREQD | ARES_NI_LOOKUPHOST | ARES_NI_LOOKUPSERVICE,
@@ -654,7 +654,7 @@ pub const Channel = opaque {
 
 var ares_has_loaded = std.atomic.Value(bool).init(false);
 fn libraryInit() void {
-    if (ares_has_loaded.swap(true, .Monotonic))
+    if (ares_has_loaded.swap(true, .monotonic))
         return;
 
     const rc = ares_library_init_mem(
@@ -1339,8 +1339,8 @@ pub const Error = enum(i32) {
             };
         }
 
-        return switch (@as(std.os.system.EAI, @enumFromInt(rc))) {
-            @as(std.os.system.EAI, @enumFromInt(0)) => return null,
+        return switch (@as(std.posix.system.EAI, @enumFromInt(rc))) {
+            @as(std.posix.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
@@ -1572,7 +1572,7 @@ pub export fn Bun__canonicalizeIP(
 /// # Returns
 ///
 /// This function returns 0 on success.
-pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.os.sockaddr) c_int {
+pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     const buf_size = 128;
 
     var buf: [buf_size]u8 = undefined;
@@ -1588,7 +1588,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.os.sockaddr) c_int {
     };
 
     {
-        const in: *std.os.sockaddr.in = @as(*std.os.sockaddr.in, @alignCast(@ptrCast(sa)));
+        const in: *std.posix.sockaddr.in = @alignCast(@ptrCast(sa));
         if (ares_inet_pton(AF.INET, addr_ptr, &in.addr) == 1) {
             in.*.family = AF.INET;
             in.*.port = std.mem.nativeToBig(u16, port);
@@ -1596,7 +1596,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.os.sockaddr) c_int {
         }
     }
     {
-        const in6: *std.os.sockaddr.in6 = @as(*std.os.sockaddr.in6, @alignCast(@ptrCast(sa)));
+        const in6: *std.posix.sockaddr.in6 = @alignCast(@ptrCast(sa));
         if (ares_inet_pton(AF.INET6, addr_ptr, &in6.addr) == 1) {
             in6.*.family = AF.INET6;
             in6.*.port = std.mem.nativeToBig(u16, port);

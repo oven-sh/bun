@@ -288,7 +288,7 @@ jobs:
             -DBUN_LINK_ONLY=1 `
             "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../bun-deps)" `
             "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../bun-cpp/bun-cpp-objects.a)" `
-            "-DBUN_ZIG_OBJ=$(Resolve-Path ../bun-zig/bun-zig.o)" `
+            "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path ../bun-zig)" `
             ${{ contains(inputs.tag, '-baseline') && '-DUSE_BASELINE_BUILD=1' || '' }}
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           ninja -v

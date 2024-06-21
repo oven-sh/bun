@@ -4536,9 +4536,9 @@ it("should fail on ssh Git URL if invalid credentials", async () => {
     cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: "pipe",
-    stdin: "pipe",
+    stdin: "ignore",
     stderr: "pipe",
-    env,
+    env: { ...env, "GIT_ASKPASS": "echo" },
   });
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain('error: "git clone" for "private-install" failed');

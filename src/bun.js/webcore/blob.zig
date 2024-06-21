@@ -808,7 +808,7 @@ pub const Blob = struct {
                 var result = ctx.bunVM().nodeFS().truncate(.{
                     .path = destination_blob.store.?.data.file.pathlike,
                     .len = 0,
-                    .flags = std.os.O.CREAT,
+                    .flags = bun.O.CREAT,
                 }, .sync);
                 if (result == .err) {
                     // it might return EPERM when the parent directory doesn't exist
@@ -1216,7 +1216,7 @@ pub const Blob = struct {
                 pathlike.path.sliceZ(&file_path),
                 // we deliberately don't use O_TRUNC here
                 // it's a perf optimization
-                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                 write_permissions,
             )) {
                 .result => |result| {
@@ -1300,9 +1300,9 @@ pub const Blob = struct {
                 if (!Environment.isWindows)
                     // we deliberately don't use O_TRUNC here
                     // it's a perf optimization
-                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK
                 else
-                    std.os.O.WRONLY | std.os.O.CREAT,
+                    bun.O.WRONLY | bun.O.CREAT,
                 write_permissions,
             )) {
                 .result => |result| {
@@ -1653,7 +1653,7 @@ pub const Blob = struct {
         };
 
         pub fn ref(this: *Store) void {
-            const old = this.ref_count.fetchAdd(1, .Monotonic);
+            const old = this.ref_count.fetchAdd(1, .monotonic);
             assert(old > 0);
         }
 
@@ -1709,7 +1709,7 @@ pub const Blob = struct {
         }
 
         pub fn deref(this: *Blob.Store) void {
-            const old = this.ref_count.fetchSub(1, .Monotonic);
+            const old = this.ref_count.fetchSub(1, .monotonic);
             assert(old >= 1);
             if (old == 1) {
                 this.deinit();
@@ -1781,12 +1781,12 @@ pub const Blob = struct {
 
                 const State = @This();
 
-                const __opener_flags = std.os.O.NONBLOCK | std.os.O.CLOEXEC;
+                const __opener_flags = bun.O.NONBLOCK | bun.O.CLOEXEC;
 
                 const open_flags_ = if (@hasDecl(This, "open_flags"))
                     This.open_flags | __opener_flags
                 else
-                    std.os.O.RDONLY | __opener_flags;
+                    bun.O.RDONLY | __opener_flags;
 
                 pub inline fn getFdByOpening(this: *This, comptime Callback: OpenCallback) void {
                     var buf: bun.PathBuffer = undefined;
@@ -1902,7 +1902,7 @@ pub const Blob = struct {
                 const Closer = @This();
 
                 fn scheduleClose(request: *io.Request) io.Action {
-                    var this: *This = @fieldParentPtr(This, "io_request", request);
+                    var this: *This = @alignCast(@fieldParentPtr("io_request", request));
                     return io.Action{
                         .close = .{
                             .ctx = this,
@@ -1922,7 +1922,7 @@ pub const Blob = struct {
 
                 fn onCloseIORequest(task: *JSC.WorkPoolTask) void {
                     bloblog("onCloseIORequest()", .{});
-                    var this: *This = @fieldParentPtr(This, "task", task);
+                    var this: *This = @alignCast(@fieldParentPtr("task", task));
                     this.close_after_io = false;
                     this.update();
                 }
@@ -1933,9 +1933,9 @@ pub const Blob = struct {
                 ) bool {
                     if (@hasField(This, "io_request")) {
                         if (this.close_after_io) {
-                            this.state.store(ClosingState.closing, .SeqCst);
+                            this.state.store(ClosingState.closing, .seq_cst);
 
-                            @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .SeqCst);
+                            @atomicStore(@TypeOf(this.io_request.callback), &this.io_request.callback, &scheduleClose, .seq_cst);
                             if (!this.io_request.scheduled)
                                 io.Loop.get().schedule(&this.io_request);
                             return true;
@@ -2089,8 +2089,9 @@ pub const Blob = struct {
             }
 
             fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
-                var this: *CopyFileWindows = @fieldParentPtr(CopyFileWindows, "io_request", req);
-                assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+                var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
+                bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
+
                 var event_loop = this.event_loop;
                 event_loop.unrefConcurrently();
                 const rc = req.result;
@@ -2262,7 +2263,7 @@ pub const Blob = struct {
             }
 
             const linux = std.os.linux;
-            const darwin = std.os.darwin;
+            const darwin = std.posix.system;
 
             pub fn deinit(this: *CopyFile) void {
                 if (this.source_file_store.pathlike == .path) {
@@ -2321,7 +2322,7 @@ pub const Blob = struct {
                 }
             }
 
-            const os = std.os;
+            const posix = std.posix;
 
             pub fn doCloseFile(this: *CopyFile, comptime which: IOWhich) void {
                 switch (which) {
@@ -2338,7 +2339,7 @@ pub const Blob = struct {
                 }
             }
 
-            const O = if (Environment.isLinux) linux.O else std.os.O;
+            const O = bun.O;
             const open_destination_flags = O.CLOEXEC | O.CREAT | O.WRONLY | O.TRUNC;
             const open_source_flags = O.CLOEXEC | O.RDONLY;
 
@@ -2454,7 +2455,7 @@ pub const Blob = struct {
                             return bun.errnoToZigErr(err.errno);
                         },
                         .result => {
-                            _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
+                            _ = linux.ftruncate(dest_fd.cast(), @as(std.posix.off_t, @intCast(total_written)));
                             return;
                         },
                     }
@@ -2467,7 +2468,7 @@ pub const Blob = struct {
                         .splice => bun.C.splice(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
                     };
 
-                    switch (linux.getErrno(written)) {
+                    switch (bun.C.getErrno(written)) {
                         .SUCCESS => {},
 
                         .NOSYS, .XDEV => {
@@ -2477,7 +2478,7 @@ pub const Blob = struct {
                                     return bun.errnoToZigErr(err.errno);
                                 },
                                 .result => {
-                                    _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
+                                    _ = linux.ftruncate(dest_fd.cast(), @as(std.posix.off_t, @intCast(total_written)));
                                     return;
                                 },
                             }
@@ -2490,7 +2491,7 @@ pub const Blob = struct {
                                     // make() can set STDOUT / STDERR to O_APPEND
                                     // this messes up sendfile()
                                     has_unset_append = true;
-                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, 0);
+                                    const flags = linux.fcntl(dest_fd.cast(), linux.F.GETFL, @as(c_int, 0));
                                     if ((flags & O.APPEND) != 0) {
                                         _ = linux.fcntl(dest_fd.cast(), linux.F.SETFL, flags ^ O.APPEND);
                                         continue;
@@ -2509,7 +2510,7 @@ pub const Blob = struct {
                                         return bun.errnoToZigErr(err.errno);
                                     },
                                     .result => {
-                                        _ = linux.ftruncate(dest_fd.cast(), @as(std.os.off_t, @intCast(total_written)));
+                                        _ = linux.ftruncate(dest_fd.cast(), @as(std.posix.off_t, @intCast(total_written)));
                                         return;
                                     },
                                 }
@@ -2531,14 +2532,14 @@ pub const Blob = struct {
                     }
 
                     // wrote zero bytes means EOF
-                    remain -|= written;
-                    total_written += written;
+                    remain -|= @intCast(written);
+                    total_written += @intCast(written);
                     if (written == 0 or remain == 0) break;
                 }
             }
 
             pub fn doFCopyFile(this: *CopyFile) anyerror!void {
-                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, os.system.COPYFILE_DATA)) {
+                switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE_DATA)) {
                     .err => |errno| {
                         this.system_error = errno.toSystemError();
 
@@ -2613,12 +2614,12 @@ pub const Blob = struct {
                                     .result => |result| {
                                         stat_ = result;
 
-                                        if (os.S.ISDIR(result.mode)) {
+                                        if (posix.S.ISDIR(result.mode)) {
                                             this.system_error = unsupported_directory_error;
                                             return;
                                         }
 
-                                        if (!os.S.ISREG(result.mode))
+                                        if (!posix.S.ISREG(result.mode))
                                             break :do_clonefile;
                                     },
                                     .err => |err| {
@@ -2633,7 +2634,7 @@ pub const Blob = struct {
                                         // If this fails...well, there's not much we can do about it.
                                         _ = bun.C.truncate(
                                             this.destination_file_store.pathlike.path.sliceZ(&path_buf),
-                                            @as(std.os.off_t, @intCast(this.max_length)),
+                                            @as(std.posix.off_t, @intCast(this.max_length)),
                                         );
                                         this.read_len = @as(SizeType, @intCast(this.max_length));
                                     } else {
@@ -2683,7 +2684,7 @@ pub const Blob = struct {
                     },
                 };
 
-                if (os.S.ISDIR(stat.mode)) {
+                if (posix.S.ISDIR(stat.mode)) {
                     this.system_error = unsupported_directory_error;
                     this.doClose();
                     return;
@@ -2696,7 +2697,7 @@ pub const Blob = struct {
                         return;
                     }
 
-                    if (os.S.ISREG(stat.mode) and
+                    if (posix.S.ISREG(stat.mode) and
                         this.max_length > bun.C.preallocate_length and
                         this.max_length != Blob.max_size)
                     {
@@ -2707,7 +2708,7 @@ pub const Blob = struct {
                 if (comptime Environment.isLinux) {
 
                     // Bun.write(Bun.file("a"), Bun.file("b"))
-                    if (os.S.ISREG(stat.mode) and (os.S.ISREG(this.destination_file_store.mode) or this.destination_file_store.mode == 0)) {
+                    if (posix.S.ISREG(stat.mode) and (posix.S.ISREG(this.destination_file_store.mode) or this.destination_file_store.mode == 0)) {
                         if (this.destination_file_store.is_atty orelse false) {
                             this.doCopyFileRange(.copy_file_range, true) catch {};
                         } else {
@@ -2719,7 +2720,7 @@ pub const Blob = struct {
                     }
 
                     // $ bun run foo.js | bun run bar.js
-                    if (os.S.ISFIFO(stat.mode) and os.S.ISFIFO(this.destination_file_store.mode)) {
+                    if (posix.S.ISFIFO(stat.mode) and posix.S.ISFIFO(this.destination_file_store.mode)) {
                         if (this.destination_file_store.is_atty orelse false) {
                             this.doCopyFileRange(.splice, true) catch {};
                         } else {
@@ -2730,7 +2731,7 @@ pub const Blob = struct {
                         return;
                     }
 
-                    if (os.S.ISREG(stat.mode) or os.S.ISCHR(stat.mode) or os.S.ISSOCK(stat.mode)) {
+                    if (posix.S.ISREG(stat.mode) or posix.S.ISCHR(stat.mode) or posix.S.ISSOCK(stat.mode)) {
                         if (this.destination_file_store.is_atty orelse false) {
                             this.doCopyFileRange(.sendfile, true) catch {};
                         } else {
@@ -2753,7 +2754,7 @@ pub const Blob = struct {
                         return;
                     };
                     if (stat.size != 0 and @as(SizeType, @intCast(stat.size)) > this.max_length) {
-                        _ = darwin.ftruncate(this.destination_fd.cast(), @as(std.os.off_t, @intCast(this.max_length)));
+                        _ = darwin.ftruncate(this.destination_fd.cast(), @as(std.posix.off_t, @intCast(this.max_length)));
                     }
 
                     this.doClose();
@@ -3039,7 +3040,7 @@ pub const Blob = struct {
                 var file_path: bun.PathBuffer = undefined;
                 switch (bun.sys.open(
                     pathlike.path.sliceZ(&file_path),
-                    std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                    bun.O.WRONLY | bun.O.CREAT | bun.O.NONBLOCK,
                     write_permissions,
                 )) {
                     .result => |result| {

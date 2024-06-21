@@ -185,11 +185,11 @@ const HugeAllocator = struct {
         assert(len > 0);
         assert(std.math.isPowerOfTwo(alignment));
 
-        const slice = std.os.mmap(
+        const slice = std.posix.mmap(
             null,
             len,
-            std.os.PROT.READ | std.os.PROT.WRITE,
-            std.os.MAP.ANONYMOUS | std.os.MAP.PRIVATE,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            std.posix.MAP.ANONYMOUS | std.posix.MAP.PRIVATE,
             -1,
             0,
         ) catch
@@ -216,7 +216,7 @@ const HugeAllocator = struct {
         _: u29,
         _: usize,
     ) void {
-        std.os.munmap(@alignCast(buf));
+        std.posix.munmap(@alignCast(buf));
     }
 };
 

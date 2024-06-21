@@ -537,7 +537,7 @@ fn dlsym(comptime Type: type, comptime symbol: [:0]const u8) ?Type {
                 0;
 
             if (bun.getenvZ("BUN_TRACY_PATH")) |path| {
-                const handle = bun.C.dlopen(&(std.os.toPosixPath(path) catch unreachable), RLTD);
+                const handle = bun.C.dlopen(&(std.posix.toPosixPath(path) catch unreachable), RLTD);
                 if (handle != null) {
                     Handle.handle = handle;
                     break :get;

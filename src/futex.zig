@@ -6,6 +6,7 @@
 // This is copy-pasted from Zig's source code to fix an issue with linking on macOS Catalina and earlier.
 
 const std = @import("std");
+const bun = @import("root").bun;
 const builtin = @import("builtin");
 const Futex = @This();
 
@@ -50,7 +51,7 @@ pub fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}
     // Avoid calling into the OS for no-op waits()
     if (timeout) |timeout_ns| {
         if (timeout_ns == 0) {
-            if (ptr.load(.SeqCst) != expect) return;
+            if (ptr.load(.seq_cst) != expect) return;
             return error.TimedOut;
         }
     }
@@ -132,8 +133,8 @@ const LinuxFutex = struct {
     const linux = std.os.linux;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-        var ts: std.os.timespec = undefined;
-        var ts_ptr: ?*std.os.timespec = null;
+        var ts: std.posix.timespec = undefined;
+        var ts_ptr: ?*std.posix.timespec = null;
 
         // Futex timespec timeout is already in relative time.
         if (timeout) |timeout_ns| {
@@ -142,7 +143,7 @@ const LinuxFutex = struct {
             ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
         }
 
-        switch (linux.getErrno(linux.futex_wait(
+        switch (bun.C.getErrno(linux.futex_wait(
             @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
             @as(i32, @bitCast(expect)),
@@ -159,7 +160,7 @@ const LinuxFutex = struct {
     }
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        switch (linux.getErrno(linux.futex_wake(
+        switch (bun.C.getErrno(linux.futex_wake(
             @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
             std.math.cast(i32, num_waiters) orelse std.math.maxInt(i32),
@@ -173,7 +174,7 @@ const LinuxFutex = struct {
 };
 
 const DarwinFutex = struct {
-    const darwin = std.os.darwin;
+    const darwin = std.c;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
         // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
@@ -208,7 +209,7 @@ const DarwinFutex = struct {
         };
 
         if (status >= 0) return;
-        switch (@as(std.os.E, @enumFromInt(-status))) {
+        switch (@as(std.posix.E, @enumFromInt(-status))) {
             .INTR => {},
             // Address of the futex is paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
@@ -230,7 +231,7 @@ const DarwinFutex = struct {
             const status = darwin.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;
-            switch (@as(std.os.E, @enumFromInt(-status))) {
+            switch (@as(std.posix.E, @enumFromInt(-status))) {
                 .INTR => continue, // spurious wake()
                 .FAULT => continue, // address of the lock was paged out
                 .NOENT => return, // nothing was woken up
@@ -251,7 +252,7 @@ const PosixFutex = struct {
             assert(std.c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
             defer assert(std.c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
 
-            if (ptr.load(.SeqCst) != expect) {
+            if (ptr.load(.seq_cst) != expect) {
                 return;
             }
 
@@ -347,11 +348,11 @@ const PosixFutex = struct {
                 .notified => return,
             }
 
-            var ts: std.os.timespec = undefined;
-            var ts_ptr: ?*const std.os.timespec = null;
+            var ts: std.posix.timespec = undefined;
+            var ts_ptr: ?*const std.posix.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+                std.posix.clock_gettime(std.posix.CLOCK_REALTIME, &ts) catch unreachable;
                 ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {

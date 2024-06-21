@@ -313,7 +313,7 @@ pub const StandaloneModuleGraph = struct {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
                 if (Syscall.clonefile(self_exe, zname) == .result) {
-                    switch (Syscall.open(zname, std.os.O.RDWR | std.os.O.CLOEXEC, 0)) {
+                    switch (Syscall.open(zname, bun.O.RDWR | bun.O.CLOEXEC, 0)) {
                         .result => |res| break :brk res,
                         .err => {},
                     }
@@ -325,7 +325,7 @@ pub const StandaloneModuleGraph = struct {
             const fd = brk2: {
                 var tried_changing_abs_dir = false;
                 for (0..3) |retry| {
-                    switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.RDWR | std.os.O.CREAT, 0)) {
+                    switch (Syscall.open(zname, bun.O.CLOEXEC | bun.O.RDWR | bun.O.CREAT, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -366,7 +366,7 @@ pub const StandaloneModuleGraph = struct {
             };
             const self_fd = brk2: {
                 for (0..3) |retry| {
-                    switch (Syscall.open(self_exe, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
+                    switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -540,7 +540,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isMac) {
             if (target.os == .mac) {
-                var signer = std.ChildProcess.init(
+                var signer = std.process.Child.init(
                     &.{
                         "codesign",
                         "--remove-signature",
@@ -564,9 +564,9 @@ pub const StandaloneModuleGraph = struct {
         bun.C.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
-            bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
+            bun.sliceTo(&(try std.posix.toPosixPath(temp_location)), 0),
             bun.toFD(root_dir.fd),
-            bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
+            bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
@@ -574,7 +574,7 @@ pub const StandaloneModuleGraph = struct {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
             }
             _ = Syscall.unlink(
-                &(try std.os.toPosixPath(temp_location)),
+                &(try std.posix.toPosixPath(temp_location)),
             );
 
             Global.exit(1);
@@ -587,7 +587,7 @@ pub const StandaloneModuleGraph = struct {
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
-        std.os.lseek_END(self_exe.cast(), -4096) catch return null;
+        std.posix.lseek_END(self_exe.cast(), -4096) catch return null;
 
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
@@ -640,7 +640,7 @@ pub const StandaloneModuleGraph = struct {
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
             const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.os.lseek_END(self_exe.cast(), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
+            std.posix.lseek_END(self_exe.cast(), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
 
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
@@ -750,7 +750,7 @@ pub const StandaloneModuleGraph = struct {
             },
             .windows => {
                 const image_path_unicode_string = std.os.windows.peb().ProcessParameters.ImagePathName;
-                const image_path = image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2];
+                const image_path = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2];
 
                 var nt_path_buf: bun.WPathBuffer = undefined;
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);

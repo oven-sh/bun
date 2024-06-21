@@ -12,12 +12,12 @@ pub usingnamespace PlatformSpecific;
 
 const C = std.c;
 const builtin = @import("builtin");
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
-const errno = os.errno;
+const errno = posix.errno;
 const mode_t = bun.Mode;
 // TODO: this is wrong on Windows
 const libc_stat = bun.Stat;
@@ -40,7 +40,7 @@ pub extern "c" fn stat64([*c]const u8, [*c]libc_stat) c_int;
 pub extern "c" fn lchmod(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn truncate([*:0]const u8, i64) c_int; // note: truncate64 is not a thing
 
-pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.os.timeval) c_int;
+pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.posix.timeval) c_int;
 pub extern "c" fn mkdtemp(template: [*c]u8) ?[*:0]u8;
 
 pub extern "c" fn memcmp(s1: [*c]const u8, s2: [*c]const u8, n: usize) c_int;
@@ -65,7 +65,7 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
         .BADF => unreachable, // Always a race condition.
         .NOMEM => return error.SystemResources,
         .ACCES => return error.AccessDenied,
-        else => |err| return os.unexpectedErrno(err),
+        else => |err| return posix.unexpectedErrno(err),
     }
 
     const atime = st.atime();
@@ -77,22 +77,22 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
         .mode = st.mode,
         .kind = switch (builtin.os.tag) {
             .wasi => switch (st.filetype) {
-                os.FILETYPE_BLOCK_DEVICE => Kind.block_device,
-                os.FILETYPE_CHARACTER_DEVICE => Kind.character_device,
-                os.FILETYPE_DIRECTORY => Kind.directory,
-                os.FILETYPE_SYMBOLIC_LINK => Kind.sym_link,
-                os.FILETYPE_REGULAR_FILE => Kind.file,
-                os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.unix_domain_socket,
+                posix.FILETYPE_BLOCK_DEVICE => Kind.block_device,
+                posix.FILETYPE_CHARACTER_DEVICE => Kind.character_device,
+                posix.FILETYPE_DIRECTORY => Kind.directory,
+                posix.FILETYPE_SYMBOLIC_LINK => Kind.sym_link,
+                posix.FILETYPE_REGULAR_FILE => Kind.file,
+                posix.FILETYPE_SOCKET_STREAM, posix.FILETYPE_SOCKET_DGRAM => Kind.unix_domain_socket,
                 else => Kind.unknown,
             },
-            else => switch (st.mode & os.S.IFMT) {
-                os.S.IFBLK => Kind.block_device,
-                os.S.IFCHR => Kind.character_device,
-                os.S.IFDIR => Kind.directory,
-                os.S.IFIFO => Kind.named_pipe,
-                os.S.IFLNK => Kind.sym_link,
-                os.S.IFREG => Kind.file,
-                os.S.IFSOCK => Kind.unix_domain_socket,
+            else => switch (st.mode & posix.S.IFMT) {
+                posix.S.IFBLK => Kind.block_device,
+                posix.S.IFCHR => Kind.character_device,
+                posix.S.IFDIR => Kind.directory,
+                posix.S.IFIFO => Kind.named_pipe,
+                posix.S.IFLNK => Kind.sym_link,
+                posix.S.IFREG => Kind.file,
+                posix.S.IFSOCK => Kind.unix_domain_socket,
                 else => Kind.unknown,
             },
         },
@@ -150,7 +150,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    const in_handle = try bun.sys.openat(from_dir, filename, std.os.O.RDONLY | std.os.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
+    const in_handle = try bun.sys.openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
     defer _ = bun.sys.close(in_handle);
     _ = bun.sys.unlinkat(from_dir, filename);
     try copyFileZSlowWithHandle(in_handle, to_dir, destination);
@@ -173,7 +173,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         return;
     }
 
-    const stat_ = if (comptime Environment.isPosix) try std.os.fstat(in_handle.cast()) else void{};
+    const stat_ = if (comptime Environment.isPosix) try std.posix.fstat(in_handle.cast()) else void{};
 
     // Attempt to delete incase it already existed.
     // This fixes ETXTBUSY on Linux
@@ -182,7 +182,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
     const out_handle = try bun.sys.openat(
         to_dir,
         destination,
-        std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC | std.os.O.TRUNC,
+        bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
         if (comptime Environment.isPosix) 0o644 else 0,
     ).unwrap();
     defer _ = bun.sys.close(out_handle);
@@ -230,8 +230,8 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
                 }
                 allocator.free(slice);
             }
-            try os.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
-                fn callback(info: *os.dl_phdr_info, size: usize, list: *List) !void {
+            try posix.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
+                fn callback(info: *posix.dl_phdr_info, size: usize, list: *List) !void {
                     _ = size;
                     const name = info.dlpi_name orelse return;
                     if (name[0] == '/') {
@@ -355,8 +355,8 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     if (code == -2) return .SRCH;
     if (code == 0) return .SUCCESS;
 
-    const errcode = std.c.getErrno(code);
-    return errcode;
+    const errcode = bun.sys.getErrno(code);
+    return @enumFromInt(@intFromEnum(errcode));
 }
 
 pub fn getVersion(buf: []u8) []const u8 {
@@ -394,7 +394,7 @@ pub fn getRelease(buf: []u8) []const u8 {
 }
 
 pub extern fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
-pub extern fn cfmakeraw(*std.os.termios) void;
+pub extern fn cfmakeraw(*std.posix.termios) void;
 
 const LazyStatus = enum {
     pending,

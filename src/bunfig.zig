@@ -56,6 +56,11 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
+        fn addErrorFormat(this: *Parser, loc: logger.Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+            this.log.addErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
+            return error.@"Invalid Bunfig";
+        }
+
         fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
             const url = URL.parse(str.data);
             var registry = std.mem.zeroes(Api.NpmRegistry);
@@ -260,13 +265,14 @@ pub const Bunfig = struct {
                         const items = expr.data.e_array.items.slice();
                         for (items) |item| {
                             try this.expectString(item);
-                            if (TestCommand.ReporterMap.get(item.asString(bun.default_allocator) orelse "")) |reporter| {
+                            const item_str = item.asString(bun.default_allocator) orelse "";
+                            if (TestCommand.ReporterMap.get(item_str)) |reporter| {
                                 switch (reporter) {
                                    .console => this.ctx.test_options.coverage.reporters.console = true,
                                    .lcov => this.ctx.test_options.coverage.reporters.lcov = true,
                                 }
                             } else {
-                                try this.addError(item.loc, "Invalid reporter.");
+                                try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
                             }
                         }
                     }

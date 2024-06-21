@@ -468,7 +468,7 @@ Once you're done with your changes, run:
     15 * 1000,
   );
 
-  [("is-even@1.0.0", "node_modules/is-even")].map(patchArg =>
+  ["is-even@1.0.0", "node_modules/is-even"].map(patchArg =>
     makeTest("should patch a node_modules package", {
       dependencies: { "is-even": "1.0.0" },
       mainScript: /* ts */ `import isEven from 'is-even'; isEven(420)`,

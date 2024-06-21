@@ -168,9 +168,9 @@ pub const Repository = extern struct {
         var std_map = try env.map.stdEnvMap(allocator);
 
         defer {
-            _ = if (originalAskPass) |value| env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", value) catch void else env.map.remove("GIT_ASKPASS");
+            _ = if (originalAskPass) |value| env.map.put(allocator, "GIT_ASKPASS", value) catch void else env.map.remove("GIT_ASKPASS");
 
-            _ = if (originalSSHCommand) |value| env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", value) catch void else env.map.remove("GIT_SSH_COMMAND");
+            _ = if (originalSSHCommand) |value| env.map.put(allocator, "GIT_SSH_COMMAND", value) catch void else env.map.remove("GIT_SSH_COMMAND");
 
             std_map.deinit();
         }

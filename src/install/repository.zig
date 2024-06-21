@@ -168,11 +168,9 @@ pub const Repository = extern struct {
         var std_map = try env.map.stdEnvMap(allocator);
 
         defer {
-            _ = if (originalAskPass) |value| env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", value) catch void
-            else env.map.remove("GIT_ASKPASS");
+            _ = if (originalAskPass) |value| env.map.putAllocKeyAndValue(allocator, "GIT_ASKPASS", value) catch void else env.map.remove("GIT_ASKPASS");
 
-            _ = if (originalSSHCommand) |value| env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", value) catch void
-            else env.map.remove("GIT_SSH_COMMAND");
+            _ = if (originalSSHCommand) |value| env.map.putAllocKeyAndValue(allocator, "GIT_SSH_COMMAND", value) catch void else env.map.remove("GIT_SSH_COMMAND");
 
             std_map.deinit();
         }
@@ -192,13 +190,10 @@ pub const Repository = extern struct {
 
         switch (result.term) {
             .Exited => |sig| if (sig == 0) return result.stdout else if (
-                // remote: The page could not be found <-- for non git
-                // remote: Repository not found. <-- for git
-                strings.containsComptime(result.stderr, "remote:")
-                and strings.containsComptime(result.stderr, "not")
-                and strings.containsComptime(result.stderr, "found")
-            ) {
-                    return error.RepositoryNotFound;
+            // remote: The page could not be found <-- for non git
+            // remote: Repository not found. <-- for git
+            strings.containsComptime(result.stderr, "remote:") and strings.containsComptime(result.stderr, "not") and strings.containsComptime(result.stderr, "found")) {
+                return error.RepositoryNotFound;
             },
             else => {},
         }
@@ -212,8 +207,7 @@ pub const Repository = extern struct {
             return null;
         }
 
-        if (strings.hasPrefixComptime(url, "git@")
-            or strings.hasPrefixComptime(url, "ssh://")) {
+        if (strings.hasPrefixComptime(url, "git@") or strings.hasPrefixComptime(url, "ssh://")) {
             return url;
         }
 
@@ -282,16 +276,7 @@ pub const Repository = extern struct {
         return null;
     }
 
-    pub fn download(
-        allocator: std.mem.Allocator,
-        env: *DotEnv.Loader,
-        log: *logger.Log,
-        cache_dir: std.fs.Dir,
-        task_id: u64,
-        name: string,
-        url: string,
-        attempt: u8
-    ) !std.fs.Dir {
+    pub fn download(allocator: std.mem.Allocator, env: *DotEnv.Loader, log: *logger.Log, cache_dir: std.fs.Dir, task_id: u64, name: string, url: string, attempt: u8) !std.fs.Dir {
         bun.Analytics.Features.git_dependencies += 1;
         const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
             bun.fmt.hexIntLower(task_id),

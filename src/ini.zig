@@ -305,15 +305,15 @@ pub const Parser = struct {
                                     break :brk &[_]u8{ '\\', c };
                                 },
                                 2 => brk: {
-                                    i += 1;
+                                    defer i += 1;
                                     break :brk &[_]u8{ '\\', c, val[i + 1] };
                                 },
                                 3 => brk: {
-                                    i += 2;
+                                    defer i += 2;
                                     break :brk &[_]u8{ '\\', c, val[i + 1], val[i + 2] };
                                 },
                                 4 => brk: {
-                                    i += 3;
+                                    defer i += 3;
                                     break :brk &[_]u8{ '\\', c, val[i + 1], val[i + 2], val[i + 3] };
                                 },
                                 // this means invalid utf8
@@ -341,15 +341,15 @@ pub const Parser = struct {
                             break :brk &[_]u8{c};
                         },
                         2 => brk: {
-                            i += 1;
+                            defer i += 1;
                             break :brk &[_]u8{ c, val[i + 1] };
                         },
                         3 => brk: {
-                            i += 2;
+                            defer i += 2;
                             break :brk &[_]u8{ c, val[i + 1], val[i + 2] };
                         },
                         4 => brk: {
-                            i += 3;
+                            defer i += 3;
                             break :brk &[_]u8{ c, val[i + 1], val[i + 2], val[i + 3] };
                         },
                         // this means invalid utf8
@@ -377,7 +377,7 @@ pub const Parser = struct {
                 },
                 .key => {
                     const thestr: []const u8 = thestr: {
-                        if (!did_any_escape) break :thestr val[0..];
+                        if (!did_any_escape) break :thestr try this.arena.allocator().dupe(u8, val[0..]);
                         if (unesc.items.len <= STACK_BUF_SIZE) break :thestr try this.arena.allocator().dupe(u8, unesc.items[0..]);
                         break :thestr unesc.items[0..];
                     };

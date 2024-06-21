@@ -3,6 +3,31 @@ const { parse } = iniInternals;
 import { expect, test, describe, it } from "bun:test";
 
 describe("parse ini", () => {
+  it("works with unicode in the .ini file", () => {
+    let ini /* ini */ = `
+hi👋lol = 'lol hi 👋'
+`;
+
+    expect(parse(ini)).toEqual({
+      "hi👋lol": "lol hi 👋",
+    });
+
+    ini = /* ini */ `
+[😎.🫒.🤦‍♀️]
+lol = 'wtf'
+    `;
+
+    expect(parse(ini)).toEqual({
+      "😎": {
+        "🫒": {
+          "🤦‍♀️": {
+            lol: "wtf",
+          },
+        },
+      },
+    });
+  });
+
   it("matches stupid npm/ini behavior", () => {
     let ini /* ini */ = `
 '{ "what": "is this" }' = seriously?

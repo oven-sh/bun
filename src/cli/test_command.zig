@@ -288,8 +288,7 @@ pub const CommandLineReporter = struct {
         var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
-            const value: bun.sourcemap.ByteRangeMapping = entry.*;
-            byte_ranges.appendAssumeCapacity(value);
+            byte_ranges.appendAssumeCapacity(entry.*);
         }
 
         if (byte_ranges.items.len == 0) {

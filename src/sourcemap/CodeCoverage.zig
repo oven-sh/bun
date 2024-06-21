@@ -732,16 +732,16 @@ pub const LcovCodeCoverageReport = struct {
 
         // SF: Source File path
         // For example, `SF:path/to/source.ts`
-        try writer.print("SF:{s}\n", .{ filename });
+        try writer.print("SF:{s}\n", .{filename});
 
         // ** Per-function coverage not supported yet, since JSC does not support function names yet. **
         // FN: line number,function name
 
         // FNF: functions found
-        try writer.print("FNF:{d}\n", .{ report.functions.items.len });
+        try writer.print("FNF:{d}\n", .{report.functions.items.len});
 
         // FNH: functions hit
-        try writer.print("FNH:{d}\n", .{ report.functions_which_have_executed.count() });
+        try writer.print("FNH:{d}\n", .{report.functions_which_have_executed.count()});
 
         var executable_lines_that_have_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
         defer executable_lines_that_have_been_executed.deinit(bun.default_allocator);
@@ -761,10 +761,10 @@ pub const LcovCodeCoverageReport = struct {
         }
 
         // LF: lines found
-        try writer.print("LF:{d}\n", .{ report.total_lines });
+        try writer.print("LF:{d}\n", .{report.total_lines});
 
         // LH: lines hit
-        try writer.print("LH:{d}\n", .{ executable_lines_that_have_been_executed.count() });
+        try writer.print("LH:{d}\n", .{executable_lines_that_have_been_executed.count()});
 
         try writer.writeAll("end_of_record\n");
     }
@@ -854,7 +854,6 @@ pub const LcovCodeCoverageReport = struct {
         return result;
     }
 };
-
 
 comptime {
     if (bun.Environment.isNative) {

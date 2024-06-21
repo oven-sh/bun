@@ -277,8 +277,8 @@ pub const CommandLineReporter = struct {
         _ = this;
 
         try std.fs.cwd().makePath(opts.reports_directory);
-        const reports_dir = try std.fs.cwd().openDir(opts.reports_directory,.{});
-        const lcov_file = try reports_dir.createFile("lcov.info",  .{.truncate = true });
+        const reports_dir = try std.fs.cwd().openDir(opts.reports_directory, .{});
+        const lcov_file = try reports_dir.createFile("lcov.info", .{ .truncate = true });
         defer lcov_file.close();
 
         var map = bun.sourcemap.ByteRangeMapping.map orelse return;

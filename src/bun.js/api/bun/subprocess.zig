@@ -128,10 +128,7 @@ pub const ResourceUsage = struct {
 };
 
 pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) !void {
-    var object_iter = JSC.JSPropertyIterator(.{
-        .skip_empty_name = false,
-        .include_value = true,
-    }).init(globalThis, object);
+    var object_iter = JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
     try envp.ensureTotalCapacityPrecise(object_iter.len +
         // +1 incase there's IPC
@@ -1638,10 +1635,7 @@ pub const Subprocess = struct {
         var allocator = arena.allocator();
 
         var override_env = false;
-        var env_array = std.ArrayListUnmanaged(?[*:0]const u8){
-            .items = &.{},
-            .capacity = 0,
-        };
+        var env_array = std.ArrayListUnmanaged(?[*:0]const u8){};
         var jsc_vm = globalThis.bunVM();
 
         var cwd = jsc_vm.bundler.fs.top_level_dir;

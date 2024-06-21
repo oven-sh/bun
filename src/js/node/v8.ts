@@ -119,6 +119,8 @@ export default {
   startupSnapshot,
   Deserializer,
   Serializer,
+  DefaultDeserializer,
+  DefaultSerializer,
 };
 
 hideFromStack(

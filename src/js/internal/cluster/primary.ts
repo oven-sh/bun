@@ -4,6 +4,7 @@ const Worker = require("internal/cluster/Worker");
 const SharedHandle = require("internal/cluster/SharedHandle");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
 const { internal, sendHelper } = require("internal/cluster/utils");
+const path = require("node:path");
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSome = Array.prototype.some;
@@ -50,6 +51,7 @@ cluster.setupPrimary = function (options) {
     exec: process.argv[1],
     execArgv: process.execArgv,
     silent: false,
+    stdio: ["inherit", "inherit", "inherit", "ipc"],
     ...cluster.settings,
     ...options,
   };

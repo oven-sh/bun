@@ -4557,6 +4557,9 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
     }
+    pub inline fn isArray(this: JSValue) bool {
+        return this.isCell() and this.jsType().isArray();
+    }
     pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
         const type_of_value = this.jsType();
         // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26

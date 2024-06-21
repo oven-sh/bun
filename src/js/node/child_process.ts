@@ -3,6 +3,9 @@ const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 
+const { setupChannel } = require("internal/child_process");
+const Pipe = require("internal/child_process/Pipe");
+
 const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 
 var NetModule;
@@ -268,7 +271,7 @@ function execFile(file, args, options, callback) {
 
   let cmd = file;
 
-  function exitHandler(code, signal) {
+  function exitHandler(code = 0, signal?: number | null) {
     if (exited) return;
     exited = true;
 
@@ -1228,9 +1231,18 @@ class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
     const argv0 = file || options.argv0;
 
-    // TODO: better ipc support
-    const ipc = $isJSArray(stdio) && stdio[3] === "ipc";
-    var env = options.envPairs || undefined;
+    const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    var env = options.envPairs || process.env;
+
+    if (has_ipc) {
+      // Let child process know about opened IPC channel
+      if (env === undefined) env = {};
+      else validateObject(env, "options.envPairs");
+
+      // env.NODE_CHANNEL_FD = `3`;
+      // env.NODE_CHANNEL_SERIALIZATION_MODE = serialization;
+    }
+
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
@@ -1242,7 +1254,7 @@ class ChildProcess extends EventEmitter {
       cmd: spawnargs,
       stdio: bunStdio,
       cwd: options.cwd || undefined,
-      env: env || process.env,
+      env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
         if (hasSocketsToEagerlyLoad) {
@@ -1260,7 +1272,7 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
-      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1272,7 +1284,7 @@ class ChildProcess extends EventEmitter {
 
     onSpawnNT(this);
 
-    if (ipc) {
+    if (has_ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
     }
@@ -1779,6 +1791,20 @@ function genericNodeError(message, options) {
   return err;
 }
 
+function _forkChild(fd, serializationMode) {
+  // set process.send()
+  const p = new Pipe(Pipe.constants.IPC);
+  p.open(fd);
+  p.unref();
+  const control = setupChannel(process, p, serializationMode);
+  process.on("newListener", function onNewListener(name) {
+    if (name === "message" || name === "disconnect") control.refCounted();
+  });
+  process.on("removeListener", function onRemoveListener(name) {
+    if (name === "message" || name === "disconnect") control.unrefCounted();
+  });
+}
+
 // const messages = new Map();
 
 // Utility function for registering the error codes. Only used here. Exported
@@ -1990,4 +2016,5 @@ export default {
   spawnSync,
   execFileSync,
   execSync,
+  _forkChild,
 };

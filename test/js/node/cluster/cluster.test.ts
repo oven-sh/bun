@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
-import {} from "harness";
+import "harness";
 
 function new_test(name: string) {
   test(name, () => {

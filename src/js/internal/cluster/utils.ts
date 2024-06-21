@@ -3,6 +3,7 @@ let seq = 0;
 
 export function sendHelper(proc, message, handle?, cb?) {
   if (!proc.connected) return false;
+  return true;
 
   // Mark message as internal. See INTERNAL_PREFIX
   // in lib/internal/child_process.js

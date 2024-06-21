@@ -176,19 +176,19 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
         };
         const src_len = bun.windows.GetFinalPathNameByHandleW(in_handle.cast(), &buf1, buf1.len, 0);
         if (src_len == 0) {
-            return error.EBUSY;
+            return Maybe(void).errno(bun.C.E.BUSY, .GetFinalPathNameByHandle);
         } else if (src_len >= buf1.len) {
-            return error.ENAMETOOLONG;
+            return Maybe(void).errno(bun.C.E.NAMETOOLONG, .GetFinalPathNameByHandle);
         }
         const src = buf1[0..src_len :0];
         bun.copyFile(src, dest) catch |e| return Maybe(void).errno(bun.copyFileErrnoConvert(e), .copyfile);
-        return;
+        return Maybe(void).success;
     }
 
     const stat_ = if (comptime Environment.isPosix) switch (bun.sys.fstat(in_handle)) {
         .result => |s| s,
         .err => |e| return .{ .err = e },
-    } else void{};
+    } else {};
 
     // Attempt to delete incase it already existed.
     // This fixes ETXTBUSY on Linux

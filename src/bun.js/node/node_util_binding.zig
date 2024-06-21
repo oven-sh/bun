@@ -43,7 +43,7 @@ fn uv_guess_handle(file: uv.uv_file) uv.uv_handle_type {
     if (file < 0)
         return .unknown;
 
-    if (std.os.isatty(file))
+    if (std.posix.isatty(file))
         return .tty;
 
     const zig_file = std.fs.File{ .handle = file };
@@ -61,21 +61,21 @@ fn uv_guess_handle(file: uv.uv_file) uv.uv_handle_type {
     if (!bun.S.ISSOCK(stat.mode))
         return .unknown;
 
-    const sockaddr = std.os.sockaddr;
+    const sockaddr = std.posix.sockaddr;
     var addr: sockaddr = undefined;
     if (std.c.getsockname(file, &addr, @ptrFromInt(@sizeOf(sockaddr))) > 0) return .unknown;
 
     var ty: u32 = 0;
-    if (std.c.getsockopt(file, std.os.SOL.SOCKET, std.os.SO.TYPE, &ty, @ptrFromInt(4)) > 0) return .unknown;
+    if (std.c.getsockopt(file, std.posix.SOL.SOCKET, std.posix.SO.TYPE, &ty, @ptrFromInt(4)) > 0) return .unknown;
 
-    if (ty == std.os.SOCK.DGRAM)
-        if (addr.family == std.os.AF.INET or addr.family == std.os.AF.INET6)
+    if (ty == std.posix.SOCK.DGRAM)
+        if (addr.family == std.posix.AF.INET or addr.family == std.posix.AF.INET6)
             return .udp;
 
-    if (ty == std.os.SOCK.STREAM) {
-        if (addr.family == std.os.AF.INET or addr.family == std.os.AF.INET6)
+    if (ty == std.posix.SOCK.STREAM) {
+        if (addr.family == std.posix.AF.INET or addr.family == std.posix.AF.INET6)
             return .tcp;
-        if (addr.family == std.os.AF.UNIX)
+        if (addr.family == std.posix.AF.UNIX)
             return .named_pipe;
     }
 

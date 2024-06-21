@@ -398,7 +398,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             }
         }
 
-        if (bun.sys.renameatConcurrently(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name).asErr()) |err| {
+        if (bun.sys.renameatConcurrently(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{ .copy_fallback = true }).asErr()) |err| {
             this.package_manager.log.addErrorFmt(
                 null,
                 logger.Loc.Empty,

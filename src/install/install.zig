@@ -756,16 +756,7 @@ pub const Task = struct {
                 const url = this.request.git_clone.url.slice();
                 var attempt: u8 = 1;
                 const dir = brk: {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                        manager.allocator,
-                        manager.env,
-                        manager.log,
-                        manager.getCacheDirectory(),
-                        this.id,
-                        name,
-                        https,
-                        attempt
-                    ) catch |err| {
+                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, https, attempt) catch |err| {
                         // Exit early if git checked and could
                         // not find the repository, skip ssh
                         if (err == error.RepositoryNotFound) {
@@ -780,16 +771,7 @@ pub const Task = struct {
                         break :brk null;
                     };
                     break :brk null;
-                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
-                    manager.allocator,
-                    manager.env,
-                    manager.log,
-                    manager.getCacheDirectory(),
-                    this.id,
-                    name,
-                    ssh,
-                    attempt
-                ) catch |err| {
+                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, ssh, attempt) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
@@ -10456,6 +10438,7 @@ pub const PackageManager = struct {
                             entrypathZ,
                             bun.toFD(destination_dir_.fd),
                             tmpname,
+                            .{ .copy_fallback = true },
                         ).asErr()) |e| {
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e});
                             Global.crash();
@@ -10796,6 +10779,7 @@ pub const PackageManager = struct {
                     "node_modules",
                     bun.toFD(root_node_modules.fd),
                     random_tempdir,
+                    .{ .copy_fallback = true },
                 ).asErr()) |_| break :has_nested_node_modules false;
 
                 break :has_nested_node_modules true;
@@ -10836,6 +10820,7 @@ pub const PackageManager = struct {
                     patch_tag,
                     bun.toFD(root_node_modules.fd),
                     patch_tag_tmpname,
+                    .{ .copy_fallback = true },
                 ).asErr()) |e| {
                     Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                     break :has_bun_patch_tag null;
@@ -10859,6 +10844,7 @@ pub const PackageManager = struct {
                             random_tempdir,
                             bun.toFD(new_folder_handle.fd),
                             "node_modules",
+                            .{ .copy_fallback = true },
                         ).asErr()) |e| {
                             Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
                         }
@@ -10870,6 +10856,7 @@ pub const PackageManager = struct {
                             patch_tag_tmpname,
                             bun.toFD(new_folder_handle.fd),
                             patch_tag,
+                            .{ .copy_fallback = true },
                         ).asErr()) |e| {
                             Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                         }
@@ -11026,6 +11013,7 @@ pub const PackageManager = struct {
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
+            .{ .copy_fallback = true },
         ).asErr()) |e| {
             Output.prettyError(
                 "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",

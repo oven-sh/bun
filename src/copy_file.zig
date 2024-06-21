@@ -26,6 +26,35 @@ const CopyFileError = error{SystemResources} || CopyFileRangeError || posix.Send
 
 const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
 
+pub fn copyFileErrorConvert(e: CopyFileError) bun.C.E {
+    return switch (e) {
+        error.FilesOpenedWithWrongFlags => bun.C.E.BADF,
+        error.IsDir => bun.C.E.ISDIR,
+        error.OutOfMemory => bun.C.E.NOMEM,
+        error.Unseekable => bun.C.E.SPIPE,
+        error.PermissionDenied => bun.C.E.PERM,
+        error.FileBusy => bun.C.E.BUSY,
+        error.ConnectionTimedOut => bun.C.E.TIMEDOUT,
+        error.NotOpenForReading => bun.C.E.BADF,
+        error.SocketNotConnected => bun.C.E.NOTCONN,
+        error.DiskQuota => bun.C.E.DQUOT,
+        error.FileTooBig => bun.C.E.FBIG,
+        error.InputOutput => bun.C.E.IO,
+        error.NoSpaceLeft => bun.C.E.NOSPC,
+        error.DeviceBusy => bun.C.E.BUSY,
+        error.InvalidArgument => bun.C.E.INVAL,
+        error.AccessDenied => bun.C.E.ACCES,
+        error.BrokenPipe => bun.C.E.PIPE,
+        error.SystemResources => bun.C.E.MFILE,
+        error.OperationAborted => bun.C.E.CANCELED,
+        error.NotOpenForWriting => bun.C.E.BADF,
+        error.LockViolation => bun.C.E.AGAIN,
+        error.WouldBlock => bun.C.E.INVAL,
+        error.ConnectionResetByPeer => bun.C.E.CONNRESET,
+        else => bun.C.E.INVAL,
+    };
+}
+
 /// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
 ///
 /// The intended order here is:

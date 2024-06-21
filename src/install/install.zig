@@ -758,13 +758,13 @@ pub const Task = struct {
                 const dir = brk: {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
-                        manager.env,
+                        this.request.git_clone.env,
                         manager.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
                         https,
-                        attempt
+                        attempt,
                     ) catch |err| {
                         // Exit early if git checked and could
                         // not find the repository, skip ssh
@@ -782,13 +782,13 @@ pub const Task = struct {
                     break :brk null;
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
-                    manager.env,
+                    this.request.git_clone.env,
                     manager.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
                     ssh,
-                    attempt
+                    attempt,
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
@@ -799,8 +799,6 @@ pub const Task = struct {
                     return;
                 };
 
-                manager.git_repositories.put(manager.allocator, this.id, bun.toFD(dir.fd)) catch unreachable;
-
                 this.data = .{
                     .git_clone = bun.toFD(dir.fd),
                 };
@@ -810,7 +808,7 @@ pub const Task = struct {
                 const git_checkout = &this.request.git_checkout;
                 const data = Repository.checkout(
                     manager.allocator,
-                    manager.env,
+                    this.request.git_checkout.env,
                     manager.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.asDir(),
@@ -891,6 +889,7 @@ pub const Task = struct {
         git_clone: struct {
             name: strings.StringOrTinyString,
             url: strings.StringOrTinyString,
+            env: DotEnv.Map,
         },
         git_checkout: struct {
             repo_dir: bun.FileDescriptor,
@@ -899,6 +898,7 @@ pub const Task = struct {
             url: strings.StringOrTinyString,
             resolved: strings.StringOrTinyString,
             resolution: Resolution,
+            env: DotEnv.Map,
         },
         local_tarball: struct {
             tarball: ExtractTarball,
@@ -4720,6 +4720,7 @@ pub const PackageManager = struct {
                         *FileSystem.FilenameStore,
                         &FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .env = Repository.shared_env.get(this.allocator, this.env),
                 },
             },
             .id = task_id,
@@ -4775,6 +4776,7 @@ pub const PackageManager = struct {
                         *FileSystem.FilenameStore,
                         &FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .env = Repository.shared_env.get(this.allocator, this.env),
                 },
             },
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
@@ -6637,6 +6639,8 @@ pub const PackageManager = struct {
                     const clone = &task.request.git_clone;
                     const name = clone.name.slice();
                     const url = clone.url.slice();
+
+                    manager.git_repositories.put(manager.allocator, task.id, task.data.git_clone) catch unreachable;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;

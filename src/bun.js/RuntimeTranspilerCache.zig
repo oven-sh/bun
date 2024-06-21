@@ -228,13 +228,8 @@ pub const RuntimeTranspilerCache = struct {
                 if (bun.Environment.allow_assert) {
                     var total: usize = 0;
                     for (vecs) |v| {
-                        if (comptime bun.Environment.isWindows) {
-                            bun.assert(v.len > 0);
-                            total += v.len;
-                        } else {
-                            bun.assert(v.iov_len > 0);
-                            total += v.iov_len;
-                        }
+                        bun.assert(v.len > 0);
+                        total += v.len;
                     }
                     bun.assert(end_position == total);
                 }
@@ -477,7 +472,7 @@ pub const RuntimeTranspilerCache = struct {
         output_code_allocator: std.mem.Allocator,
     ) !Entry {
         var metadata_bytes_buf: [Metadata.size * 2]u8 = undefined;
-        const cache_fd = try bun.sys.open(cache_file_path.sliceAssumeZ(), std.os.O.RDONLY, 0).unwrap();
+        const cache_fd = try bun.sys.open(cache_file_path.sliceAssumeZ(), bun.O.RDONLY, 0).unwrap();
         defer _ = bun.sys.close(cache_fd);
         errdefer {
             // On any error, we delete the cache file

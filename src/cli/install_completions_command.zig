@@ -57,11 +57,11 @@ pub const InstallCompletionsCommand = struct {
         const exe = try bun.selfExePath();
         var target_buf: bun.PathBuffer = undefined;
         var target = std.fmt.bufPrint(&target_buf, "{s}/" ++ bunx_name, .{std.fs.path.dirname(exe).?}) catch unreachable;
-        std.os.symlink(exe, target) catch {
+        std.posix.symlink(exe, target) catch {
             outer: {
                 if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/bin/" ++ bunx_name, .{install_dir}) catch unreachable;
-                    std.os.symlink(exe, target) catch break :outer;
+                    std.posix.symlink(exe, target) catch break :outer;
                     return;
                 }
             }
@@ -70,7 +70,7 @@ pub const InstallCompletionsCommand = struct {
             outer: {
                 if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/.bun/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
-                    std.os.symlink(exe, target) catch break :outer;
+                    std.posix.symlink(exe, target) catch break :outer;
                     return;
                 }
             }
@@ -79,7 +79,7 @@ pub const InstallCompletionsCommand = struct {
             outer: {
                 if (bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
                     target = std.fmt.bufPrint(&target_buf, "{s}/.local/bin/" ++ bunx_name, .{home_dir}) catch unreachable;
-                    std.os.symlink(exe, target) catch break :outer;
+                    std.posix.symlink(exe, target) catch break :outer;
                     return;
                 }
             }

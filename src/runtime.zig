@@ -199,13 +199,12 @@ pub const Fallback = struct {
 pub const Runtime = struct {
     pub const source_code = @embedFile("./runtime.out.js");
 
-    pub const version_hash = @import("build_options").runtime_js_version;
-    var version_hash_int: u32 = 0;
+    pub const hash = brk: {
+        @setEvalBranchQuota(source_code.len * 50);
+        break :brk bun.Wyhash11.hash(0, source_code);
+    };
     pub fn versionHash() u32 {
-        if (version_hash_int == 0) {
-            version_hash_int = @as(u32, @truncate(version_hash));
-        }
-        return version_hash_int;
+        return @truncate(hash);
     }
 
     pub const Features = struct {

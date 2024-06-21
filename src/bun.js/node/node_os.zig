@@ -391,7 +391,7 @@ pub const OS = struct {
 
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
 
-        return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(std.posix.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
     }
 
     pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -420,7 +420,7 @@ pub const OS = struct {
             const err = JSC.SystemError{
                 .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
                 .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
-                .errno = @intFromEnum(std.os.errno(rc)),
+                .errno = @intFromEnum(std.posix.errno(rc)),
                 .syscall = bun.String.static("getifaddrs"),
             };
 
@@ -445,9 +445,9 @@ pub const OS = struct {
             pub fn isLinkLayer(iface: *C.ifaddrs) bool {
                 if (iface.ifa_addr == null) return false;
                 return if (comptime Environment.isLinux)
-                    return iface.ifa_addr.*.sa_family == std.os.AF.PACKET
+                    return iface.ifa_addr.*.sa_family == std.posix.AF.PACKET
                 else if (comptime Environment.isMac)
-                    return iface.ifa_addr.?.*.family == std.os.AF.LINK
+                    return iface.ifa_addr.?.*.family == std.posix.AF.LINK
                 else
                     unreachable;
             }
@@ -477,8 +477,8 @@ pub const OS = struct {
             if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
 
             const interface_name = std.mem.sliceTo(iface.ifa_name, 0);
-            const addr = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_addr))));
-            const netmask = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_netmask))));
+            const addr = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_addr))));
+            const netmask = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_netmask))));
 
             var interface = JSC.JSValue.createEmptyObject(globalThis, 7);
 
@@ -488,8 +488,8 @@ pub const OS = struct {
                 // Compute the CIDR suffix; returns null if the netmask cannot
                 //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (addr.any.family) {
-                    std.os.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
-                    std.os.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(netmask.in6.sa.addr))),
+                    std.posix.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
+                    std.posix.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(netmask.in6.sa.addr))),
                     else => null,
                 };
 
@@ -522,8 +522,8 @@ pub const OS = struct {
 
             // family <string> Either IPv4 or IPv6
             interface.put(globalThis, JSC.ZigString.static("family"), (switch (addr.any.family) {
-                std.os.AF.INET => JSC.ZigString.static("IPv4"),
-                std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
+                std.posix.AF.INET => JSC.ZigString.static("IPv4"),
+                std.posix.AF.INET6 => JSC.ZigString.static("IPv6"),
                 else => JSC.ZigString.static("unknown"),
             }).toValueGC(globalThis));
 
@@ -541,7 +541,7 @@ pub const OS = struct {
                     // This is the correct link-layer interface entry for the current interface,
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
-                        break @as(?*std.os.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
+                        break @as(?*std.posix.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else if (comptime Environment.isMac) {
                         break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else {
@@ -574,7 +574,7 @@ pub const OS = struct {
             interface.put(globalThis, JSC.ZigString.static("internal"), JSC.JSValue.jsBoolean(helpers.isLoopback(iface)));
 
             // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
-            if (addr.any.family == std.os.AF.INET6) {
+            if (addr.any.family == std.posix.AF.INET6) {
                 interface.put(globalThis, JSC.ZigString.static("scope_id"), JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
             }
 
@@ -628,8 +628,8 @@ pub const OS = struct {
                 // Compute the CIDR suffix; returns null if the netmask cannot
                 //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (iface.address.address4.family) {
-                    std.os.AF.INET => netmaskToCIDRSuffix(iface.netmask.netmask4.addr),
-                    std.os.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(iface.netmask.netmask6.addr))),
+                    std.posix.AF.INET => netmaskToCIDRSuffix(iface.netmask.netmask4.addr),
+                    std.posix.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(iface.netmask.netmask6.addr))),
                     else => null,
                 };
 
@@ -665,8 +665,8 @@ pub const OS = struct {
             }
             // family
             interface.put(globalThis, JSC.ZigString.static("family"), (switch (iface.address.address4.family) {
-                std.os.AF.INET => JSC.ZigString.static("IPv4"),
-                std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
+                std.posix.AF.INET => JSC.ZigString.static("IPv4"),
+                std.posix.AF.INET6 => JSC.ZigString.static("IPv6"),
                 else => JSC.ZigString.static("unknown"),
             }).toValueGC(globalThis));
 
@@ -688,7 +688,7 @@ pub const OS = struct {
             interface.put(globalThis, JSC.ZigString.static("cidr"), cidr);
 
             // scopeid
-            if (iface.address.address4.family == std.os.AF.INET6) {
+            if (iface.address.address4.family == std.posix.AF.INET6) {
                 interface.put(globalThis, JSC.ZigString.static("scopeid"), JSC.JSValue.jsNumber(iface.address.address6.scope_id));
             }
 
@@ -840,13 +840,8 @@ pub const OS = struct {
             result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toValueGC(globalThis));
             result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
 
-            if (comptime Environment.isLinux) {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(std.os.linux.getgid()));
-            } else {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.darwin.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.darwin.getgid()));
-            }
+            result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.getuid()));
+            result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.getgid()));
         }
 
         return result;

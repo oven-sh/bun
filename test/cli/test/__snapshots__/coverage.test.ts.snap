@@ -1,0 +1,14 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`lcov coverage reporter 1`] = `
+"TN:
+SF:demo.test.ts
+FNF:1
+FNH:0
+DA:2,12
+DA:3,1
+LF:3
+LH:2
+end_of_record
+"
+`;

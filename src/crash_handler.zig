@@ -1351,9 +1351,8 @@ fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTr
 /// single line (the error name) is printed. When this is set, we will print
 /// trace strings for those errors (or full stacks in debug builds).
 ///
-/// This can be enabled by passing `--verbose-error-trace` to the CLI.
-/// In release builds with error return tracing enabled, this is also exposed.
-/// You can test if this feature is available by checking `bun --help` for the flag.
+/// This can be enabled by passing `--verbose-error-trace` to the CLI, which
+/// is enabled in release mode to aid debugging.
 pub inline fn handleErrorReturnTrace(err: anyerror, maybe_trace: ?*std.builtin.StackTrace) void {
     handleErrorReturnTraceExtra(err, maybe_trace, false);
 }

@@ -273,27 +273,6 @@ pub fn build(b: *Build) !void {
             }
         }
     }
-
-    // Running `zig build` with no arguments is almost always a mistake.
-    // TODO: revive this error. cannot right now since ZLS runs zig build without arguments
-    {
-        // const mistake_message = b.addSystemCommand(&.{
-        //     "echo",
-        //     \\
-        //     \\To build Bun from source, please use `bun run setup` instead of `zig build`"
-        //     \\For more info, see https://bun.sh/docs/project/contributing
-        //     \\
-        //     \\If you want to build the zig code in isolation, run:
-        //     \\  'zig build obj -Dgenerated-code=./build/codegen [...opts]'
-        //     \\
-        //     \\If you want to test a compile without emitting an object:
-        //     \\  'zig build check'
-        //     \\  'zig build check-all' (run linux+mac+windows)
-        //     \\
-        // });
-
-        // b.default_step.dependOn(&mistake_message.step);
-    }
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
@@ -307,6 +286,13 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .optimize = opts.optimize,
         .pic = true,
         .strip = false, // stripped at the end
+
+        // Enable error tracing for all targets so that end users can use bun
+        // --verbose-error-trace in order to print extra error information.
+        //
+        // For performance, see https://ziglang.org/documentation/0.13.0/#toc-Implementation-Details
+        // When this was added to Bun, no large performance impacts were observed,
+        .error_tracing = true,
     });
 
     obj.bundle_compiler_rt = false;
@@ -334,6 +320,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
             obj.root_module.valgrind = true;
         }
     }
+
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
     return obj;

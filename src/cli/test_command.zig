@@ -628,10 +628,6 @@ pub const TestCommand = struct {
         console: bool,
         lcov: bool,
     };
-    pub const ReporterMap = bun.ComptimeStringMap(Reporter, .{
-        &.{ "console", Reporter.console },
-        &.{ "lcov", Reporter.lcov },
-    });
 
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;

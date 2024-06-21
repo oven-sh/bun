@@ -266,11 +266,10 @@ pub const Bunfig = struct {
                         for (items) |item| {
                             try this.expectString(item);
                             const item_str = item.asString(bun.default_allocator) orelse "";
-                            if (TestCommand.ReporterMap.get(item_str)) |reporter| {
-                                switch (reporter) {
-                                   .console => this.ctx.test_options.coverage.reporters.console = true,
-                                   .lcov => this.ctx.test_options.coverage.reporters.lcov = true,
-                                }
+                            if (bun.strings.eqlComptime(item_str, "console")) {
+                                this.ctx.test_options.coverage.reporters.console = true;
+                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                                this.ctx.test_options.coverage.reporters.lcov = true;
                             } else {
                                 try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
                             }

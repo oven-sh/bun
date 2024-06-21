@@ -756,16 +756,7 @@ pub const Task = struct {
                 const url = this.request.git_clone.url.slice();
                 var attempt: u8 = 1;
                 const dir = brk: {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                        manager.allocator,
-                        manager.env,
-                        manager.log,
-                        manager.getCacheDirectory(),
-                        this.id,
-                        name,
-                        https,
-                        attempt
-                    ) catch |err| {
+                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, https, attempt) catch |err| {
                         // Exit early if git checked and could
                         // not find the repository, skip ssh
                         if (err == error.RepositoryNotFound) {
@@ -780,16 +771,7 @@ pub const Task = struct {
                         break :brk null;
                     };
                     break :brk null;
-                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
-                    manager.allocator,
-                    manager.env,
-                    manager.log,
-                    manager.getCacheDirectory(),
-                    this.id,
-                    name,
-                    ssh,
-                    attempt
-                ) catch |err| {
+                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, ssh, attempt) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
@@ -13823,6 +13805,10 @@ pub const PackageManager = struct {
         for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
             for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
                 if (package_id < end) continue;
+
+                // Fixes an issue where if git dependencies have other git dependencies
+                // that have lockfiles, the package will not resolve correctly.
+                if (failed_dep.version.tag == .git) continue;
 
                 // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
                 //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.

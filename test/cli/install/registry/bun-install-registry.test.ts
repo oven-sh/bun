@@ -11,6 +11,7 @@ import {
   toMatchNodeModulesAt,
   runBunInstall,
   runBunUpdate,
+  tempDirWithFiles,
 } from "harness";
 import { join, sep, resolve } from "path";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
@@ -7268,6 +7269,66 @@ describe("semver", () => {
     expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
     expect(out).toBeEmpty();
+  });
+});
+
+test("doesn't error when the migration is out of sync", async () => {
+  const cwd = tempDirWithFiles("out-of-sync-1", {
+    "package.json": JSON.stringify({
+      "devDependencies": {
+        "no-deps": "1.0.0",
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      "name": "reproo",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "reproo",
+          "dependencies": {
+            "no-deps": "2.0.0",
+          },
+          "devDependencies": {
+            "no-deps": "1.0.0",
+          },
+        },
+        "node_modules/no-deps": {
+          "version": "1.0.0",
+          "resolved": "http://localhost:4873/no-deps/-/no-deps-1.0.0.tgz",
+          "integrity":
+            "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+          "dev": true,
+        },
+      },
+    }),
+  });
+
+  const subprocess = Bun.spawn([bunExe(), "install"], {
+    env,
+    cwd,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+
+  await subprocess.exited;
+
+  expect(subprocess.exitCode).toBe(0);
+
+  let { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "ls"],
+    env,
+    cwd,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let out = stdout.toString().trim();
+  expect(out).toContain("no-deps@1.0.0");
+  // only one no-deps is installed
+  expect(out.lastIndexOf("no-deps")).toEqual(out.indexOf("no-deps"));
+  expect(exitCode).toBe(0);
+
+  expect(await file(join(cwd, "node_modules/no-deps/package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    name: "no-deps",
   });
 });
 

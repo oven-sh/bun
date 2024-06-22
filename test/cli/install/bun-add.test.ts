@@ -907,6 +907,35 @@ for (const { desc, dep } of gitNameTests) {
   });
 }
 
+it("git dep without package.json and with default branch", async () => {
+  await Bun.write(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+    }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "git@github.com:dylan-conway/install-test-no-packagejson"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+
+  expect(await exited).toBe(0);
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      "install-test-no-packagejson": "git@github.com:dylan-conway/install-test-no-packagejson",
+    },
+  });
+});
+
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

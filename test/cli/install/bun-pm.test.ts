@@ -318,7 +318,7 @@ it("should remove all cache", async () => {
     },
   });
   expect(await new Response(stderr1).text()).toBe("");
-  expect(await new Response(stdout1).text()).toBe(cache_dir);
+  expect(await new Response(stdout1).text()).toBe(cache_dir + "\n");
   expect(await exited1).toBe(0);
 
   const {

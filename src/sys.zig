@@ -2219,17 +2219,11 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
 pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
     if (comptime !Environment.isLinux) @compileError("linux only!");
 
-    const use_c = std.c.versionCheck(.{ .major = 2, .minor = 27, .patch = 0 });
-    const create = if (use_c) std.c.memfd_create else std.os.linux.memfd_create;
-
-    const rc = create(name, flags);
+    const rc = std.os.linux.memfd_create(name, flags);
 
     log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
 
-    return switch (bun.C.getErrno(rc)) {
-        .SUCCESS => .{ .result = bun.toFD(rc) },
-        else => |errno| .{ .err = Error.fromCode(errno, .memfd_create) },
-    };
+    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse .{ .result = bun.toFD(rc) };
 }
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {

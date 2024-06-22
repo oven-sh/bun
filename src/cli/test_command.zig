@@ -272,7 +272,7 @@ pub const CommandLineReporter = struct {
     }
 
     pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        if (comptime !reporters.console and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov) {
             return;
         }
 
@@ -296,12 +296,12 @@ pub const CommandLineReporter = struct {
     pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, byte_ranges: []bun.sourcemap.ByteRangeMapping, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
         _ = this; // autofix
         const trace = bun.tracy.traceNamed(@src(), comptime brk: {
-            if (reporters.console and reporters.lcov) {
-                break :brk "TestCommand.printCodeCoverageLCovAndConsole";
+            if (reporters.text and reporters.lcov) {
+                break :brk "TestCommand.printCodeCoverageLCovAndText";
             }
 
-            if (reporters.console) {
-                break :brk "TestCommand.printCodeCoverageConsole";
+            if (reporters.text) {
+                break :brk "TestCommand.printCodeCoverageText";
             }
 
             if (reporters.lcov) {
@@ -312,14 +312,14 @@ pub const CommandLineReporter = struct {
         });
         defer trace.end();
 
-        if (comptime !reporters.console and !reporters.lcov) {
+        if (comptime !reporters.text and !reporters.lcov) {
             @compileError("No reporters enabled");
         }
 
         const relative_dir = vm.bundler.fs.top_level_dir;
 
-        // --- Console ---
-        const max_filepath_length: usize = if (reporters.console) brk: {
+        // --- Text ---
+        const max_filepath_length: usize = if (reporters.text) brk: {
             var len = "All files".len;
             for (byte_ranges) |*entry| {
                 const utf8 = entry.source_url.slice();
@@ -333,7 +333,7 @@ pub const CommandLineReporter = struct {
         const base_fraction = opts.fractions;
         var failing = false;
 
-        if (comptime reporters.console) {
+        if (comptime reporters.text) {
             console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
             console.writeByteNTimes('-', max_filepath_length + 2) catch return;
             console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
@@ -356,7 +356,7 @@ pub const CommandLineReporter = struct {
             .stmts = 0.0,
         };
         var avg_count: f64 = 0;
-        // --- Console ---
+        // --- Text ---
 
         // --- LCOV ---
         var lcov_name_buf: bun.PathBuffer = undefined;
@@ -429,9 +429,9 @@ pub const CommandLineReporter = struct {
             var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
             defer report.deinit(bun.default_allocator);
 
-            if (comptime reporters.console) {
+            if (comptime reporters.text) {
                 var fraction = base_fraction;
-                CodeCoverageReport.Console.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
+                CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
                 avg.functions += fraction.functions;
                 avg.lines += fraction.lines;
                 avg.stmts += fraction.stmts;
@@ -452,13 +452,13 @@ pub const CommandLineReporter = struct {
             }
         }
 
-        if (comptime reporters.console) {
+        if (comptime reporters.text) {
             {
                 avg.functions /= avg_count;
                 avg.lines /= avg_count;
                 avg.stmts /= avg_count;
 
-                try CodeCoverageReport.Console.writeFormatWithValues(
+                try CodeCoverageReport.Text.writeFormatWithValues(
                     "All files",
                     max_filepath_length,
                     avg,
@@ -705,7 +705,7 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
-        reporters: Reporters = .{ .console = true, .lcov = false },
+        reporters: Reporters = .{ .text = true, .lcov = false },
         reports_directory: string = "coverage",
         fractions: bun.sourcemap.CoverageFraction = .{},
         ignore_sourcemap: bool = false,
@@ -713,7 +713,7 @@ pub const TestCommand = struct {
         fail_on_low_coverage: bool = false,
     };
     pub const Reporter = enum {
-        console,
+        text,
         lcov,
     };
     const Reporters = struct {
@@ -1002,10 +1002,10 @@ pub const TestCommand = struct {
 
             if (coverage.enabled) {
                 switch (Output.enable_ansi_colors_stderr) {
-                    inline else => |colors| switch (coverage.reporters.console) {
+                    inline else => |colors| switch (coverage.reporters.text) {
                         inline else => |console| switch (coverage.reporters.lcov) {
                             inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage, .{ .console = console, .lcov = lcov }, colors);
+                                try reporter.generateCodeCoverage(vm, &coverage, .{ .text = console, .lcov = lcov }, colors);
                             },
                         },
                     },

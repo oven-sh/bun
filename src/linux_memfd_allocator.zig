@@ -134,26 +134,14 @@ pub const LinuxMemFdAllocator = struct {
             unreachable;
         }
 
-        const rc = brk: {
-            var label_buf: [128]u8 = undefined;
-            const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
+        var label_buf: [128]u8 = undefined;
+        const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
-            // Using huge pages was slower.
-            const code = std.c.memfd_create(label.ptr, std.os.linux.MFD.CLOEXEC | 0);
-
-            bun.sys.syslog("memfd_create({s}) = {d}", .{ label, code });
-            break :brk code;
+        // Using huge pages was slower.
+        const fd = switch (bun.sys.memfd_create(label, std.os.linux.MFD.CLOEXEC)) {
+            .err => |err| return .{ .err = bun.sys.Error.fromCode(err.getErrno(), .open) },
+            .result => |fd| fd,
         };
-
-        switch (bun.C.getErrno(rc)) {
-            .SUCCESS => {},
-            else => |errno| {
-                bun.sys.syslog("Failed to create memfd: {s}", .{@tagName(errno)});
-                return .{ .err = bun.sys.Error.fromCode(errno, .open) };
-            },
-        }
-
-        const fd = bun.toFD(rc);
 
         if (bytes.len > 0)
             // Hint at the size of the file

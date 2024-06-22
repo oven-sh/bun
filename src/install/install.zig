@@ -758,13 +758,13 @@ pub const Task = struct {
                 const dir = brk: {
                     if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
                         manager.allocator,
-                        manager.env,
+                        this.request.git_clone.env,
                         manager.log,
                         manager.getCacheDirectory(),
                         this.id,
                         name,
                         https,
-                        attempt
+                        attempt,
                     ) catch |err| {
                         // Exit early if git checked and could
                         // not find the repository, skip ssh
@@ -782,13 +782,13 @@ pub const Task = struct {
                     break :brk null;
                 } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                     manager.allocator,
-                    manager.env,
+                    this.request.git_clone.env,
                     manager.log,
                     manager.getCacheDirectory(),
                     this.id,
                     name,
                     ssh,
-                    attempt
+                    attempt,
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
@@ -799,8 +799,6 @@ pub const Task = struct {
                     return;
                 };
 
-                manager.git_repositories.put(manager.allocator, this.id, bun.toFD(dir.fd)) catch unreachable;
-
                 this.data = .{
                     .git_clone = bun.toFD(dir.fd),
                 };
@@ -810,7 +808,7 @@ pub const Task = struct {
                 const git_checkout = &this.request.git_checkout;
                 const data = Repository.checkout(
                     manager.allocator,
-                    manager.env,
+                    this.request.git_checkout.env,
                     manager.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.asDir(),
@@ -891,6 +889,7 @@ pub const Task = struct {
         git_clone: struct {
             name: strings.StringOrTinyString,
             url: strings.StringOrTinyString,
+            env: DotEnv.Map,
         },
         git_checkout: struct {
             repo_dir: bun.FileDescriptor,
@@ -899,6 +898,7 @@ pub const Task = struct {
             url: strings.StringOrTinyString,
             resolved: strings.StringOrTinyString,
             resolution: Resolution,
+            env: DotEnv.Map,
         },
         local_tarball: struct {
             tarball: ExtractTarball,
@@ -1624,7 +1624,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
-                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
@@ -4720,6 +4720,7 @@ pub const PackageManager = struct {
                         *FileSystem.FilenameStore,
                         &FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .env = Repository.shared_env.get(this.allocator, this.env),
                 },
             },
             .id = task_id,
@@ -4775,6 +4776,7 @@ pub const PackageManager = struct {
                         *FileSystem.FilenameStore,
                         &FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .env = Repository.shared_env.get(this.allocator, this.env),
                 },
             },
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
@@ -6637,6 +6639,8 @@ pub const PackageManager = struct {
                     const clone = &task.request.git_clone;
                     const name = clone.name.slice();
                     const url = clone.url.slice();
+
+                    manager.git_repositories.put(manager.allocator, task.id, task.data.git_clone) catch unreachable;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
@@ -9851,6 +9855,7 @@ pub const PackageManager = struct {
             "dependencies";
         var any_changes = false;
 
+        var not_in_workspace_root: ?PatchCommitResult = null;
         switch (subcommand) {
             .remove => {
                 // if we're removing, they don't have to specify where it is installed in the dependencies list
@@ -9929,12 +9934,18 @@ pub const PackageManager = struct {
                 if (manager.options.patch_features == .commit) {
                     var pathbuf: bun.PathBuffer = undefined;
                     if (try manager.doPatchCommit(&pathbuf, log_level)) |stuff| {
-                        try PackageJSONEditor.editPatchedDependencies(
-                            manager,
-                            &current_package_json.root,
-                            stuff.patch_key,
-                            stuff.patchfile_path,
-                        );
+                        // we're inside a workspace package, we need to edit the
+                        // root json, not the `current_package_json`
+                        if (stuff.not_in_workspace_root) {
+                            not_in_workspace_root = stuff;
+                        } else {
+                            try PackageJSONEditor.editPatchedDependencies(
+                                manager,
+                                &current_package_json.root,
+                                stuff.patch_key,
+                                stuff.patchfile_path,
+                            );
+                        }
                     }
                 }
             },
@@ -9972,6 +9983,8 @@ pub const PackageManager = struct {
         @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
         @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
         const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+        root_package_json_path_buf[root_package_json_path.len] = 0;
+        const root_package_json_pathZ = root_package_json_path_buf[0..root_package_json_path.len :0];
 
         const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
             .parse_err => |err| {
@@ -9995,6 +10008,25 @@ pub const PackageManager = struct {
             },
             .entry => |entry| entry,
         };
+
+        if (not_in_workspace_root) |stuff| {
+            try PackageJSONEditor.editPatchedDependencies(
+                manager,
+                &root_package_json.root,
+                stuff.patch_key,
+                stuff.patchfile_path,
+            );
+            var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+            try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
+            buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
+            var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
+
+            _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
+                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+            root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
+        }
 
         try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
 
@@ -10055,17 +10087,19 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.write_package_json) {
+            const source, const path = if (manager.options.patch_features == .commit) .{ root_package_json.source.contents, root_package_json_pathZ } else .{ new_package_json_source, manager.original_package_json_path };
+
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             const workspace_package_json_file = (try bun.sys.File.openat(
                 bun.invalid_fd,
-                manager.original_package_json_path,
+                path,
                 bun.O.RDWR,
                 0,
             ).unwrap()).handle.asFile();
 
-            try workspace_package_json_file.pwriteAll(new_package_json_source, 0);
-            std.posix.ftruncate(workspace_package_json_file.handle, new_package_json_source.len) catch {};
+            try workspace_package_json_file.pwriteAll(source, 0);
+            std.posix.ftruncate(workspace_package_json_file.handle, source.len) catch {};
             workspace_package_json_file.close();
 
             if (subcommand == .remove) {
@@ -10202,15 +10236,19 @@ pub const PackageManager = struct {
         name_and_version,
 
         pub fn fromArg(argument: []const u8) PatchArgKind {
-            if (bun.strings.hasPrefixComptime(argument, "node_modules/")) return .path;
-            if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules/")) return .path;
-            if (comptime bun.Environment.isWindows) {
-                if (bun.strings.hasPrefix(argument, "node_modules\\")) return .path;
-                if (bun.path.Platform.auto.isAbsolute(argument) and bun.strings.contains(argument, "node_modules\\")) return .path;
-            }
+            if (bun.strings.containsComptime(argument, "node_modules/")) return .path;
+            if (bun.Environment.isWindows and bun.strings.hasPrefix(argument, "node_modules\\")) return .path;
             return .name_and_version;
         }
     };
+
+    fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile: *const Lockfile, argument: []const u8) ?[]const u8 {
+        const workspace_package_id = manager.root_package_id.get(lockfile, manager.workspace_name_hash);
+        if (workspace_package_id == 0) return null;
+        const workspace_res = lockfile.packages.items(.resolution)[workspace_package_id];
+        const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
+        return bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)) catch bun.outOfMemory();
+    }
 
     /// 1. Arg is either:
     ///   - name and possibly version (e.g. "is-even" or "is-even@1.0.0")
@@ -10220,7 +10258,7 @@ pub const PackageManager = struct {
     /// 4. Print to user
     fn preparePatch(manager: *PackageManager) !void {
         const strbuf = manager.lockfile.buffers.string_bytes.items;
-        const argument = manager.options.positionals[1];
+        var argument = manager.options.positionals[1];
 
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
 
@@ -10230,9 +10268,24 @@ pub const PackageManager = struct {
 
         var win_normalizer: if (bun.Environment.isWindows) bun.PathBuffer else struct {} = undefined;
 
+        const not_in_workspace_root = manager.root_package_id.get(manager.lockfile, manager.workspace_name_hash) != 0;
+        var free_argument = false;
+        argument = if (arg_kind == .path and
+            not_in_workspace_root and
+            (!bun.path.Platform.posix.isAbsolute(argument) or (bun.Environment.isWindows and !bun.path.Platform.windows.isAbsolute(argument))))
+        brk: {
+            if (pathArgumentRelativeToRootWorkspacePackage(manager, manager.lockfile, argument)) |rel_path| {
+                free_argument = true;
+                break :brk rel_path;
+            }
+            break :brk argument;
+        } else argument;
+        defer if (free_argument) manager.allocator.free(argument);
+
         const cache_dir: std.fs.Dir, const cache_dir_subpath: []const u8, const module_folder: []const u8, const pkg_name: []const u8 = switch (arg_kind) {
             .path => brk: {
                 var lockfile = manager.lockfile;
+
                 const package_json_source: logger.Source = src: {
                     const package_json_path = bun.path.joinZ(&[_][]const u8{ argument, "package.json" }, .auto);
 
@@ -10392,8 +10445,14 @@ pub const PackageManager = struct {
             Global.crash();
         };
 
-        Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
-        Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
+        if (not_in_workspace_root) {
+            var bufn: bun.PathBuffer = undefined;
+            Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, bun.path.joinStringBuf(bufn[0..], &[_][]const u8{ bun.fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), module_folder }, .posix) });
+            Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{bun.path.joinStringBuf(bufn[0..], &[_][]const u8{ bun.fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), module_folder }, .posix)});
+        } else {
+            Output.pretty("\nTo patch <b>{s}<r>, edit the following folder:\n\n  <cyan>{s}<r>\n", .{ pkg_name, module_folder });
+            Output.pretty("\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{s}'<r>\n", .{module_folder});
+        }
 
         return;
     }
@@ -10456,6 +10515,7 @@ pub const PackageManager = struct {
                             entrypathZ,
                             bun.toFD(destination_dir_.fd),
                             tmpname,
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e});
                             Global.crash();
@@ -10470,7 +10530,7 @@ pub const PackageManager = struct {
                         const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
                         const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
-                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10495,7 +10555,7 @@ pub const PackageManager = struct {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10556,6 +10616,7 @@ pub const PackageManager = struct {
     const PatchCommitResult = struct {
         patch_key: []const u8,
         patchfile_path: []const u8,
+        not_in_workspace_root: bool = false,
     };
 
     /// - Arg is the dir containing the package with changes OR name and version
@@ -10606,9 +10667,22 @@ pub const PackageManager = struct {
             .ok => {},
         }
 
-        const argument = manager.options.positionals[1];
-
+        var argument = manager.options.positionals[1];
         const arg_kind: PatchArgKind = PatchArgKind.fromArg(argument);
+
+        const not_in_workspace_root = manager.root_package_id.get(lockfile, manager.workspace_name_hash) != 0;
+        var free_argument = false;
+        argument = if (arg_kind == .path and
+            not_in_workspace_root and
+            (!bun.path.Platform.posix.isAbsolute(argument) or (bun.Environment.isWindows and !bun.path.Platform.windows.isAbsolute(argument))))
+        brk: {
+            if (pathArgumentRelativeToRootWorkspacePackage(manager, lockfile, argument)) |rel_path| {
+                free_argument = true;
+                break :brk rel_path;
+            }
+            break :brk argument;
+        } else argument;
+        defer if (free_argument) manager.allocator.free(argument);
 
         // Attempt to open the existing node_modules folder
         var root_node_modules = switch (bun.sys.openatOSPath(bun.FD.cwd(), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
@@ -10768,7 +10842,7 @@ pub const PackageManager = struct {
                 }, .posix);
             };
 
-            const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname(name, buf2[0..], bun.fastRandom()) catch |e| {
+            const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make tempdir {s}<r>\n",
                     .{@errorName(e)},
@@ -10796,12 +10870,13 @@ pub const PackageManager = struct {
                     "node_modules",
                     bun.toFD(root_node_modules.fd),
                     random_tempdir,
+                    .{ .move_fallback = true },
                 ).asErr()) |_| break :has_nested_node_modules false;
 
                 break :has_nested_node_modules true;
             };
 
-            const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(name, buf3[0..], bun.fastRandom()) catch |e| {
+            const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
                 Output.prettyError(
                     "<r><red>error<r>: failed to make tempdir {s}<r>\n",
                     .{@errorName(e)},
@@ -10836,6 +10911,7 @@ pub const PackageManager = struct {
                     patch_tag,
                     bun.toFD(root_node_modules.fd),
                     patch_tag_tmpname,
+                    .{ .move_fallback = true },
                 ).asErr()) |e| {
                     Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                     break :has_bun_patch_tag null;
@@ -10859,6 +10935,7 @@ pub const PackageManager = struct {
                             random_tempdir,
                             bun.toFD(new_folder_handle.fd),
                             "node_modules",
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
                         }
@@ -10870,6 +10947,7 @@ pub const PackageManager = struct {
                             patch_tag_tmpname,
                             bun.toFD(new_folder_handle.fd),
                             patch_tag,
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                         }
@@ -11026,6 +11104,7 @@ pub const PackageManager = struct {
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
+            .{ .move_fallback = true },
         ).asErr()) |e| {
             Output.prettyError(
                 "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",
@@ -11041,6 +11120,7 @@ pub const PackageManager = struct {
         return .{
             .patch_key = patch_key,
             .patchfile_path = patchfile_path,
+            .not_in_workspace_root = not_in_workspace_root,
         };
     }
 

@@ -878,6 +878,7 @@ pub const G = struct {
             set,
             spread,
             declare,
+            abstract,
             class_static_block,
 
             pub fn jsonStringify(self: @This(), writer: anytype) !void {

@@ -22,21 +22,28 @@ test("coverage crash", () => {
 
 test("lcov coverage reporter", () => {
   const dir = tempDirWithFiles("cov", {
-    "demo.test.ts": `
-import { test, expect } from "bun:test";
+    "demo2.ts": `
 import { Y } from "./demo1";
-test("hello", () => {
-   console.log(Y);
-});
-    `,
+
+export function covered() {
+  // this function IS covered
+  return Y;
+}
+
+export function uncovered() {
+  // this function is not covered
+  return 42;
+}
+
+covered();
+`,
     "demo1.ts": `
 export class Y {
-  #hello;
-}
+#hello;
+};
     `,
   });
-  console.log({ dir });
-  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./demo2.ts"], {
     cwd: dir,
     env: {
       ...bunEnv,

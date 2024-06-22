@@ -627,7 +627,7 @@ pub const ByteRangeMapping = struct {
                     for (min_line..end) |line| {
                         executable_lines.set(line);
                         lines_which_have_executed.unset(line);
-                        line_hits.ptr[line] = 0;
+                        line_hits_slice[line] = 0;
                     }
                 }
 

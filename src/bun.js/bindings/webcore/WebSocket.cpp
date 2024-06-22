@@ -30,8 +30,6 @@
  */
 
 #include "config.h"
-#include "EventInit.h"
-#include "EventOptions.h"
 #include "WebSocket.h"
 #include "headers.h"
 // #include "Blob.h"

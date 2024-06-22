@@ -386,18 +386,8 @@ pub const PatchTask = struct {
             path_in_tmpdir,
             bun.toFD(this.callback.apply.cache_dir.fd),
             this.callback.apply.cache_dir_subpath,
-        ).asErr()) |e| {
-            if (e.getErrno() == .XDEV) {
-                bun.C.moveFileZSlow(
-                    bun.toFD(system_tmpdir.fd),
-                    path_in_tmpdir,
-                    bun.toFD(this.callback.apply.cache_dir.fd),
-                    this.callback.apply.cache_dir_subpath,
-                ) catch |ee| {
-                    return try log.addErrorFmtNoLoc(this.manager.allocator, "{s}", .{@errorName(ee)});
-                };
-            } else return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
-        }
+            .{ .move_fallback = true },
+        ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
     }
 
     pub fn calcHash(this: *PatchTask) ?u64 {

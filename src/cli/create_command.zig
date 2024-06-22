@@ -583,7 +583,7 @@ pub const CreateCommand = struct {
                                 },
                             }
 
-                            CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
+                            CopyFile.copyFile(infile.handle, outfile.handle).unwrap() catch |err| {
                                 node_.end();
                                 progress_.refresh();
                                 Output.err(err, "failed to copy file {}", .{bun.fmt.fmtOSPath(entry.path, .{})});

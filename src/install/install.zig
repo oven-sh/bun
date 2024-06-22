@@ -1606,7 +1606,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
-                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
@@ -10693,19 +10693,8 @@ pub const PackageManager = struct {
                             entrypathZ,
                             bun.toFD(destination_dir_.fd),
                             tmpname,
-                        ).asErr()) |e| ok: {
-                            if (e.getErrno() == .XDEV) {
-                                bun.C.moveFileZ(
-                                    bun.toFD(destination_dir_.fd),
-                                    entrypathZ,
-                                    bun.toFD(destination_dir_.fd),
-                                    tmpname,
-                                ) catch |ee| {
-                                    Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(ee)});
-                                    Global.crash();
-                                };
-                                break :ok;
-                            }
+                            .{ .move_fallback = true },
+                        ).asErr()) |e| {
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e});
                             Global.crash();
                         }
@@ -10719,7 +10708,7 @@ pub const PackageManager = struct {
                         const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
                         const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
-                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10744,7 +10733,7 @@ pub const PackageManager = struct {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -11059,18 +11048,8 @@ pub const PackageManager = struct {
                     "node_modules",
                     bun.toFD(root_node_modules.fd),
                     random_tempdir,
-                ).asErr()) |e| ok: {
-                    if (e.getErrno() == .XDEV) {
-                        bun.C.moveFileZSlow(
-                            bun.toFD(new_folder_handle.fd),
-                            "node_modules",
-                            bun.toFD(root_node_modules.fd),
-                            random_tempdir,
-                        ) catch break :has_nested_node_modules false;
-                        break :ok;
-                    }
-                    break :has_nested_node_modules false;
-                }
+                    .{ .move_fallback = true },
+                ).asErr()) |_| break :has_nested_node_modules false;
 
                 break :has_nested_node_modules true;
             };
@@ -11110,19 +11089,8 @@ pub const PackageManager = struct {
                     patch_tag,
                     bun.toFD(root_node_modules.fd),
                     patch_tag_tmpname,
-                ).asErr()) |e| ok: {
-                    if (e.getErrno() == .XDEV) {
-                        bun.C.moveFileZSlow(
-                            bun.toFD(new_folder_handle.fd),
-                            patch_tag,
-                            bun.toFD(root_node_modules.fd),
-                            patch_tag_tmpname,
-                        ) catch |ee| {
-                            Output.warn("failed renaming the bun patch tag, this may cause issues: {s}", .{@errorName(ee)});
-                            break :has_bun_patch_tag null;
-                        };
-                        break :ok;
-                    }
+                    .{ .move_fallback = true },
+                ).asErr()) |e| {
                     Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                     break :has_bun_patch_tag null;
                 }
@@ -11145,6 +11113,7 @@ pub const PackageManager = struct {
                             random_tempdir,
                             bun.toFD(new_folder_handle.fd),
                             "node_modules",
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             if (e.getErrno() == .XDEV) {
                                 bun.C.moveFileZSlow(
@@ -11165,6 +11134,7 @@ pub const PackageManager = struct {
                             patch_tag_tmpname,
                             bun.toFD(new_folder_handle.fd),
                             patch_tag,
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             if (e.getErrno() == .XDEV) {
                                 bun.C.moveFileZSlow(
@@ -11330,6 +11300,7 @@ pub const PackageManager = struct {
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
+            .{ .move_fallback = true },
         ).asErr()) |e| {
             if (e.getErrno() == .XDEV) {
                 bun.C.moveFileZSlow(

@@ -2223,7 +2223,8 @@ pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
 
     log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
 
-    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse .{ .result = bun.toFD(rc) };
+    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse
+        .{ .result = bun.toFD(@as(c_int, @intCast(rc))) };
 }
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {

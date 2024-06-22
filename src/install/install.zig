@@ -756,16 +756,7 @@ pub const Task = struct {
                 const url = this.request.git_clone.url.slice();
                 var attempt: u8 = 1;
                 const dir = brk: {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                        manager.allocator,
-                        manager.env,
-                        manager.log,
-                        manager.getCacheDirectory(),
-                        this.id,
-                        name,
-                        https,
-                        attempt
-                    ) catch |err| {
+                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, https, attempt) catch |err| {
                         // Exit early if git checked and could
                         // not find the repository, skip ssh
                         if (err == error.RepositoryNotFound) {
@@ -780,16 +771,7 @@ pub const Task = struct {
                         break :brk null;
                     };
                     break :brk null;
-                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
-                    manager.allocator,
-                    manager.env,
-                    manager.log,
-                    manager.getCacheDirectory(),
-                    this.id,
-                    name,
-                    ssh,
-                    attempt
-                ) catch |err| {
+                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, ssh, attempt) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };

@@ -862,18 +862,14 @@ const libSymbols = {
     returns: "int",
     args: ["ptr", "int"],
   },
-  // FIXME:
-  // TypeError: Symbol "pthread_attr_getguardsize" not found in "/lib/x86_64-linux-gnu/libc.so.6"
-  //   code: "ERR_INVALID_ARG_TYPE"
-  //
-  // pthread_attr_getguardsize: {
-  //   returns: "int",
-  //   args: ["ptr", "ptr"],
-  // },
-  // pthread_attr_setguardsize: {
-  //   returns: "int",
-  //   args: ["ptr", "usize"],
-  // },
+  pthread_attr_getguardsize: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setguardsize: {
+    returns: "int",
+    args: ["ptr", "usize"],
+  },
   pthread_attr_getschedparam: {
     returns: "int",
     args: ["ptr", "ptr"],
@@ -906,18 +902,14 @@ const libSymbols = {
     returns: "int",
     args: ["ptr", "int"],
   },
-  // FIXME:
-  // TypeError: Symbol "pthread_attr_getstackaddr" not found in "/lib/x86_64-linux-gnu/libc.so.6"
-  //   code: "ERR_INVALID_ARG_TYPE"
-  //
-  // pthread_attr_getstackaddr: {
-  //   returns: "int",
-  //   args: ["ptr", "ptr"],
-  // },
-  // pthread_attr_setstackaddr: {
-  //   returns: "int",
-  //   args: ["ptr", "ptr"],
-  // },
+  pthread_attr_getstackaddr: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
+  pthread_attr_setstackaddr: {
+    returns: "int",
+    args: ["ptr", "ptr"],
+  },
   pthread_attr_getstacksize: {
     returns: "int",
     args: ["ptr", "ptr"],

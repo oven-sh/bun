@@ -249,7 +249,7 @@ pub const Arguments = struct {
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
-        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'console' and/or 'lcov'. Defaults to 'console'.") catch unreachable,
+        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
         clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
@@ -444,10 +444,10 @@ pub const Arguments = struct {
             }
 
             if (args.options("--coverage-reporter").len > 0) {
-                ctx.test_options.coverage.reporters = .{ .console = false, .lcov = false };
+                ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
                 for (args.options("--coverage-reporter")) |reporter| {
-                    if (bun.strings.eqlComptime(reporter, "console")) {
-                        ctx.test_options.coverage.reporters.console = true;
+                    if (bun.strings.eqlComptime(reporter, "text")) {
+                        ctx.test_options.coverage.reporters.text = true;
                     } else if (bun.strings.eqlComptime(reporter, "lcov")) {
                         ctx.test_options.coverage.reporters.lcov = true;
                     } else {

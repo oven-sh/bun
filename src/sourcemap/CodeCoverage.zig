@@ -65,7 +65,7 @@ pub const CodeCoverageReport = struct {
         return (@as(f64, @floatFromInt(this.functions_which_have_executed.count())) / total_count);
     }
 
-    pub const Console = struct {
+    pub const Text = struct {
         pub fn writeFormatWithValues(
             filename: []const u8,
             max_filename_length: usize,
@@ -685,7 +685,7 @@ pub const ByteRangeMapping = struct {
         var buffered_writer = mutable_str.bufferedWriter();
         var writer = buffered_writer.writer();
 
-        CodeCoverageReport.Console.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
+        CodeCoverageReport.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };

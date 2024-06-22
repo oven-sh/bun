@@ -258,15 +258,28 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
                     }
 
-                    if (test_.get("coverageReporters")) |expr| {
-                        this.ctx.test_options.coverage.reporters = .{ .console = false, .lcov = false };
+                    if (test_.get("coverageReporter")) |expr| brk: {
+                        this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                        if (expr.data == .e_string) {
+                            const item_str = expr.asString(bun.default_allocator) orelse "";
+                            if (bun.strings.eqlComptime(item_str, "text")) {
+                                this.ctx.test_options.coverage.reporters.text = true;
+                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                                this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else {
+                                try this.addErrorFormat(expr.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                            }
+
+                            break :brk;
+                        }
+
                         try this.expect(expr, .e_array);
                         const items = expr.data.e_array.items.slice();
                         for (items) |item| {
                             try this.expectString(item);
                             const item_str = item.asString(bun.default_allocator) orelse "";
-                            if (bun.strings.eqlComptime(item_str, "console")) {
-                                this.ctx.test_options.coverage.reporters.console = true;
+                            if (bun.strings.eqlComptime(item_str, "text")) {
+                                this.ctx.test_options.coverage.reporters.text = true;
                             } else if (bun.strings.eqlComptime(item_str, "lcov")) {
                                 this.ctx.test_options.coverage.reporters.lcov = true;
                             } else {

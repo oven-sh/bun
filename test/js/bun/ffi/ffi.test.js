@@ -677,7 +677,7 @@ it(".ptr is not leaked", () => {
 const libPath =
   platform() === "darwin"
     ? "/usr/lib/libSystem.B.dylib"
-    : existsSync("/lib/x86_64-linux-gnu/libc.so.6")
+    : existsSync("/lib/x86_64-linux-gnu/libc.so.6") && isGlibcVersionAtLeast("2.36")
       ? "/lib/x86_64-linux-gnu/libc.so.6"
       : null;
 

@@ -579,7 +579,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 .alignment = fields[i].alignment,
             };
             break :entry @Type(.{ .Struct = .{
-                .layout = .Extern,
+                .layout = .@"extern",
                 .fields = &entry_fields,
                 .decls = &.{},
                 .is_tuple = false,

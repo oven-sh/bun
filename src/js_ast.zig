@@ -21,7 +21,7 @@ const allocators = @import("allocators.zig");
 const JSC = bun.JSC;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
-const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen = false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
@@ -197,7 +197,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                     }
                     this.overflow.allocated = 1;
                 }
-                var base_store = @fieldParentPtr(WithBase, "store", this);
+                var base_store: *WithBase = @fieldParentPtr("store", this);
                 if (this.overflow.ptrs[0] == &base_store.head) {
                     allocator.destroy(base_store);
                 }
@@ -878,6 +878,7 @@ pub const G = struct {
             set,
             spread,
             declare,
+            abstract,
             class_static_block,
 
             pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -2284,9 +2285,8 @@ pub const E = struct {
                     .is_utf16 = true,
                 };
             }
-            return .{
-                .data = value,
-            };
+
+            return .{ .data = value };
         }
 
         pub fn slice16(this: *const String) []const u16 {
@@ -7784,13 +7784,19 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    stack_allocator: std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size)) = undefined,
+    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size));
+
+    stack_allocator: SFA = undefined,
     bump_allocator: std.mem.Allocator = undefined,
     allocator: std.mem.Allocator,
     previous: ?*ASTMemoryAllocator = null,
 
     pub fn reset(this: *ASTMemoryAllocator) void {
-        this.stack_allocator.fallback_allocator = this.allocator;
+        this.stack_allocator = SFA{
+            .buffer = undefined,
+            .fallback_allocator = this.allocator,
+            .fixed_buffer_allocator = undefined,
+        };
         this.bump_allocator = this.stack_allocator.get();
     }
 

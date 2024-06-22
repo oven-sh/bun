@@ -11,6 +11,7 @@ import {
   toMatchNodeModulesAt,
   runBunInstall,
   runBunUpdate,
+  tempDirWithFiles,
 } from "harness";
 import { join, sep, resolve } from "path";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
@@ -66,38 +67,61 @@ registry = "http://localhost:${port}/"
   );
 });
 
-for (const optional of [true, false]) {
-  test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency fails to install`, async () => {
-    await write(
-      join(packageDir, "package.json"),
-      JSON.stringify({
-        name: "foo",
-        [optional ? "optionalDependencies" : "dependencies"]: {
-          "missing-tarball": "1.0.0",
-          "uses-what-bin": "1.0.0",
-        },
-        "trustedDependencies": ["uses-what-bin"],
-      }),
-    );
+describe("optionalDependencies", () => {
+  for (const optional of [true, false]) {
+    test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          [optional ? "optionalDependencies" : "dependencies"]: {
+            "missing-tarball": "1.0.0",
+            "uses-what-bin": "1.0.0",
+          },
+          "trustedDependencies": ["uses-what-bin"],
+        }),
+      );
 
-    const { exited, err } = await runBunInstall(env, packageDir, {
-      [optional ? "allowWarnings" : "allowErrors"]: true,
-      expectedExitCode: optional ? 0 : 1,
-      savesLockfile: false,
+      const { exited, err } = await runBunInstall(env, packageDir, {
+        [optional ? "allowWarnings" : "allowErrors"]: true,
+        expectedExitCode: optional ? 0 : 1,
+        savesLockfile: false,
+      });
+      expect(err).toContain(
+        `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - `,
+      );
+      expect(await exited).toBe(optional ? 0 : 1);
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+        ".bin",
+        ".cache",
+        "uses-what-bin",
+        "what-bin",
+      ]);
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
-    expect(err).toContain(
-      `${optional ? "warn" : "error"}: GET http://localhost:${port}/missing-tarball/-/missing-tarball-1.0.0.tgz - 500`,
-    );
-    expect(await exited).toBe(optional ? 0 : 1);
-    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
-      ".bin",
-      ".cache",
-      "uses-what-bin",
-      "what-bin",
-    ]);
-    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
-  });
-}
+  }
+
+  for (const rootOptional of [true, false]) {
+    test(`exit code is 0 when ${rootOptional ? "root" : ""} optional dependency does not exist in registry`, async () => {
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          [rootOptional ? "optionalDependencies" : "dependencies"]: {
+            [rootOptional ? "this-package-does-not-exist-in-the-registry" : "has-missing-optional-dep"]: "||",
+          },
+        }),
+      );
+
+      const { err } = await runBunInstall(env, packageDir, {
+        allowWarnings: true,
+        savesLockfile: !rootOptional,
+      });
+
+      expect(err).toContain("warn: GET http://localhost:4873/this-package-does-not-exist-in-the-registry - ");
+    });
+  }
+});
 
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
@@ -7245,6 +7269,66 @@ describe("semver", () => {
     expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
     expect(out).toBeEmpty();
+  });
+});
+
+test("doesn't error when the migration is out of sync", async () => {
+  const cwd = tempDirWithFiles("out-of-sync-1", {
+    "package.json": JSON.stringify({
+      "devDependencies": {
+        "no-deps": "1.0.0",
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      "name": "reproo",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "reproo",
+          "dependencies": {
+            "no-deps": "2.0.0",
+          },
+          "devDependencies": {
+            "no-deps": "1.0.0",
+          },
+        },
+        "node_modules/no-deps": {
+          "version": "1.0.0",
+          "resolved": "http://localhost:4873/no-deps/-/no-deps-1.0.0.tgz",
+          "integrity":
+            "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+          "dev": true,
+        },
+      },
+    }),
+  });
+
+  const subprocess = Bun.spawn([bunExe(), "install"], {
+    env,
+    cwd,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+
+  await subprocess.exited;
+
+  expect(subprocess.exitCode).toBe(0);
+
+  let { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "ls"],
+    env,
+    cwd,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let out = stdout.toString().trim();
+  expect(out).toContain("no-deps@1.0.0");
+  // only one no-deps is installed
+  expect(out.lastIndexOf("no-deps")).toEqual(out.indexOf("no-deps"));
+  expect(exitCode).toBe(0);
+
+  expect(await file(join(cwd, "node_modules/no-deps/package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    name: "no-deps",
   });
 });
 

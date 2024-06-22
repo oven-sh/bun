@@ -107,11 +107,26 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
-Napi::Object InitAll(Napi::Env env, Napi::Object exports) {
+Napi::Value RunCallback(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  Napi::Function cb = info[0].As<Napi::Function>();
+  return cb.Call(env.Global(), {Napi::String::New(env, "hello world")});
+}
+
+Napi::Object Init2(Napi::Env env, Napi::Object exports) {
+  return Napi::Function::New(env, RunCallback);
+}
+
+Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   // check that these symbols are defined
   auto *isolate = v8::Isolate::GetCurrent();
-  node::AddEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
-  node::RemoveEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
+
+  Napi::Object exports = Init2(env, exports1);
+
+  node::AddEnvironmentCleanupHook(
+      isolate, [](void *) {}, isolate);
+  node::RemoveEnvironmentCleanupHook(
+      isolate, [](void *) {}, isolate);
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));

@@ -132,7 +132,7 @@ pub const PatchFile = struct {
                     const newfile_fd = switch (bun.sys.openat(
                         patch_dir,
                         filepath.sliceAssumeZ(),
-                        std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+                        bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC,
                         mode.toBunMode(),
                     )) {
                         .result => |fd| fd,
@@ -204,7 +204,7 @@ pub const PatchFile = struct {
                             .result => |p| p,
                             .err => |e| return e.toSystemError(),
                         };
-                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), std.os.O.RDWR, 0)) {
+                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), bun.O.RDWR, 0)) {
                             .err => |e| return e.toSystemError(),
                             .result => |f| f,
                         };
@@ -333,7 +333,7 @@ pub const PatchFile = struct {
         const file_fd = switch (bun.sys.openat(
             patch_dir,
             file_path,
-            std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+            bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC,
             @intCast(stat.mode),
         )) {
             .err => |e| return .{ .err = e.withPath(file_path) },
@@ -1201,7 +1201,7 @@ pub const TestingAPIs = struct {
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
 
-            break :brk switch (bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
                     globalThis.throwValue(e.withPath(path).toJSC(globalThis));
                     return .{ .err = .undefined };
@@ -1373,7 +1373,7 @@ pub fn gitDiffInternal(
         allocator.free(new_folder);
     };
 
-    var child_proc = std.ChildProcess.init(
+    var child_proc = std.process.Child.init(
         &[_][]const u8{
             "git",
             "-c",

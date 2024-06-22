@@ -1,7 +1,11 @@
 import { join } from "path";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({

@@ -21,6 +21,7 @@ const Npm = @import("./install/npm.zig");
 const PackageManager = @import("./install/install.zig").PackageManager;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const resolver = @import("./resolver/resolver.zig");
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
 pub const MacroImportReplacementMap = bun.StringArrayHashMap(string);
 pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
@@ -52,6 +53,11 @@ pub const Bunfig = struct {
 
         fn addError(this: *Parser, loc: logger.Loc, comptime text: string) !void {
             this.log.addError(this.source, loc, text) catch unreachable;
+            return error.@"Invalid Bunfig";
+        }
+
+        fn addErrorFormat(this: *Parser, loc: logger.Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+            this.log.addErrorFmt(this.source, loc, allocator, text, args) catch unreachable;
             return error.@"Invalid Bunfig";
         }
 
@@ -250,6 +256,41 @@ pub const Bunfig = struct {
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coverageReporter")) |expr| brk: {
+                        this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                        if (expr.data == .e_string) {
+                            const item_str = expr.asString(bun.default_allocator) orelse "";
+                            if (bun.strings.eqlComptime(item_str, "text")) {
+                                this.ctx.test_options.coverage.reporters.text = true;
+                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                                this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else {
+                                try this.addErrorFormat(expr.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                            }
+
+                            break :brk;
+                        }
+
+                        try this.expect(expr, .e_array);
+                        const items = expr.data.e_array.items.slice();
+                        for (items) |item| {
+                            try this.expectString(item);
+                            const item_str = item.asString(bun.default_allocator) orelse "";
+                            if (bun.strings.eqlComptime(item_str, "text")) {
+                                this.ctx.test_options.coverage.reporters.text = true;
+                            } else if (bun.strings.eqlComptime(item_str, "lcov")) {
+                                this.ctx.test_options.coverage.reporters.lcov = true;
+                            } else {
+                                try this.addErrorFormat(item.loc, allocator, "Invalid coverage reporter \"{s}\"", .{item_str});
+                            }
+                        }
+                    }
+
+                    if (test_.get("coverageDir")) |expr| {
+                        try this.expectString(expr);
+                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {

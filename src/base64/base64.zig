@@ -1,27 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
-pub const DecodeResult = struct {
-    written: usize,
-    fail: bool = false,
-};
-
-pub const LibBase64 = struct {
-    pub const State = extern struct {
-        eof: c_int,
-        bytes: c_int,
-        flags: c_int,
-        carry: u8,
-    };
-    pub extern fn base64_encode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) void;
-    pub extern fn base64_stream_encode_init(state: *State, flags: c_int) void;
-    pub extern fn base64_stream_encode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) void;
-    pub extern fn base64_stream_encode_final(state: *State, out: [*]u8, outlen: *usize) void;
-    pub extern fn base64_decode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) c_int;
-    pub extern fn base64_stream_decode_init(state: *State, flags: c_int) void;
-    pub extern fn base64_stream_decode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) c_int;
-};
-
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -35,21 +14,28 @@ const mixed_decoder = brk: {
     break :brk decoder;
 };
 
-pub fn decode(destination: []u8, source: []const u8) DecodeResult {
-    var wrote: usize = 0;
-    mixed_decoder.decode(destination, source, &wrote) catch {
-        return .{
-            .written = wrote,
-            .fail = true,
+pub fn decode(destination: []u8, source: []const u8) bun.simdutf.SIMDUTFResult {
+    const result = bun.simdutf.base64.decode(source, destination, false);
+
+    if (!result.isSuccessful()) {
+        // The input does not follow the WHATWG forgiving-base64 specification
+        // https://infra.spec.whatwg.org/#forgiving-base64-decode
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/string_bytes.cc#L359
+        var wrote: usize = 0;
+        mixed_decoder.decode(destination, source, &wrote) catch {
+            return .{
+                .count = wrote,
+                .status = .invalid_base64_character,
+            };
         };
-    };
-    return .{ .written = wrote, .fail = false };
+        return .{ .count = wrote, .status = .success };
+    }
+
+    return result;
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {
-    var outlen: usize = destination.len;
-    LibBase64.base64_encode(source.ptr, source.len, destination.ptr, &outlen, 0);
-    return outlen;
+    return bun.simdutf.base64.encode(source, destination, false);
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {

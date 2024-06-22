@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.15")
-set(WEBKIT_TAG 64d04ec1a65d91326c5f2298b9c7d05b56125252)
+set(Bun_VERSION "1.1.16")
+set(WEBKIT_TAG 5bbfe7e880090b9d0b5feaf3563e85957dd7b10d)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -301,7 +301,6 @@ option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
 option(USE_CUSTOM_ZSTD "Use Bun's recommended version of zstd" ON)
 option(USE_CUSTOM_CARES "Use Bun's recommended version of c-ares" ON)
-option(USE_CUSTOM_BASE64 "Use Bun's recommended version of libbase64" ON)
 option(USE_CUSTOM_LOLHTML "Use Bun's recommended version of lolhtml" ON)
 option(USE_CUSTOM_TINYCC "Use Bun's recommended version of tinycc" ON)
 option(USE_CUSTOM_LIBUV "Use Bun's recommended version of libuv (Windows only)" ON)
@@ -852,11 +851,13 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
-if(NOT BUN_ZIG_OBJ)
-    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
+if(NOT BUN_ZIG_OBJ_DIR)
+    set(BUN_ZIG_OBJ_DIR "${BUN_WORKDIR}/CMakeFiles")
 endif()
 
-get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+get_filename_component(BUN_ZIG_OBJ_DIR "${BUN_ZIG_OBJ_DIR}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
+set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
 
 set(USES_TERMINAL_NOT_IN_CI "")
 
@@ -870,7 +871,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         COMMAND
         "${ZIG_COMPILER}" "build" "obj"
         "--zig-lib-dir" "${ZIG_LIB_DIR}"
-        "-Doutput-file=${BUN_ZIG_OBJ}"
+        "--prefix" "${BUN_ZIG_OBJ_DIR}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
@@ -1075,7 +1076,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "/LTCG")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL)
+        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG})
         target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG:FULL)
     endif()
 endif()
@@ -1111,7 +1112,7 @@ if(WIN32)
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
-    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def")
 else()
     target_compile_options(${bun} PUBLIC
         -fPIC
@@ -1331,19 +1332,6 @@ if(USE_CUSTOM_CARES)
 else()
     find_package(c-ares CONFIG REQUIRED)
     target_link_libraries(${bun} PRIVATE c-ares::cares)
-endif()
-
-if(USE_CUSTOM_BASE64)
-    include_directories(${BUN_DEPS_DIR}/base64/include)
-
-    if(WIN32)
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/base64.lib")
-    else()
-        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libbase64.a")
-    endif()
-else()
-    find_package(base64 REQUIRED)
-    target_link_libraries(${bun} PRIVATE base64::base64)
 endif()
 
 if(USE_CUSTOM_TINYCC)

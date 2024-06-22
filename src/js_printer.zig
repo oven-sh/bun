@@ -161,8 +161,8 @@ fn ws(comptime str: []const u8) Whitespacer {
                     buf_i += 1;
                 }
             }
-
-            break :brk buf[0..buf_i];
+            const final = buf[0..buf_i].*;
+            break :brk &final;
         };
     };
 
@@ -773,6 +773,9 @@ fn NewPrinter(
 
         const Printer = @This();
 
+        /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
+        pub const Error = error{};
+
         /// The handling of binary expressions is convoluted because we're using
         /// iteration on the heap instead of recursion on the call stack to avoid
         /// stack overflow for deeply-nested ASTs. See the comments for the similar
@@ -943,7 +946,6 @@ fn NewPrinter(
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
             p.print(bytes);
-            return;
         }
 
         pub fn writeByteNTimes(self: *Printer, byte: u8, n: usize) !void {
@@ -958,22 +960,23 @@ fn NewPrinter(
             }
         }
 
+        pub fn writeBytesNTimes(self: *Printer, bytes: []const u8, n: usize) anyerror!void {
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                try self.writeAll(bytes);
+            }
+        }
+
         fn fmt(p: *Printer, comptime str: string, args: anytype) !void {
             const len = @call(
-                .{
-                    .modifier = .always_inline,
-                },
+                .always_inline,
                 std.fmt.count,
                 .{ str, args },
             );
-            var ptr = try p.writer.reserveNext(
-                len,
-            );
+            var ptr = try p.writer.reserve(len);
 
             const written = @call(
-                .{
-                    .modifier = .always_inline,
-                },
+                .always_inline,
                 std.fmt.bufPrint,
                 .{ ptr[0..len], str, args },
             ) catch unreachable;
@@ -1537,7 +1540,7 @@ fn NewPrinter(
             const remainder: f64 = (float - floored);
             const is_integer = remainder == 0;
             if (float < std.math.maxInt(u52) and is_integer) {
-                @setFloatMode(.Optimized);
+                @setFloatMode(.optimized);
                 // In JavaScript, numbers are represented as 64 bit floats
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
@@ -1630,18 +1633,12 @@ fn NewPrinter(
                 return;
             }
 
-            std.fmt.formatFloatDecimal(
-                float,
-                .{},
-                p,
-            ) catch unreachable;
+            p.fmt("{d}", .{float}) catch {};
         }
 
         pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
             var i: usize = 0;
             const n: usize = text.len;
-
-            // e(text.len) catch unreachable;
 
             outer: while (i < n) {
                 const CodeUnitType = u32;
@@ -1649,7 +1646,6 @@ fn NewPrinter(
                 const c: CodeUnitType = text[i];
                 i += 1;
 
-                // TODO: here
                 switch (c) {
 
                     // Special-case the null character since it may mess with code written in C
@@ -5486,8 +5482,8 @@ pub fn NewWriter(
     comptime writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
     comptime getLastByte: fn (ctx: *const ContextType) u8,
     comptime getLastLastByte: fn (ctx: *const ContextType) u8,
-    comptime reserveNext: fn (ctx: *ContextType, count: u32) anyerror![*]u8,
-    comptime advanceBy: fn (ctx: *ContextType, count: u32) void,
+    comptime reserveNext: fn (ctx: *ContextType, count: u64) anyerror![*]u8,
+    comptime advanceBy: fn (ctx: *ContextType, count: u64) void,
 ) type {
     return struct {
         const Self = @This();
@@ -5543,11 +5539,11 @@ pub fn NewWriter(
             return @call(bun.callmod_inline, getLastLastByte, .{&writer.ctx});
         }
 
-        pub fn reserve(writer: *Self, count: u32) anyerror![*]u8 {
+        pub fn reserve(writer: *Self, count: u64) anyerror![*]u8 {
             return try reserveNext(&writer.ctx, count);
         }
 
-        pub fn advance(writer: *Self, count: u32) void {
+        pub fn advance(writer: *Self, count: u64) void {
             advanceBy(&writer.ctx, count);
             writer.written += @as(i32, @intCast(count));
         }
@@ -5608,14 +5604,14 @@ pub const DirectWriter = struct {
     handle: FileDescriptorType,
 
     pub fn write(writer: *DirectWriter, buf: []const u8) !usize {
-        return try std.os.write(writer.handle, buf);
+        return try std.posix.write(writer.handle, buf);
     }
 
     pub fn writeAll(writer: *DirectWriter, buf: []const u8) !void {
-        _ = try std.os.write(writer.handle, buf);
+        _ = try std.posix.write(writer.handle, buf);
     }
 
-    pub const Error = std.os.WriteError;
+    pub const Error = std.posix.WriteError;
 };
 
 // Unbuffered           653ms
@@ -5677,11 +5673,11 @@ const FileWriterInternal = struct {
         return this.last_bytes[0];
     }
 
-    pub fn reserveNext(_: *FileWriterInternal, count: u32) anyerror![*]u8 {
+    pub fn reserveNext(_: *FileWriterInternal, count: u64) anyerror![*]u8 {
         try buffer.growIfNeeded(count);
         return @as([*]u8, @ptrCast(&buffer.list.items.ptr[buffer.list.items.len]));
     }
-    pub fn advanceBy(this: *FileWriterInternal, count: u32) void {
+    pub fn advanceBy(this: *FileWriterInternal, count: u64) void {
         if (comptime Environment.isDebug) bun.assert(buffer.list.items.len + count <= buffer.list.capacity);
 
         buffer.list.items = buffer.list.items.ptr[0 .. buffer.list.items.len + count];
@@ -5712,22 +5708,22 @@ const FileWriterInternal = struct {
                     const remain = first.len + second.len;
                     const third: []const u8 = result[remain..];
 
-                    var vecs = [_]std.os.iovec_const{
+                    var vecs = [_]std.posix.iovec_const{
                         .{
-                            .iov_base = first.ptr,
-                            .iov_len = first.len,
+                            .base = first.ptr,
+                            .len = first.len,
                         },
                         .{
-                            .iov_base = second.ptr,
-                            .iov_len = second.len,
+                            .base = second.ptr,
+                            .len = second.len,
                         },
                         .{
-                            .iov_base = third.ptr,
-                            .iov_len = third.len,
+                            .base = third.ptr,
+                            .len = third.len,
                         },
                     };
 
-                    const written = try std.os.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
+                    const written = try std.posix.writev(ctx.file.handle, vecs[0..@as(usize, if (third.len > 0) 3 else 2)]);
                     if (written == 0 or result.len - written == 0) return;
                     result = result[written..];
                 },
@@ -5796,11 +5792,12 @@ pub const BufferWriter = struct {
         return ctx.last_bytes[0];
     }
 
-    pub fn reserveNext(ctx: *BufferWriter, count: u32) anyerror![*]u8 {
+    pub fn reserveNext(ctx: *BufferWriter, count: u64) anyerror![*]u8 {
         try ctx.buffer.growIfNeeded(count);
         return @as([*]u8, @ptrCast(&ctx.buffer.list.items.ptr[ctx.buffer.list.items.len]));
     }
-    pub fn advanceBy(ctx: *BufferWriter, count: u32) void {
+
+    pub fn advanceBy(ctx: *BufferWriter, count: u64) void {
         if (comptime Environment.isDebug) bun.assert(ctx.buffer.list.items.len + count <= ctx.buffer.list.capacity);
 
         ctx.buffer.list.items = ctx.buffer.list.items.ptr[0 .. ctx.buffer.list.items.len + count];

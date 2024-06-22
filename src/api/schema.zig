@@ -1890,12 +1890,15 @@ pub const Api = struct {
     };
 
     pub const SourceMapMode = enum(u8) {
-        _none,
-        /// inline_into_file
-        inline_into_file,
+        none,
+
+        /// inline
+        @"inline",
 
         /// external
         external,
+
+        linked,
 
         _,
 

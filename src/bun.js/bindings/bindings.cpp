@@ -4814,9 +4814,12 @@ enum class BuiltinNamesMap : uint8_t {
     path,
     stream,
     asyncIterator,
+    name,
+    message,
+    error,
 };
 
-static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
 {
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
@@ -4863,6 +4866,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
     }
+    case BuiltinNamesMap::name: {
+        return vm.propertyNames->name;
+    }
+    case BuiltinNamesMap::message: {
+        return vm.propertyNames->message;
+    }
+    case BuiltinNamesMap::error: {
+        return vm.propertyNames->error;
+    }
     default: {
         ASSERT_NOT_REACHED();
         return Identifier();
@@ -4889,7 +4901,8 @@ bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* glo
     return JSValue::decode(JSValue0).toBoolean(globalObject);
 }
 
-void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+template<bool nonIndexedOnly>
+static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -4902,7 +4915,7 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     size_t prototypeCount = 0;
 
     JSC::Structure* structure = object->structure();
-    bool fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+    bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
 
     if (fast) {
@@ -5003,7 +5016,12 @@ restart:
         JSObject* iterating = prototypeObject.getObject();
 
         while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
-            iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+            if constexpr (nonIndexedOnly) {
+                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+            } else {
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+            }
+
             RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
                 if (UNLIKELY(property.isEmpty() || property.isNull()))
@@ -5012,6 +5030,12 @@ restart:
                 // ignore constructor
                 if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
                     continue;
+
+                if constexpr (nonIndexedOnly) {
+                    if (property == vm.propertyNames->length) {
+                        continue;
+                    }
+                }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 if (!object->getPropertySlot(globalObject, property, slot))
@@ -5066,6 +5090,10 @@ restart:
 
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
             }
+            if constexpr (nonIndexedOnly) {
+                break;
+            }
+
             // reuse memory
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
@@ -5082,6 +5110,16 @@ restart:
         scope.clearException();
         return;
     }
+}
+
+void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
 void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))

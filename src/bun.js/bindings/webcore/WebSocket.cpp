@@ -1155,7 +1155,14 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     if (auto* context = scriptExecutionContext()) {
         this->incPendingActivityCount();
         if (wasConnecting && isConnectionError) {
-            dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            ErrorEvent::Init eventInit = {};
+            eventInit.message = makeString("WebSocket connection to '"_s, m_url.stringCenterEllipsizedToLength(), "' failed: "_s, reason);
+            eventInit.filename = String();
+            eventInit.bubbles = false;
+            eventInit.cancelable = false;
+            eventInit.colno = 0;
+            eventInit.error = {};
+            dispatchEvent(ErrorEvent::create(eventNames().errorEvent, eventInit, EventIsTrusted::Yes));
         }
         // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
         dispatchEvent(CloseEvent::create(wasClean == CleanStatus::Clean, code, reason));

@@ -1518,7 +1518,10 @@
           "id": "EventMetadata",
           "description": "A key-value pair for additional event information to pass along.",
           "type": "object",
-          "properties": [{ "name": "key", "type": "string" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "key", "type": "string" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "BackgroundServiceEvent",
@@ -1570,7 +1573,10 @@
         {
           "name": "setRecording",
           "description": "Set the recording state for the service.",
-          "parameters": [{ "name": "shouldRecord", "type": "boolean" }, { "name": "service", "$ref": "ServiceName" }]
+          "parameters": [
+            { "name": "shouldRecord", "type": "boolean" },
+            { "name": "service", "$ref": "ServiceName" }
+          ]
         },
         {
           "name": "clearEvents",
@@ -1582,7 +1588,10 @@
         {
           "name": "recordingStateChanged",
           "description": "Called when the recording state for the service has been updated.",
-          "parameters": [{ "name": "isRecording", "type": "boolean" }, { "name": "service", "$ref": "ServiceName" }]
+          "parameters": [
+            { "name": "isRecording", "type": "boolean" },
+            { "name": "service", "$ref": "ServiceName" }
+          ]
         },
         {
           "name": "backgroundServiceEventReceived",
@@ -2072,7 +2081,10 @@
         {
           "id": "Header",
           "type": "object",
-          "properties": [{ "name": "name", "type": "string" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "name", "type": "string" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "CachedResponse",
@@ -3442,7 +3454,10 @@
         {
           "name": "setStyleSheetText",
           "description": "Sets the new stylesheet text.",
-          "parameters": [{ "name": "styleSheetId", "$ref": "StyleSheetId" }, { "name": "text", "type": "string" }],
+          "parameters": [
+            { "name": "styleSheetId", "$ref": "StyleSheetId" },
+            { "name": "text", "type": "string" }
+          ],
           "returns": [
             {
               "name": "sourceMapURL",
@@ -3567,7 +3582,10 @@
         },
         {
           "name": "executeSQL",
-          "parameters": [{ "name": "databaseId", "$ref": "DatabaseId" }, { "name": "query", "type": "string" }],
+          "parameters": [
+            { "name": "databaseId", "$ref": "DatabaseId" },
+            { "name": "query", "type": "string" }
+          ],
           "returns": [
             { "name": "columnNames", "optional": true, "type": "array", "items": { "type": "string" } },
             { "name": "values", "optional": true, "type": "array", "items": { "type": "any" } },
@@ -3608,7 +3626,10 @@
         {
           "name": "selectPrompt",
           "description": "Select a device in response to a DeviceAccess.deviceRequestPrompted event.",
-          "parameters": [{ "name": "id", "$ref": "RequestId" }, { "name": "deviceId", "$ref": "DeviceId" }]
+          "parameters": [
+            { "name": "id", "$ref": "RequestId" },
+            { "name": "deviceId", "$ref": "DeviceId" }
+          ]
         },
         {
           "name": "cancelPrompt",
@@ -5656,7 +5677,10 @@
         },
         {
           "name": "removeDOMStorageItem",
-          "parameters": [{ "name": "storageId", "$ref": "StorageId" }, { "name": "key", "type": "string" }]
+          "parameters": [
+            { "name": "storageId", "$ref": "StorageId" },
+            { "name": "key", "type": "string" }
+          ]
         },
         {
           "name": "setDOMStorageItem",
@@ -5678,7 +5702,10 @@
         },
         {
           "name": "domStorageItemRemoved",
-          "parameters": [{ "name": "storageId", "$ref": "StorageId" }, { "name": "key", "type": "string" }]
+          "parameters": [
+            { "name": "storageId", "$ref": "StorageId" },
+            { "name": "key", "type": "string" }
+          ]
         },
         {
           "name": "domStorageItemUpdated",
@@ -5748,7 +5775,10 @@
         {
           "id": "MediaFeature",
           "type": "object",
-          "properties": [{ "name": "name", "type": "string" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "name", "type": "string" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "VirtualTimePolicy",
@@ -5762,7 +5792,10 @@
           "description": "Used to specify User Agent Cient Hints to emulate. See https://wicg.github.io/ua-client-hints",
           "experimental": true,
           "type": "object",
-          "properties": [{ "name": "brand", "type": "string" }, { "name": "version", "type": "string" }]
+          "properties": [
+            { "name": "brand", "type": "string" },
+            { "name": "version", "type": "string" }
+          ]
         },
         {
           "id": "UserAgentMetadata",
@@ -6120,7 +6153,10 @@
           "name": "setSensorOverrideReadings",
           "description": "Updates the sensor readings reported by a sensor type previously overriden\nby setSensorOverrideEnabled.",
           "experimental": true,
-          "parameters": [{ "name": "type", "$ref": "SensorType" }, { "name": "reading", "$ref": "SensorReading" }]
+          "parameters": [
+            { "name": "type", "$ref": "SensorType" },
+            { "name": "reading", "$ref": "SensorReading" }
+          ]
         },
         {
           "name": "setIdleOverride",
@@ -6405,11 +6441,17 @@
         { "name": "disable" },
         {
           "name": "selectAccount",
-          "parameters": [{ "name": "dialogId", "type": "string" }, { "name": "accountIndex", "type": "integer" }]
+          "parameters": [
+            { "name": "dialogId", "type": "string" },
+            { "name": "accountIndex", "type": "integer" }
+          ]
         },
         {
           "name": "clickDialogButton",
-          "parameters": [{ "name": "dialogId", "type": "string" }, { "name": "dialogButton", "$ref": "DialogButton" }]
+          "parameters": [
+            { "name": "dialogId", "type": "string" },
+            { "name": "dialogButton", "$ref": "DialogButton" }
+          ]
         },
         {
           "name": "dismissDialog",
@@ -6464,7 +6506,10 @@
           "id": "HeaderEntry",
           "description": "Response HTTP header entry",
           "type": "object",
-          "properties": [{ "name": "name", "type": "string" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "name", "type": "string" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "AuthChallenge",
@@ -8301,19 +8346,28 @@
           "id": "PlayerProperty",
           "description": "Corresponds to kMediaPropertyChange",
           "type": "object",
-          "properties": [{ "name": "name", "type": "string" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "name", "type": "string" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "PlayerEvent",
           "description": "Corresponds to kMediaEventTriggered",
           "type": "object",
-          "properties": [{ "name": "timestamp", "$ref": "Timestamp" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "timestamp", "$ref": "Timestamp" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "PlayerErrorSourceLocation",
           "description": "Represents logged source line numbers reported in an error.\nNOTE: file and line are from chromium c++ implementation code, not js.",
           "type": "object",
-          "properties": [{ "name": "file", "type": "string" }, { "name": "line", "type": "integer" }]
+          "properties": [
+            { "name": "file", "type": "string" },
+            { "name": "line", "type": "integer" }
+          ]
         },
         {
           "id": "PlayerError",
@@ -12357,7 +12411,10 @@
           "description": "Pair of issuer origin and number of available (signed, but not used) Trust\nTokens from that issuer.",
           "experimental": true,
           "type": "object",
-          "properties": [{ "name": "issuerOrigin", "type": "string" }, { "name": "count", "type": "number" }]
+          "properties": [
+            { "name": "issuerOrigin", "type": "string" },
+            { "name": "count", "type": "number" }
+          ]
         },
         {
           "id": "InterestGroupAccessType",
@@ -12420,7 +12477,10 @@
           "id": "SharedStorageEntry",
           "description": "Struct for a single key-value pair in an origin's shared storage.",
           "type": "object",
-          "properties": [{ "name": "key", "type": "string" }, { "name": "value", "type": "string" }]
+          "properties": [
+            { "name": "key", "type": "string" },
+            { "name": "value", "type": "string" }
+          ]
         },
         {
           "id": "SharedStorageMetadata",
@@ -12436,7 +12496,10 @@
           "id": "SharedStorageReportingMetadata",
           "description": "Pair of reporting metadata details for a candidate URL for `selectURL()`.",
           "type": "object",
-          "properties": [{ "name": "eventType", "type": "string" }, { "name": "reportingUrl", "type": "string" }]
+          "properties": [
+            { "name": "eventType", "type": "string" },
+            { "name": "reportingUrl", "type": "string" }
+          ]
         },
         {
           "id": "SharedStorageUrlWithMetadata",
@@ -12568,7 +12631,10 @@
           "id": "AttributionReportingAggregationKeysEntry",
           "experimental": true,
           "type": "object",
-          "properties": [{ "name": "key", "type": "string" }, { "name": "value", "$ref": "UnsignedInt128AsBase16" }]
+          "properties": [
+            { "name": "key", "type": "string" },
+            { "name": "value", "$ref": "UnsignedInt128AsBase16" }
+          ]
         },
         {
           "id": "AttributionReportingEventReportWindows",
@@ -12943,7 +13009,10 @@
           "name": "getInterestGroupDetails",
           "description": "Gets details for a named interest group.",
           "experimental": true,
-          "parameters": [{ "name": "ownerOrigin", "type": "string" }, { "name": "name", "type": "string" }],
+          "parameters": [
+            { "name": "ownerOrigin", "type": "string" },
+            { "name": "name", "type": "string" }
+          ],
           "returns": [{ "name": "details", "$ref": "InterestGroupDetails" }]
         },
         {
@@ -12986,7 +13055,10 @@
           "name": "deleteSharedStorageEntry",
           "description": "Deletes entry for `key` (if it exists) for a given origin's shared storage.",
           "experimental": true,
-          "parameters": [{ "name": "ownerOrigin", "type": "string" }, { "name": "key", "type": "string" }]
+          "parameters": [
+            { "name": "ownerOrigin", "type": "string" },
+            { "name": "key", "type": "string" }
+          ]
         },
         {
           "name": "clearSharedStorageEntries",
@@ -13010,7 +13082,10 @@
           "name": "setStorageBucketTracking",
           "description": "Set tracking for a storage key's buckets.",
           "experimental": true,
-          "parameters": [{ "name": "storageKey", "type": "string" }, { "name": "enable", "type": "boolean" }]
+          "parameters": [
+            { "name": "storageKey", "type": "string" },
+            { "name": "enable", "type": "boolean" }
+          ]
         },
         {
           "name": "deleteStorageBucket",
@@ -13456,7 +13531,10 @@
           "id": "RemoteLocation",
           "experimental": true,
           "type": "object",
-          "properties": [{ "name": "host", "type": "string" }, { "name": "port", "type": "integer" }]
+          "properties": [
+            { "name": "host", "type": "string" },
+            { "name": "port", "type": "integer" }
+          ]
         }
       ],
       "commands": [

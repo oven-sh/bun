@@ -14,24 +14,40 @@ pub const Parser = struct {
     out: Expr,
     logger: bun.logger.Log,
     arena: std.heap.ArenaAllocator,
+    env: *bun.DotEnv.Loader,
 
     const Options = struct {
         bracked_array: bool = true,
     };
 
-    pub fn init(allocator: Allocator, path: []const u8, src: []const u8) Parser {
+    pub fn init(allocator: Allocator, path: []const u8, src: []const u8, env: *bun.DotEnv.Loader) Parser {
         return .{
             .logger = bun.logger.Log.init(allocator),
             .src = src,
             .out = Expr.init(E.Object, E.Object{}, Loc.Empty),
             .source = bun.logger.Source.initPathString(path, src),
             .arena = std.heap.ArenaAllocator.init(allocator),
+            .env = env,
         };
     }
 
     pub fn deinit(this: *Parser) void {
         this.logger.deinit();
         this.arena.deinit();
+    }
+
+    // fn expandValueIfNeeded(string: []const u8, ctx: *bun.CLI.Command.ContextData, env: *bun.DotEnv.Loader) []const u8 {
+    //     if (std.mem.indexOf(u8, "${", needle: []const T)
+    // }
+
+    pub fn apply(this: *Parser, ctx: *bun.CLI.Command.ContextData, env: *bun.DotEnv.Loader) void {
+        _ = ctx; // autofix
+        _ = env; // autofix
+        if (this.out.asProperty("registry")) |prop| {
+            if (prop.expr.asUtf8StringLiteral()) |registry_url| {
+                _ = registry_url; // autofix
+            }
+        }
     }
 
     pub fn parse(this: *Parser) !void {
@@ -324,6 +340,21 @@ pub const Parser = struct {
 
                     esc = false;
                 } else switch (c) {
+                    '$' => {
+                        not_env_substitution: {
+                            if (comptime usage != .value) break :not_env_substitution;
+
+                            if (this.parseEnvSubstitution(val, i, i, &unesc)) |new_i| {
+                                // set to true so we heap alloc
+                                did_any_escape = true;
+                                i = new_i;
+                                continue;
+                            }
+
+                            break :not_env_substitution;
+                        }
+                        try unesc.append('$');
+                    },
                     ';', '#' => break,
                     '\\' => {
                         esc = true;
@@ -388,6 +419,47 @@ pub const Parser = struct {
         if (comptime usage == .value) return Expr.init(E.String, E.String.init(val[0..]), Loc{ .start = offset });
         if (comptime usage == .key) return val[0..];
         return strToRope(ropealloc, val[0..]);
+    }
+
+    /// Returns index to skip or null if not an env substitution
+    /// Invariants:
+    /// - `i` must be an index into `val` that points to a '$' char
+    fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.ArrayList(u8)) ?usize {
+        if (i + 1 < val.len and val[i + 1] == '{') {
+            if (i + 2 >= val.len) return null;
+
+            var found_closing = false;
+            var j = i + 2;
+            while (j < val.len) : (j += 1) {
+                switch (val[j]) {
+                    '$' => return this.parseEnvSubstitution(val, start, j, unesc),
+                    '{' => return null,
+                    '}' => {
+                        found_closing = true;
+                        break;
+                    },
+                    else => {},
+                }
+            }
+
+            if (!found_closing) return null;
+
+            if (start != i) {
+                const missed = val[start..i];
+                unesc.appendSlice(missed) catch bun.outOfMemory();
+            }
+
+            const env_var = val[i + 2 .. j];
+            const expanded = this.expandEnvVar(env_var);
+            unesc.appendSlice(expanded) catch bun.outOfMemory();
+
+            return j;
+        }
+        return null;
+    }
+
+    fn expandEnvVar(this: *Parser, name: []const u8) []const u8 {
+        return this.env.get(name) orelse "";
     }
 
     fn singleStrRope(ropealloc: Allocator, str: []const u8) *Rope {
@@ -485,7 +557,7 @@ pub const IniTestingAPIs = struct {
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();
 
-        var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice());
+        var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().bundler.env);
         defer parser.deinit();
 
         parser.parse() catch |e| {

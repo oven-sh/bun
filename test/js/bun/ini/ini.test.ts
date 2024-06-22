@@ -1,8 +1,74 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 import { expect, test, describe, it } from "bun:test";
+import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 
 describe("parse ini", () => {
+  describe("env vars", () => {
+    envVarTest({
+      name: "basic",
+      ini: /* ini */ `
+hello = \${LOL}
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "hi" },
+    });
+
+    envVarTest({
+      name: "concat",
+      ini: /* ini */ `
+hello = greeting: \${LOL}
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "greeting: hi" },
+    });
+
+    envVarTest({
+      name: "nesting selects the inner most",
+      ini: /* ini */ `
+hello = greeting: \${what\${LOL}lol}
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "greeting: ${whathilol}" },
+    });
+
+    envVarTest({
+      name: "nesting 2 selects the inner most",
+      ini: /* ini */ `
+hello = greeting: \${what\${omg\${LOL}why}lol}
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "greeting: ${what${omghiwhy}lol}" },
+    });
+
+    envVarTest({
+      name: "unclosed",
+      ini: /* ini */ `
+hello = greeting: \${LOL
+      `,
+      env: { LOL: "hi" },
+      expected: { hello: "greeting: ${LOL" },
+    });
+
+    function envVarTest(args: { name: string; ini: string; env: Record<string, string>; expected: any }) {
+      const { name, ini, env, expected } = args;
+      test(name, async () => {
+        const tempdir = tempDirWithFiles("hi", { "foo.ini": ini });
+        const code = /* ts */ `
+const { iniInternals } = require("bun:internal-for-testing");
+const { parse } = iniInternals;
+
+const ini = await Bun.$\`cat ${tempdir}/foo.ini\`.text()
+
+console.log(JSON.stringify(parse(ini)))
+        `;
+
+        const result = await Bun.$`${bunExe()} -e ${code}`.env({ ...bunEnv, ...env }).json();
+        expect(result).toEqual(expected);
+      });
+    }
+  });
+
   it("works with unicode in the .ini file", () => {
     let ini /* ini */ = `
 hi👋lol = 'lol hi 👋'

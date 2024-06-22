@@ -3360,6 +3360,10 @@ pub const Expr = struct {
         return ArrayIterator{ .array = array, .index = 0 };
     }
 
+    pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
+        if (expr.data == .e_string) return expr.data.e_string.data;
+    }
+
     pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
         return expr.data.e_string.string(allocator) catch null;

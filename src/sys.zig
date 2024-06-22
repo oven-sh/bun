@@ -194,6 +194,7 @@ pub const Tag = enum(u8) {
     mkdir,
     mkdtemp,
     fnctl,
+    memfd_create,
     mmap,
     munmap,
     open,
@@ -2213,6 +2214,17 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(system.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
     } else return Maybe(void).success;
+}
+
+pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
+    if (comptime !Environment.isLinux) @compileError("linux only!");
+
+    const rc = std.os.linux.memfd_create(name, flags);
+
+    log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
+
+    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse
+        .{ .result = bun.toFD(@as(c_int, @intCast(rc))) };
 }
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {

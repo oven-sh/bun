@@ -1320,7 +1320,7 @@ function reportAnnotationToBuildKite(label, content, attempt = 0) {
   const buildLabel = getBuildLabel();
   const buildUrl = getBuildUrl();
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
-  let message = `<details><summary>\`${label}\` - annotation error on ${platform}</summary>`;
+  let message = `<details><summary><a><code>${label}</code></a> - annotation error on ${platform}</summary>`;
   if (stderr) {
     message += `\n\n\`\`\`terminal\n${escapeCodeBlock(stderr)}\n\`\`\`\n\n</details>\n\n`;
   }

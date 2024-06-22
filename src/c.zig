@@ -106,7 +106,7 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 // we assume that this is relatively uncommon
 // TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (bun.sys.renameatConcurrentlyWithoutFallback(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
@@ -181,42 +181,44 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             return Maybe(void).errno(bun.C.E.NAMETOOLONG, .GetFinalPathNameByHandle);
         }
         const src = buf1[0..src_len :0];
-        bun.copyFile(src, dest) catch |e| return Maybe(void).errno(bun.copyFileErrnoConvert(e), .copyfile);
+        return bun.copyFile(src, dest);
+    } else {
+        const stat_ = switch (bun.sys.fstat(in_handle)) {
+            .result => |s| s,
+            .err => |e| return .{ .err = e },
+        };
+
+        // Attempt to delete incase it already existed.
+        // This fixes ETXTBUSY on Linux
+        _ = bun.sys.unlinkat(to_dir, destination);
+
+        const out_handle = switch (bun.sys.openat(
+            to_dir,
+            destination,
+            bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
+            if (comptime Environment.isPosix) 0o644 else 0,
+        )) {
+            .result => |fd| fd,
+            .err => |e| return .{ .err = e },
+        };
+        defer _ = bun.sys.close(out_handle);
+
+        if (comptime Environment.isLinux) {
+            _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
+        }
+
+        switch (bun.copyFile(in_handle.cast(), out_handle.cast())) {
+            .err => |e| return .{ .err = e },
+            .result => {},
+        }
+
+        if (comptime Environment.isPosix) {
+            _ = fchmod(out_handle.cast(), stat_.mode);
+            _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
+        }
+
         return Maybe(void).success;
     }
-
-    const stat_ = if (comptime Environment.isPosix) switch (bun.sys.fstat(in_handle)) {
-        .result => |s| s,
-        .err => |e| return .{ .err = e },
-    } else {};
-
-    // Attempt to delete incase it already existed.
-    // This fixes ETXTBUSY on Linux
-    _ = bun.sys.unlinkat(to_dir, destination);
-
-    const out_handle = switch (bun.sys.openat(
-        to_dir,
-        destination,
-        bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
-        if (comptime Environment.isPosix) 0o644 else 0,
-    )) {
-        .result => |fd| fd,
-        .err => |e| return .{ .err = e },
-    };
-    defer _ = bun.sys.close(out_handle);
-
-    if (comptime Environment.isLinux) {
-        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
-    }
-
-    bun.copyFile(in_handle.cast(), out_handle.cast()) catch |e| return Maybe(void).errno(bun.copyFileErrnoConvert(e), .copyfile);
-
-    if (comptime Environment.isPosix) {
-        _ = fchmod(out_handle.cast(), stat_.mode);
-        _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
-    }
-
-    return Maybe(void).success;
 }
 
 pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {

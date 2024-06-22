@@ -1606,7 +1606,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
-                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
@@ -10508,7 +10508,7 @@ pub const PackageManager = struct {
                         const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
                         const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
-                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10533,7 +10533,7 @@ pub const PackageManager = struct {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };

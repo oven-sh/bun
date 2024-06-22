@@ -22,38 +22,7 @@ pub const CopyFileRangeError = error{
     FileBusy,
 } || posix.PReadError || posix.PWriteError || posix.UnexpectedError;
 
-const CopyFileError = error{SystemResources} || CopyFileRangeError || posix.SendFileError;
-
 const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
-
-pub fn copyFileErrorConvert(e: CopyFileError) bun.C.E {
-    return switch (e) {
-        error.FilesOpenedWithWrongFlags => bun.C.E.BADF,
-        error.IsDir => bun.C.E.ISDIR,
-        error.OutOfMemory => bun.C.E.NOMEM,
-        error.Unseekable => bun.C.E.SPIPE,
-        error.PermissionDenied => bun.C.E.PERM,
-        error.FileBusy => bun.C.E.BUSY,
-        error.ConnectionTimedOut => bun.C.E.TIMEDOUT,
-        error.NotOpenForReading => bun.C.E.BADF,
-        error.SocketNotConnected => bun.C.E.NOTCONN,
-        error.DiskQuota => bun.C.E.DQUOT,
-        error.FileTooBig => bun.C.E.FBIG,
-        error.InputOutput => bun.C.E.IO,
-        error.NoSpaceLeft => bun.C.E.NOSPC,
-        error.DeviceBusy => bun.C.E.BUSY,
-        error.InvalidArgument => bun.C.E.INVAL,
-        error.AccessDenied => bun.C.E.ACCES,
-        error.BrokenPipe => bun.C.E.PIPE,
-        error.SystemResources => bun.C.E.MFILE,
-        error.OperationAborted => bun.C.E.CANCELED,
-        error.NotOpenForWriting => bun.C.E.BADF,
-        error.LockViolation => bun.C.E.AGAIN,
-        error.WouldBlock => bun.C.E.INVAL,
-        error.ConnectionResetByPeer => bun.C.E.CONNRESET,
-        else => bun.C.E.INVAL,
-    };
-}
 
 /// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
 ///
@@ -87,16 +56,18 @@ const LinuxCopyFileState = packed struct {
 };
 const EmptyCopyFileState = struct {};
 pub const CopyFileState = if (Environment.isLinux) LinuxCopyFileState else EmptyCopyFileState;
-pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFileState) CopyFileError!void {
+const CopyFileReturnType = bun.sys.Maybe(void);
+
+pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFileState) CopyFileReturnType {
     if (comptime Environment.isMac) {
         const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE_DATA);
+
         switch (posix.errno(rc)) {
-            .SUCCESS => return,
-            .NOMEM => return error.SystemResources,
+            .SUCCESS => return CopyFileReturnType.success,
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
             .OPNOTSUPP => {},
-            else => |err| return posix.unexpectedErrno(err),
+            else => return CopyFileReturnType.errnoSys(rc, .copyfile).?,
         }
     }
 
@@ -108,7 +79,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             // the ordering is flipped but it is consistent with other system calls.
             bun.sys.syslog("ioctl_ficlone({d}, {d}) = {d}", .{ in, out, rc });
             switch (bun.C.getErrno(rc)) {
-                .SUCCESS => return,
+                .SUCCESS => return CopyFileReturnType.success,
                 .XDEV => {
                     copy_file_state.has_seen_exdev = true;
                 },
@@ -135,45 +106,37 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             // The kernel checks the u64 value `offset+count` for overflow, use
             // a 32 bit value so that the syscall won't return EINVAL except for
             // impossibly large files (> 2^64-1 - 2^32-1).
-            const amt = try copyFileRange(in, out, math.maxInt(i32) - 1, 0, copy_file_state);
+            const amt = switch (copyFileRange(in, out, math.maxInt(i32) - 1, 0, copy_file_state)) {
+                .result => |a| a,
+                .err => |err| return .{ .err = err },
+            };
             // Terminate when no data was copied
             if (amt == 0) break :cfr_loop;
             offset += amt;
         }
-        return;
+        return CopyFileReturnType.success;
     }
 
     if (comptime Environment.isWindows) {
-        if (bun.windows.CopyFileW(in.ptr, out.ptr, 0) == bun.windows.FALSE) {
-            switch (@as(bun.C.E, @enumFromInt(@intFromEnum(bun.windows.GetLastError())))) {
-                .SUCCESS => return,
-                .FBIG => return error.FileTooBig,
-                .IO => return error.InputOutput,
-                .ISDIR => return error.IsDir,
-                .NOMEM => return error.OutOfMemory,
-                .NOSPC => return error.NoSpaceLeft,
-                .OVERFLOW => return error.Unseekable,
-                .PERM => return error.PermissionDenied,
-                .TXTBSY => return error.FileBusy,
-                else => return error.Unexpected,
-            }
+        if (CopyFileReturnType.errnoSys(bun.windows.CopyFileW(in.ptr, out.ptr, 0))) |err| {
+            return err;
         }
 
-        return;
+        return CopyFileReturnType.success;
     }
 
-    // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
-    // fallback code will copy the contents chunk by chunk.
-    const empty_iovec = [0]posix.iovec_const{};
-    var offset: u64 = 0;
-    sendfile_loop: while (true) {
-        const amt = try posix.sendfile(out, in, offset, 0, &empty_iovec, &empty_iovec, 0);
-        // Terminate when no data was copied
-        if (amt == 0) break :sendfile_loop;
-        offset += amt;
+    while (true) {
+        switch (copyFileReadWriteLoop(in, out, math.maxInt(i32) - 1)) {
+            .err => |err| return .{ .err = err },
+            .result => |amt| {
+                if (amt == 0) break;
+            },
+        }
     }
+
+    return CopyFileReturnType.success;
 }
-pub fn copyFile(in: InputType, out: InputType) CopyFileError!void {
+pub fn copyFile(in: InputType, out: InputType) CopyFileReturnType {
     var state: CopyFileState = .{};
     return copyFileWithState(in, out, &state);
 }
@@ -244,14 +207,15 @@ pub fn can_use_ioctl_ficlone() bool {
 }
 
 const fd_t = std.posix.fd_t;
+const Maybe = bun.sys.Maybe;
 
-pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_state: *CopyFileState) CopyFileRangeError!usize {
+pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_state: *CopyFileState) Maybe(usize) {
     if (canUseCopyFileRangeSyscall() and !copy_file_state.has_seen_exdev and !copy_file_state.has_copy_file_range_failed) {
         while (true) {
             const rc = std.os.linux.copy_file_range(in, null, out, null, len, flags);
             bun.sys.syslog("copy_file_range({d}, {d}, {d}) = {d}", .{ in, out, len, rc });
             switch (bun.C.getErrno(rc)) {
-                .SUCCESS => return @as(usize, @intCast(rc)),
+                .SUCCESS => return .{ .result = @intCast(rc) },
                 // these may not be regular files, try fallback
                 .INVAL => {
                     copy_file_state.has_copy_file_range_failed = true;
@@ -282,7 +246,7 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
         const rc = std.os.linux.sendfile(@intCast(out), @intCast(in), null, len);
         bun.sys.syslog("sendfile({d}, {d}, {d}) = {d}", .{ in, out, len, rc });
         switch (bun.C.getErrno(rc)) {
-            .SUCCESS => return @as(usize, @intCast(rc)),
+            .SUCCESS => return .{ .result = @intCast(rc) },
             .INTR => continue,
             // these may not be regular files, try fallback
             .INVAL => {
@@ -305,9 +269,36 @@ pub fn copyFileRange(in: fd_t, out: fd_t, len: usize, flags: u32, copy_file_stat
         break;
     }
 
+    return copyFileReadWriteLoop(in, out, len);
+}
+
+pub fn copyFileReadWriteLoop(
+    in: fd_t,
+    out: fd_t,
+    len: usize,
+) Maybe(usize) {
     var buf: [8 * 4096]u8 = undefined;
     const adjusted_count = @min(buf.len, len);
-    const amt_read = try posix.read(in, buf[0..adjusted_count]);
-    if (amt_read == 0) return 0;
-    return posix.write(out, buf[0..amt_read]);
+    switch (bun.sys.read(bun.toFD(in), buf[0..adjusted_count])) {
+        .result => |amt_read| {
+            var amt_written: usize = 0;
+            if (amt_read == 0) return .{ .result = 0 };
+
+            while (amt_written < amt_read) {
+                switch (bun.sys.write(bun.toFD(out), buf[amt_written..amt_read])) {
+                    .result => |wrote| {
+                        if (wrote == 0) {
+                            return .{ .result = amt_written };
+                        }
+
+                        amt_written += wrote;
+                    },
+                    .err => |err| return .{ .err = err },
+                }
+            }
+            if (amt_read == 0) return .{ .result = 0 };
+            return .{ .result = amt_read };
+        },
+        .err => |err| return .{ .err = err },
+    }
 }

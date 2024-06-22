@@ -73,7 +73,7 @@ This is needed, especially when you integrate coverages with tools like CodeCov,
 
 ```toml
 coverageReporters  = ["console", "lcov"]  # default ["console"]
-coverageReportsDir = "path/to/somewhere"  # default "coverage"
+coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
 | Reporter  | Description |

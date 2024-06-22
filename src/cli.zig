@@ -250,7 +250,7 @@ pub const Arguments = struct {
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
         clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'console' and/or 'lcov'. Defaults to 'console'.") catch unreachable,
-        clap.parseParam("--coverage-reports-dir <STR>     Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
+        clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
@@ -457,7 +457,7 @@ pub const Arguments = struct {
                 }
             }
 
-            if (args.option("--coverage-reports-dir")) |dir| {
+            if (args.option("--coverage-dir")) |dir| {
                 ctx.test_options.coverage.reports_directory = dir;
             }
 

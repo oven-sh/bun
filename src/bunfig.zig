@@ -275,7 +275,7 @@ pub const Bunfig = struct {
                         }
                     }
 
-                    if (test_.get("coverageReportsDir")) |expr| {
+                    if (test_.get("coverageDir")) |expr| {
                         try this.expectString(expr);
                         this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
                     }

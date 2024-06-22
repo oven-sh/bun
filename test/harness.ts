@@ -1078,3 +1078,28 @@ export function isIPv6() {
 export function isIPv4() {
   return isIP("IPv4");
 }
+
+let glibcVersion: string | undefined;
+
+export function getGlibcVersion() {
+  if (glibcVersion || !isLinux) {
+    return glibcVersion;
+  }
+  try {
+    const { header } = process.report!.getReport() as any;
+    const { glibcVersionRuntime: version } = header;
+    if (typeof version === "string") {
+      return (glibcVersion = version);
+    }
+  } catch (error) {
+    console.warn("Failed to detect glibc version", error);
+  }
+}
+
+export function isGlibcVersionAtLeast(version: string): boolean {
+  const glibcVersion = getGlibcVersion();
+  if (!glibcVersion) {
+    return false;
+  }
+  return Bun.semver.satisfies(glibcVersion, version);
+}

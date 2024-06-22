@@ -1101,5 +1101,5 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   if (!glibcVersion) {
     return false;
   }
-  return Bun.semver.satisfies(glibcVersion, version);
+  return Bun.semver.satisfies(version, `>=${glibcVersion}`);
 }

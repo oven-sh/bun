@@ -79,11 +79,27 @@ pub const Repository = extern struct {
     ) []u8 {
         const buf = lockfile.buffers.string_bytes.items;
         const dep = lockfile.buffers.dependencies.items[dep_id];
-        const version_literal = dep.version.literal.slice(buf);
         const repo_name = repository.repo;
         const repo_name_str = lockfile.str(&repo_name);
 
-        if (repo_name_str.len == 0) {
+        const name = brk: {
+            var remain = repo_name_str;
+
+            if (strings.indexOfChar(remain, '#')) |hash_index| {
+                remain = remain[0..hash_index];
+            }
+
+            if (remain.len == 0) break :brk remain;
+
+            if (strings.lastIndexOfChar(remain, '/')) |slash_index| {
+                remain = remain[slash_index + 1 ..];
+            }
+
+            break :brk remain;
+        };
+
+        if (name.len == 0) {
+            const version_literal = dep.version.literal.slice(buf);
             const name_buf = allocator.alloc(u8, bun.sha.EVP.SHA1.digest) catch bun.outOfMemory();
             var sha1 = bun.sha.SHA1.init();
             defer sha1.deinit();
@@ -92,26 +108,7 @@ pub const Repository = extern struct {
             return name_buf[0..bun.sha.SHA1.digest];
         }
 
-        var len: usize = 0;
-        var remain = repo_name_str;
-        while (strings.indexOfChar(remain, '@')) |at_index| {
-            len += remain[0..at_index].len;
-            remain = remain[at_index + 1 ..];
-        }
-        len += remain.len;
-
-        const name_buf = allocator.alloc(u8, len) catch bun.outOfMemory();
-        var name = name_buf;
-        len = 0;
-        remain = repo_name_str;
-        while (strings.indexOfChar(remain, '@')) |at_index| {
-            @memcpy(name[0..at_index], remain[0..at_index]);
-            name = name[at_index + 1 ..];
-            remain = remain[at_index + 1 ..];
-        }
-
-        @memcpy(name[0..remain.len], remain);
-        return name_buf[0..name_buf.len];
+        return allocator.dupe(u8, name) catch bun.outOfMemory();
     }
 
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {

@@ -174,7 +174,16 @@ it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
   type: "message",
-  data: 123
+  data: 123,
+}`,
+  );
+});
+
+it("MessageEvent", () => {
+  expect(Bun.inspect(new MessageEvent("message"))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
 }`,
   );
 });

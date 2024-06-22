@@ -717,7 +717,7 @@ pub const TestCommand = struct {
         lcov,
     };
     const Reporters = struct {
-        console: bool,
+        text: bool,
         lcov: bool,
     };
 

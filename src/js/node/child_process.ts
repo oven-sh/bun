@@ -1297,6 +1297,10 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message) {
+    if (message?.cmd?.startsWith("NODE_")) {
+      this.emit("internalMessage", message);
+      return;
+    }
     this.emit("message", message);
   }
 

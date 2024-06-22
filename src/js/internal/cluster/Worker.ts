@@ -20,13 +20,7 @@ function Worker(options) {
   if (options.process) {
     this.process = options.process;
     this.process.on("error", (code, signal) => this.emit("error", code, signal));
-    this.process.on("message", (message, handle) => {
-      if (message?.cmd?.startsWith("NODE_")) {
-        this.emit("internalMessage", message, handle);
-        return;
-      }
-      this.emit("message", message, handle);
-    });
+    this.process.on("message", (message, handle) => this.emit("message", message, handle));
   }
 }
 Worker.prototype = {};

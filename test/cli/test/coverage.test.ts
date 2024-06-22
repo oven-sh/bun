@@ -22,10 +22,20 @@ test("coverage crash", () => {
 
 test("lcov coverage reporter", () => {
   const dir = tempDirWithFiles("cov", {
-    "demo.test.ts": `class Y {
-  #hello
-}`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { Y } from "./demo1";
+test("hello", () => {
+   console.log(Y);
+});
+    `,
+    "demo1.ts": `
+export class Y {
+  #hello;
+}
+    `,
   });
+  console.log({ dir });
   const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov"], {
     cwd: dir,
     env: {

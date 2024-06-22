@@ -4814,9 +4814,12 @@ enum class BuiltinNamesMap : uint8_t {
     path,
     stream,
     asyncIterator,
+    name,
+    message,
+    error,
 };
 
-static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
 {
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
@@ -4862,6 +4865,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
+    }
+    case BuiltinNamesMap::name: {
+        return vm.propertyNames->name;
+    }
+    case BuiltinNamesMap::message: {
+        return vm.propertyNames->message;
+    }
+    case BuiltinNamesMap::error: {
+        return vm.propertyNames->error;
     }
     default: {
         ASSERT_NOT_REACHED();

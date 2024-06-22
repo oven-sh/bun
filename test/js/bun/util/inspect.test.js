@@ -174,7 +174,32 @@ it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
   type: "message",
-  data: 123
+  data: 123,
+}`,
+  );
+});
+
+it("MessageEvent with no data set", () => {
+  expect(Bun.inspect(new MessageEvent("message"))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
+}`,
+  );
+});
+
+it("MessageEvent with deleted data", () => {
+  const event = new MessageEvent("message");
+  Object.defineProperty(event, "data", {
+    value: 123,
+    writable: true,
+    configurable: true,
+  });
+  delete event.data;
+  expect(Bun.inspect(event)).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
 }`,
   );
 });

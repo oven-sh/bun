@@ -4828,6 +4828,9 @@ pub const JSValue = enum(JSValueReprInt) {
         path,
         stream,
         asyncIterator,
+        name,
+        message,
+        @"error",
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

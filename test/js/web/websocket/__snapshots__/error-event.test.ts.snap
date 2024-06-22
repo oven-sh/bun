@@ -1,0 +1,29 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`WebSocket error event snapshot: Snapshot snapshot 1`] = `ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect", 
+  error: null
+}`;
+
+exports[`WebSocket error event snapshot: Inspect snapshot 1`] = `
+"ErrorEvent {
+  type: "error",
+  message: "WebSocket connection to 'ws://127.0.0.1:8080/' failed: Failed to connect",
+  error: null,
+}"
+`;
+
+exports[`ErrorEvent with no message: Inspect snapshot 1`] = `
+"ErrorEvent {
+  type: "error",
+  message: "",
+  error: null,
+}"
+`;
+
+exports[`ErrorEvent with no message: Snapshot snapshot 1`] = `ErrorEvent {
+  type: "error",
+  message: "", 
+  error: null
+}`;

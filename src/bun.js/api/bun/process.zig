@@ -1301,13 +1301,8 @@ pub fn spawnProcessPosix(
                             else => "spawn_stdio_generic",
                         };
 
-                        // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-                        const rc = std.os.linux.memfd_create(label, 0);
-                        if (bun.C.getErrno(rc) != .SUCCESS) {
-                            break :use_memfd;
-                        }
+                        const fd = bun.sys.memfd_create(label, 0).unwrap() catch break :use_memfd;
 
-                        const fd = bun.toFD(@as(u32, @intCast(rc)));
                         to_close_on_error.append(fd) catch {};
                         to_set_cloexec.append(fd) catch {};
                         try actions.dup2(fd, fileno);

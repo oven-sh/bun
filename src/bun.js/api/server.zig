@@ -1001,7 +1001,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arg.getTruthy(global, "error")) |onError| {
+            if (arg.getTruthyComptime(global, "error")) |onError| {
                 if (!onError.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected error to be a function", .{}, global, exception);
                     if (args.ssl_config) |*conf| {
@@ -3667,7 +3667,7 @@ pub const WebSocketServer = struct {
 
             var valid = false;
 
-            if (object.getTruthy(globalObject, "message")) |message_| {
+            if (object.getTruthyComptime(globalObject, "message")) |message_| {
                 if (!message_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                     return null;

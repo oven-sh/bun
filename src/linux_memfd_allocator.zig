@@ -137,6 +137,7 @@ pub const LinuxMemFdAllocator = struct {
         var label_buf: [128]u8 = undefined;
         const label = std.fmt.bufPrintZ(&label_buf, "memfd-num-{d}", .{memfd_counter.fetchAdd(1, .monotonic)}) catch "";
 
+        // Using huge pages was slower.
         const fd = switch (bun.sys.memfd_create(label, std.os.linux.MFD.CLOEXEC)) {
             .err => |err| return .{ .err = bun.sys.Error.fromCode(err.getErrno(), .open) },
             .result => |fd| fd,

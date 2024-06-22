@@ -68,16 +68,24 @@ coverageIgnoreSourcemaps = true   # default false
 
 By default, coverage reports will be printed to the console.
 
-You can specify the reporters and the directory where the reports will be saved.
-This is needed, especially when you integrate coverages with tools like CodeCov, CodeClimate, Coveralls and so on.
+For persistent code coverage reports in CI environments and for other tools, you can pass a `--coverage-reporter=lcov` CLI option or `coverageReporter` option in `bunfig.toml`.
 
 ```toml
-coverageReporters  = ["console", "lcov"]  # default ["console"]
+[test]
+coverageReporter  = ["text", "lcov"]  # default ["text"]
 coverageDir = "path/to/somewhere"  # default "coverage"
 ```
 
-| Reporter  | Description |
-|-----------|-------------|
-| `console` | Prints a text summary of the coverage to the console. |
-| `lcov`    | Save coverage in [lcov](https://github.com/linux-test-project/lcov) format. |
+| Reporter | Description                                                                 |
+| -------- | --------------------------------------------------------------------------- |
+| `text`   | Prints a text summary of the coverage to the console.                       |
+| `lcov`   | Save coverage in [lcov](https://github.com/linux-test-project/lcov) format. |
 
+#### lcov coverage reporter
+
+To generate an lcov report, you can use the `lcov` reporter. This will generate an `lcov.info` file in the `coverage` directory.
+
+```toml
+[test]
+coverageReporter = "lcov"
+```

@@ -3362,6 +3362,7 @@ pub const Expr = struct {
 
     pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
         if (expr.data == .e_string) return expr.data.e_string.data;
+        return null;
     }
 
     pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {

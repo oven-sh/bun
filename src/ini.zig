@@ -6,6 +6,8 @@ const Expr = bun.JSAst.Expr;
 const Loc = bun.logger.Loc;
 const js_ast = bun.JSAst;
 const Rope = js_ast.E.Object.Rope;
+const Output = bun.Output;
+const Global = bun.Global;
 
 pub const Parser = struct {
     opts: Options = .{},
@@ -639,3 +641,303 @@ pub const toStringFormatter = struct {
         }
     }
 };
+
+pub fn Option(comptime T: type) type {
+    return union(enum) {
+        some: T,
+        none,
+
+        pub fn get(this: @This()) ?T {
+            return switch (this) {
+                .some => this.some,
+                .none => null,
+            };
+        }
+    };
+}
+
+pub const ConfigIterator = struct {
+    allocator: Allocator,
+    config: *E.Object,
+    source: *const bun.logger.Source,
+    log: *bun.logger.Log,
+
+    prop_idx: usize = 0,
+
+    pub const Item = struct {
+        registry_url: []const u8,
+        optname: Opt,
+        value: []const u8,
+
+        pub const Opt = enum {
+            /// base64 authentication string
+            _auth,
+
+            /// authentication string
+            _authToken,
+
+            username,
+
+            _password,
+
+            email,
+
+            /// path to certificate file
+            certfile,
+
+            /// path to key file
+            keyfile,
+        };
+    };
+
+    pub fn next(this: *ConfigIterator) error{ParserError}!?Option(Item) {
+        if (this.prop_idx >= this.config.properties.len) return null;
+        defer this.prop_idx += 1;
+
+        const prop = this.config.properties.ptr[this.prop_idx];
+
+        if (prop.key) |keyexpr| {
+            if (keyexpr.asUtf8StringLiteral()) |key| {
+                if (bun.strings.hasPrefixComptime(key, "//")) {
+                    const optnames = comptime brk: {
+                        const names = std.meta.fieldNames(Item.Opt);
+                        var names2: [names.len][:0]const u8 = undefined;
+                        // we need to make sure to reverse this
+                        // because _auth could match when it actually had _authToken
+                        // so go backwards since _authToken is last
+                        for (0..names.len) |i| {
+                            names2[names2.len - i - 1] = names[i];
+                        }
+                        break :brk names2;
+                    };
+
+                    inline for (optnames) |name| {
+                        var buf: [name.len + 1]u8 = undefined;
+                        buf[0] = ':';
+                        @memcpy(buf[1 .. name.len + 1], name);
+                        const name_with_eq = buf[0..];
+
+                        if (std.mem.lastIndexOf(u8, key, name_with_eq)) |index| {
+                            const url_part = key[2..index];
+                            if (prop.value) |value_expr| {
+                                if (value_expr.asUtf8StringLiteral()) |value| {
+                                    return .{
+                                        .some = Item{
+                                            .registry_url = url_part,
+                                            .value = value,
+                                            .optname = std.meta.stringToEnum(Item.Opt, name).?,
+                                        },
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return .none;
+    }
+};
+
+pub const ScopeIterator = struct {
+    allocator: Allocator,
+    config: *E.Object,
+    source: *const bun.logger.Source,
+    log: *bun.logger.Log,
+
+    prop_idx: usize = 0,
+    count: bool = false,
+
+    const Error = error{
+        no_value,
+    };
+
+    const Item = struct { scope: []const u8, registry: bun.Schema.Api.NpmRegistry };
+
+    pub fn next(this: *ScopeIterator) error{ParserError}!?Option(Item) {
+        if (this.prop_idx >= this.config.properties.len) return null;
+        defer this.prop_idx += 1;
+
+        const prop = this.config.properties.ptr[this.prop_idx];
+
+        if (prop.key) |keyexpr| {
+            if (keyexpr.asUtf8StringLiteral()) |key| {
+                if (bun.strings.hasPrefixComptime(key, "@") and bun.strings.endsWith(key, ":registry")) {
+                    if (!this.count) {
+                        return .{
+                            .some = .{
+                                .scope = key[1 .. key.len - ":registry".len],
+                                .registry = brk: {
+                                    if (prop.value) |p| {
+                                        var parser = bun.Schema.Api.NpmRegistry.Parser{
+                                            .log = this.log,
+                                            .source = this.source,
+                                            .allocator = this.allocator,
+                                        };
+                                        break :brk parser.parseRegistry(p) catch |e| {
+                                            if (e == error.OutOfMemory) bun.outOfMemory();
+                                            return error.ParserError;
+                                        };
+                                    }
+                                    return .none;
+                                },
+                            },
+                        };
+                    }
+
+                    return .none;
+                }
+            }
+        }
+
+        return .none;
+    }
+};
+
+pub fn loadNpmrc(
+    allocator: std.mem.Allocator,
+    env: *bun.DotEnv.Loader,
+    auto_loaded: bool,
+    ctx: bun.CLI.Command.Context,
+    log: *bun.logger.Log,
+) !void {
+    const Api = bun.Schema.Api;
+    const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), ".npmrc", bun.O.RDONLY, 0)) {
+        .result => |fd| fd,
+        .err => |err| {
+            if (auto_loaded) return;
+            Output.prettyErrorln("{}\nwhile opening .npmrc \"{s}\"", .{
+                err,
+                ".npmrc",
+            });
+            Global.exit(1);
+        },
+    };
+    defer _ = bun.sys.close(npmrc_file);
+
+    var npmrc_contents = std.ArrayList(u8).init(allocator);
+    defer npmrc_contents.deinit();
+    switch (bun.sys.File.readToEndWithArrayList(bun.sys.File{ .handle = npmrc_file }, &npmrc_contents)) {
+        .result => {},
+        .err => |err| {
+            // TODO: should this exit(1)?
+            Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
+                err,
+                ".npmrc",
+            });
+            Global.exit(1);
+        },
+    }
+    defer npmrc_contents.deinit();
+    const source = bun.logger.Source.initPathString(".npmrc", npmrc_contents.items[0..]);
+
+    var parser = bun.ini.Parser.init(allocator, ".npmrc", npmrc_contents.items[0..], env);
+    parser.parse() catch |e| {
+        if (e == error.ParserError) {
+            parser.logger.printForLogLevel(Output.errorWriter()) catch unreachable;
+            return e;
+        }
+        // TODO: should this exit(1)?
+        Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
+            e,
+            ".npmrc",
+        });
+        Global.exit(1);
+    };
+
+    const out = parser.out;
+
+    var install: *Api.BunInstall = ctx.install orelse brk: {
+        const install_ = allocator.create(Api.BunInstall) catch bun.outOfMemory();
+        install_.* = std.mem.zeroes(Api.BunInstall);
+        ctx.install = install_;
+        break :brk install_;
+    };
+
+    if (out.asProperty("registry")) |query| {
+        if (query.expr.asUtf8StringLiteral() != null) {
+            var p = bun.Schema.Api.NpmRegistry.Parser{
+                .allocator = allocator,
+                .log = log,
+                .source = &source,
+            };
+            install.default_registry = p.parseRegistry(query.expr) catch |e| {
+                if (e == error.OutOfMemory) bun.outOfMemory();
+                return error.ParserError;
+            };
+        }
+    }
+
+    var registry_map = install.scoped orelse bun.Schema.Api.NpmRegistryMap{};
+
+    // Process scopes
+    {
+        var iter = bun.ini.ScopeIterator{
+            .config = parser.out.data.e_object,
+            .count = true,
+            .source = &source,
+            .log = log,
+            .allocator = allocator,
+        };
+
+        const scope_count = brk: {
+            var count: usize = 0;
+            while (iter.next() catch {
+                @panic("TODO ZACK handle error");
+            }) |o| {
+                if (o == .some) {
+                    count += 1;
+                }
+            }
+            break :brk count;
+        };
+
+        defer install.scoped = registry_map;
+        registry_map.scopes.ensureUnusedCapacity(ctx.allocator, scope_count) catch bun.outOfMemory();
+
+        iter.prop_idx = 0;
+        iter.count = false;
+
+        while (iter.next() catch unreachable) |val| {
+            if (val.get()) |result| {
+                const registry = result.registry;
+                registry_map.scopes.put(ctx.allocator, result.scope, registry) catch bun.outOfMemory();
+            }
+        }
+    }
+
+    // Process registry configuration
+    {
+        var iter = bun.ini.ConfigIterator{
+            .config = parser.out.data.e_object,
+            .source = &source,
+            .log = log,
+            .allocator = allocator,
+        };
+
+        while_loop: while (iter.next() catch {
+            @panic("TODO zack handle this");
+        }) |val| {
+            if (val.get()) |conf_item_| {
+                const conf_item: bun.ini.ConfigIterator.Item = conf_item_;
+                for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
+                    _ = k; // autofix
+                    if (std.mem.eql(u8, v.url, conf_item.registry_url)) {
+                        switch (conf_item.optname) {
+                            ._auth => @panic("TODO zack handle"),
+                            ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                            .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                            ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                            .email => @panic("TODO zack handle"),
+                            .certfile => @panic("TODO zack handle"),
+                            .keyfile => @panic("TODO zack handle"),
+                        }
+                        continue :while_loop;
+                    }
+                }
+                @panic("TODO zack handle not found");
+            }
+        }
+    }
+}

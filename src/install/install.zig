@@ -6973,8 +6973,8 @@ pub const PackageManager = struct {
             }
             if (bun_install_) |bun_install| {
                 if (bun_install.scoped) |scoped| {
-                    for (scoped.scopes, 0..) |name, i| {
-                        var registry = scoped.registries[i];
+                    for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
+                        var registry = registry_.*;
                         if (registry.url.len == 0) registry.url = base.url;
                         try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
                     }
@@ -8459,6 +8459,13 @@ pub const PackageManager = struct {
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
+
+        var log = logger.Log.init(ctx.allocator);
+        defer log.deinit();
+        bun.ini.loadNpmrc(ctx.allocator, env, true, ctx, &log) catch {
+            Output.print("Several errors ocurred while reading .npmrc:\n", .{});
+            log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
+        };
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

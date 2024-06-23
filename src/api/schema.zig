@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const js_ast = bun.JSAst;
 
 pub const Reader = struct {
     const Self = @This();
@@ -2747,14 +2748,97 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.password), this.password);
             try writer.writeValue(@TypeOf(this.token), this.token);
         }
+
+        pub const Parser = struct {
+            log: *bun.logger.Log,
+            source: *const bun.logger.Source,
+            allocator: std.mem.Allocator,
+
+            fn addError(this: *Parser, loc: bun.logger.Loc, comptime text: []const u8) !void {
+                this.log.addError(this.source, loc, text) catch unreachable;
+                return error.ParserError;
+            }
+
+            fn expectString(this: *Parser, expr: js_ast.Expr) !void {
+                switch (expr.data) {
+                    .e_string, .e_utf8_string => {},
+                    else => {
+                        this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
+                            @as(js_ast.Expr.Tag, expr.data),
+                        }) catch unreachable;
+                        return error.ParserError;
+                    },
+                }
+            }
+
+            fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+                const url = bun.URL.parse(str.data);
+                var registry = std.mem.zeroes(Api.NpmRegistry);
+
+                // Token
+                if (url.username.len == 0 and url.password.len > 0) {
+                    registry.token = url.password;
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                } else if (url.username.len > 0 and url.password.len > 0) {
+                    registry.username = url.username;
+                    registry.password = url.password;
+
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                } else {
+                    // Do not include a trailing slash. There might be parameters at the end.
+                    registry.url = url.href;
+                }
+
+                return registry;
+            }
+
+            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
+                var registry = std.mem.zeroes(Api.NpmRegistry);
+
+                if (obj.get("url")) |url| {
+                    try this.expectString(url);
+                    const href = url.asString(this.allocator).?;
+                    // Do not include a trailing slash. There might be parameters at the end.
+                    registry.url = href;
+                }
+
+                if (obj.get("username")) |username| {
+                    try this.expectString(username);
+                    registry.username = username.asString(this.allocator).?;
+                }
+
+                if (obj.get("password")) |password| {
+                    try this.expectString(password);
+                    registry.password = password.asString(this.allocator).?;
+                }
+
+                if (obj.get("token")) |token| {
+                    try this.expectString(token);
+                    registry.token = token.asString(this.allocator).?;
+                }
+
+                return registry;
+            }
+
+            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+                switch (expr.data) {
+                    .e_string => |str| {
+                        return this.parseRegistryURLString(str);
+                    },
+                    .e_object => |obj| {
+                        return this.parseRegistryObject(obj);
+                    },
+                    else => {
+                        try this.addError(expr.loc, "Expected registry to be a URL string or an object");
+                        return std.mem.zeroes(Api.NpmRegistry);
+                    },
+                }
+            }
+        };
     };
 
     pub const NpmRegistryMap = struct {
-        /// scopes
-        scopes: []const []const u8,
-
-        /// registries
-        registries: []const NpmRegistry,
+        scopes: std.StringArrayHashMapUnmanaged(NpmRegistry) = .{},
 
         pub fn decode(reader: anytype) anyerror!NpmRegistryMap {
             var this = std.mem.zeroes(NpmRegistryMap);
@@ -2765,8 +2849,8 @@ pub const Api = struct {
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray([]const u8, this.scopes);
-            try writer.writeArray(NpmRegistry, this.registries);
+            try writer.writeArray([]const u8, this.scopes.keys());
+            try writer.writeArray(NpmRegistry, this.scopes.values());
         }
     };
 

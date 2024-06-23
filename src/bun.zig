@@ -1279,15 +1279,11 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    comptime {
-        var entries: [std.enums.values(T).len]struct { string, T } = undefined;
-        var i: usize = 0;
-        for (std.enums.values(T)) |value| {
-            entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
-            i += 1;
-        }
-        return ComptimeStringMap(T, entries);
+    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    for (std.enums.values(T), &entries) |value, *entry| {
+        entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
+    return ComptimeStringMap(T, entries);
 }
 
 /// Write 0's for every byte in Type

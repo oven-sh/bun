@@ -1,5 +1,6 @@
-
 #include "root.h"
+
+#include "JavaScriptCore/JSGlobalObject.h"
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/ObjectPrototype.h>
 #include "headers-handwritten.h"
@@ -223,7 +224,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
     for (unsigned i = 0; i < count; i++) {
         auto& cell = cells[i];
         JSValue value = toJS(vm, globalObject, cell);
-        RETURN_IF_EXCEPTION(scope, value);
+        RETURN_IF_EXCEPTION(scope, {});
         object->putDirectOffset(vm, i, value);
     }
 
@@ -232,16 +233,20 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned co
 
 static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject)
 {
+    JSValue value = toJS(structure, cells, count, globalObject);
+    if (value.isEmpty())
+        return {};
+
     if (array) {
-        array->push(globalObject, toJS(structure, cells, count, globalObject));
+        array->push(globalObject, value);
         return array;
     }
 
-    auto* newArray = JSC::constructEmptyArray(globalObject, nullptr);
+    auto* newArray = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), 1);
     if (!newArray)
         return {};
 
-    newArray->putDirectIndex(globalObject, 0, toJS(structure, cells, count, globalObject));
+    newArray->putDirectIndex(globalObject, 0, value);
     return newArray;
 }
 

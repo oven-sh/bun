@@ -85,18 +85,18 @@ if (!isCI) {
     expect((await sql`select 1`).command).toBe("SELECT");
   });
 
-  // t("Create table", async () => {
-  //   await sql`create table test(int int)`;
-  //   await sql`drop table test`;
-  // });
+  t("Create table", async () => {
+    await sql`create table test(int int)`;
+    await sql`drop table test`;
+  });
 
-  // t("Drop table", async () => {
-  //   await sql`create table test(int int)`;
-  //   await sql`drop table test`;
-  //   // Verify that table is dropped
-  //   const result = await sql`select * from pg_catalog.pg_tables where tablename = 'test'`;
-  //   expect(result).toBeArrayOfSize(0);
-  // });
+  t("Drop table", async () => {
+    await sql`create table test(int int)`;
+    await sql`drop table test`;
+    // Verify that table is dropped
+    const result = await sql`select * from pg_catalog.pg_tables where tablename = 'test'`;
+    expect(result).toBeArrayOfSize(0);
+  });
 
   t("null", async () => {
     expect((await sql`select ${null} as x`)[0].x).toBeNull();
@@ -182,15 +182,40 @@ if (!isCI) {
   //   expect(Object.keys((await sql`select 1 as ${sql('hej"hej')}`)[0])[0]).toBe('hej"hej');
   // });
 
-  t("null for int", async () => {
-    await sql`create table test (x int)`;
-    try {
-      const result = await sql`insert into test values(${null})`;
-      expect(result.count).toBe(1);
-    } finally {
-      await sql`drop table test`;
-    }
-  });
+  // t.only(
+  //   "big query body",
+  //   async () => {
+  //     await sql`create table test (x int)`;
+  //     const count = 1000;
+  //     const array = new Array(count);
+  //     for (let i = 0; i < count; i++) {
+  //       array[i] = i;
+  //     }
+  //     try {
+  //       expect((await sql`insert into test SELECT * from UNNEST(${array})`).count).toBe(count);
+  //     } finally {
+  //       await sql`drop table test`;
+  //     }
+  //   },
+  //   { timeout: 20 * 1000 },
+  // );
+
+  t(
+    "null for int",
+    async () => {
+      const result = await sql`create table test (x int)`;
+      expect(result.command).toBe("CREATE TABLE");
+      expect(result.count).toBe(0);
+      try {
+        const result = await sql`insert into test values(${null})`;
+        expect(result.command).toBe("INSERT");
+        expect(result.count).toBe(1);
+      } finally {
+        await sql`drop table test`;
+      }
+    },
+    Infinity,
+  );
 
   // t('Throws on illegal transactions', async() => {
   //   const sql = postgres({ ...options, max: 2, fetch_types: false })
@@ -381,9 +406,7 @@ if (!isCI) {
   //   return [null, (await sql`select * from (values ${ sql([undefined, undefined]) }) as x(x, y)`)[0].y]
   // })
 
-  // t('Null sets to null', async() =>
-  //   [null, (await sql`select ${ null } as x`)[0].x]
-  // )
+  t("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
 
   // Add code property.
   t.todo("Throw syntax error", async () => {
@@ -968,13 +991,6 @@ if (!isCI) {
   //   return ['postgres.js', (await sql`select 1`.then(() => sql.parameters.application_name))]
   // })
 
-  // t('big query body', { timeout: 2 }, async() => {
-  //   await sql`create table test (x int)`
-  //   return [50000, (await sql`insert into test ${
-  //     sql([...Array(50000).keys()].map(x => ({ x })))
-  //   }`).count, await sql`drop table test`]
-  // })
-
   // t('Throws if more than 65534 parameters', async() => {
   //   await sql`create table test (x int)`
   //   return ['MAX_PARAMETERS_EXCEEDED', (await sql`insert into test ${
@@ -982,11 +998,15 @@ if (!isCI) {
   //   }`.catch(e => e.code)), await sql`drop table test`]
   // })
 
-  // t('let postgres do implicit cast of unknown types', async() => {
-  //   await sql`create table test (x timestamp with time zone)`
-  //   const [{ x }] = await sql`insert into test values (${ new Date().toISOString() }) returning *`
-  //   return [true, x instanceof Date, await sql`drop table test`]
-  // })
+  t("let postgres do implicit cast of unknown types", async () => {
+    await sql`create table test (x timestamp with time zone)`;
+    try {
+      const [{ x }] = await sql`insert into test values (${new Date().toISOString()}) returning *`;
+      expect(x instanceof Date).toBe(true);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
   // t('only allows one statement', async() =>
   //   ['42601', await sql`select 1; select 2`.catch(e => e.code)]
@@ -1032,17 +1052,18 @@ if (!isCI) {
   //   return ['NOT_TAGGED_CALL', error]
   // })
 
-  // t('little bobby tables', async() => {
-  //   const name = 'Robert\'); DROP TABLE students;--'
+  t("little bobby tables", async () => {
+    const name = "Robert'); DROP TABLE students;--";
 
-  //   await sql`create table students (name text, age int)`
-  //   await sql`insert into students (name) values (${ name })`
+    try {
+      await sql`create table students (name text, age int)`;
+      await sql`insert into students (name) values (${name})`;
 
-  //   return [
-  //     name, (await sql`select name from students`)[0].name,
-  //     await sql`drop table students`
-  //   ]
-  // })
+      expect((await sql`select name from students`)[0].name).toBe(name);
+    } finally {
+      await sql`drop table students`;
+    }
+  });
 
   // t('Connection errors are caught using begin()', {
   //   timeout: 2

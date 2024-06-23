@@ -1,3 +1,15 @@
+const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
+
+const PublicArray = globalThis.Array;
+
+class SQLResultArray extends PublicArray {
+  static [Symbol.toStringTag] = "SQLResults";
+
+  statement;
+  command;
+  count;
+}
+
 const queryStatus_active = 1 << 1;
 const queryStatus_cancelled = 1 << 2;
 const queryStatus_error = 1 << 3;
@@ -135,9 +147,20 @@ class Query extends PublicPromise {
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 init(
-  function (query, result) {
+  function (query, result, commandTag, count) {
+    $assert(result instanceof SQLResultArray, "Invalid result array");
+    if (typeof commandTag === "string") {
+      if (commandTag.length > 0) {
+        result.command = commandTag;
+      }
+    } else {
+      result.command = cmds[commandTag];
+    }
+
+    result.count = count || 0;
+
     try {
-      query.resolve($isUndefinedOrNull(result) ? [] : result);
+      query.resolve(result);
     } catch (e) {
       console.log(e);
     }
@@ -296,7 +319,7 @@ function SQL(o) {
   }
 
   function connectedSQL(strings, values) {
-    return new Query(createQuery(normalizeStrings(strings), values), connectedHandler);
+    return new Query(createQuery(normalizeStrings(strings), values, new SQLResultArray()), connectedHandler);
   }
 
   function closedSQL(strings, values) {
@@ -304,7 +327,7 @@ function SQL(o) {
   }
 
   function pendingSQL(strings, values) {
-    return new Query(createQuery(normalizeStrings(strings), values), pendingConnectionHandler);
+    return new Query(createQuery(normalizeStrings(strings), values, new SQLResultArray()), pendingConnectionHandler);
   }
 
   function sql(strings, ...values) {

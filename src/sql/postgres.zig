@@ -4,11 +4,12 @@ const String = bun.String;
 const uws = bun.uws;
 const std = @import("std");
 const debug = bun.Output.scoped(.Postgres, false);
-const int32 = u32;
-const PostgresInt32 = int32;
+const int4 = u32;
+const PostgresInt32 = int4;
 const short = u16;
 const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
+const JSValue = JSC.JSValue;
 
 const Data = union(enum) {
     owned: bun.ByteList,
@@ -187,7 +188,7 @@ pub const protocol = struct {
 
             pub inline fn length(this: @This()) anyerror!LengthWriter {
                 const i = this.offset();
-                try this.int32(0);
+                try this.int4(0);
                 return LengthWriter{
                     .index = i,
                     .context = this,
@@ -202,11 +203,11 @@ pub const protocol = struct {
                 try pwriteFn(this.wrapped, data, i);
             }
 
-            pub fn int32(this: @This(), value: PostgresInt32) !void {
+            pub fn int4(this: @This(), value: PostgresInt32) !void {
                 try this.write(std.mem.asBytes(&@byteSwap(value)));
             }
 
-            pub fn sint32(this: @This(), value: i32) !void {
+            pub fn sint4(this: @This(), value: i32) !void {
                 try this.write(std.mem.asBytes(&@byteSwap(value)));
             }
 
@@ -234,12 +235,12 @@ pub const protocol = struct {
                     try this.write(&[_]u8{0});
             }
 
-            pub fn boolean(this: @This(), value: bool) !void {
+            pub fn @"bool"(this: @This(), value: bool) !void {
                 try this.write(if (value) "t" else "f");
             }
 
             pub fn @"null"(this: @This()) !void {
-                try this.int32(std.math.maxInt(PostgresInt32));
+                try this.int4(std.math.maxInt(PostgresInt32));
             }
 
             pub fn String(this: @This(), value: bun.String) !void {
@@ -473,7 +474,7 @@ pub const protocol = struct {
                 return actual == value;
             }
 
-            pub fn int32(this: @This()) !PostgresInt32 {
+            pub fn int4(this: @This()) !PostgresInt32 {
                 return this.int(PostgresInt32);
             }
 
@@ -572,7 +573,7 @@ pub const protocol = struct {
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             const message_length = try reader.length();
 
-            switch (try reader.int32()) {
+            switch (try reader.int4()) {
                 0 => {
                     if (message_length != 8) return error.InvalidMessageLength;
                     this.* = .{ .Ok = {} };
@@ -735,8 +736,8 @@ pub const protocol = struct {
             }
 
             this.* = .{
-                .process_id = @bitCast(try reader.int32()),
-                .secret_key = @bitCast(try reader.int32()),
+                .process_id = @bitCast(try reader.int4()),
+                .secret_key = @bitCast(try reader.int4()),
             };
         }
     };
@@ -771,7 +772,7 @@ pub const protocol = struct {
 
         pub const decode = decoderWrap(ErrorResponse, decodeInternal).decode;
 
-        pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: ErrorResponse, globalObject: *JSC.JSGlobalObject) JSValue {
             var b = bun.StringBuilder{};
             defer b.deinit(bun.default_allocator);
 
@@ -851,7 +852,7 @@ pub const protocol = struct {
     pub const Terminate = [_]u8{'X'} ++ toBytes(Int32(4));
 
     fn Int32(value: anytype) [4]u8 {
-        return @bitCast(@byteSwap(@as(int32, @intCast(value))));
+        return @bitCast(@byteSwap(@as(int4, @intCast(value))));
     }
 
     const toBytes = std.mem.toBytes;
@@ -897,7 +898,7 @@ pub const protocol = struct {
         }
     };
 
-    pub const null_int32 = 4294967295;
+    pub const null_int4 = 4294967295;
 
     pub const DataRow = struct {
         pub fn decode(context: anytype, comptime ContextType: type, reader: NewReader(ContextType), comptime forEach: fn (@TypeOf(context), index: u32, bytes: ?*Data) anyerror!bool) anyerror!void {
@@ -907,10 +908,10 @@ pub const protocol = struct {
             const remaining_fields: usize = @intCast(@max(try reader.short(), 0));
 
             for (0..remaining_fields) |index| {
-                const byte_length = try reader.int32();
+                const byte_length = try reader.int4();
                 switch (byte_length) {
                     0 => break,
-                    null_int32 => {
+                    null_int4 => {
                         if (!try forEach(context, @intCast(index), null)) break;
                     },
                     else => {
@@ -926,9 +927,9 @@ pub const protocol = struct {
 
     pub const FieldDescription = struct {
         name: Data = .{ .empty = {} },
-        table_oid: int32 = 0,
+        table_oid: int4 = 0,
         column_index: short = 0,
-        type_oid: int32 = 0,
+        type_oid: int4 = 0,
 
         pub fn typeTag(this: @This()) types.Tag {
             return @enumFromInt(@as(short, @truncate(this.type_oid)));
@@ -955,9 +956,9 @@ pub const protocol = struct {
             // Int16
             // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
             this.* = .{
-                .table_oid = try reader.int32(),
+                .table_oid = try reader.int4(),
                 .column_index = try reader.short(),
-                .type_oid = try reader.int32(),
+                .type_oid = try reader.int4(),
                 .name = .{ .owned = try name.toOwned() },
             };
 
@@ -1007,18 +1008,18 @@ pub const protocol = struct {
     };
 
     pub const ParameterDescription = struct {
-        parameters: []int32 = &[_]int32{},
+        parameters: []int4 = &[_]int4{},
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
             var remaining_bytes = try reader.length();
             remaining_bytes -|= 4;
 
             const count = try reader.short();
-            const parameters = try bun.default_allocator.alloc(int32, @intCast(@max(count, 0)));
+            const parameters = try bun.default_allocator.alloc(int4, @intCast(@max(count, 0)));
 
-            var data = try reader.read(@as(usize, @intCast(@max(count, 0))) * @sizeOf((int32)));
+            var data = try reader.read(@as(usize, @intCast(@max(count, 0))) * @sizeOf((int4)));
             defer data.deinit();
-            const input_params: []align(1) const int32 = toInt32Slice(int32, data.slice());
+            const input_params: []align(1) const int4 = toInt32Slice(int4, data.slice());
             for (input_params, parameters) |src, *dest| {
                 dest.* = @byteSwap(src);
             }
@@ -1037,7 +1038,7 @@ pub const protocol = struct {
     }
 
     pub const NotificationResponse = struct {
-        pid: int32 = 0,
+        pid: int4 = 0,
         channel: bun.ByteList = .{},
         payload: bun.ByteList = .{},
 
@@ -1051,7 +1052,7 @@ pub const protocol = struct {
             bun.assert(length >= 4);
 
             this.* = .{
-                .pid = try reader.int32(),
+                .pid = try reader.int4(),
                 .channel = (try reader.readZ()).toOwned(),
                 .payload = (try reader.readZ()).toOwned(),
             };
@@ -1083,7 +1084,7 @@ pub const protocol = struct {
     pub const Parse = struct {
         name: []const u8 = "",
         query: []const u8 = "",
-        params: []const int32 = &.{},
+        params: []const int4 = &.{},
 
         pub fn deinit(this: *Parse) void {
             _ = this;
@@ -1104,7 +1105,7 @@ pub const protocol = struct {
             try writer.string(this.query);
             try writer.short(parameters.len);
             for (parameters) |parameter| {
-                try writer.int32(parameter);
+                try writer.int4(parameter);
             }
         }
 
@@ -1196,7 +1197,7 @@ pub const protocol = struct {
             } ++ toBytes(Int32(count));
             try writer.write(&header);
             try writer.string(mechanism);
-            try writer.int32(@truncate(data.len));
+            try writer.int4(@truncate(data.len));
             try writer.write(data);
         }
 
@@ -1241,11 +1242,11 @@ pub const protocol = struct {
             const database = this.database.slice();
             const options = this.options.slice();
 
-            const count: usize = @sizeOf((int32)) + @sizeOf((int32)) + zFieldCount("user", user) + zFieldCount("database", database) + zFieldCount("client_encoding", "UTF8") + zFieldCount("", options) + 1;
+            const count: usize = @sizeOf((int4)) + @sizeOf((int4)) + zFieldCount("user", user) + zFieldCount("database", database) + zFieldCount("client_encoding", "UTF8") + zFieldCount("", options) + 1;
 
             const header = toBytes(Int32(@as(u32, @truncate(count))));
             try writer.write(&header);
-            try writer.int32(196608);
+            try writer.int4(196608);
 
             try writer.string("user");
             if (user.len > 0)
@@ -1285,7 +1286,7 @@ pub const protocol = struct {
     }
 
     pub const Execute = struct {
-        max_rows: int32 = 0,
+        max_rows: int4 = 0,
         p: PortalOrPreparedStatement,
 
         pub fn writeInternal(
@@ -1299,7 +1300,7 @@ pub const protocol = struct {
                 try writer.string(this.p.portal)
             else
                 try writer.write(&[_]u8{0});
-            try writer.int32(this.max_rows);
+            try writer.int4(this.max_rows);
             try length.write();
         }
 
@@ -1354,7 +1355,7 @@ pub const protocol = struct {
     };
 
     pub const NegotiateProtocolVersion = struct {
-        version: int32 = 0,
+        version: int4 = 0,
         unrecognized_options: std.ArrayListUnmanaged(String) = .{},
 
         pub fn decodeInternal(
@@ -1365,12 +1366,12 @@ pub const protocol = struct {
             const length = try reader.length();
             bun.assert(length >= 4);
 
-            const version = try reader.int32();
+            const version = try reader.int4();
             this.* = .{
                 .version = version,
             };
 
-            const unrecognized_options_count: u32 = @intCast(@max(try reader.int32(), 0));
+            const unrecognized_options_count: u32 = @intCast(@max(try reader.int4(), 0));
             try this.unrecognized_options.ensureTotalCapacity(bun.default_allocator, unrecognized_options_count);
             errdefer {
                 for (this.unrecognized_options.items) |*option| {
@@ -1414,7 +1415,7 @@ pub const protocol = struct {
         message: Data = .{ .empty = {} },
 
         pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
-            _ = try reader.int32();
+            _ = try reader.int4();
 
             const message = try reader.readZ();
             this.* = .{
@@ -1467,38 +1468,168 @@ pub const protocol = struct {
 };
 
 pub const types = struct {
+    //     select b.typname,  b.oid, b.typarray
+    //       from pg_catalog.pg_type a
+    //       left join pg_catalog.pg_type b on b.oid = a.typelem
+    //       where a.typcategory = 'A'
+    //       group by b.oid, b.typarray
+    //       order by b.oid
+    // ;
+    //                 typname                |  oid  | typarray
+    // ---------------------------------------+-------+----------
+    //  bool                                  |    16 |     1000
+    //  bytea                                 |    17 |     1001
+    //  char                                  |    18 |     1002
+    //  name                                  |    19 |     1003
+    //  int8                                  |    20 |     1016
+    //  int2                                  |    21 |     1005
+    //  int2vector                            |    22 |     1006
+    //  int4                                  |    23 |     1007
+    //  regproc                               |    24 |     1008
+    //  text                                  |    25 |     1009
+    //  oid                                   |    26 |     1028
+    //  tid                                   |    27 |     1010
+    //  xid                                   |    28 |     1011
+    //  cid                                   |    29 |     1012
+    //  oidvector                             |    30 |     1013
+    //  pg_type                               |    71 |      210
+    //  pg_attribute                          |    75 |      270
+    //  pg_proc                               |    81 |      272
+    //  pg_class                              |    83 |      273
+    //  json                                  |   114 |      199
+    //  xml                                   |   142 |      143
+    //  point                                 |   600 |     1017
+    //  lseg                                  |   601 |     1018
+    //  path                                  |   602 |     1019
+    //  box                                   |   603 |     1020
+    //  polygon                               |   604 |     1027
+    //  line                                  |   628 |      629
+    //  cidr                                  |   650 |      651
+    //  float4                                |   700 |     1021
+    //  float8                                |   701 |     1022
+    //  circle                                |   718 |      719
+    //  macaddr8                              |   774 |      775
+    //  money                                 |   790 |      791
+    //  macaddr                               |   829 |     1040
+    //  inet                                  |   869 |     1041
+    //  aclitem                               |  1033 |     1034
+    //  bpchar                                |  1042 |     1014
+    //  varchar                               |  1043 |     1015
+    //  date                                  |  1082 |     1182
+    //  time                                  |  1083 |     1183
+    //  timestamp                             |  1114 |     1115
+    //  timestamptz                           |  1184 |     1185
+    //  interval                              |  1186 |     1187
+    //  pg_database                           |  1248 |    12052
+    //  timetz                                |  1266 |     1270
+    //  bit                                   |  1560 |     1561
+    //  varbit                                |  1562 |     1563
+    //  numeric                               |  1700 |     1231
     pub const Tag = enum(short) {
-        boolean = 16,
-        boolean_array = 1000,
+        bool = 16,
         bytea = 17,
-        bytea_array = 1001,
-        double = 701,
-        double_array = 1022,
-        float = 700,
-        float_array = 1021,
-        int16 = 21,
-        int16_array = 1005,
-        int32 = 23,
-        int32_array = 1007,
-        int64 = 20,
+        char = 18,
+        name = 19,
+        int8 = 20,
+        int2 = 21,
+        int2vector = 22,
+        int4 = 23,
+        // regproc = 24,
+        text = 25,
+        // oid = 26,
+        // tid = 27,
+        // xid = 28,
+        // cid = 29,
+        // oidvector = 30,
+        // pg_type = 71,
+        // pg_attribute = 75,
+        // pg_proc = 81,
+        // pg_class = 83,
         json = 114,
-        name_array = 1003,
-        number = 0,
-        string = 25,
-        string_array = 1009,
-        time = 1082,
+        xml = 142,
+        point = 600,
+        lseg = 601,
+        path = 602,
+        box = 603,
+        polygon = 604,
+        line = 628,
+        cidr = 650,
+        float4 = 700,
+        float8 = 701,
+        circle = 718,
+        macaddr8 = 774,
+        money = 790,
+        macaddr = 829,
+        inet = 869,
+        aclitem = 1033,
+        bpchar = 1042,
+        varchar = 1043,
+        date = 1082,
+        time = 1083,
         timestamp = 1114,
         timestamptz = 1184,
+        interval = 1186,
+        pg_database = 1248,
         timetz = 1266,
-
-        /// numeric(precision, decimal), arbitrary precision number
+        bit = 1560,
+        varbit = 1562,
         numeric = 1700,
+        uuid = 2950,
+
+        bool_array = 1000,
+        bytea_array = 1001,
+        char_array = 1002,
+        name_array = 1003,
+        int8_array = 1016,
+        int2_array = 1005,
+        int2vector_array = 1006,
+        int4_array = 1007,
+        // regproc_array = 1008,
+        text_array = 1009,
+        oid_array = 1028,
+        tid_array = 1010,
+        xid_array = 1011,
+        cid_array = 1012,
+        // oidvector_array = 1013,
+        // pg_type_array = 210,
+        // pg_attribute_array = 270,
+        // pg_proc_array = 272,
+        // pg_class_array = 273,
+        json_array = 199,
+        xml_array = 143,
+        point_array = 1017,
+        lseg_array = 1018,
+        path_array = 1019,
+        box_array = 1020,
+        polygon_array = 1027,
+        line_array = 629,
+        cidr_array = 651,
+        float4_array = 1021,
+        float8_array = 1022,
+        circle_array = 719,
+        macaddr8_array = 775,
+        money_array = 791,
+        macaddr_array = 1040,
+        inet_array = 1041,
+        aclitem_array = 1034,
+        bpchar_array = 1014,
+        varchar_array = 1015,
+        date_array = 1182,
+        time_array = 1183,
+        timestamp_array = 1115,
+        timestamptz_array = 1185,
+        interval_array = 1187,
+        pg_database_array = 12052,
+        timetz_array = 1270,
+        bit_array = 1561,
+        varbit_array = 1563,
+        numeric_array = 1231,
         _,
 
         pub fn isBinaryFormatSupported(this: Tag) bool {
             return switch (this) {
-                // TODO: .int16_array, .double_array,
-                .int32_array, .float_array, .int32, .double, .float, .bytea, .number => true,
+                // TODO: .int2_array, .float8_array,
+                .int4_array, .float4_array, .int4, .float8, .float4, .bytea, .numeric => true,
 
                 else => false,
             };
@@ -1515,14 +1646,14 @@ pub const types = struct {
         fn PostgresBinarySingleDimensionArray(comptime T: type) type {
             return extern struct {
                 // struct array_int4 {
-                //   int32_t ndim; /* Number of dimensions */
-                //   int32_t _ign; /* offset for data, removed by libpq */
+                //   int4_t ndim; /* Number of dimensions */
+                //   int4_t _ign; /* offset for data, removed by libpq */
                 //   Oid elemtype; /* type of element in the array */
 
                 //   /* First dimension */
-                //   int32_t size; /* Number of elements */
-                //   int32_t index; /* Index of first element */
-                //   int32_t first_value; /* Beginning of integer data */
+                //   int4_t size; /* Number of elements */
+                //   int4_t index; /* Index of first element */
+                //   int4_t first_value; /* Beginning of integer data */
                 // };
 
                 ndim: i32,
@@ -1567,32 +1698,32 @@ pub const types = struct {
             };
         }
 
-        pub fn toJSTypedArrayType(comptime T: Tag) JSC.JSValue.JSType {
+        pub fn toJSTypedArrayType(comptime T: Tag) JSValue.JSType {
             return comptime switch (T) {
-                .int32_array => .Int32Array,
-                // .int16_array => .Uint16Array,
-                .float_array => .Float32Array,
-                // .double_array => .Float64Array,
+                .int4_array => .Int32Array,
+                // .int2_array => .Uint2Array,
+                .float4_array => .Float32Array,
+                // .float8_array => .Float64Array,
                 else => @compileError("TODO: not implemented"),
             };
         }
 
         pub fn byteArrayType(comptime T: Tag) type {
             return comptime switch (T) {
-                .int32_array => i32,
-                // .int16_array => i16,
-                .float_array => f32,
-                // .double_array => f64,
+                .int4_array => i32,
+                // .int2_array => i16,
+                .float4_array => f32,
+                // .float8_array => f64,
                 else => @compileError("TODO: not implemented"),
             };
         }
 
         pub fn unsignedByteArrayType(comptime T: Tag) type {
             return comptime switch (T) {
-                .int32_array => u32,
-                // .int16_array => u16,
-                .float_array => f32,
-                // .double_array => f64,
+                .int4_array => u32,
+                // .int2_array => u16,
+                .float4_array => f32,
+                // .float8_array => f64,
                 else => @compileError("TODO: not implemented"),
             };
         }
@@ -1606,22 +1737,22 @@ pub const types = struct {
             globalObject: *JSC.JSGlobalObject,
             comptime Type: type,
             value: Type,
-        ) anyerror!JSC.JSValue {
+        ) anyerror!JSValue {
             switch (tag) {
                 .numeric => {
-                    return number.toJS(globalObject, value);
+                    return numeric.toJS(globalObject, value);
                 },
 
-                .float, .double => {
-                    return number.toJS(globalObject, value);
+                .float4, .float8 => {
+                    return numeric.toJS(globalObject, value);
                 },
 
                 .json => {
                     return json.toJS(globalObject, value);
                 },
 
-                .boolean => {
-                    return boolean.toJS(globalObject, value);
+                .bool => {
+                    return @"bool".toJS(globalObject, value);
                 },
 
                 .timestamp, .timestamptz => {
@@ -1632,12 +1763,12 @@ pub const types = struct {
                     return bytea.toJS(globalObject, value);
                 },
 
-                .int64 => {
-                    return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
+                .int8 => {
+                    return JSValue.fromInt64NoTruncate(globalObject, value);
                 },
 
-                .int32 => {
-                    return number.toJS(globalObject, value);
+                .int4 => {
+                    return numeric.toJS(globalObject, value);
                 },
 
                 else => {
@@ -1650,19 +1781,19 @@ pub const types = struct {
             tag: Tag,
             globalObject: *JSC.JSGlobalObject,
             value: anytype,
-        ) anyerror!JSC.JSValue {
+        ) anyerror!JSValue {
             return toJSWithType(tag, globalObject, @TypeOf(value), value);
         }
 
-        pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) anyerror!Tag {
+        pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSValue) anyerror!Tag {
             if (value.isEmptyOrUndefinedOrNull()) {
-                return Tag.number;
+                return Tag.numeric;
             }
 
             if (value.isCell()) {
                 const tag = value.jsType();
                 if (tag.isStringLike()) {
-                    return .string;
+                    return .text;
                 }
 
                 if (tag == .JSDate) {
@@ -1670,11 +1801,14 @@ pub const types = struct {
                 }
 
                 if (tag.isTypedArray()) {
+                    if (tag == .Int32Array)
+                        return .int4_array;
+
                     return .bytea;
                 }
 
                 if (tag == .HeapBigInt) {
-                    return .int64;
+                    return .int8;
                 }
 
                 if (tag.isArrayLike() and value.getLength(globalObject) > 0) {
@@ -1702,18 +1836,18 @@ pub const types = struct {
             }
 
             if (value.isInt32()) {
-                return .int32;
+                return .int4;
             }
 
             if (value.isNumber()) {
-                return .double;
+                return .float8;
             }
 
             if (value.isBoolean()) {
-                return .boolean;
+                return .bool;
             }
 
-            return Tag.number;
+            return .numeric;
         }
     };
 
@@ -1725,7 +1859,7 @@ pub const types = struct {
             globalThis: *JSC.JSGlobalObject,
             comptime Type: type,
             value: Type,
-        ) anyerror!JSC.JSValue {
+        ) anyerror!JSValue {
             switch (comptime Type) {
                 [:0]u8, []u8, []const u8, [:0]const u8 => {
                     var str = String.fromUTF8(value);
@@ -1753,22 +1887,22 @@ pub const types = struct {
         pub fn toJS(
             globalThis: *JSC.JSGlobalObject,
             value: anytype,
-        ) !JSC.JSValue {
+        ) !JSValue {
             var str = try toJSWithType(globalThis, @TypeOf(value), value);
             defer str.deinit();
             return str.toJS(globalThis);
         }
     };
 
-    pub const number = struct {
+    pub const numeric = struct {
         pub const to = 0;
         pub const from = [_]short{ 21, 23, 26, 700, 701 };
 
         pub fn toJS(
             _: *JSC.JSGlobalObject,
             value: anytype,
-        ) anyerror!JSC.JSValue {
-            return JSC.JSValue.jsNumber(value);
+        ) anyerror!JSValue {
+            return JSValue.jsNumber(value);
         }
     };
 
@@ -1779,11 +1913,11 @@ pub const types = struct {
         pub fn toJS(
             globalObject: *JSC.JSGlobalObject,
             value: *Data,
-        ) anyerror!JSC.JSValue {
+        ) anyerror!JSValue {
             defer value.deinit();
             var str = bun.String.fromUTF8(value.slice());
             defer str.deref();
-            const parse_result = JSC.JSValue.parseJSON(str.toJS(globalObject), globalObject);
+            const parse_result = JSValue.parseJSON(str.toJS(globalObject), globalObject);
             if (parse_result.isAnyError()) {
                 globalObject.throwValue(parse_result);
                 return error.JSError;
@@ -1793,15 +1927,15 @@ pub const types = struct {
         }
     };
 
-    pub const boolean = struct {
+    pub const @"bool" = struct {
         pub const to = 16;
         pub const from = [_]short{16};
 
         pub fn toJS(
             _: *JSC.JSGlobalObject,
             value: bool,
-        ) anyerror!JSC.JSValue {
-            return JSC.JSValue.jsBoolean(value);
+        ) anyerror!JSValue {
+            return JSValue.jsBoolean(value);
         }
     };
 
@@ -1812,9 +1946,9 @@ pub const types = struct {
         pub fn toJS(
             globalObject: *JSC.JSGlobalObject,
             value: *Data,
-        ) anyerror!JSC.JSValue {
+        ) anyerror!JSValue {
             defer value.deinit();
-            return JSC.JSValue.fromDateString(globalObject, value.sliceZ().ptr);
+            return JSValue.fromDateString(globalObject, value.sliceZ().ptr);
         }
     };
 
@@ -1825,12 +1959,12 @@ pub const types = struct {
         pub fn toJS(
             globalObject: *JSC.JSGlobalObject,
             value: *Data,
-        ) anyerror!JSC.JSValue {
+        ) anyerror!JSValue {
             defer value.deinit();
 
             // var slice = value.slice()[@min(1, value.len)..];
             // _ = slice;
-            return JSC.JSValue.createBuffer(globalObject, value.slice(), null);
+            return JSValue.createBuffer(globalObject, value.slice(), null);
         }
     };
 };
@@ -1844,7 +1978,7 @@ pub const PostgresSQLContext = struct {
     onQueryResolveFn: JSC.Strong = .{},
     onQueryRejectFn: JSC.Strong = .{},
 
-    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var ctx = &globalObject.bunVM().rareData().postgresql_context;
         ctx.onQueryResolveFn.set(globalObject, callframe.argument(0));
         ctx.onQueryRejectFn.set(globalObject, callframe.argument(1));
@@ -1865,12 +1999,13 @@ pub const PostgresSQLQuery = struct {
     statement: ?*PostgresSQLStatement = null,
     query: bun.String = bun.String.empty,
     cursor_name: bun.String = bun.String.empty,
-    thisValue: JSC.JSValue = .undefined,
+    thisValue: JSValue = .undefined,
     target: JSC.Strong = JSC.Strong.init(),
     status: Status = Status.pending,
     is_done: bool = false,
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
     binary: bool = false,
+    pending_value: JSC.Strong = .{},
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLQuery;
 
@@ -1898,6 +2033,7 @@ pub const PostgresSQLQuery = struct {
         this.query.deref();
         this.cursor_name.deref();
         this.target.deinit();
+        this.pending_value.deinit();
 
         bun.default_allocator.destroy(this);
     }
@@ -1925,20 +2061,26 @@ pub const PostgresSQLQuery = struct {
         defer this.deref();
 
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        const targetValue = this.target.trySwap() orelse JSValue.zero;
         if (thisValue == .zero or targetValue == .zero) {
             return;
         }
 
-        var vm = JSC.VirtualMachine.get();
+        const vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSC.JSValue{targetValue});
+        const event_loop = vm.eventLoop();
+        event_loop.runCallback(function, globalObject, thisValue, &.{
+            targetValue,
+            this.pending_value.trySwap() orelse .undefined,
+            JSValue.jsNumber(0),
+            JSValue.jsNumber(0),
+        });
     }
     pub fn onWriteFail(this: *@This(), err: anyerror, globalObject: *JSC.JSGlobalObject) void {
         this.status = .fail;
-
+        this.pending_value.deinit();
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        const targetValue = this.target.trySwap() orelse JSValue.zero;
         if (thisValue == .zero or targetValue == .zero) {
             return;
         }
@@ -1946,9 +2088,13 @@ pub const PostgresSQLQuery = struct {
         const instance = globalObject.createTypeErrorInstance("Failed to bind query: {s}", .{@errorName(err)});
 
         // TODO: error handling
-        var vm = JSC.VirtualMachine.get();
+        const vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSC.JSValue{ targetValue, instance });
+        const event_loop = vm.eventLoop();
+        event_loop.runCallback(function, globalObject, thisValue, &.{
+            targetValue,
+            instance,
+        });
     }
 
     pub fn onError(this: *@This(), err: protocol.ErrorResponse, globalObject: *JSC.JSGlobalObject) void {
@@ -1956,7 +2102,7 @@ pub const PostgresSQLQuery = struct {
         defer this.deref();
 
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        const targetValue = this.target.trySwap() orelse JSValue.zero;
         if (thisValue == .zero or targetValue == .zero) {
             return;
         }
@@ -1964,24 +2110,130 @@ pub const PostgresSQLQuery = struct {
         // TODO: error handling
         var vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryRejectFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSC.JSValue{ targetValue, err.toJS(globalObject) });
+        globalObject.queueMicrotask(function, &[_]JSValue{ targetValue, err.toJS(globalObject) });
     }
 
-    pub fn onSuccess(this: *@This(), _: []const u8, globalObject: *JSC.JSGlobalObject) void {
+    const CommandTag = union(enum) {
+        // For an INSERT command, the tag is INSERT oid rows, where rows is the
+        // number of rows inserted. oid used to be the object ID of the inserted
+        // row if rows was 1 and the target table had OIDs, but OIDs system
+        // columns are not supported anymore; therefore oid is always 0.
+        INSERT: u64,
+        // For a DELETE command, the tag is DELETE rows where rows is the number
+        // of rows deleted.
+        DELETE: u64,
+        // For an UPDATE command, the tag is UPDATE rows where rows is the
+        // number of rows updated.
+        UPDATE: u64,
+        // For a MERGE command, the tag is MERGE rows where rows is the number
+        // of rows inserted, updated, or deleted.
+        MERGE: u64,
+        // For a SELECT or CREATE TABLE AS command, the tag is SELECT rows where
+        // rows is the number of rows retrieved.
+        SELECT: u64,
+        // For a MOVE command, the tag is MOVE rows where rows is the number of
+        // rows the cursor's position has been changed by.
+        MOVE: u64,
+        // For a FETCH command, the tag is FETCH rows where rows is the number
+        // of rows that have been retrieved from the cursor.
+        FETCH: u64,
+        // For a COPY command, the tag is COPY rows where rows is the number of
+        // rows copied. (Note: the row count appears only in PostgreSQL 8.2 and
+        // later.)
+        COPY: u64,
+
+        other: []const u8,
+
+        pub fn toJSTag(this: CommandTag, globalObject: *JSC.JSGlobalObject) JSValue {
+            return switch (this) {
+                .INSERT => JSValue.jsNumber(1),
+                .DELETE => JSValue.jsNumber(2),
+                .UPDATE => JSValue.jsNumber(3),
+                .MERGE => JSValue.jsNumber(4),
+                .SELECT => JSValue.jsNumber(5),
+                .MOVE => JSValue.jsNumber(6),
+                .FETCH => JSValue.jsNumber(7),
+                .COPY => JSValue.jsNumber(8),
+                .other => |tag| JSC.ZigString.init(tag).toValueGC(globalObject),
+            };
+        }
+
+        pub fn toJSNumber(this: CommandTag) JSValue {
+            return switch (this) {
+                .other => JSValue.jsNumber(0),
+                inline else => |val| JSValue.jsNumber(val),
+            };
+        }
+
+        const KnownCommand = enum {
+            INSERT,
+            DELETE,
+            UPDATE,
+            MERGE,
+            SELECT,
+            MOVE,
+            FETCH,
+            COPY,
+
+            pub const Map = bun.ComptimeEnumMap(KnownCommand);
+        };
+
+        pub fn init(tag: []const u8) CommandTag {
+            const first_space_index = bun.strings.indexOfChar(tag, ' ') orelse return .{ .other = tag };
+            const cmd = KnownCommand.Map.get(tag[0..first_space_index]) orelse return .{
+                .other = tag,
+            };
+
+            const number = brk: {
+                switch (cmd) {
+                    .INSERT => {
+                        var remaining = tag[@min(first_space_index + 1, tag.len)..];
+                        const second_space = bun.strings.indexOfChar(remaining, ' ') orelse return .{ .other = tag };
+                        remaining = remaining[@min(second_space + 1, remaining.len)..];
+                        break :brk std.fmt.parseInt(u64, remaining, 0) catch |err| {
+                            debug("CommandTag failed to parse number: {s}", .{@errorName(err)});
+                            return .{ .other = tag };
+                        };
+                    },
+                    else => {
+                        const after_tag = tag[@min(first_space_index + 1, tag.len)..];
+                        break :brk std.fmt.parseInt(u64, after_tag, 0) catch |err| {
+                            debug("CommandTag failed to parse number: {s}", .{@errorName(err)});
+                            return .{ .other = tag };
+                        };
+                    },
+                }
+            };
+
+            switch (cmd) {
+                inline else => |t| return @unionInit(CommandTag, @tagName(t), number),
+            }
+        }
+    };
+
+    pub fn onSuccess(this: *@This(), command_tag_str: []const u8, globalObject: *JSC.JSGlobalObject) void {
         this.status = .success;
         defer this.deref();
 
         const thisValue = this.thisValue;
-        const targetValue = this.target.trySwap() orelse JSC.JSValue.zero;
+        const targetValue = this.target.trySwap() orelse JSValue.zero;
         if (thisValue == .zero or targetValue == .zero) {
+            this.pending_value.deinit();
             return;
         }
 
-        const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.undefined;
-        pending_value.ensureStillAlive();
-        var vm = JSC.VirtualMachine.get();
+        const tag = CommandTag.init(command_tag_str);
+
+        const vm = JSC.VirtualMachine.get();
         const function = vm.rareData().postgresql_context.onQueryResolveFn.get().?;
-        globalObject.queueMicrotask(function, &[_]JSC.JSValue{ targetValue, pending_value });
+        const event_loop = vm.eventLoop();
+
+        event_loop.runCallback(function, globalObject, thisValue, &.{
+            targetValue,
+            this.pending_value.trySwap() orelse .undefined,
+            tag.toJSTag(globalObject),
+            tag.toJSNumber(),
+        });
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLQuery {
@@ -1995,8 +2247,8 @@ pub const PostgresSQLQuery = struct {
         return @sizeOf(PostgresSQLQuery);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        const arguments = callframe.arguments(2).slice();
+    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const arguments = callframe.arguments(3).slice();
         const query = arguments[0];
         const values = arguments[1];
 
@@ -2010,6 +2262,12 @@ pub const PostgresSQLQuery = struct {
             return .zero;
         }
 
+        const pending_value = arguments[2];
+        if (!pending_value.jsType().isArrayLike()) {
+            globalThis.throwInvalidArgumentType("query", "pendingValue", "Array");
+            return .zero;
+        }
+
         var ptr = bun.default_allocator.create(PostgresSQLQuery) catch |err| {
             globalThis.throwError(err, "failed to allocate query");
             return .zero;
@@ -2017,7 +2275,6 @@ pub const PostgresSQLQuery = struct {
 
         const this_value = ptr.toJS(globalThis);
         this_value.ensureStillAlive();
-        PostgresSQLQuery.bindingSetCached(this_value, globalThis, values);
 
         ptr.* = .{
             .query = query.toBunString(globalThis),
@@ -2025,28 +2282,25 @@ pub const PostgresSQLQuery = struct {
         };
         ptr.query.ref();
 
+        PostgresSQLQuery.bindingSetCached(this_value, globalThis, values);
+        PostgresSQLQuery.pendingValueSetCached(this_value, globalThis, pending_value);
+        ptr.pending_value.set(globalThis, pending_value);
+
         return this_value;
     }
 
-    pub fn push(this: *PostgresSQLQuery, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        const thisValue = this.thisValue;
-        var pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse JSC.JSValue.zero;
-        if (pending_value.isEmptyOrUndefinedOrNull()) {
-            pending_value = JSC.JSValue.createEmptyArray(globalThis, 1);
-            pending_value.putIndex(globalThis, 0, value);
-            PostgresSQLQuery.pendingValueSetCached(thisValue, globalThis, pending_value);
-        } else {
-            pending_value.push(globalThis, value);
-        }
+    pub fn push(this: *PostgresSQLQuery, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+        var pending_value = this.pending_value.get() orelse return;
+        pending_value.push(globalThis, value);
     }
 
-    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         _ = globalObject;
         this.is_done = true;
         return .undefined;
     }
 
-    pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var arguments_ = callframe.arguments(2);
         const arguments = arguments_.slice();
         var connection = arguments[0].as(PostgresSQLConnection) orelse {
@@ -2059,6 +2313,7 @@ pub const PostgresSQLQuery = struct {
             globalObject.throwInvalidArgumentType("run", "query", "Query");
             return .zero;
         }
+
         this.target.set(globalObject, query);
         const binding_value = PostgresSQLQuery.bindingGetCached(callframe.this()) orelse .zero;
         var query_str = this.query.toUTF8(bun.default_allocator);
@@ -2145,7 +2400,7 @@ pub const PostgresSQLQuery = struct {
         return .undefined;
     }
 
-    pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -2165,7 +2420,7 @@ pub const PostgresRequest = struct {
         name: []const u8,
         cursor_name: bun.String,
         globalObject: *JSC.JSGlobalObject,
-        values_array: JSC.JSValue,
+        values_array: JSValue,
         result_fields: []const protocol.FieldDescription,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
@@ -2207,7 +2462,7 @@ pub const PostgresRequest = struct {
                 debug("  -> NULL", .{});
                 //  As a special case, -1 indicates a
                 // NULL parameter value. No value bytes follow in the NULL case.
-                try writer.int32(@bitCast(@as(i32, -1)));
+                try writer.int4(@bitCast(@as(i32, -1)));
                 continue;
             }
 
@@ -2225,9 +2480,9 @@ pub const PostgresRequest = struct {
                     try writer.write(slice.slice());
                     try l.writeExcludingSelf();
                 },
-                .boolean => {
+                .bool => {
                     const l = try writer.length();
-                    try writer.boolean(value.toBoolean());
+                    try writer.bool(value.toBoolean());
                     try l.writeExcludingSelf();
                 },
                 .time, .timestamp, .timestamptz => {
@@ -2248,12 +2503,17 @@ pub const PostgresRequest = struct {
                     try writer.write(bytes);
                     try l.writeExcludingSelf();
                 },
-                .int32 => {
+                .int4 => {
                     const l = try writer.length();
-                    try writer.int32(@bitCast(value.coerceToInt32(globalObject)));
+                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
                     try l.writeExcludingSelf();
                 },
-                .double => {
+                .int4_array => {
+                    const l = try writer.length();
+                    try writer.int4(@bitCast(value.coerceToInt32(globalObject)));
+                    try l.writeExcludingSelf();
+                },
+                .float8 => {
                     const l = try writer.length();
                     try writer.f64(@bitCast(value.coerceToDouble(globalObject)));
                     try l.writeExcludingSelf();
@@ -2295,7 +2555,7 @@ pub const PostgresRequest = struct {
     pub fn writeQuery(
         query: []const u8,
         name: []const u8,
-        params: []const int32,
+        params: []const int4,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
     ) !void {
@@ -2323,7 +2583,7 @@ pub const PostgresRequest = struct {
     pub fn prepareAndQueryWithSignature(
         globalObject: *JSC.JSGlobalObject,
         query: []const u8,
-        array_value: JSC.JSValue,
+        array_value: JSValue,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
         signature: *Signature,
@@ -2344,7 +2604,7 @@ pub const PostgresRequest = struct {
     pub fn prepareAndQuery(
         globalObject: *JSC.JSGlobalObject,
         query: bun.String,
-        array_value: JSC.JSValue,
+        array_value: JSValue,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
     ) !Signature {
@@ -2363,7 +2623,7 @@ pub const PostgresRequest = struct {
     pub fn bindAndExecute(
         globalObject: *JSC.JSGlobalObject,
         statement: *PostgresSQLStatement,
-        array_value: JSC.JSValue,
+        array_value: JSValue,
         comptime Context: type,
         writer: protocol.NewWriter(Context),
     ) !void {
@@ -2437,7 +2697,7 @@ pub const PostgresSQLConnection = struct {
 
     statements: PreparedStatementsMap,
     pending_activity_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-    js_value: JSC.JSValue = JSC.JSValue.undefined,
+    js_value: JSValue = JSValue.undefined,
 
     is_ready_for_query: bool = false,
 
@@ -2588,7 +2848,7 @@ pub const PostgresSQLConnection = struct {
                 if (on_connect == .zero) return;
                 const js_value = this.js_value;
                 js_value.ensureStillAlive();
-                this.globalObject.queueMicrotask(on_connect, &[_]JSC.JSValue{ JSC.JSValue.jsNull(), js_value });
+                this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ JSValue.jsNull(), js_value });
                 this.poll_ref.unref(this.globalObject.bunVM());
                 this.updateHasPendingActivity();
             },
@@ -2625,7 +2885,7 @@ pub const PostgresSQLConnection = struct {
         _ = on_close.callWithThis(
             this.globalObject,
             this.js_value,
-            &[_]JSC.JSValue{
+            &[_]JSValue{
                 instance,
             },
         );
@@ -2757,7 +3017,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(9).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
@@ -2909,13 +3169,13 @@ pub const PostgresSQLConnection = struct {
         this.ref_count += 1;
     }
 
-    pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         this.poll_ref.ref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
         return .undefined;
     }
 
-    pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         this.poll_ref.unref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
         return .undefined;
@@ -2931,7 +3191,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         _ = globalObject;
         this.disconnect();
         this.write_buffer.deinit(bun.default_allocator);
@@ -3054,10 +3314,10 @@ pub const PostgresSQLConnection = struct {
         pub const Tag = enum(u8) {
             null = 0,
             string = 1,
-            double = 2,
-            int32 = 3,
-            int64 = 4,
-            boolean = 5,
+            float8 = 2,
+            int4 = 3,
+            int8 = 4,
+            bool = 5,
             date = 6,
             bytea = 7,
             json = 8,
@@ -3068,10 +3328,10 @@ pub const PostgresSQLConnection = struct {
         pub const Value = extern union {
             null: u8,
             string: bun.WTF.StringImpl,
-            double: f64,
-            int32: i32,
-            int64: i64,
-            boolean: u8,
+            float8: f64,
+            int4: i32,
+            int8: i64,
+            bool: u8,
             date: f64,
             bytea: [2]usize,
             json: bun.WTF.StringImpl,
@@ -3093,7 +3353,7 @@ pub const PostgresSQLConnection = struct {
             ptr: ?[*]u8 = null,
             len: u32,
             byte_len: u32,
-            type: JSC.JSValue.JSType,
+            type: JSValue.JSType,
 
             pub fn slice(this: *TypedArray) []u8 {
                 const ptr = this.ptr orelse return &.{};
@@ -3135,17 +3395,17 @@ pub const PostgresSQLConnection = struct {
             }
         }
 
-        pub fn fromBytes(binary: bool, oid: int32, bytes: []const u8, globalObject: *JSC.JSGlobalObject) anyerror!DataCell {
+        pub fn fromBytes(binary: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) anyerror!DataCell {
             switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
-                // TODO: .int16_array, .double_array
-                inline .int32_array, .float_array => |tag| {
+                // TODO: .int2_array, .float8_array
+                inline .int4_array, .float4_array => |tag| {
                     if (binary) {
                         if (bytes.len < 16) {
                             return error.InvalidBinaryData;
                         }
                         // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
-                        const dimensions_raw: int32 = @bitCast(bytes[0..4].*);
-                        const contains_nulls: int32 = @bitCast(bytes[4..8].*);
+                        const dimensions_raw: int4 = @bitCast(bytes[0..4].*);
+                        const contains_nulls: int4 = @bitCast(bytes[4..8].*);
 
                         const dimensions = @byteSwap(dimensions_raw);
                         if (dimensions > 1) {
@@ -3189,34 +3449,34 @@ pub const PostgresSQLConnection = struct {
                         return fromBytes(false, @intFromEnum(types.Tag.bytea), bytes, globalObject);
                     }
                 },
-                .int32 => {
+                .int4 => {
                     if (binary) {
-                        return DataCell{ .tag = .int32, .value = .{ .int32 = try parseBinary(.int32, i32, bytes) } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = try parseBinary(.int4, i32, bytes) } };
                     } else {
-                        return DataCell{ .tag = .int32, .value = .{ .int32 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
+                        return DataCell{ .tag = .int4, .value = .{ .int4 = bun.fmt.parseInt(i32, bytes, 0) catch 0 } };
                     }
                 },
-                .double => {
+                .float8 => {
                     if (binary and bytes.len == 8) {
-                        return DataCell{ .tag = .double, .value = .{ .double = try parseBinary(.double, f64, bytes) } };
+                        return DataCell{ .tag = .float8, .value = .{ .float8 = try parseBinary(.float8, f64, bytes) } };
                     } else {
-                        const double: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
-                        return DataCell{ .tag = .double, .value = .{ .double = double } };
+                        const float8: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
+                        return DataCell{ .tag = .float8, .value = .{ .float8 = float8 } };
                     }
                 },
-                .float => {
+                .float4 => {
                     if (binary and bytes.len == 4) {
-                        return DataCell{ .tag = .double, .value = .{ .double = try parseBinary(.float, f32, bytes) } };
+                        return DataCell{ .tag = .float8, .value = .{ .float8 = try parseBinary(.float4, f32, bytes) } };
                     } else {
-                        const float: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
-                        return DataCell{ .tag = .double, .value = .{ .double = float } };
+                        const float4: f64 = bun.parseDouble(bytes) catch std.math.nan(f64);
+                        return DataCell{ .tag = .float8, .value = .{ .float8 = float4 } };
                     }
                 },
                 .json => {
                     return DataCell{ .tag = .json, .value = .{ .json = String.createUTF8(bytes).value.WTFStringImpl }, .free_value = 1 };
                 },
-                .boolean => {
-                    return DataCell{ .tag = .boolean, .value = .{ .boolean = @intFromBool(bytes.len > 0 and bytes[0] == 't') } };
+                .bool => {
+                    return DataCell{ .tag = .bool, .value = .{ .bool = @intFromBool(bytes.len > 0 and bytes[0] == 't') } };
                 },
                 .time, .timestamp, .timestamptz => {
                     var str = bun.String.init(bytes);
@@ -3282,15 +3542,15 @@ pub const PostgresSQLConnection = struct {
 
         pub fn parseBinary(comptime tag: types.Tag, comptime ReturnType: type, bytes: []const u8) anyerror!ReturnType {
             switch (comptime tag) {
-                .double => {
-                    return @as(f64, @bitCast(try parseBinary(.int64, i64, bytes)));
+                .float8 => {
+                    return @as(f64, @bitCast(try parseBinary(.int8, i64, bytes)));
                 },
-                .int64 => {
+                .int8 => {
                     // pq_getmsgfloat8
                     if (bytes.len != 8) return error.InvalidBinaryData;
                     return @byteSwap(@as(i64, @bitCast(bytes[0..8].*)));
                 },
-                .int32 => {
+                .int4 => {
                     // pq_getmsgint
                     switch (bytes.len) {
                         1 => {
@@ -3307,7 +3567,7 @@ pub const PostgresSQLConnection = struct {
                         },
                     }
                 },
-                .int16 => {
+                .int2 => {
                     // pq_getmsgint
                     switch (bytes.len) {
                         1 => {
@@ -3321,9 +3581,9 @@ pub const PostgresSQLConnection = struct {
                         },
                     }
                 },
-                .float => {
+                .float4 => {
                     // pq_getmsgfloat4
-                    return @as(f32, @bitCast(try parseBinary(.int32, i32, bytes)));
+                    return @as(f32, @bitCast(try parseBinary(.int4, i32, bytes)));
                 },
                 else => @compileError("TODO"),
             }
@@ -3336,8 +3596,8 @@ pub const PostgresSQLConnection = struct {
             count: usize = 0,
             globalObject: *JSC.JSGlobalObject,
 
-            extern fn JSC__constructObjectFromDataCell(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, [*]DataCell, u32) JSC.JSValue;
-            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSC.JSValue, structure: JSC.JSValue) JSC.JSValue {
+            extern fn JSC__constructObjectFromDataCell(*JSC.JSGlobalObject, JSValue, JSValue, [*]DataCell, u32) JSValue;
+            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue) JSValue {
                 return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len));
             }
 
@@ -3489,7 +3749,7 @@ pub const PostgresSQLConnection = struct {
                 this.is_ready_for_query = true;
                 this.socket.setTimeout(300);
 
-                if (try this.advance()) {
+                if (try this.advance() or this.is_ready_for_query) {
                     this.flushData();
                 }
             },
@@ -3516,7 +3776,11 @@ pub const PostgresSQLConnection = struct {
             .ParseComplete => {
                 try reader.eatMessage(protocol.ParseComplete);
                 const request = this.current() orelse return error.ExpectedRequest;
-                _ = request;
+                if (request.statement) |statement| {
+                    if (statement.status == .parsing) {
+                        statement.status = .prepared;
+                    }
+                }
             },
             .ParameterDescription => {
                 var description: protocol.ParameterDescription = undefined;
@@ -3524,9 +3788,6 @@ pub const PostgresSQLConnection = struct {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 statement.parameters = description.parameters;
-                if (statement.status == .parsing) {
-                    statement.status = .prepared;
-                }
             },
             .RowDescription => {
                 var description: protocol.RowDescription = undefined;
@@ -3672,11 +3933,6 @@ pub const PostgresSQLConnection = struct {
                 var request = this.current() orelse return error.ExpectedRequest;
                 if (request.status == .binding) {
                     request.status = .running;
-                } else {
-                    _ = this.requests.discard(1);
-                    this.updateRef();
-
-                    request.onNoData(this.globalObject);
                 }
             },
             .BackendKeyData => {
@@ -3698,7 +3954,7 @@ pub const PostgresSQLConnection = struct {
                     if (on_connect == .zero) return;
                     const js_value = this.js_value;
                     js_value.ensureStillAlive();
-                    this.globalObject.queueMicrotask(on_connect, &[_]JSC.JSValue{ err.toJS(this.globalObject), js_value });
+                    this.globalObject.queueMicrotask(on_connect, &[_]JSValue{ err.toJS(this.globalObject), js_value });
 
                     // it shouldn't enqueue any requests while connecting
                     bun.assert(this.requests.count == 0);
@@ -3782,7 +4038,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -3790,7 +4046,7 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -3798,8 +4054,8 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.status == Status.connected);
+    pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return JSValue.jsBoolean(this.status == Status.connected);
     }
 };
 
@@ -3807,7 +4063,7 @@ pub const PostgresSQLStatement = struct {
     cached_structure: JSC.Strong = .{},
     ref_count: u32 = 1,
     fields: []const protocol.FieldDescription = &[_]protocol.FieldDescription{},
-    parameters: []const int32 = &[_]int32{},
+    parameters: []const int4 = &[_]int4{},
     signature: Signature,
     status: Status = Status.parsing,
     error_response: protocol.ErrorResponse = .{},
@@ -3847,7 +4103,7 @@ pub const PostgresSQLStatement = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn structure(this: *PostgresSQLStatement, owner: JSC.JSValue, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
         return this.cached_structure.get() orelse {
             const names = bun.default_allocator.alloc(bun.String, this.fields.len) catch return .undefined;
             defer {
@@ -3872,7 +4128,7 @@ pub const PostgresSQLStatement = struct {
 };
 
 const Signature = struct {
-    fields: []const int32,
+    fields: []const int4,
     name: []const u8,
     query: []const u8,
 
@@ -3889,8 +4145,8 @@ const Signature = struct {
         return hasher.final();
     }
 
-    pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSC.JSValue) !Signature {
-        var fields = std.ArrayList(int32).init(bun.default_allocator);
+    pub fn generate(globalObject: *JSC.JSGlobalObject, query: []const u8, array_value: JSValue) !Signature {
+        var fields = std.ArrayList(int4).init(bun.default_allocator);
         var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
 
         name.appendSliceAssumeCapacity(query);
@@ -3913,17 +4169,19 @@ const Signature = struct {
             try fields.append(@intFromEnum(tag));
 
             switch (tag) {
-                .int32 => try name.appendSlice(".int32"),
-                .double => try name.appendSlice(".double"),
-                .float => try name.appendSlice(".float"),
-                .number => try name.appendSlice(".number"),
+                .int8 => try name.appendSlice(".int8"),
+                .int4 => try name.appendSlice(".int4"),
+                // .int4_array => try name.appendSlice(".int4_array"),
+                .int2 => try name.appendSlice(".int2"),
+                .float8 => try name.appendSlice(".float8"),
+                .float4 => try name.appendSlice(".float4"),
+                .numeric => try name.appendSlice(".numeric"),
                 .json => try name.appendSlice(".json"),
-                .boolean => try name.appendSlice(".boolean"),
+                .bool => try name.appendSlice(".bool"),
                 .timestamp => try name.appendSlice(".timestamp"),
                 .timestamptz => try name.appendSlice(".timestamptz"),
                 .time => try name.appendSlice(".time"),
                 .bytea => try name.appendSlice(".bytea"),
-                .int64 => try name.appendSlice(".int64"),
                 else => try name.appendSlice(".string"),
             }
         }
@@ -3936,8 +4194,8 @@ const Signature = struct {
     }
 };
 
-pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const binding = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
+pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSValue {
+    const binding = JSValue.createEmptyObjectWithNullPrototype(globalObject);
     binding.put(globalObject, ZigString.static("PostgresSQLConnection"), PostgresSQLConnection.getConstructor(globalObject));
     binding.put(globalObject, ZigString.static("init"), JSC.JSFunction.create(globalObject, "init", PostgresSQLContext.init, 0, .{}));
     binding.put(

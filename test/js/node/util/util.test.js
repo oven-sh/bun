@@ -327,7 +327,7 @@ describe("util", () => {
   });
 
   it("styleText", () => {
-    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}, []].forEach(invalidOption => {
+    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}].forEach(invalidOption => {
       assert.throws(
         () => {
           util.styleText(invalidOption, "test");
@@ -356,5 +356,18 @@ describe("util", () => {
     );
 
     assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+
+    assert.strictEqual(util.styleText(["red", "bold"], "test"), "\x1B[31m\x1B[1mtest\x1B[22m\x1B[39m");
+
+    assert.strictEqual(util.styleText([], "test"), "test");
+
+    assert.throws(
+      () => {
+        util.styleText(["invalid", "bold"], "test");
+      },
+      {
+        code: "ERR_INVALID_ARG_VALUE",
+      },
+    );
   });
 });

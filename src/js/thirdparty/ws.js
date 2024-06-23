@@ -160,10 +160,12 @@ class BunWebSocket extends EventEmitter {
     try {
       this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {
+      // Node.js APIs expect callback arguments to be called after the current stack pops
       typeof cb === "function" && process.nextTick(cb, error);
       return;
     }
     // deviation: this should be called once the data is written, not immediately
+    // Node.js APIs expect callback arguments to be called after the current stack pops
     typeof cb === "function" && process.nextTick(cb, null);
   }
 

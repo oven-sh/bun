@@ -86,7 +86,7 @@ const Crypto = @import("../sha.zig").Hashers;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
 
-const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
+const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 pub const NameHashMap = std.ArrayHashMapUnmanaged(PackageNameHash, String, ArrayIdentityContext.U64, false);
 pub const TrustedDependenciesSet = std.ArrayHashMapUnmanaged(TruncatedPackageNameHash, void, ArrayIdentityContext, false);
@@ -714,17 +714,28 @@ pub fn maybeCloneFilteringRootPackages(
     exact_versions: bool,
     comptime log_level: PackageManager.Options.LogLevel,
 ) !*Lockfile {
-    const old_root_dependencies_list = old.packages.items(.dependencies)[0];
-    var old_root_resolutions = old.packages.items(.resolutions)[0];
-    const root_dependencies = old_root_dependencies_list.get(old.buffers.dependencies.items);
-    const resolutions = old_root_resolutions.mut(old.buffers.resolutions.items);
+    const old_packages = old.packages.slice();
+    const old_dependencies_lists = old_packages.items(.dependencies);
+    const old_resolutions_lists = old_packages.items(.resolutions);
+    const old_resolutions = old_packages.items(.resolution);
     var any_changes = false;
-    const end = @as(PackageID, @truncate(old.packages.len));
+    const end: PackageID = @truncate(old.packages.len);
 
-    for (root_dependencies, resolutions) |dependency, *resolution| {
-        if (!dependency.behavior.isEnabled(features) and resolution.* < end) {
-            resolution.* = invalid_package_id;
-            any_changes = true;
+    // set all disabled dependencies of workspaces to `invalid_package_id`
+    for (0..end) |package_id| {
+        if (package_id != 0 and old_resolutions[package_id].tag != .workspace) continue;
+
+        const old_workspace_dependencies_list = old_dependencies_lists[package_id];
+        var old_workspace_resolutions_list = old_resolutions_lists[package_id];
+
+        const old_workspace_dependencies = old_workspace_dependencies_list.get(old.buffers.dependencies.items);
+        const old_workspace_resolutions = old_workspace_resolutions_list.mut(old.buffers.resolutions.items);
+
+        for (old_workspace_dependencies, old_workspace_resolutions) |dependency, *resolution| {
+            if (!dependency.behavior.isEnabled(features) and resolution.* < end) {
+                resolution.* = invalid_package_id;
+                any_changes = true;
+            }
         }
     }
 
@@ -852,6 +863,7 @@ pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
     return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspaceOnly();
 }
 
+/// Returns the package id of the workspace the install is taking place in.
 pub fn getWorkspacePackageID(this: *const Lockfile, workspace_name_hash: ?PackageNameHash) PackageID {
     return if (workspace_name_hash) |workspace_name_hash_| brk: {
         const packages = this.packages.slice();
@@ -1976,52 +1988,6 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_features: Features, comptime log_level: PackageManager.Options.LogLevel) void {
-    const resolutions_lists: []const DependencyIDSlice = this.packages.items(.resolutions);
-    const dependency_lists: []const DependencySlice = this.packages.items(.dependencies);
-    const dependencies_buffer = this.buffers.dependencies.items;
-    const resolutions_buffer = this.buffers.resolutions.items;
-    const end = @as(PackageID, @truncate(this.packages.len));
-
-    var any_failed = false;
-    const string_buf = this.buffers.string_bytes.items;
-
-    const root_list = resolutions_lists[0];
-    for (resolutions_lists, dependency_lists, 0..) |resolution_list, dependency_list, parent_id| {
-        for (resolution_list.get(resolutions_buffer), dependency_list.get(dependencies_buffer)) |package_id, failed_dep| {
-            if (package_id < end) continue;
-            if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
-                if (root_list.contains(@truncate(parent_id)))
-                    local_features
-                else
-                    remote_features,
-            )) continue;
-            if (log_level != .silent) {
-                if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
-                } else {
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.name.slice(string_buf),
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
-                }
-            }
-            // track this so we can log each failure instead of just the first
-            any_failed = true;
-        }
-    }
-
-    if (any_failed) Global.crash();
-}
-
 pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
@@ -2050,7 +2016,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     bun.rand(&base64_bytes);
     const tmpname = std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
-    const file = switch (File.openat(std.fs.cwd(), tmpname, std.os.O.CREAT | std.os.O.WRONLY, 0o777)) {
+    const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
             Output.err(err, "failed to create temporary file to save lockfile\n{}", .{});
             Global.crash();
@@ -3799,6 +3765,10 @@ pub const Package = extern struct {
                             entry.value_ptr.path.slice(to_lockfile.buffers.string_bytes.items),
                         )) break :patched_dependencies_changed true;
                     } else break :patched_dependencies_changed true;
+                }
+                iter = from_lockfile.patched_dependencies.iterator();
+                while (iter.next()) |entry| {
+                    if (!to_lockfile.patched_dependencies.contains(entry.key_ptr.*)) break :patched_dependencies_changed true;
                 }
                 break :patched_dependencies_changed false;
             };
@@ -6423,30 +6393,33 @@ pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Ve
 
 const max_default_trusted_dependencies = 512;
 
-pub const default_trusted_dependencies_list: []string = brk: {
+// TODO
+pub const default_trusted_dependencies_list: []const []const u8 = brk: {
     // This file contains a list of dependencies that Bun runs `postinstall` on by default.
     const data = @embedFile("./default-trusted-dependencies.txt");
     @setEvalBranchQuota(999999);
-    var buf: [max_default_trusted_dependencies]string = undefined;
+    var buf: [max_default_trusted_dependencies][]const u8 = undefined;
     var i: usize = 0;
     var iter = std.mem.tokenizeAny(u8, data, " \r\n\t");
-    while (iter.next()) |dep| {
-        buf[i] = dep;
+    while (iter.next()) |package_ptr| {
+        const package = package_ptr[0..].*;
+        buf[i] = &package;
         i += 1;
     }
 
     const Sorter = struct {
-        pub fn lessThan(_: void, lhs: string, rhs: string) bool {
+        pub fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
             return std.mem.order(u8, lhs, rhs) == .lt;
         }
     };
 
-    const names = buf[0..i];
-
     // alphabetical so we don't need to sort in `bun pm trusted --default`
-    std.sort.pdq(string, names, {}, Sorter.lessThan);
+    std.sort.pdq([]const u8, buf[0..i], {}, Sorter.lessThan);
 
-    break :brk names;
+    var names: [i][]const u8 = undefined;
+    @memcpy(names[0..i], buf[0..i]);
+    const final = names;
+    break :brk &final;
 };
 
 /// The default list of trusted dependencies is a static hashmap
@@ -6476,7 +6449,8 @@ const default_trusted_dependencies = brk: {
         map.putAssumeCapacity(dep, {});
     }
 
-    break :brk &map;
+    const final = map;
+    break :brk &final;
 };
 
 pub fn hasTrustedDependency(this: *Lockfile, name: []const u8) bool {

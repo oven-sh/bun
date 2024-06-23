@@ -14,7 +14,6 @@ const logger = bun.logger;
 const cache = @import("../cache.zig");
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
@@ -68,10 +67,10 @@ pub const TSConfigJSON = struct {
         remove,
         invalid,
 
-        pub const List = ComptimeStringMap(ImportsNotUsedAsValue, .{
-            .{ "preserve", ImportsNotUsedAsValue.preserve },
-            .{ "error", ImportsNotUsedAsValue.err },
-            .{ "remove", ImportsNotUsedAsValue.remove },
+        pub const List = std.StaticStringMap(ImportsNotUsedAsValue).initComptime(.{
+            .{ "preserve", .preserve },
+            .{ "error", .err },
+            .{ "remove", .remove },
         });
     };
 

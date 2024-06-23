@@ -188,7 +188,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             prev: ?*OverflowBlock = null,
 
             pub fn append(this: *OverflowBlock, item: ValueType) !*ValueType {
-                const index = this.used.fetchAdd(1, .AcqRel);
+                const index = this.used.fetchAdd(1, .acq_rel);
                 if (index >= ChunkSize) return error.OutOfMemory;
                 this.data[index] = item;
                 return &this.data[index];

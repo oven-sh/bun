@@ -2248,6 +2248,17 @@ pub const Formatter = struct {
                             writer.pretty("<r><d>{d} x empty items<r>", enable_ansi_colors, .{empty_count});
                         }
                     }
+
+                    const Iterator = PropertyIterator(Writer, enable_ansi_colors);
+                    var iter = Iterator{
+                        .formatter = this,
+                        .writer = writer_,
+                        .always_newline = !this.single_line and (this.always_newline_scope or this.goodTimeForANewLine()),
+                        .single_line = this.single_line,
+                        .parent = value,
+                        .i = i,
+                    };
+                    value.forEachPropertyNonIndexed(this.globalThis, &iter, Iterator.forEach);
                 }
 
                 if (!this.single_line and (this.ordered_properties or was_good_time or this.goodTimeForANewLine())) {
@@ -2588,10 +2599,21 @@ pub const Formatter = struct {
                 writer.print("{}", .{str});
             },
             .Event => {
-                const event_type = EventType.map.getWithEql(value.get(this.globalThis, "type").?.getZigString(this.globalThis), ZigString.eqlComptime) orelse EventType.unknown;
-                if (event_type != .MessageEvent and event_type != .ErrorEvent) {
-                    return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
-                }
+                const event_type_value = brk: {
+                    const value_ = value.get(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                    if (value_.isString()) {
+                        break :brk value_;
+                    }
+
+                    break :brk JSValue.undefined;
+                };
+
+                const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                    .MessageEvent, .ErrorEvent => |evt| evt,
+                    else => {
+                        return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                    },
+                };
 
                 writer.print(
                     comptime Output.prettyFmt("<r><cyan>{s}<r> {{\n", enable_ansi_colors),
@@ -2617,56 +2639,67 @@ pub const Formatter = struct {
                                     event_type.label(),
                                 },
                             );
-                            if (!single_line) {
+                        },
+                    }
+
+                    if (value.fastGet(this.globalThis, .message)) |message_value| {
+                        if (message_value.isString()) {
+                            if (!this.single_line) {
                                 this.writeIndent(Writer, writer_) catch unreachable;
                             }
-                        },
+
+                            writer.print(
+                                comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                .{},
+                            );
+
+                            const tag = Tag.getAdvanced(message_value, this.globalThis, .{ .hide_global = true });
+                            this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            if (!this.single_line) {
+                                writer.writeAll("\n");
+                            }
+                        }
                     }
 
                     switch (event_type) {
                         .MessageEvent => {
+                            if (!this.single_line) {
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                            }
+
                             writer.print(
                                 comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                 .{},
                             );
-                            const data = value.fastGet(this.globalThis, .data).?;
+                            const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
                             const tag = Tag.getAdvanced(data, this.globalThis, .{ .hide_global = true });
-                            if (tag.cell.isStringLike()) {
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
-                            } else {
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                            this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            if (!this.single_line) {
+                                writer.writeAll("\n");
                             }
                         },
                         .ErrorEvent => {
-                            {
-                                const error_value = value.get(this.globalThis, "error").?;
-
-                                if (!error_value.isEmptyOrUndefinedOrNull()) {
-                                    writer.print(
-                                        comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
-                                        .{},
-                                    );
-
-                                    const tag = Tag.getAdvanced(error_value, this.globalThis, .{ .hide_global = true });
-                                    this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                            if (value.fastGet(this.globalThis, .@"error")) |error_value| {
+                                if (!this.single_line) {
+                                    this.writeIndent(Writer, writer_) catch unreachable;
                                 }
-                            }
 
-                            const message_value = value.get(this.globalThis, "message").?;
-                            if (message_value.isString()) {
                                 writer.print(
-                                    comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                    comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
 
-                                const tag = Tag.getAdvanced(message_value, this.globalThis, .{ .hide_global = true });
-                                this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                                const tag = Tag.getAdvanced(error_value, this.globalThis, .{ .hide_global = true });
+                                this.format(tag, Writer, writer_, error_value, this.globalThis, enable_ansi_colors);
+                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                                if (!this.single_line) {
+                                    writer.writeAll("\n");
+                                }
                             }
                         },
                         else => unreachable,
-                    }
-                    if (!this.single_line) {
-                        writer.writeAll("\n");
                     }
                 }
 
@@ -3097,7 +3130,9 @@ pub const Formatter = struct {
         else
             "<r><d>, ... {d} more<r>";
 
-        writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{slice[0]});
+        writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
+            if (@typeInfo(Number) == .Float) bun.fmt.fmtDouble(@floatCast(slice[0])) else slice[0],
+        });
         var leftover = slice[1..];
         const max = 512;
         leftover = leftover[0..@min(leftover.len, max)];
@@ -3105,7 +3140,9 @@ pub const Formatter = struct {
             this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
             writer.space();
 
-            writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});
+            writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
+                if (@typeInfo(Number) == .Float) bun.fmt.fmtDouble(@floatCast(el)) else el,
+            });
         }
 
         if (slice.len > max + 1) {

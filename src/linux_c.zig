@@ -294,7 +294,7 @@ pub const SystemErrno = enum(u8) {
 };
 
 pub const preallocate_length = 2048 * 1024;
-pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
+pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.posix.off_t) anyerror!void {
     // https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
     //  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64
     //
@@ -382,7 +382,7 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
 /// transfers up to len bytes of data from the file descriptor fd_in
 /// to the file descriptor fd_out, where one of the file descriptors
 /// must refer to a pipe.
-pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
+pub fn splice(fd_in: std.posix.fd_t, off_in: ?*i64, fd_out: std.posix.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
     return std.os.linux.syscall6(
         .splice,
         @as(usize, @bitCast(@as(isize, fd_in))),
@@ -448,7 +448,7 @@ pub fn getSystemLoadavg() [3]f64 {
 }
 
 pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
-    const uts = std.os.uname();
+    const uts = std.posix.uname();
     const result = bun.sliceTo(&uts.version, 0);
     bun.copy(u8, name_buffer, result);
 
@@ -456,7 +456,7 @@ pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
 }
 
 pub fn get_release(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
-    const uts = std.os.uname();
+    const uts = std.posix.uname();
     const result = bun.sliceTo(&uts.release, 0);
     bun.copy(u8, name_buffer, result);
 
@@ -475,11 +475,11 @@ pub const POSIX_SPAWN = struct {
     pub const SETSID = 0x80;
 };
 
-const fd_t = std.os.fd_t;
-const pid_t = std.os.pid_t;
-const mode_t = std.os.mode_t;
+const fd_t = std.posix.fd_t;
+const pid_t = std.posix.pid_t;
+const mode_t = std.posix.mode_t;
 const sigset_t = std.c.sigset_t;
-const sched_param = std.os.sched_param;
+const sched_param = std.posix.sched_param;
 
 pub const posix_spawnattr_t = extern struct {
     __flags: c_short,
@@ -548,7 +548,7 @@ const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_sp
 const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
 
 /// When not available, these functions will return 0.
-pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {
+pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.posix.fd_t) c_int {
     const function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
         return 0;
     return function(actions, filedes);
@@ -561,7 +561,7 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
     return function(actions, path);
 }
 
-pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usize, flags: u32) isize;
+pub extern fn vmsplice(fd: c_int, iovec: [*]const std.posix.iovec, iovec_count: usize, flags: u32) isize;
 
 const net_c = @cImport({
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
@@ -586,13 +586,34 @@ pub const F = struct {
 };
 
 pub const Mode = u32;
-pub const E = std.os.E;
-pub const S = std.os.S;
+pub const E = std.posix.E;
+pub const S = std.posix.S;
 
 pub extern "c" fn umask(Mode) Mode;
 
 pub fn getErrno(rc: anytype) E {
-    return std.c.getErrno(rc);
+    const Type = @TypeOf(rc);
+
+    return switch (Type) {
+        // raw system calls from std.os.linux.* will return usize
+        // the errno is stored in this value
+        usize => {
+            const signed: isize = @bitCast(rc);
+            const int = if (signed > -4096 and signed < 0) -signed else 0;
+            return @enumFromInt(int);
+        },
+
+        // glibc system call wrapper returns i32/int
+        // the errno is stored in a thread local variable
+        //
+        // TODO: the inclusion of  'u32' and 'isize' seems suspicous
+        i32, c_int, u32, isize, i64 => if (rc == -1)
+            @enumFromInt(std.c._errno().*)
+        else
+            .SUCCESS,
+
+        else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
+    };
 }
 
 pub const getuid = std.os.linux.getuid;
@@ -623,20 +644,20 @@ pub const RWFFlagSupport = enum(u8) {
     }
 
     pub fn disable() void {
-        rwf_bool.store(.unsupported, .Monotonic);
+        rwf_bool.store(.unsupported, .monotonic);
     }
 
     /// Workaround for https://github.com/google/gvisor/issues/2601
     pub fn isMaybeSupported() bool {
         if (comptime !bun.Environment.isLinux) return false;
-        switch (rwf_bool.load(.Monotonic)) {
+        switch (rwf_bool.load(.monotonic)) {
             .unknown => {
                 if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
-                    rwf_bool.store(.unsupported, .Monotonic);
+                    rwf_bool.store(.unsupported, .monotonic);
                     return false;
                 }
 
-                rwf_bool.store(.supported, .Monotonic);
+                rwf_bool.store(.supported, .monotonic);
                 return true;
             },
             .supported => {
@@ -653,17 +674,17 @@ pub const RWFFlagSupport = enum(u8) {
 
 pub extern "C" fn sys_preadv2(
     fd: c_int,
-    iov: [*]const std.os.iovec,
+    iov: [*]const std.posix.iovec,
     iovcnt: c_int,
-    offset: std.os.off_t,
+    offset: std.posix.off_t,
     flags: c_uint,
 ) isize;
 
 pub extern "C" fn sys_pwritev2(
     fd: c_int,
-    iov: [*]const std.os.iovec_const,
+    iov: [*]const std.posix.iovec_const,
     iovcnt: c_int,
-    offset: std.os.off_t,
+    offset: std.posix.off_t,
     flags: c_uint,
 ) isize;
 

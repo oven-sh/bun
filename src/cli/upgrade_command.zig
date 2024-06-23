@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const Progress = bun.Progress;
 
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -172,8 +173,8 @@ pub const UpgradeCommand = struct {
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
-        refresher: ?*std.Progress,
-        progress: ?*std.Progress.Node,
+        refresher: ?*Progress,
+        progress: ?*Progress.Node,
         use_profile: bool,
         comptime silent: bool,
     ) !?Version {
@@ -465,7 +466,7 @@ pub const UpgradeCommand = struct {
         const use_profile = strings.containsAny(bun.argv, "--profile");
 
         const version: Version = if (!use_canary) v: {
-            var refresher = std.Progress{};
+            var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
             const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
@@ -512,7 +513,7 @@ pub const UpgradeCommand = struct {
         const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
 
         {
-            var refresher = std.Progress{};
+            var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
@@ -634,7 +635,7 @@ pub const UpgradeCommand = struct {
                         tmpname,
                     };
 
-                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    var unzip_process = std.process.Child.init(&unzip_argv, ctx.allocator);
                     unzip_process.cwd = tmpdir_path;
                     unzip_process.stdin_behavior = .Inherit;
                     unzip_process.stdout_behavior = .Inherit;
@@ -712,7 +713,7 @@ pub const UpgradeCommand = struct {
                     "--version",
                 };
 
-                const result = std.ChildProcess.run(.{
+                const result = std.process.Child.run(.{
                     .allocator = ctx.allocator,
                     .argv = &verify_argv,
                     .cwd = tmpdir_path,
@@ -850,7 +851,7 @@ pub const UpgradeCommand = struct {
                         target_dirname,
                         target_filename,
                     });
-                    std.os.rename(destination_executable, outdated_filename.?) catch |err| {
+                    std.posix.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -863,7 +864,7 @@ pub const UpgradeCommand = struct {
 
                     if (comptime Environment.isWindows) {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
-                        std.os.rename(outdated_filename.?, destination_executable) catch {
+                        std.posix.rename(outdated_filename.?, destination_executable) catch {
                             Output.errGeneric(
                                 \\Failed to move new version of Bun to {s} due to {s}
                             ,
@@ -912,7 +913,7 @@ pub const UpgradeCommand = struct {
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
-                _ = std.ChildProcess.run(.{
+                _ = std.process.Child.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,
@@ -948,20 +949,20 @@ pub const UpgradeCommand = struct {
                     \\
                     \\<b><green>Welcome to Bun v{s}!<r>
                     \\
+                    \\What's new in Bun v{s}:
+                    \\
+                    \\    <cyan>https://bun.sh/blog/release-notes/{s}<r>
+                    \\
                     \\Report any bugs:
                     \\
                     \\    https://github.com/oven-sh/bun/issues
                     \\
-                    \\What's new:
-                    \\
-                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
-                    \\
-                    \\Changelog:
+                    \\Commit log:
                     \\
                     \\    https://github.com/oven-sh/bun/compare/{s}...{s}
                     \\
                 ,
-                    .{ version_name, version.tag, bun_v, version.tag },
+                    .{ version_name, version_name, version.tag, bun_v, version.tag },
                 );
             }
 

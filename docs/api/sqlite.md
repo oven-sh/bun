@@ -16,7 +16,7 @@ Features include:
 - Parameters (named & positional)
 - Prepared statements
 - Datatype conversions (`BLOB` becomes `Uint8Array`)
-- World's Tiniest ORM (`query.as(MyClass)`)
+- Map query results to classes without an ORM - `query.as(MyClass)`
 - The fastest performance of any SQLite driver for JavaScript
 - `bigint` support
 - Multi-query statements (e.g. `SELECT 1; SELECT 2;`) in a single call to database.run(query)
@@ -70,17 +70,27 @@ By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or
 
 To instead throw an error when a parameter is missing and allow binding without a prefix, set `strict: true` on the `Database` constructor:
 
+<!-- prettier-ignore -->
 ```ts
 import { Database } from "bun:sqlite";
 
-const strict = new Database(":memory:", { strict: true });
-const notStrict = new Database(":memory:");
-
-// does not throw error:
-notStrict.query("SELECT $message;").all({ messag: "Hello world" });
+const strict = new Database(
+  ":memory:", 
+  { strict: true }
+);
 
 // throws error because of the typo:
-const query = strict.query("SELECT $message;").all({ messag: "Hello world" });
+const query = strict
+  .query("SELECT $message;")
+  .all({ messag: "Hello world" });
+
+const notStrict = new Database(
+  ":memory:"
+);
+// does not throw error:
+notStrict
+  .query("SELECT $message;")
+  .all({ messag: "Hello world" });
 ```
 
 ### Load via ES module import
@@ -222,7 +232,7 @@ query.all("Hello world");
 Added in Bun v1.1.14
 {% /callout %}
 
-By default, the `$`, `:`, and `@` prefixes are **included** when binding values to named parameters. To bind without these prefixes, use the `bind`
+By default, the `$`, `:`, and `@` prefixes are **included** when binding values to named parameters. To bind without these prefixes, use the `strict` option in the `Database` constructor.
 
 ```ts
 import { Database } from "bun:sqlite";
@@ -286,7 +296,7 @@ Since Bun v1.1.14, `.run()` returns an object with two properties: `lastInsertRo
 
 The `lastInsertRowid` property returns the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
 
-### `.as(Class)` - World's smallest ORM
+### `.as(Class)` - Map query results to a class
 
 {% callout %}
 Added in Bun v1.1.14

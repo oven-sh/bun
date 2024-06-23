@@ -59,7 +59,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
-            var this = @fieldParentPtr(This, "task", task);
+            var this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx);
             this.onFinish();
         }
@@ -122,7 +122,7 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn runFromThreadPool(task: *TaskType) void {
             JSC.markBinding(@src());
-            const this = @fieldParentPtr(This, "task", task);
+            const this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx, this);
         }
 
@@ -286,7 +286,7 @@ pub const AnyTaskWithExtraContext = struct {
                         @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
-                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr(AnyTaskWithExtraContext, "ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
+                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr("ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
                 bun.default_allocator.destroy(anytask);
             }
         };
@@ -569,7 +569,7 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
-        return @fieldParentPtr(VirtualMachine, "gc_controller", this);
+        return @alignCast(@fieldParentPtr("gc_controller", this));
     }
 
     pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
@@ -1259,7 +1259,7 @@ pub const EventLoop = struct {
 
     pub fn tickConcurrentWithCount(this: *EventLoop) usize {
         JSC.markBinding(@src());
-        const delta = this.concurrent_ref.swap(0, .Monotonic);
+        const delta = this.concurrent_ref.swap(0, .monotonic);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
             if (delta > 0) {
@@ -1601,13 +1601,13 @@ pub const EventLoop = struct {
 
     pub fn refConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchAdd(1, .Monotonic);
+        _ = this.concurrent_ref.fetchAdd(1, .monotonic);
         this.wakeup();
     }
 
     pub fn unrefConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchSub(1, .Monotonic);
+        _ = this.concurrent_ref.fetchSub(1, .monotonic);
         this.wakeup();
     }
 };

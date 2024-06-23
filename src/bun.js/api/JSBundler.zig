@@ -199,8 +199,28 @@ pub const JSBundler = struct {
                 this.target = target;
             }
 
-            if (try config.getOptionalEnum(globalThis, "sourcemap", options.SourceMapOption)) |source_map| {
-                this.source_map = source_map;
+            var has_out_dir = false;
+            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                this.outdir.appendSliceExact(slice.slice()) catch unreachable;
+                has_out_dir = true;
+            }
+
+            if (config.getTruthy(globalThis, "sourcemap")) |source_map_js| {
+                if (bun.FeatureFlags.breaking_changes_1_2 and config.isBoolean()) {
+                    if (source_map_js == .true) {
+                        this.source_map = if (has_out_dir)
+                            .linked
+                        else
+                            .@"inline";
+                    }
+                } else if (!source_map_js.isEmptyOrUndefinedOrNull()) {
+                    this.source_map = try source_map_js.toEnum(
+                        globalThis,
+                        "sourcemap",
+                        options.SourceMapOption,
+                    );
+                }
             }
 
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
@@ -219,11 +239,6 @@ pub const JSBundler = struct {
 
             if (try config.getOptional(globalThis, "splitting", bool)) |hot| {
                 this.code_splitting = hot;
-            }
-
-            if (try config.getOptional(globalThis, "outdir", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                this.outdir.appendSliceExact(slice.slice()) catch unreachable;
             }
 
             if (config.getTruthy(globalThis, "minify")) |hot| {

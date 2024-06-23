@@ -186,7 +186,7 @@ pub fn validateFeatureName(name: []const u8) void {
 
 pub const packed_features_list = brk: {
     const decls = std.meta.declarations(Features);
-    var names: [decls.len][]const u8 = undefined;
+    var names: [decls.len][:0]const u8 = undefined;
     var i = 0;
     for (decls) |decl| {
         if (@TypeOf(@field(Features, decl.name)) == usize) {
@@ -195,12 +195,12 @@ pub const packed_features_list = brk: {
             i += 1;
         }
     }
-    break :brk names[0..i];
+    break :brk names[0..i].*;
 };
 
 pub const PackedFeatures = @Type(.{
     .Struct = .{
-        .layout = .Packed,
+        .layout = .@"packed",
         .backing_integer = u64,
         .fields = brk: {
             var fields: [64]std.builtin.Type.StructField = undefined;

@@ -51,6 +51,7 @@
 #include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
+#include "wtf/Compiler.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "wtf/text/StringCommon.h"
@@ -4211,12 +4212,19 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 {
     JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
     JSC::VM& vm = global->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
         populateStackTrace(vm, *stackTrace, &except->stack);
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
         populateStackTrace(vm, *err->stackTrace(), &except->stack);
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
     } else {
         getFromSourceURL = true;
     }
@@ -4241,29 +4249,57 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     except->runtime_type = err->runtimeTypeForCause();
 
-    auto clientData = WebCore::clientData(vm);
+    const auto& names = builtinNames(vm);
     if (except->code != SYNTAX_ERROR_CODE) {
 
-        if (JSC::JSValue syscall = obj->getIfPropertyExists(global, clientData->builtinNames().syscallPublicName())) {
-            except->syscall = Bun::toStringRef(global, syscall);
+        if (JSC::JSValue syscall = obj->getIfPropertyExists(global, names.syscallPublicName())) {
+            if (syscall.isString()) {
+                except->syscall = Bun::toStringRef(global, syscall);
+            }
         }
 
-        if (JSC::JSValue code = obj->getIfPropertyExists(global, clientData->builtinNames().codePublicName())) {
-            except->code_ = Bun::toStringRef(global, code);
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
         }
 
-        if (JSC::JSValue path = obj->getIfPropertyExists(global, clientData->builtinNames().pathPublicName())) {
-            except->path = Bun::toStringRef(global, path);
+        if (JSC::JSValue code = obj->getIfPropertyExists(global, names.codePublicName())) {
+            if (code.isString() || code.isNumber()) {
+                except->code_ = Bun::toStringRef(global, code);
+            }
         }
 
-        if (JSC::JSValue fd = obj->getIfPropertyExists(global, Identifier::fromString(vm, "fd"_s))) {
-            if (fd.isAnyInt()) {
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue path = obj->getIfPropertyExists(global, names.pathPublicName())) {
+            if (path.isString()) {
+                except->path = Bun::toStringRef(global, path);
+            }
+        }
+
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue fd = obj->getIfPropertyExists(global, names.fdPublicName())) {
+            if (fd.isNumber()) {
                 except->fd = fd.toInt32(global);
             }
         }
 
-        if (JSC::JSValue errno_ = obj->getIfPropertyExists(global, clientData->builtinNames().errnoPublicName())) {
-            except->errno_ = errno_.toInt32(global);
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue errno_ = obj->getIfPropertyExists(global, names.errnoPublicName())) {
+            if (errno_.isNumber()) {
+                except->errno_ = errno_.toInt32(global);
+            }
+        }
+
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
         }
     }
 
@@ -4314,29 +4350,38 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
         }
 
         if (getFromSourceURL) {
+
             if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
-                except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
+                if (sourceURL.isString()) {
+                    except->stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
 
-                if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
-                    except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
-                }
-
-                if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
-                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
-
-                    if (JSC::JSValue lineText = obj->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "lineText"_s))) {
-                        if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
-                            auto str = jsStr->value(global);
-                            except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
-                            except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
-                            except->stack.source_lines_len = 1;
-                            except->remapped = true;
+                    if (JSC::JSValue column = obj->getIfPropertyExists(global, vm.propertyNames->column)) {
+                        if (column.isNumber()) {
+                            except->stack.frames_ptr[0].position.column_zero_based = OrdinalNumber::fromOneBasedInt(column.toInt32(global)).zeroBasedInt();
                         }
                     }
-                }
 
-                except->stack.frames_len = 1;
-                except->stack.frames_ptr[0].remapped = obj->hasProperty(global, JSC::Identifier::fromString(vm, "originalLine"_s));
+                    if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
+                        if (line.isNumber()) {
+                            except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+
+                            if (JSC::JSValue lineText = obj->getIfPropertyExists(global, names.lineTextPublicName())) {
+                                if (lineText.isString()) {
+                                    if (JSC::JSString* jsStr = lineText.toStringOrNull(global)) {
+                                        auto str = jsStr->value(global);
+                                        except->stack.source_lines_ptr[0] = Bun::toStringRef(str);
+                                        except->stack.source_lines_numbers[0] = except->stack.frames_ptr[0].position.line();
+                                        except->stack.source_lines_len = 1;
+                                        except->remapped = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    except->stack.frames_len = 1;
+                    except->stack.frames_ptr[0].remapped = obj->hasProperty(global, names.originalLinePublicName());
+                }
             }
         }
     }
@@ -4346,68 +4391,93 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
 void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobalObject* global)
 {
+    JSC::VM& vm = global->vm();
+    if (UNLIKELY(vm.hasPendingTerminationException())) {
+        return;
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
     // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
     // ErrorInstance
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
-        if (obj->hasProperty(global, global->vm().propertyNames->name)) {
-            auto name_str = obj->getIfPropertyExists(global, global->vm().propertyNames->name).toWTFString(global);
-            except->name = Bun::toStringRef(name_str);
-            if (name_str == "Error"_s) {
-                except->code = JSErrorCodeError;
-            } else if (name_str == "EvalError"_s) {
-                except->code = JSErrorCodeEvalError;
-            } else if (name_str == "RangeError"_s) {
-                except->code = JSErrorCodeRangeError;
-            } else if (name_str == "ReferenceError"_s) {
-                except->code = JSErrorCodeReferenceError;
-            } else if (name_str == "SyntaxError"_s) {
-                except->code = JSErrorCodeSyntaxError;
-            } else if (name_str == "TypeError"_s) {
-                except->code = JSErrorCodeTypeError;
-            } else if (name_str == "URIError"_s) {
-                except->code = JSErrorCodeURIError;
-            } else if (name_str == "AggregateError"_s) {
-                except->code = JSErrorCodeAggregateError;
+        if (auto name_value = obj->getIfPropertyExists(global, vm.propertyNames->name)) {
+            if (name_value.isString()) {
+                auto name_str = name_value.toWTFString(global);
+                except->name = Bun::toStringRef(name_str);
+                if (name_str == "Error"_s) {
+                    except->code = JSErrorCodeError;
+                } else if (name_str == "EvalError"_s) {
+                    except->code = JSErrorCodeEvalError;
+                } else if (name_str == "RangeError"_s) {
+                    except->code = JSErrorCodeRangeError;
+                } else if (name_str == "ReferenceError"_s) {
+                    except->code = JSErrorCodeReferenceError;
+                } else if (name_str == "SyntaxError"_s) {
+                    except->code = JSErrorCodeSyntaxError;
+                } else if (name_str == "TypeError"_s) {
+                    except->code = JSErrorCodeTypeError;
+                } else if (name_str == "URIError"_s) {
+                    except->code = JSErrorCodeURIError;
+                } else if (name_str == "AggregateError"_s) {
+                    except->code = JSErrorCodeAggregateError;
+                }
             }
         }
 
-        if (JSC::JSValue message = obj->getIfPropertyExists(global, global->vm().propertyNames->message)) {
-            if (message) {
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
+            if (message.isString()) {
                 except->message = Bun::toStringRef(
                     message.toWTFString(global));
             }
         }
 
-        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, global->vm().propertyNames->sourceURL)) {
-            if (sourceURL) {
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue sourceURL = obj->getIfPropertyExists(global, vm.propertyNames->sourceURL)) {
+            if (sourceURL.isString()) {
                 except->stack.frames_ptr[0].source_url = Bun::toStringRef(
                     sourceURL.toWTFString(global));
                 except->stack.frames_len = 1;
             }
         }
 
-        if (JSC::JSValue line = obj->getIfPropertyExists(global, global->vm().propertyNames->line)) {
-            if (line) {
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
+        if (JSC::JSValue line = obj->getIfPropertyExists(global, vm.propertyNames->line)) {
+            if (line.isNumber()) {
+                except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+
                 // TODO: don't sourcemap it twice
-                if (auto originalLine = obj->getIfPropertyExists(global, JSC::Identifier::fromString(global->vm(), "originalLine"_s))) {
-                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
-                } else {
-                    except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(line.toInt32(global)).zeroBasedInt();
+                if (auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName())) {
+                    if (originalLine.isNumber()) {
+                        except->stack.frames_ptr[0].position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLine.toInt32(global)).zeroBasedInt();
+                    }
                 }
                 except->stack.frames_len = 1;
             }
         }
 
+        if (UNLIKELY(scope.exception())) {
+            scope.clearExceptionExceptTermination();
+        }
+
         return;
     }
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
+
     auto str = value.toWTFString(global);
-    if (scope.exception()) {
-        scope.clearException();
-        scope.release();
+    if (UNLIKELY(scope.exception())) {
+        scope.clearExceptionExceptTermination();
         return;
     }
-    scope.release();
 
     except->message = Bun::toStringRef(str);
 }
@@ -4744,9 +4814,12 @@ enum class BuiltinNamesMap : uint8_t {
     path,
     stream,
     asyncIterator,
+    name,
+    message,
+    error,
 };
 
-static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
 {
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
@@ -4793,6 +4866,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
     }
+    case BuiltinNamesMap::name: {
+        return vm.propertyNames->name;
+    }
+    case BuiltinNamesMap::message: {
+        return vm.propertyNames->message;
+    }
+    case BuiltinNamesMap::error: {
+        return vm.propertyNames->error;
+    }
     default: {
         ASSERT_NOT_REACHED();
         return Identifier();
@@ -4819,7 +4901,8 @@ bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* glo
     return JSValue::decode(JSValue0).toBoolean(globalObject);
 }
 
-void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+template<bool nonIndexedOnly>
+static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -4832,7 +4915,7 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     size_t prototypeCount = 0;
 
     JSC::Structure* structure = object->structure();
-    bool fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+    bool fast = !nonIndexedOnly && canPerformFastPropertyEnumerationForIterationBun(structure);
     JSValue prototypeObject = value;
 
     if (fast) {
@@ -4933,7 +5016,12 @@ restart:
         JSObject* iterating = prototypeObject.getObject();
 
         while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
-            iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+            if constexpr (nonIndexedOnly) {
+                iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
+            } else {
+                iterating->methodTable()->getOwnPropertyNames(iterating, globalObject, properties, DontEnumPropertiesMode::Include);
+            }
+
             RETURN_IF_EXCEPTION(scope, void());
             for (auto& property : properties) {
                 if (UNLIKELY(property.isEmpty() || property.isNull()))
@@ -4942,6 +5030,12 @@ restart:
                 // ignore constructor
                 if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
                     continue;
+
+                if constexpr (nonIndexedOnly) {
+                    if (property == vm.propertyNames->length) {
+                        continue;
+                    }
+                }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 if (!object->getPropertySlot(globalObject, property, slot))
@@ -4996,6 +5090,10 @@ restart:
 
                 iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), property.isSymbol(), isPrivate);
             }
+            if constexpr (nonIndexedOnly) {
+                break;
+            }
+
             // reuse memory
             properties.data()->propertyNameVector().shrink(0);
             if (iterating->isCallable())
@@ -5012,6 +5110,16 @@ restart:
         scope.clearException();
         return;
     }
+}
+
+void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
 void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))

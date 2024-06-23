@@ -174,7 +174,32 @@ it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
   type: "message",
-  data: 123
+  data: 123,
+}`,
+  );
+});
+
+it("MessageEvent with no data set", () => {
+  expect(Bun.inspect(new MessageEvent("message"))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
+}`,
+  );
+});
+
+it("MessageEvent with deleted data", () => {
+  const event = new MessageEvent("message");
+  Object.defineProperty(event, "data", {
+    value: 123,
+    writable: true,
+    configurable: true,
+  });
+  delete event.data;
+  expect(Bun.inspect(event)).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
 }`,
   );
 });
@@ -220,8 +245,8 @@ it("BigIntArray", () => {
   }
 });
 
-it("FloatArray", () => {
-  for (let TypedArray of [Float32Array, Float64Array]) {
+for (let TypedArray of [Float32Array, Float64Array]) {
+  it(TypedArray.name + " " + Math.fround(42.68), () => {
     const buffer = new TypedArray([Math.fround(42.68)]);
     const input = Bun.inspect(buffer);
 
@@ -231,8 +256,22 @@ it("FloatArray", () => {
         `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
-  }
-});
+  });
+
+  it(TypedArray.name + " " + 42.68, () => {
+    const buffer = new TypedArray([42.68]);
+    const input = Bun.inspect(buffer);
+
+    expect(input).toBe(
+      `${TypedArray.name}(${buffer.length}) [ ${[TypedArray === Float32Array ? Math.fround(42.68) : 42.68].join(", ")} ]`,
+    );
+    for (let i = 1; i < buffer.length + 1; i++) {
+      expect(Bun.inspect(buffer.subarray(i))).toBe(
+        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+      );
+    }
+  });
+}
 
 it("jsx with two elements", () => {
   const input = Bun.inspect(
@@ -469,4 +508,15 @@ describe("Functions with names", () => {
       expect(Bun.inspect(closure())).toBe("[Function: f]");
     });
   }
+});
+
+it("Bun.inspect array with non-indexed properties", () => {
+  const a = [1, 2, 3];
+  a.length = 42;
+  a[18] = 24;
+  a.potato = "hello";
+  console.log(a);
+  expect(Bun.inspect(a)).toBe(`[
+  1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
+]`);
 });

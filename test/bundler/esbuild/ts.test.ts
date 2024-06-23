@@ -14,7 +14,7 @@ describe("bundler", () => {
         declare const require: any
         declare const exports: any;
         declare const module: any
-  
+
         declare const foo: any
         let foo = bar()
       `,
@@ -33,7 +33,7 @@ describe("bundler", () => {
         declare let require: any
         declare let exports: any;
         declare let module: any
-  
+
         declare let foo: any
         let foo = bar()
       `,
@@ -51,7 +51,7 @@ describe("bundler", () => {
         declare var require: any
         declare var exports: any;
         declare var module: any
-  
+
         declare var foo: any
         let foo = bar()
       `,
@@ -69,7 +69,7 @@ describe("bundler", () => {
         declare class require {}
         declare class exports {};
         declare class module {}
-  
+
         declare class foo {}
         let foo = bar()
       `,
@@ -105,7 +105,7 @@ describe("bundler", () => {
           declare b: number
           [(() => null, c)] = 3
           declare [(() => null, d)]: number
-  
+
           static A = 5
           static declare B: number
           static [(() => null, C)] = 7
@@ -121,7 +121,7 @@ describe("bundler", () => {
           declare b
           [(() => null, c)]
           declare [(() => null, d)]
-  
+
           static A
           static declare B
           static [(() => null, C)]
@@ -154,7 +154,7 @@ describe("bundler", () => {
         declare function require(): void
         declare function exports(): void;
         declare function module(): void
-  
+
         declare function foo() {}
         let foo = bar()
       `,
@@ -173,7 +173,7 @@ describe("bundler", () => {
         declare namespace require {}
         declare namespace exports {};
         declare namespace module {}
-  
+
         declare namespace foo {}
         let foo = bar()
       `,
@@ -192,7 +192,7 @@ describe("bundler", () => {
         declare enum require {}
         declare enum exports {};
         declare enum module {}
-  
+
         declare enum foo {}
         let foo = bar()
       `,
@@ -211,7 +211,7 @@ describe("bundler", () => {
         declare const enum require {}
         declare const enum exports {};
         declare const enum module {}
-  
+
         declare const enum foo {}
         let foo = bar()
       `,
@@ -724,11 +724,11 @@ describe("bundler", () => {
         import a = foo.a
         import b = a.b
         import c = b.c
-  
+
         import x = foo.x
         import y = x.y
         import z = y.z
-  
+
         export let bar = c
       `,
     },
@@ -888,8 +888,9 @@ describe("bundler", () => {
           @x @y mDef = 1
           @x @y method(@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }
           @x @y declare mDecl
+          @x @y declare mAbst
           constructor(@x0 @y0 arg0, @x1 @y1 arg1) {}
-  
+
           @x @y static sUndef
           @x @y static sDef = new Foo
           @x @y static sMethod(@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }
@@ -904,13 +905,14 @@ describe("bundler", () => {
           @x @y [mDef()] = 1
           @x @y [method()](@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }
           @x @y declare [mDecl()]
-  
+          @x @y abstract [mAbst()]
+
           // Side effect order must be preserved even for fields without decorators
           [xUndef()]
           [xDef()] = 2
           static [yUndef()]
           static [yDef()] = 3
-  
+
           @x @y static [sUndef()]
           @x @y static [sDef()] = new Foo
           @x @y static [sMethod()](@x0 @y0 arg0, @x1 @y1 arg1) { return new Foo }
@@ -1015,7 +1017,7 @@ describe("bundler", () => {
           method1(@dec(foo) foo = 2) {}
           method2(@dec(() => foo) foo = 3) {}
         }
-  
+
         class Bar {
           static x = class {
             static y = () => {
@@ -1071,14 +1073,14 @@ describe("bundler", () => {
         import tn_def, { bar as tn } from './keep/type-nested'
         import vn_def, { bar as vn } from './keep/value-namespace'
         import vnm_def, { bar as vnm } from './keep/value-namespace-merged'
-  
+
         import i_def, { bar as i } from './remove/interface'
         import ie_def, { bar as ie } from './remove/interface-exported'
         import t_def, { bar as t } from './remove/type'
         import te_def, { bar as te } from './remove/type-exported'
         import ton_def, { bar as ton } from './remove/type-only-namespace'
         import tone_def, { bar as tone } from './remove/type-only-namespace-exported'
-  
+
         export default [
           dc_def, dc,
           dl_def, dl,
@@ -1087,7 +1089,7 @@ describe("bundler", () => {
           tn_def, tn,
           vn_def, vn,
           vnm_def, vnm,
-  
+
           i,
           ie,
           t,
@@ -1324,7 +1326,7 @@ describe("bundler", () => {
             foo(x = this) { return [x, this]; }
             static bar(x = this) { return [x, this]; }
           }
-          
+
           assert.deepEqual(bar('bun'), ['bun', undefined]);
           assert.deepEqual(bar.call('this'), ['this', 'this']);
           assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
@@ -1391,7 +1393,7 @@ describe("bundler", () => {
             foo(x = this) { return [x, this]; }
             static bar(x = this) { return [x, this]; }
           }
-          
+
           assert.deepEqual(bar('bun'), ['bun', undefined]);
           assert.deepEqual(bar.call('this'), ['this', 'this']);
           assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
@@ -1459,7 +1461,7 @@ describe("bundler", () => {
             foo(x = this) { return [x, this]; }
             static bar(x = this) { return [x, this]; }
           }
-          
+
           assert.deepEqual(bar('bun'), ['bun', undefined]);
           assert.deepEqual(bar.call('this'), ['this', 'this']);
           assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
@@ -1527,7 +1529,7 @@ describe("bundler", () => {
             foo(x = this) { return [x, this]; }
             static bar(x = this) { return [x, this]; }
           }
-          
+
           assert.deepEqual(bar('bun'), ['bun', undefined]);
           assert.deepEqual(bar.call('this'), ['this', 'this']);
           assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
@@ -1879,7 +1881,7 @@ describe("bundler", () => {
 
         export enum x { y, yy = y }
         export enum x { z = y + 1 }
-  
+
         declare let y: any, z: any
         export namespace x { console.log(y, z) }
         console.log(x.y, x.z)
@@ -1890,7 +1892,7 @@ describe("bundler", () => {
 
         export enum x { y = 'a', yy = y }
         export enum x { z = y }
-  
+
         declare let y: any, z: any
         export namespace x { console.log(y, z) }
         console.log(x.y, x.z)
@@ -1911,7 +1913,7 @@ describe("bundler", () => {
         (0, eval)('globalThis.z = 2345');
         export namespace foo { export enum x { y, yy = y } }
         export namespace foo { export enum x { z = y + 1 } }
-  
+
         declare let y: any, z: any
         export namespace foo.x {
           console.log(y, z)
@@ -1924,7 +1926,7 @@ describe("bundler", () => {
 
         export namespace foo { export enum x { y = 'a', yy = y } }
         export namespace foo { export enum x { z = y } }
-  
+
         declare let y: any, z: any
         export namespace foo.x {
           console.log(y, z)
@@ -2043,19 +2045,19 @@ describe("bundler", () => {
       `,
       "/fragment.tsx": /* tsx */ `
         import { create } from 'not-react'
-        
+
         export enum React { Fragment = 'div' }
         console.log(JSON.stringify(<>test</>))
       `,
       "/nested-element.tsx": /* tsx */ `
         import { create } from 'not-react'
-        
+
         namespace x.y { export enum Foo { Div = 'div' } }
         namespace x.y { console.log(JSON.stringify(<Foo.Div />)) }
       `,
       "/nested-fragment.tsx": /* tsx */ `
         import { create } from 'not-react'
-        
+
         namespace x.y { export enum React { Fragment = 'div' } }
         namespace x.y { console.log(JSON.stringify(<>test</>)) }
       `,
@@ -2198,15 +2200,15 @@ describe("bundler", () => {
           b_DROP,
           c_DROP,
         } from './enums'
-  
+
         console.log([
           capture(a_DROP.x),
           capture(b_DROP['x']),
           capture(c_DROP.x),
         ])
-  
+
         import { a, b, c, d, e } from './enums'
-  
+
         console.log([
           capture(a.x),
           capture(b.x),
@@ -2219,7 +2221,7 @@ describe("bundler", () => {
         export enum a_DROP { x = 1 }  // test a dot access
         export enum b_DROP { x = 2 }  // test an index access
         export enum c_DROP { x = '' } // test a string enum
-  
+
         export enum a { x = false } // false is not inlinable
         export enum b { x = foo }   // foo has side effects
         export enum c { x = 3 }     // this enum object is captured
@@ -2250,7 +2252,7 @@ describe("bundler", () => {
           C as c,
           d as dd,
         } from './enums'
-  
+
         console.log([
           capture(A.A),
           capture(B.B),
@@ -2432,7 +2434,7 @@ describe("bundler", () => {
           capture(NonIntegerNumberToString.SUPPORTED),
           capture(NonIntegerNumberToString.UNSUPPORTED),
         )
-  
+
         const enum OutOfBoundsNumberToString {
           SUPPORTED = '' + 1_000_000_000,
           UNSUPPORTED = '' + 1_000_000_000_000,
@@ -2441,7 +2443,7 @@ describe("bundler", () => {
           capture(OutOfBoundsNumberToString.SUPPORTED),
           capture(OutOfBoundsNumberToString.UNSUPPORTED),
         )
-  
+
         const enum TemplateExpressions {
           // TypeScript enums don't handle any of these
           NULL = '' + null,
@@ -2494,7 +2496,7 @@ describe("bundler", () => {
       "/entry.ts": /* ts */ `
         before();
         after();
-        
+
         export function before() {
           console.log(JSON.stringify(Foo), Foo.FOO)
         }

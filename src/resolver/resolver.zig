@@ -768,14 +768,14 @@ pub const Resolver = struct {
                         var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, route_dir };
                         const abs = r.fs.join(&parts);
                         // must end in trailing slash
-                        break :brk (std.os.realpath(abs, &buf) catch continue);
+                        break :brk (std.posix.realpath(abs, &buf) catch continue);
                     }
                     return error.MissingRouteDir;
                 } else {
                     var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
                     const abs = r.fs.join(&parts);
                     // must end in trailing slash
-                    break :brk std.os.realpath(abs, &buf) catch return error.MissingRouteDir;
+                    break :brk std.posix.realpath(abs, &buf) catch return error.MissingRouteDir;
                 }
             };
 
@@ -3385,6 +3385,7 @@ pub const Resolver = struct {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
+        const alloc = stack_fallback_allocator.get();
 
         if (r.readDirInfo(str) catch null) |result| {
             var dir_info = result;
@@ -3398,7 +3399,7 @@ pub const Resolver = struct {
 
                     break :brk [2]string{ path_without_trailing_slash, std.fs.path.sep_str ++ "node_modules" };
                 };
-                const nodemodules_path = bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable;
+                const nodemodules_path = bun.strings.concat(alloc, &path_parts) catch unreachable;
                 bun.path.posixToPlatformInPlace(u8, nodemodules_path);
                 list.append(bun.String.createUTF8(nodemodules_path)) catch unreachable;
                 dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
@@ -3413,7 +3414,7 @@ pub const Resolver = struct {
                 list.append(
                     bun.String.createUTF8(
                         bun.strings.concat(
-                            stack_fallback_allocator.get(),
+                            alloc,
                             &[_]string{
                                 path_without_trailing_slash,
                                 std.fs.path.sep_str ++ "node_modules",

@@ -1251,3 +1251,15 @@ it("query should work if the cached statement was finalized", () => {
     expect(() => prevQuery.get()).toThrow();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/12012
+it("reports changes in Statement#run", () => {
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+
+  const sql = "INSERT INTO cats (name) VALUES ('Fluffy'), ('Furry')";
+
+  expect(db.run(sql).changes).toBe(2);
+  expect(db.prepare(sql).run().changes).toBe(2);
+  expect(db.query(sql).run().changes).toBe(2);
+});

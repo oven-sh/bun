@@ -44,6 +44,9 @@
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix",
     "test": "node packages/bun-internal-test/src/runner.node.mjs ./build/bun-debug",
-    "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun"
+    "test:release": "node packages/bun-internal-test/src/runner.node.mjs ./build-release/bun",
+    "zig-check": ".cache/zig/zig.exe build check --summary new",
+    "zig-check-all": ".cache/zig/zig.exe build check-all --summary new",
+    "zig": ".cache/zig/zig.exe "
   }
 }

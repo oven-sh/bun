@@ -69,13 +69,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "src/deps/base64"]
-path = src/deps/base64
-url = https://github.com/aklomp/base64.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
 [submodule "src/deps/ls-hpack"]
 path = src/deps/ls-hpack
 url = https://github.com/litespeedtech/ls-hpack.git
@@ -86,7 +79,6 @@ fetchRecurseSubmodules = false
 [submodule "zig"]
 path = src/deps/zig
 url = https://github.com/oven-sh/zig
-branch = bun
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false

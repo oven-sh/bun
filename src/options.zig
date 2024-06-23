@@ -28,14 +28,13 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
-const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 const assert = bun.assert;
 
 pub const WriteDestination = enum {
     stdout,
     disk,
-    // eventaully: wasm
+    // eventually: wasm
 };
 
 pub fn validatePath(
@@ -50,7 +49,7 @@ pub fn validatePath(
         return "";
     }
     const paths = [_]string{ cwd, rel_path };
-    // TODO: switch to getFdPath()-based implemetation
+    // TODO: switch to getFdPath()-based implementation
     const out = std.fs.path.resolve(allocator, &paths) catch |err| {
         log.addErrorFmt(
             null,
@@ -299,7 +298,7 @@ pub const ExternalModules = struct {
         "zlib",
     };
 
-    pub const NodeBuiltinsMap = ComptimeStringMap(void, .{
+    pub const NodeBuiltinsMap = std.StaticStringMap(void).initComptime(.{
         .{ "_http_agent", {} },
         .{ "_http_client", {} },
         .{ "_http_common", {} },
@@ -371,7 +370,7 @@ pub const ModuleType = enum {
     cjs,
     esm,
 
-    pub const List = ComptimeStringMap(ModuleType, .{
+    pub const List = std.StaticStringMap(ModuleType).initComptime(.{
         .{ "commonjs", ModuleType.cjs },
         .{ "module", ModuleType.esm },
     });
@@ -383,16 +382,13 @@ pub const Target = enum {
     bun_macro,
     node,
 
-    pub const Map = ComptimeStringMap(
-        Target,
-        .{
-            .{ "browser", Target.browser },
-            .{ "bun", Target.bun },
-            .{ "bun_macro", Target.bun_macro },
-            .{ "macro", Target.bun_macro },
-            .{ "node", Target.node },
-        },
-    );
+    pub const Map = bun.ComptimeStringMap(Target, .{
+        .{ "browser", Target.browser },
+        .{ "bun", Target.bun },
+        .{ "bun_macro", Target.bun_macro },
+        .{ "macro", Target.bun_macro },
+        .{ "node", Target.node },
+    });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Target {
         if (!value.jsType().isStringLike()) {
@@ -542,7 +538,7 @@ pub const Target = enum {
         //
         // This is unfortunate but it's a problem on the side of those packages.
         // They won't work correctly with other popular bundlers (with node as a target) anyway.
-        var list = [_]string{ MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[1] };
+        const list = [_]string{ MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[1] };
         array.set(Target.node, &list);
 
         // Note that this means if a package specifies "main", "module", and
@@ -552,8 +548,8 @@ pub const Target = enum {
         // This is deliberate because the presence of the "browser" field is a
         // good signal that this should be preferred. Some older packages might only use CJS in their "browser"
         // but in such a case they probably don't have any ESM files anyway.
-        var listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
-        var listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
+        const listc = [_]string{ MAIN_FIELD_NAMES[0], MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[3], MAIN_FIELD_NAMES[2] };
+        const listd = [_]string{ MAIN_FIELD_NAMES[1], MAIN_FIELD_NAMES[2], MAIN_FIELD_NAMES[3] };
 
         array.set(Target.browser, &listc);
         array.set(Target.bun, &listd);
@@ -597,23 +593,11 @@ pub const Format = enum {
     cjs,
     iife,
 
-    pub const Map = ComptimeStringMap(
-        Format,
-        .{
-            .{
-                "esm",
-                Format.esm,
-            },
-            .{
-                "cjs",
-                Format.cjs,
-            },
-            .{
-                "iife",
-                Format.iife,
-            },
-        },
-    );
+    pub const Map = bun.ComptimeStringMap(Format, .{
+        .{ "esm", .esm },
+        .{ "cjs", .cjs },
+        .{ "iife", .iife },
+    });
 
     pub fn fromJS(global: *JSC.JSGlobalObject, format: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Format {
         if (format.isUndefinedOrNull()) return null;
@@ -701,18 +685,18 @@ pub const Loader = enum(u8) {
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
         var map = Map.initFill("");
-        map.set(Loader.jsx, "input.jsx");
-        map.set(Loader.js, "input.js");
-        map.set(Loader.ts, "input.ts");
-        map.set(Loader.tsx, "input.tsx");
-        map.set(Loader.css, "input.css");
-        map.set(Loader.file, "input");
-        map.set(Loader.json, "input.json");
-        map.set(Loader.toml, "input.toml");
-        map.set(Loader.wasm, "input.wasm");
-        map.set(Loader.napi, "input.node");
-        map.set(Loader.text, "input.txt");
-        map.set(Loader.bunsh, "input.sh");
+        map.set(.jsx, "input.jsx");
+        map.set(.js, "input.js");
+        map.set(.ts, "input.ts");
+        map.set(.tsx, "input.tsx");
+        map.set(.css, "input.css");
+        map.set(.file, "input");
+        map.set(.json, "input.json");
+        map.set(.toml, "input.toml");
+        map.set(.wasm, "input.wasm");
+        map.set(.napi, "input.node");
+        map.set(.text, "input.txt");
+        map.set(.bunsh, "input.sh");
         break :brk map;
     };
 
@@ -739,50 +723,50 @@ pub const Loader = enum(u8) {
     }
 
     pub const names = bun.ComptimeStringMap(Loader, .{
-        .{ "js", Loader.js },
-        .{ "mjs", Loader.js },
-        .{ "cjs", Loader.js },
-        .{ "cts", Loader.ts },
-        .{ "mts", Loader.ts },
-        .{ "jsx", Loader.jsx },
-        .{ "ts", Loader.ts },
-        .{ "tsx", Loader.tsx },
-        .{ "css", Loader.css },
-        .{ "file", Loader.file },
-        .{ "json", Loader.json },
-        .{ "toml", Loader.toml },
-        .{ "wasm", Loader.wasm },
-        .{ "node", Loader.napi },
-        .{ "dataurl", Loader.dataurl },
-        .{ "base64", Loader.base64 },
-        .{ "txt", Loader.text },
-        .{ "text", Loader.text },
-        .{ "sh", Loader.bunsh },
-        .{ "sqlite", Loader.sqlite },
-        .{ "sqlite_embedded", Loader.sqlite_embedded },
+        .{ "js", .js },
+        .{ "mjs", .js },
+        .{ "cjs", .js },
+        .{ "cts", .ts },
+        .{ "mts", .ts },
+        .{ "jsx", .jsx },
+        .{ "ts", .ts },
+        .{ "tsx", .tsx },
+        .{ "css", .css },
+        .{ "file", .file },
+        .{ "json", .json },
+        .{ "toml", .toml },
+        .{ "wasm", .wasm },
+        .{ "node", .napi },
+        .{ "dataurl", .dataurl },
+        .{ "base64", .base64 },
+        .{ "txt", .text },
+        .{ "text", .text },
+        .{ "sh", .bunsh },
+        .{ "sqlite", .sqlite },
+        .{ "sqlite_embedded", .sqlite_embedded },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
-        .{ "js", Api.Loader.js },
-        .{ "mjs", Api.Loader.js },
-        .{ "cjs", Api.Loader.js },
-        .{ "cts", Api.Loader.ts },
-        .{ "mts", Api.Loader.ts },
-        .{ "jsx", Api.Loader.jsx },
-        .{ "ts", Api.Loader.ts },
-        .{ "tsx", Api.Loader.tsx },
-        .{ "css", Api.Loader.css },
-        .{ "file", Api.Loader.file },
-        .{ "json", Api.Loader.json },
-        .{ "toml", Api.Loader.toml },
-        .{ "wasm", Api.Loader.wasm },
-        .{ "node", Api.Loader.napi },
-        .{ "dataurl", Api.Loader.dataurl },
-        .{ "base64", Api.Loader.base64 },
-        .{ "txt", Api.Loader.text },
-        .{ "text", Api.Loader.text },
-        .{ "sh", Api.Loader.file },
-        .{ "sqlite", Api.Loader.sqlite },
+        .{ "js", .js },
+        .{ "mjs", .js },
+        .{ "cjs", .js },
+        .{ "cts", .ts },
+        .{ "mts", .ts },
+        .{ "jsx", .jsx },
+        .{ "ts", .ts },
+        .{ "tsx", .tsx },
+        .{ "css", .css },
+        .{ "file", .file },
+        .{ "json", .json },
+        .{ "toml", .toml },
+        .{ "wasm", .wasm },
+        .{ "node", .napi },
+        .{ "dataurl", .dataurl },
+        .{ "base64", .base64 },
+        .{ "txt", .text },
+        .{ "text", .text },
+        .{ "sh", .file },
+        .{ "sqlite", .sqlite },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -844,6 +828,7 @@ pub const Loader = enum(u8) {
     pub fn isJSX(loader: Loader) bool {
         return loader == .jsx or loader == .tsx;
     }
+
     pub fn isTypeScript(loader: Loader) bool {
         return loader == .tsx or loader == .ts;
     }
@@ -875,35 +860,32 @@ pub const Loader = enum(u8) {
 };
 
 const default_loaders_posix = .{
-    .{ ".jsx", Loader.jsx },
-    .{ ".json", Loader.json },
-    .{ ".js", Loader.jsx },
+    .{ ".jsx", .jsx },
+    .{ ".json", .json },
+    .{ ".js", .jsx },
 
-    .{ ".mjs", Loader.js },
-    .{ ".cjs", Loader.js },
+    .{ ".mjs", .js },
+    .{ ".cjs", .js },
 
-    .{ ".css", Loader.css },
-    .{ ".ts", Loader.ts },
-    .{ ".tsx", Loader.tsx },
+    .{ ".css", .css },
+    .{ ".ts", .ts },
+    .{ ".tsx", .tsx },
 
-    .{ ".mts", Loader.ts },
-    .{ ".cts", Loader.ts },
+    .{ ".mts", .ts },
+    .{ ".cts", .ts },
 
-    .{ ".toml", Loader.toml },
-    .{ ".wasm", Loader.wasm },
-    .{ ".node", Loader.napi },
-    .{ ".txt", Loader.text },
-    .{ ".text", Loader.text },
+    .{ ".toml", .toml },
+    .{ ".wasm", .wasm },
+    .{ ".node", .napi },
+    .{ ".txt", .text },
+    .{ ".text", .text },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
-    .{ ".sh", Loader.bunsh },
+    .{ ".sh", .bunsh },
 };
 
 const default_loaders = if (Environment.isWindows) default_loaders_win32 else default_loaders_posix;
-pub const defaultLoaders = ComptimeStringMap(
-    Loader,
-    default_loaders,
-);
+pub const defaultLoaders = bun.ComptimeStringMap(Loader, default_loaders);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
@@ -956,12 +938,12 @@ pub const ESMConditions = struct {
 
 pub const JSX = struct {
     pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
-        .{ "classic", JSX.Runtime.classic },
-        .{ "automatic", JSX.Runtime.automatic },
-        .{ "react", JSX.Runtime.classic },
-        .{ "react-jsx", JSX.Runtime.automatic },
-        .{ "react-jsxdev", JSX.Runtime.automatic },
-        .{ "solid", JSX.Runtime.solid },
+        .{ "classic", .classic },
+        .{ "automatic", .automatic },
+        .{ "react", .classic },
+        .{ "react-jsx", .automatic },
+        .{ "react-jsxdev", .automatic },
+        .{ "solid", .solid },
     });
 
     pub const Pragma = struct {
@@ -1360,11 +1342,13 @@ pub const SourceMapOption = enum {
     none,
     @"inline",
     external,
+    linked,
 
     pub fn fromApi(source_map: ?Api.SourceMapMode) SourceMapOption {
-        return switch (source_map orelse Api.SourceMapMode._none) {
-            Api.SourceMapMode.external => .external,
-            Api.SourceMapMode.inline_into_file => .@"inline",
+        return switch (source_map orelse .none) {
+            .external => .external,
+            .@"inline" => .@"inline",
+            .linked => .linked,
             else => .none,
         };
     }
@@ -1372,15 +1356,24 @@ pub const SourceMapOption = enum {
     pub fn toAPI(source_map: ?SourceMapOption) Api.SourceMapMode {
         return switch (source_map orelse .none) {
             .external => .external,
-            .@"inline" => .inline_into_file,
-            else => ._none,
+            .@"inline" => .@"inline",
+            .linked => .linked,
+            .none => .none,
         };
     }
 
-    pub const Map = ComptimeStringMap(SourceMapOption, .{
+    pub fn hasExternalFiles(mode: SourceMapOption) bool {
+        return switch (mode) {
+            .linked, .external => true,
+            else => false,
+        };
+    }
+
+    pub const Map = bun.ComptimeStringMap(SourceMapOption, .{
         .{ "none", .none },
         .{ "inline", .@"inline" },
         .{ "external", .external },
+        .{ "linked", .linked },
     });
 };
 
@@ -1742,7 +1735,7 @@ pub const BundleOptions = struct {
         opts.external = ExternalModules.init(allocator, &fs.fs, fs.top_level_dir, transform.external, log, opts.target);
         opts.out_extensions = opts.target.outExtensions(allocator);
 
-        opts.source_map = SourceMapOption.fromApi(transform.source_map orelse Api.SourceMapMode._none);
+        opts.source_map = SourceMapOption.fromApi(transform.source_map orelse .none);
 
         opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;
@@ -2022,7 +2015,7 @@ pub const OutputFile = struct {
     }
 
     pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.os.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.os.toPosixPath(rel_path)), 0));
+        try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.posix.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.posix.toPosixPath(rel_path)), 0));
     }
 
     pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
@@ -2030,7 +2023,6 @@ pub const OutputFile = struct {
 
         const fd_out = file_out.handle;
         var do_close = false;
-        // TODO: close file_out on error
         const fd_in = (try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only })).handle;
 
         if (Environment.isWindows) {
@@ -2044,12 +2036,12 @@ pub const OutputFile = struct {
 
         defer {
             if (do_close) {
-                std.os.close(fd_out);
-                std.os.close(fd_in);
+                _ = bun.sys.close(bun.toFD(fd_out));
+                _ = bun.sys.close(bun.toFD(fd_in));
             }
         }
 
-        try bun.copyFile(fd_in, fd_out);
+        try bun.copyFile(fd_in, fd_out).unwrap();
     }
 
     pub fn toJS(
@@ -2681,15 +2673,12 @@ pub const PathTemplate = struct {
         ext: []const u8 = "",
         hash: ?u64 = null,
 
-        pub const map = bun.ComptimeStringMap(
-            std.meta.FieldEnum(Placeholder),
-            .{
-                .{ "dir", .dir },
-                .{ "name", .name },
-                .{ "ext", .ext },
-                .{ "hash", .hash },
-            },
-        );
+        pub const map = bun.ComptimeStringMap(std.meta.FieldEnum(Placeholder), .{
+            .{ "dir", .dir },
+            .{ "name", .name },
+            .{ "ext", .ext },
+            .{ "hash", .hash },
+        });
     };
 
     pub const chunk = PathTemplate{

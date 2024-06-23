@@ -113,12 +113,13 @@ const LibInfo = struct {
         );
 
         if (errno != 0) {
-            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(std.c.getErrno(errno))}));
+            request.head.promise.rejectTask(globalThis, globalThis.createErrorInstance("getaddrinfo_async_start error: {s}", .{@tagName(bun.C.getErrno(errno))}));
             if (request.cache.pending_cache) this.pending_host_cache_native.available.set(request.cache.pos_in_pending);
             this.vm.allocator.destroy(request);
 
             return promise_value;
         }
+
         bun.assert(request.backend.libinfo.machport != null);
         var poll = bun.Async.FilePoll.init(this.vm, bun.toFD(std.math.maxInt(i32) - 1), .{}, GetAddrInfoRequest, request);
         request.backend.libinfo.file_poll = poll;
@@ -126,11 +127,9 @@ const LibInfo = struct {
             this.vm.event_loop_handle.?,
             .machport,
             .one_shot,
-            bun.toFD(@intFromPtr(request.backend.libinfo.machport)),
+            bun.toFD(@as(i32, @intCast(@intFromPtr(request.backend.libinfo.machport)))),
         );
-        bun.assert(
-            rc == .result,
-        );
+        bun.assert(rc == .result);
 
         poll.enableKeepingProcessAlive(this.vm.eventLoop());
 
@@ -714,7 +713,7 @@ pub const GetAddrInfoRequest = struct {
         addr_info: ?*std.c.addrinfo,
         arg: ?*anyopaque,
     ) callconv(.C) void {
-        const this = @as(*GetAddrInfoRequest, @ptrFromInt(@intFromPtr(arg)));
+        const this = @as(*GetAddrInfoRequest, @ptrCast(@alignCast(arg)));
         log("getAddrInfoAsyncCallback: status={d}", .{status});
 
         if (this.backend == .libinfo) {
@@ -1075,7 +1074,7 @@ pub const DNSLookup = struct {
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
-                    break :brk bun.sys.Error.fromCode(bun.C.getErrno(-1), .getaddrinfo).toJSC(globalThis);
+                    break :brk bun.sys.Error.fromCode(bun.C.getErrno(@as(c_int, -1)), .getaddrinfo).toJSC(globalThis);
                 }
                 const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
                 error_value.put(
@@ -1341,7 +1340,7 @@ pub const InternalDNS = struct {
 
         fn isNearlyFull(this: *This) bool {
             // 80% full (value is kind of arbitrary)
-            return @atomicLoad(usize, &this.len, .Monotonic) * 5 >= this.cache.len * 4;
+            return @atomicLoad(usize, &this.len, .monotonic) * 5 >= this.cache.len * 4;
         }
 
         fn deleteEntryAt(this: *This, len: usize, i: usize) ?*Request {
@@ -1576,7 +1575,8 @@ pub const InternalDNS = struct {
             return false;
         }
 
-        var poll = bun.Async.FilePoll.init(loop, bun.toFD(@intFromPtr(machport)), .{}, InternalDNSRequest, req);
+        const fake_fd: i32 = @intCast(@intFromPtr(machport));
+        var poll = bun.Async.FilePoll.init(loop, bun.toFD(fake_fd), .{}, InternalDNSRequest, req);
         const rc = poll.register(loop.loop(), .machport, true);
 
         if (rc == .err) {
@@ -1610,12 +1610,12 @@ pub const InternalDNS = struct {
 
     pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, 6);
-        object.put(globalObject, JSC.ZigString.static("cacheHitsCompleted"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("cacheHitsInflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("cacheMisses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("size"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("errors"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .Monotonic)));
-        object.put(globalObject, JSC.ZigString.static("totalCount"), JSC.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .Monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cacheHitsCompleted"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cacheHitsInflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
+        object.put(globalObject, JSC.ZigString.static("cacheMisses"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .monotonic)));
+        object.put(globalObject, JSC.ZigString.static("size"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .monotonic)));
+        object.put(globalObject, JSC.ZigString.static("errors"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .monotonic)));
+        object.put(globalObject, JSC.ZigString.static("totalCount"), JSC.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .monotonic)));
         return object;
     }
 
@@ -2931,7 +2931,7 @@ pub const DNSResolver = struct {
             var buf: [INET6_ADDRSTRLEN + 2 + 6 + 1]u8 = undefined;
             const family = current.family;
 
-            const ip = if (family == std.os.AF.INET6) blk: {
+            const ip = if (family == std.posix.AF.INET6) blk: {
                 break :blk c_ares.ares_inet_ntop(family, &current.addr.addr6, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
             } else blk: {
                 break :blk c_ares.ares_inet_ntop(family, &current.addr.addr4, buf[1..], @sizeOf(@TypeOf(buf)) - 1);
@@ -2956,7 +2956,7 @@ pub const DNSResolver = struct {
             if (port == IANA_DNS_PORT) {
                 values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toValueGC(globalThis));
             } else {
-                if (family == std.os.AF.INET6) {
+                if (family == std.posix.AF.INET6) {
                     buf[0] = '[';
                     buf[size] = ']';
                     const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
@@ -3003,8 +3003,8 @@ pub const DNSResolver = struct {
             return .zero;
         };
 
-        var sa: std.os.sockaddr.storage = std.mem.zeroes(std.os.sockaddr.storage);
-        if (c_ares.getSockaddr(addr_s, port, @as(*std.os.sockaddr, @ptrCast(&sa))) != 0) {
+        var sa: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
+        if (c_ares.getSockaddr(addr_s, port, @as(*std.posix.sockaddr, @ptrCast(&sa))) != 0) {
             globalThis.throwInvalidArgumentType("lookupService", "address", "invalid address");
             return .zero;
         }
@@ -3051,7 +3051,7 @@ pub const DNSResolver = struct {
 
         const promise = request.tail.promise.value();
         channel.getNameInfo(
-            @as(*std.os.sockaddr, @ptrCast(&sa)),
+            @as(*std.posix.sockaddr, @ptrCast(&sa)),
             GetNameInfoRequest,
             request,
             GetNameInfoRequest.onCaresComplete,

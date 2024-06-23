@@ -48,6 +48,7 @@ pub const JumpTable = struct {
             // explicitly tell LLVM's optimizer about values we know will not be in the range of this switch statement
             0xaa...0xffd7 => isIdentifierPartSlow16(@as(u16, @intCast(codepoint))),
             (0xffd7 + 1)...0xe01ef => isIdentifierPartSlow32(codepoint),
+
             else => false,
         };
     }
@@ -108,6 +109,8 @@ pub const JumpTable = struct {
             'A'...'Z', 'a'...'z', '0'...'9', '$', '_' => true,
             else => if (codepoint < 128)
                 return false
+            else if (codepoint == 0x200C or codepoint == 0x200D)
+                return true
             else
                 return isIdentifierPartSlow(codepoint),
         };

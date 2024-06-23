@@ -28,6 +28,7 @@ pub const Classes = struct {
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const Glob = JSC.API.Glob;
     pub const ShellInterpreter = JSC.API.Shell.Interpreter;
+    pub const ParsedShellScript = JSC.API.Shell.ParsedShellScript;
     pub const Bundler = JSC.API.JSBundler;
     pub const JSBundler = Bundler;
     pub const Transpiler = JSC.API.JSTranspiler;

@@ -38,7 +38,10 @@ const isBuildKite = !!process.env["BUILDKITE"];
 const isBuildKiteTestSuite = !!process.env["BUILDKITE_ANALYTICS_TOKEN"];
 const isCI = !!process.env["CI"] || isGitHubAction || isBuildKite;
 
-const isAWS = !!process.env["AWS_EXECUTION_ENV"] || process.env["USERNAME"]?.startsWith("EC2");
+const isAWS =
+  process.env["USERNAME"]?.test(/^ec2/i) ||
+  process.env["USER"]?.test(/^ec2/i) ||
+  process.env["HOSTNAME"]?.test(/^ip-/i);
 const isCloud = isAWS;
 
 const isInteractive = !isCI && process.argv.includes("-i") && process.stdout.isTTY;
@@ -1510,6 +1513,47 @@ function getExitCode(outcome) {
   return 1;
 }
 
+/**
+ * @returns {Promise<Date | undefined>}
+ */
+async function getDoomsdayDate() {
+  try {
+    const response = await fetch("http://169.254.169.254/latest/meta-data/spot/instance-action");
+    if (response.ok) {
+      const { time } = await response.json();
+      return new Date(time);
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * @param {string} signal
+ */
+async function beforeExit(signal) {
+  const endOfWorld = await getDoomsdayDate();
+  if (endOfWorld) {
+    const timeMin = 10 * 1000;
+    const timeLeft = Math.max(0, date.getTime() - Date.now());
+    if (timeLeft > timeMin) {
+      setTimeout(() => onExit(signal), timeLeft - timeMin);
+      return;
+    }
+  }
+  onExit(signal);
+}
+
+/**
+ * @param {string} signal
+ */
+async function onExit(signal) {
+  const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
+  await runTask(label, () => {
+    process.exit(getExitCode("cancel"));
+  });
+}
+
 const [target, ...filters] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
 if (!target) {
   const filename = relative(cwd, import.meta.filename);
@@ -1517,11 +1561,7 @@ if (!target) {
 }
 
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, async () => {
-    await runTask(`${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`, () => {
-      process.exit(getExitCode("cancel"));
-    });
-  });
+  process.on(signal, () => beforeExit(signal));
 }
 
 await runTask("Environment", printInfo);

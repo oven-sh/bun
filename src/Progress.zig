@@ -14,6 +14,7 @@
 //! * `refresh_rate_ms`
 //! * `initial_delay_ms`
 
+const bun = @import("root").bun;
 const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
@@ -77,6 +78,7 @@ pub const Node = struct {
     parent: ?*Node,
     name: []const u8,
     unit: []const u8 = "",
+    convert_to_bytes_unit: bool = false,
     /// Must be handled atomically to be thread-safe.
     recently_updated_child: ?*Node = null,
     /// Must be handled atomically to be thread-safe. 0 means null.
@@ -235,6 +237,55 @@ pub fn refresh(self: *Progress) void {
     return self.refreshWithHeldLock();
 }
 
+const WindowsTerminalError = error{
+    InvalidHandle,
+    FillConsoleOutputAttributeFailed,
+    FillConsoleOutputCharacterFailed,
+    SetConsoleCursorPositionFailed,
+};
+
+pub fn clearTerminalWindows(file: std.fs.File, columns: usize) WindowsTerminalError!void {
+    var info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+    if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != std.os.windows.TRUE)
+        // stop trying to write to this file
+        return WindowsTerminalError.InvalidHandle;
+
+    var cursor_pos = std.os.windows.COORD{
+        .X = info.dwCursorPosition.X - @as(std.os.windows.SHORT, @intCast(columns)),
+        .Y = info.dwCursorPosition.Y,
+    };
+
+    if (cursor_pos.X < 0)
+        cursor_pos.X = 0;
+
+    const fill_chars = @as(std.os.windows.DWORD, @intCast(info.dwSize.X - cursor_pos.X));
+
+    var written: std.os.windows.DWORD = undefined;
+    if (std.os.windows.kernel32.FillConsoleOutputAttribute(
+        file.handle,
+        info.wAttributes,
+        fill_chars,
+        cursor_pos,
+        &written,
+    ) != std.os.windows.TRUE)
+        // stop trying to write to this file
+        return WindowsTerminalError.FillConsoleOutputAttributeFailed;
+
+    if (std.os.windows.kernel32.FillConsoleOutputCharacterW(
+        file.handle,
+        ' ',
+        fill_chars,
+        cursor_pos,
+        &written,
+    ) != std.os.windows.TRUE)
+        // stop trying to write to this file
+        return WindowsTerminalError.FillConsoleOutputCharacterFailed;
+
+    if (std.os.windows.kernel32.SetConsoleCursorPosition(file.handle, cursor_pos) != std.os.windows.TRUE)
+        // stop trying to write to this file
+        return WindowsTerminalError.SetConsoleCursorPositionFailed;
+}
+
 fn clearWithHeldLock(p: *Progress, end_ptr: *usize) void {
     const file = p.terminal orelse return;
     var end = end_ptr.*;
@@ -243,56 +294,17 @@ fn clearWithHeldLock(p: *Progress, end_ptr: *usize) void {
         // `columns_written` cells to the left, then clear the rest of the
         // line
         if (p.supports_ansi_escape_codes) {
-            end += (std.fmt.bufPrint(p.output_buffer[end..], "\x1b[{d}D", .{p.columns_written}) catch unreachable).len;
-            end += (std.fmt.bufPrint(p.output_buffer[end..], "\x1b[0K", .{}) catch unreachable).len;
-        } else if (builtin.os.tag == .windows) winapi: {
+            // throw if buffer is too small
+            end += (std.fmt.bufPrint(p.output_buffer[end..], "\x1b[{d}D", .{p.columns_written}) catch unreachable).len; // move cursor
+            end += (std.fmt.bufPrint(p.output_buffer[end..], "\x1b[0K", .{}) catch unreachable).len; // clear line
+            // should give it a bigger buffer
+        } else if (builtin.os.tag == .windows) {
             std.debug.assert(p.is_windows_terminal);
 
-            var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-            if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != windows.TRUE) {
+            clearTerminalWindows(file, p.columns_written) catch {
                 // stop trying to write to this file
                 p.terminal = null;
-                break :winapi;
-            }
-
-            var cursor_pos = windows.COORD{
-                .X = info.dwCursorPosition.X - @as(windows.SHORT, @intCast(p.columns_written)),
-                .Y = info.dwCursorPosition.Y,
             };
-
-            if (cursor_pos.X < 0)
-                cursor_pos.X = 0;
-
-            const fill_chars = @as(windows.DWORD, @intCast(info.dwSize.X - cursor_pos.X));
-
-            var written: windows.DWORD = undefined;
-            if (windows.kernel32.FillConsoleOutputAttribute(
-                file.handle,
-                info.wAttributes,
-                fill_chars,
-                cursor_pos,
-                &written,
-            ) != windows.TRUE) {
-                // stop trying to write to this file
-                p.terminal = null;
-                break :winapi;
-            }
-            if (windows.kernel32.FillConsoleOutputCharacterW(
-                file.handle,
-                ' ',
-                fill_chars,
-                cursor_pos,
-                &written,
-            ) != windows.TRUE) {
-                // stop trying to write to this file
-                p.terminal = null;
-                break :winapi;
-            }
-            if (windows.kernel32.SetConsoleCursorPosition(file.handle, cursor_pos) != windows.TRUE) {
-                // stop trying to write to this file
-                p.terminal = null;
-                break :winapi;
-            }
         } else {
             // we are in a "dumb" terminal like in acme or writing to a file
             p.output_buffer[end] = '\n';
@@ -331,11 +343,19 @@ fn refreshWithHeldLock(self: *Progress) void {
                 }
                 if (eti > 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit });
+                    if (node.convert_to_bytes_unit) {
+                        self.bufWrite(&end, "[{s:.2}/{s:.2}] ", .{ bun.fmt.size(current_item), bun.fmt.size(eti) });
+                    } else {
+                        self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit });
+                    }
                     need_ellipse = false;
                 } else if (completed_items != 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit });
+                    if (node.convert_to_bytes_unit) {
+                        self.bufWrite(&end, "[{s:.2}] ", .{bun.fmt.size(current_item)});
+                    } else {
+                        self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit });
+                    }
                     need_ellipse = false;
                 }
             }

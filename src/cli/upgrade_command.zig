@@ -515,6 +515,7 @@ pub const UpgradeCommand = struct {
         {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
+            progress.convert_to_bytes_unit = true;
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);

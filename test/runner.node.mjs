@@ -20,7 +20,7 @@ import {
   rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir, hostname, userInfo, homedir } from "node:os";
+import { tmpdir, hostname, userInfo, homedir, type } from "node:os";
 import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
@@ -61,6 +61,9 @@ async function printInfo() {
   console.log("Timestamp:", new Date());
   console.log("OS:", getOsPrettyText(), getOsEmoji());
   console.log("Arch:", getArchText(), getArchEmoji());
+  if (isLinux) {
+    console.log("Glibc:", getGlibcVersion());
+  }
   console.log("Hostname:", getHostname());
   if (isCloud) {
     console.log("Public IP:", await getPublicIp());
@@ -129,14 +132,7 @@ async function runTests(target, filters) {
     results.push(result);
 
     if (isBuildKite) {
-      const { ok, testPath, error, stdout, stdoutPreview } = result;
-
-      const logsPath = join(cwd, "logs");
-      const logFilePath = join(logsPath, `${testPath}.log`);
-      mkdirSync(dirname(logFilePath), { recursive: true });
-      appendFileSync(logFilePath, stripAnsi(stdout));
-      uploadArtifactsToBuildKite(relative(cwd, logFilePath));
-
+      const { ok, error, stdoutPreview } = result;
       const markdown = formatTestToMarkdown(result);
       if (markdown) {
         reportAnnotationToBuildKite(title, markdown);
@@ -161,7 +157,7 @@ async function runTests(target, filters) {
     }
 
     if (isBail && !result.ok) {
-      process.exit(1);
+      process.exit(getExitCode("fail"));
     }
   };
 
@@ -1032,6 +1028,24 @@ function getArchEmoji() {
 /**
  * @returns {string | undefined}
  */
+function getGlibcVersion() {
+  if (!isLinux) {
+    return;
+  }
+  try {
+    const { header } = process.report.getReport();
+    const { glibcVersionRuntime } = header;
+    if (typeof glibcVersionRuntime === "string") {
+      return glibcVersionRuntime;
+    }
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+/**
+ * @returns {string | undefined}
+ */
 function getBuildUrl() {
   if (isBuildKite) {
     const buildUrl = process.env["BUILDKITE_BUILD_URL"];
@@ -1475,24 +1489,42 @@ function isExecutable(execPath) {
   return true;
 }
 
+/**
+ * @param {"pass" | "fail" | "cancel"} [outcome]
+ */
+function getExitCode(outcome) {
+  if (outcome === "pass") {
+    return 0;
+  }
+  if (!isBuildKite) {
+    return 1;
+  }
+  // On Buildkite, you can define a `soft_fail` property to differentiate
+  // from failing tests and the runner itself failing.
+  if (outcome === "fail") {
+    return 2;
+  }
+  if (outcome === "cancel") {
+    return 3;
+  }
+  return 1;
+}
+
 const [target, ...filters] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
 if (!target) {
   const filename = relative(cwd, import.meta.filename);
   throw new Error(`Usage: ${process.argv0} ${filename} <target> [...filters]`);
 }
 
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, async () => {
+    await runTask(`${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`, () => {
+      process.exit(getExitCode("cancel"));
+    });
+  });
+}
+
 await runTask("Environment", printInfo);
 const results = await runTests(target, filters);
 const ok = results.every(({ ok }) => ok);
-
-// On Buildkite, you can define a `soft_fail` property to differentiate
-// from failing tests and the runner itself failing.
-//
-// ```yml
-// steps:
-//  - command: smoke-test.sh
-//    soft_fail:
-//      - exit_status: 2
-// ```
-const exitCode = ok ? 0 : isBuildKite ? 2 : 1;
-process.exit(exitCode);
+process.exit(getExitCode(ok ? "pass" : "fail"));

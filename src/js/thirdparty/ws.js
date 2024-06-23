@@ -29,6 +29,11 @@ function emitWarning(type, message) {
 // TODO: add private method on WebSocket to avoid these allocations
 function normalizeData(data, opts) {
   const isBinary = opts?.binary;
+
+  if (typeof data === "number") {
+    data = data.toString();
+  }
+
   if (isBinary === true && typeof data === "string") {
     data = Buffer.from(data);
   } else if (isBinary === false && $isTypedArrayView(data)) {
@@ -147,14 +152,19 @@ class BunWebSocket extends EventEmitter {
   }
 
   send(data, opts, cb) {
+    if ($isCallable(opts)) {
+      cb = opts;
+      opts = undefined;
+    }
+
     try {
       this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {
-      typeof cb === "function" && cb(error);
+      typeof cb === "function" && process.nextTick(cb, error);
       return;
     }
     // deviation: this should be called once the data is written, not immediately
-    typeof cb === "function" && cb();
+    typeof cb === "function" && process.nextTick(cb, null);
   }
 
   close(code, reason) {
@@ -727,6 +737,11 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   send(data, opts, cb) {
+    if ($isCallable(opts)) {
+      cb = opts;
+      opts = undefined;
+    }
+
     if (this.#state === 1) {
       const compress = opts?.compress;
       data = normalizeData(data, opts);

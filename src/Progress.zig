@@ -244,7 +244,7 @@ const WindowsTerminalError = error{
     SetConsoleCursorPositionFailed,
 };
 
-pub fn clearTerminalWindows(file: std.fs.File, columns: usize) WindowsTerminalError!void {
+fn clearTerminalWindows(file: std.fs.File, columns: usize) WindowsTerminalError!void {
     var info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
     if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != std.os.windows.TRUE)
         // stop trying to write to this file

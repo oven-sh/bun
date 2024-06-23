@@ -37,11 +37,11 @@ pub fn decode(destination: []u8, source: []const u8) bun.simdutf.SIMDUTFResult {
 pub fn decodeAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     var dest = try allocator.alloc(u8, decodeLen(input));
     const result = decode(dest, input);
-    if (result.fail) {
+    if (result.isSuccessful()) {
         allocator.free(dest);
         return error.DecodingFailed;
     }
-    return dest[0..result.written];
+    return dest[0..result.count];
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {

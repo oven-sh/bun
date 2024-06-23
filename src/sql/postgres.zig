@@ -1888,7 +1888,7 @@ pub const PostgresSQLQuery = struct {
     };
 
     pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
-        return this.ref_count.load(.Monotonic) > 1;
+        return this.ref_count.load(.monotonic) > 1;
     }
 
     pub fn deinit(this: *@This()) void {
@@ -1909,7 +1909,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn deref(this: *@This()) void {
-        const ref_count = this.ref_count.fetchSub(1, .Monotonic);
+        const ref_count = this.ref_count.fetchSub(1, .monotonic);
 
         if (ref_count == 1) {
             this.deinit();
@@ -1917,7 +1917,7 @@ pub const PostgresSQLQuery = struct {
     }
 
     pub fn ref(this: *@This()) void {
-        bun.assert(this.ref_count.fetchAdd(1, .Monotonic) > 0);
+        bun.assert(this.ref_count.fetchAdd(1, .monotonic) > 0);
     }
 
     pub fn onNoData(this: *@This(), globalObject: *JSC.JSGlobalObject) void {
@@ -2565,15 +2565,15 @@ pub const PostgresSQLConnection = struct {
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
     pub fn hasPendingActivity(this: *PostgresSQLConnection) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.pending_activity_count.load(.Acquire) > 0;
+        @fence(.acquire);
+        return this.pending_activity_count.load(.acquire) > 0;
     }
 
     fn updateHasPendingActivity(this: *PostgresSQLConnection) void {
-        @fence(.Release);
+        @fence(.release);
         const a: u32 = if (this.requests.readableLength() > 0) 1 else 0;
         const b: u32 = if (this.status != .disconnected) 1 else 0;
-        this.pending_activity_count.store(a + b, .Release);
+        this.pending_activity_count.store(a + b, .release);
     }
 
     pub fn setStatus(this: *PostgresSQLConnection, status: Status) void {

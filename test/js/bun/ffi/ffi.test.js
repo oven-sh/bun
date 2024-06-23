@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
 import { platform } from "os";
+import { isGlibcVersionAtLeast } from "harness";
 
 import {
   CFunction,

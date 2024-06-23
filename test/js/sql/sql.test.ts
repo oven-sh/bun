@@ -1,5 +1,5 @@
 import { postgres, sql } from "bun:sql";
-import { expect, test as t, describe } from "bun:test";
+import { expect, test as test, describe } from "bun:test";
 import { isCI } from "harness";
 
 if (!isCI) {
@@ -57,7 +57,7 @@ if (!isCI) {
     max: 1,
   };
 
-  t("Connects with no options", async () => {
+  test("Connects with no options", async () => {
     const sql = postgres({ max: 1 });
 
     const result = (await sql`select 1 as x`)[0].x;
@@ -65,32 +65,30 @@ if (!isCI) {
     expect(result).toBe(1);
   });
 
-  t("Uses default database without slash", async () => {
+  test("Uses default database without slash", async () => {
     const sql = postgres("postgres://localhost");
-    console.log(sql.options);
     expect(sql.options.username).toBe(sql.options.database);
   });
 
-  t("Uses default database with slash", async () => {
+  test("Uses default database with slash", async () => {
     const sql = postgres("postgres://localhost/");
     expect(sql.options.username).toBe(sql.options.database);
   });
 
-  // console.log(sql`select 1`)
-  t("Result is array", async () => {
+  test("Result is array", async () => {
     expect(await sql`select 1`).toBeArray();
   });
 
-  t.todo("Result has command", async () => {
+  test("Result has command", async () => {
     expect((await sql`select 1`).command).toBe("SELECT");
   });
 
-  t("Create table", async () => {
+  test("Create table", async () => {
     await sql`create table test(int int)`;
     await sql`drop table test`;
   });
 
-  t("Drop table", async () => {
+  test("Drop table", async () => {
     await sql`create table test(int int)`;
     await sql`drop table test`;
     // Verify that table is dropped
@@ -98,31 +96,31 @@ if (!isCI) {
     expect(result).toBeArrayOfSize(0);
   });
 
-  t("null", async () => {
+  test("null", async () => {
     expect((await sql`select ${null} as x`)[0].x).toBeNull();
   });
 
-  t("Unsigned Integer", async () => {
+  test("Unsigned Integer", async () => {
     expect((await sql`select ${0x7fffffff + 2} as x`)[0].x).toBe(0x7fffffff + 2);
   });
 
-  t("Signed Integer", async () => {
+  test("Signed Integer", async () => {
     expect((await sql`select ${-1} as x`)[0].x).toBe(-1);
   });
 
-  t("Double", async () => {
+  test("Double", async () => {
     expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
   });
 
-  t("String", async () => {
+  test("String", async () => {
     expect((await sql`select ${"hello"} as x`)[0].x).toBe("hello");
   });
 
-  t("Boolean false", async () => [false, (await sql`select ${false} as x`)[0].x]);
+  test("Boolean false", async () => expect((await sql`select ${false} as x`)[0].x).toBe(false));
 
-  t("Boolean true", async () => [true, (await sql`select ${true} as x`)[0].x]);
+  test("Boolean true", async () => expect((await sql`select ${true} as x`)[0].x).toBe(true));
 
-  t("Date", async () => {
+  test("Date", async () => {
     const now = new Date();
     const then = (await sql`select ${now}::timestamp as x`)[0].x;
     expect(then).toEqual(now);
@@ -133,22 +131,21 @@ if (!isCI) {
   //   return ["hello,42", [x.a, x.b].join()];
   // });
 
-  t("implicit json", async () => {
+  test("implicit json", async () => {
     const x = (await sql`select ${{ a: "hello", b: 42 }}::json as x`)[0].x;
     expect(x).toEqual({ a: "hello", b: 42 });
   });
 
   // It's treating as a string.
-  t.todo("implicit jsonb", async () => {
+  test.todo("implicit jsonb", async () => {
     const x = (await sql`select ${{ a: "hello", b: 42 }}::jsonb as x`)[0].x;
     expect([x.a, x.b].join(",")).toBe("hello,42");
   });
 
   // t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
 
-  t("string arg with ::int -> Array<int>", async () =>
-    expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])),
-  );
+  test("string arg with ::int -> Array<int>", async () =>
+    expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])));
 
   // t("Array of Integer", async () => ["3", (await sql`select ${sql.array([1, 2, 3])} as x`)[0].x[2]]);
 
@@ -200,22 +197,18 @@ if (!isCI) {
   //   { timeout: 20 * 1000 },
   // );
 
-  t(
-    "null for int",
-    async () => {
-      const result = await sql`create table test (x int)`;
-      expect(result.command).toBe("CREATE TABLE");
-      expect(result.count).toBe(0);
-      try {
-        const result = await sql`insert into test values(${null})`;
-        expect(result.command).toBe("INSERT");
-        expect(result.count).toBe(1);
-      } finally {
-        await sql`drop table test`;
-      }
-    },
-    Infinity,
-  );
+  test("null for int", async () => {
+    const result = await sql`create table test (x int)`;
+    expect(result.command).toBe("CREATE TABLE");
+    expect(result.count).toBe(0);
+    try {
+      const result = await sql`insert into test values(${null})`;
+      expect(result.command).toBe("INSERT");
+      expect(result.count).toBe(1);
+    } finally {
+      await sql`drop table test`;
+    }
+  });
 
   // t('Throws on illegal transactions', async() => {
   //   const sql = postgres({ ...options, max: 2, fetch_types: false })
@@ -406,10 +399,10 @@ if (!isCI) {
   //   return [null, (await sql`select * from (values ${ sql([undefined, undefined]) }) as x(x, y)`)[0].y]
   // })
 
-  t("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
+  test("Null sets to null", async () => expect((await sql`select ${null} as x`)[0].x).toBeNull());
 
   // Add code property.
-  t.todo("Throw syntax error", async () => {
+  test.todo("Throw syntax error", async () => {
     const code = await sql`wat 1`.catch(x => x);
     console.log({ code });
   });
@@ -491,7 +484,7 @@ if (!isCI) {
   //   return [true, (await postgres({ ...options, ...login_md5 })`select true as x`)[0].x]
   // })
 
-  t("Login using scram-sha-256", async () => {
+  test("Login using scram-sha-256", async () => {
     await using sql = postgres({ ...options, ...login_scram });
 
     // Run it three times to catch any GC
@@ -501,7 +494,7 @@ if (!isCI) {
   });
 
   // Promise.all on multiple values in-flight doesn't work currently due to pendingValueGetcached pointing to the wrong value.
-  t.todo("Parallel connections using scram-sha-256", async () => {
+  test.todo("Parallel connections using scram-sha-256", async () => {
     await using sql = postgres({ ...options, ...login_scram });
     return [
       true,
@@ -998,7 +991,7 @@ if (!isCI) {
   //   }`.catch(e => e.code)), await sql`drop table test`]
   // })
 
-  t("let postgres do implicit cast of unknown types", async () => {
+  test("let postgres do implicit cast of unknown types", async () => {
     await sql`create table test (x timestamp with time zone)`;
     try {
       const [{ x }] = await sql`insert into test values (${new Date().toISOString()}) returning *`;
@@ -1052,7 +1045,7 @@ if (!isCI) {
   //   return ['NOT_TAGGED_CALL', error]
   // })
 
-  t("little bobby tables", async () => {
+  test("little bobby tables", async () => {
     const name = "Robert'); DROP TABLE students;--";
 
     try {
@@ -2522,7 +2515,7 @@ if (!isCI) {
   // })
 
   // Hangs with array
-  t.todo("Insert array with null", async () => {
+  test.todo("Insert array with null", async () => {
     await sql`create table test (x int[])`;
     console.log("here");
     try {

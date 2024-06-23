@@ -1423,10 +1423,6 @@ else()
     )
 endif()
 
-if(WIN32)
-    # delayimp -delayload:shell32.dll -delayload:ole32.dll
-endif()
-
 if(BUN_LINK_ONLY)
     message(STATUS "NOTE: BUN_LINK_ONLY is ON, this build config will only link the Bun executable")
 endif()

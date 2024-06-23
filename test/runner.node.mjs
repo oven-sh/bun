@@ -39,9 +39,10 @@ const isBuildKiteTestSuite = !!process.env["BUILDKITE_ANALYTICS_TOKEN"];
 const isCI = !!process.env["CI"] || isGitHubAction || isBuildKite;
 
 const isAWS =
-  process.env["USERNAME"]?.test(/^ec2/i) ||
-  process.env["USER"]?.test(/^ec2/i) ||
-  process.env["HOSTNAME"]?.test(/^ip-/i);
+  /^ec2/i.test(process.env["USERNAME"]) ||
+  /^ec2/i.test(process.env["USER"]) ||
+  /^(?:ec2|ip)/i.test(process.env["HOSTNAME"]) ||
+  /^(?:ec2|ip)/i.test(getHostname());
 const isCloud = isAWS;
 
 const isInteractive = !isCI && process.argv.includes("-i") && process.stdout.isTTY;

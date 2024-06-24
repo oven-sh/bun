@@ -111,20 +111,7 @@ pub const Stdio = union(enum) {
             else => "spawn_stdio_memory_file",
         };
 
-        // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-        const rc = std.c.memfd_create(label, 0);
-
-        log("memfd_create({s}) = {d}", .{ label, rc });
-
-        switch (bun.C.getErrno(rc)) {
-            .SUCCESS => {},
-            else => |errno| {
-                log("Failed to create memfd: {s}", .{@tagName(errno)});
-                return;
-            },
-        }
-
-        const fd = bun.toFD(rc);
+        const fd = bun.sys.memfd_create(label, 0).unwrap() catch return;
 
         var remain = this.byteSlice();
 

@@ -106,7 +106,7 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 // we assume that this is relatively uncommon
 // TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    switch (bun.sys.renameat(from_dir, filename, to_dir, destination)) {
+    switch (bun.sys.renameatConcurrentlyWithoutFallback(from_dir, filename, to_dir, destination)) {
         .err => |err| {
             // allow over-writing an empty directory
             if (err.getErrno() == .ISDIR) {
@@ -137,7 +137,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
             }
 
             if (err.getErrno() == .XDEV) {
-                try copyFileZSlowWithHandle(from_handle, to_dir, destination);
+                try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = bun.sys.unlinkat(from_dir, filename);
             }
 
@@ -147,55 +147,77 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
     }
 }
 
+const Maybe = bun.sys.Maybe;
+
 // On Linux, this will be fast because sendfile() supports copying between two file descriptors on disk
 // macOS & BSDs will be slow because
 pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
-    const in_handle = try bun.sys.openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644).unwrap();
-    defer _ = bun.sys.close(in_handle);
-    _ = bun.sys.unlinkat(from_dir, filename);
-    try copyFileZSlowWithHandle(in_handle, to_dir, destination);
+    return try moveFileZSlowMaybe(from_dir, filename, to_dir, destination).unwrap();
 }
 
-pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
+pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {
+    const in_handle = switch (bun.sys.openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644)) {
+        .result => |f| f,
+        .err => |e| return .{ .err = e },
+    };
+    defer _ = bun.sys.close(in_handle);
+    _ = bun.sys.unlinkat(from_dir, filename);
+    return copyFileZSlowWithHandle(in_handle, to_dir, destination);
+}
+
+pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {
     if (comptime Environment.isWindows) {
         var buf0: bun.WPathBuffer = undefined;
         var buf1: bun.WPathBuffer = undefined;
 
-        const dest = try bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0).unwrap();
+        const dest = switch (bun.sys.normalizePathWindows(u8, to_dir, destination, &buf0)) {
+            .result => |x| x,
+            .err => |e| return .{ .err = e },
+        };
         const src_len = bun.windows.GetFinalPathNameByHandleW(in_handle.cast(), &buf1, buf1.len, 0);
         if (src_len == 0) {
-            return error.EBUSY;
+            return Maybe(void).errno(bun.C.E.BUSY, .GetFinalPathNameByHandle);
         } else if (src_len >= buf1.len) {
-            return error.ENAMETOOLONG;
+            return Maybe(void).errno(bun.C.E.NAMETOOLONG, .GetFinalPathNameByHandle);
         }
         const src = buf1[0..src_len :0];
-        try bun.copyFile(src, dest);
-        return;
-    }
+        return bun.copyFile(src, dest);
+    } else {
+        const stat_ = switch (bun.sys.fstat(in_handle)) {
+            .result => |s| s,
+            .err => |e| return .{ .err = e },
+        };
 
-    const stat_ = if (comptime Environment.isPosix) try std.posix.fstat(in_handle.cast()) else void{};
+        // Attempt to delete incase it already existed.
+        // This fixes ETXTBUSY on Linux
+        _ = bun.sys.unlinkat(to_dir, destination);
 
-    // Attempt to delete incase it already existed.
-    // This fixes ETXTBUSY on Linux
-    _ = bun.sys.unlinkat(to_dir, destination);
+        const out_handle = switch (bun.sys.openat(
+            to_dir,
+            destination,
+            bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
+            if (comptime Environment.isPosix) 0o644 else 0,
+        )) {
+            .result => |fd| fd,
+            .err => |e| return .{ .err = e },
+        };
+        defer _ = bun.sys.close(out_handle);
 
-    const out_handle = try bun.sys.openat(
-        to_dir,
-        destination,
-        bun.O.WRONLY | bun.O.CREAT | bun.O.CLOEXEC | bun.O.TRUNC,
-        if (comptime Environment.isPosix) 0o644 else 0,
-    ).unwrap();
-    defer _ = bun.sys.close(out_handle);
+        if (comptime Environment.isLinux) {
+            _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
+        }
 
-    if (comptime Environment.isLinux) {
-        _ = std.os.linux.fallocate(out_handle.cast(), 0, 0, @intCast(stat_.size));
-    }
+        switch (bun.copyFile(in_handle.cast(), out_handle.cast())) {
+            .err => |e| return .{ .err = e },
+            .result => {},
+        }
 
-    try bun.copyFile(in_handle.cast(), out_handle.cast());
+        if (comptime Environment.isPosix) {
+            _ = fchmod(out_handle.cast(), stat_.mode);
+            _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
+        }
 
-    if (comptime Environment.isPosix) {
-        _ = fchmod(out_handle.cast(), stat_.mode);
-        _ = fchown(out_handle.cast(), stat_.uid, stat_.gid);
+        return Maybe(void).success;
     }
 }
 

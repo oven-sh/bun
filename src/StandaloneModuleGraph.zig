@@ -288,7 +288,7 @@ pub const StandaloneModuleGraph = struct {
                 out_buf[zname.len] = 0;
                 const out = out_buf[0..zname.len :0];
 
-                bun.copyFile(in, out) catch |err| {
+                bun.copyFile(in, out).unwrap() catch |err| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
@@ -388,7 +388,7 @@ pub const StandaloneModuleGraph = struct {
 
             defer _ = Syscall.close(self_fd);
 
-            bun.copyFile(self_fd.cast(), fd.cast()) catch |err| {
+            bun.copyFile(self_fd.cast(), fd.cast()).unwrap() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                 cleanup(zname, fd);
                 Global.exit(1);

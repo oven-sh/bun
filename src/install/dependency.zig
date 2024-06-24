@@ -187,6 +187,8 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     return false;
 }
 
+/// `isGitHubShorthand` from npm
+/// https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/hosted-git-info/lib/from-url.js#L6
 pub inline fn isGitHubRepoPath(dependency: string) bool {
     // Shortest valid expression: u/r
     if (dependency.len < 3) return false;
@@ -576,7 +578,6 @@ pub const Version = struct {
                                     url = url["://".len..];
                                 }
                             }
-
 
                             if (url.len > 4 and strings.eqlComptime(url[0.."git@".len], "git@")) {
                                 url = url["git@".len..];

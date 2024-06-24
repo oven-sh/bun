@@ -5,9 +5,13 @@ source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 cwd=$(pwd)
 zig=
 
-CI="${CI:-}"
-if [ -n "$CI" ]; then
-  bash $(dirname -- "${BASH_SOURCE[0]}")/download-zig.sh
+if [[ "$CI" ]]; then
+  # Since the zig build depends on files from the zig submodule,
+  # make sure to update the submodule before building.
+  git submodule update --init --recursive --progress --depth=1 --checkout src/deps/zig
+
+  # Also update the correct version of zig in the submodule.
+  $(dirname -- "${BASH_SOURCE[0]}")/download-zig.sh
 fi
 
 if [ -f "$cwd/.cache/zig/zig" ]; then

@@ -46,7 +46,8 @@ dep() {
         for lib in "${@:2}"; do
             if [ ! -f "$BUN_DEPS_OUT_DIR/$lib" ]; then
                 if [[ "$CACHE" == "1" && -f "$CACHE_DIR/$CACHE_KEY/$lib" ]]; then
-                    cp "$CACHE_DIR/$CACHE_KEY/$lib" "$BUN_DEPS_OUT_DIR"
+                    mkdir -p "$BUN_DEPS_OUT_DIR"
+                    cp "$CACHE_DIR/$CACHE_KEY/$lib" "$BUN_DEPS_OUT_DIR/$lib"
                     printf "%s %s - already cached\n" "$script" "$lib"
                 else
                     HAS_ALL_DEPS=0

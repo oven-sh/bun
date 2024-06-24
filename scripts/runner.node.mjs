@@ -847,7 +847,6 @@ async function getExecPathFromBuildKite(target) {
 
   let zipPath;
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-    console.log({ entry });
     if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
       zipPath = join(releasePath, entry);
       break;

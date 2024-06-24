@@ -34,13 +34,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-cmake -S . \
+mkdir -p build
+cd build
+mkdir -p tmp_modules tmp_functions js codegen
+cmake .. \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_LTO=${USE_LTO} \
   -DCPU_TARGET=${CPU_TARGET} \
   -DBUN_CPP_ONLY=1 \
   -DNO_CONFIGURE_DEPENDS=1
-
-chmod +x compile-cpp-only.sh
-bash compile-cpp-only.sh -v
+chmod +x ./compile-cpp-only.sh
+bash ./compile-cpp-only.sh -v

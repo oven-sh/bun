@@ -27,7 +27,7 @@ cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DBUN_LINK_ONLY=1 `
   "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
   "-DUSE_LTO=${UseLto}" `
-  "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../release/src/deps)" `
+  "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../release/bun-deps)" `
   "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../release/bun-cpp-objects.a)" `
   "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path ../release)" `
   "$Flags"

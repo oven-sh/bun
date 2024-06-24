@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -exo pipefail
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 export USE_LTO="${USE_LTO:-ON}"
@@ -45,20 +45,22 @@ if [[ -z "$TAG" ]]; then
   exit 1
 fi
 
+rm -rf release
 mkdir -p release
 buildkite-agent artifact download '**' release --step $TAG-build-deps
 buildkite-agent artifact download '**' release --step $TAG-build-zig
 buildkite-agent artifact download '**' release --step $TAG-build-cpp
 
+cd release
 cmake \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCPU_TARGET=${CPU_TARGET} \
   -DUSE_LTO=${USE_LTO} \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ_DIR="$(pwd)/release" \
-  -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
-  -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
+  -DBUN_ZIG_OBJ_DIR="$(pwd)/build" \
+  -DBUN_CPP_ARCHIVE="$(pwd)/build/bun-cpp-objects.a" \
+  -DBUN_DEPS_OUT_DIR="$(pwd)/build/bun-deps" \
   -DNO_CONFIGURE_DEPENDS=1
 ninja -v
 

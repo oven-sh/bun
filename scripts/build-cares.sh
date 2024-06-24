@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -exo pipefail
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 cd $BUN_DEPS_DIR/c-ares

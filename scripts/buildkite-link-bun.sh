@@ -52,7 +52,7 @@ buildkite-agent artifact download '**' release --step $TAG-build-zig
 buildkite-agent artifact download '**' release --step $TAG-build-cpp
 
 cd release
-cmake \
+cmake .. \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCPU_TARGET=${CPU_TARGET} \

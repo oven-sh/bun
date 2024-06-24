@@ -103,6 +103,21 @@ steps:
         command:
           - "./scripts/runner.node.mjs darwin-aarch64-build-bun"
 
+      - key: "darwin-aarch64-test-macos-12"
+        label: ":darwin: 12 aarch64 - bun-test"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "darwin-aarch64-build-bun"
+        agents:
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "aarch64"
+          release: "12"
+        command:
+          - "./scripts/runner.node.mjs darwin-aarch64-build-bun"
+
   # # macOS x64
   - key: "darwin-x64"
     group: ":darwin: x64"
@@ -204,6 +219,21 @@ steps:
           os: "darwin"
           arch: "x64"
           release: "13"
+        command:
+          - "./scripts/runner.node.mjs darwin-x64-build-bun"
+
+      - key: "darwin-x64-test-macos-12"
+        label: ":darwin: 12 x64 - bun-test"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "darwin-x64-build-bun"
+        agents:
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "x64"
+          release: "12"
         command:
           - "./scripts/runner.node.mjs darwin-x64-build-bun"
 

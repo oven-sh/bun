@@ -20,7 +20,7 @@ import {
   rmSync,
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { tmpdir, hostname, userInfo, homedir, type } from "node:os";
+import { tmpdir, hostname, userInfo, homedir } from "node:os";
 import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";

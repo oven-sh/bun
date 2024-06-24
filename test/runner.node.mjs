@@ -844,7 +844,6 @@ async function getExecPathFromBuildKite(target) {
     command: "buildkite-agent",
     args: ["artifact", "download", "**", releasePath, "--step", target],
   });
-  console.log({ releasePath });
 
   let zipPath;
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
@@ -872,10 +871,9 @@ async function getExecPathFromBuildKite(target) {
 
   for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
     const execPath = join(releasePath, entry);
-    if (entry.endsWith(".zip") || !isExecutable(execPath)) {
-      continue;
+    if (/bun(?:\.exe)?$/i.test(entry) && isExecutable(execPath)) {
+      return execPath;
     }
-    return execPath;
   }
 
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
@@ -1090,7 +1088,7 @@ function getBuildLabel() {
   if (isBuildKite) {
     const label = process.env["BUILDKITE_LABEL"] || process.env["BUILDKITE_GROUP_LABEL"];
     if (label) {
-      return label.replace("- test-bun", "").trim();
+      return label.replace("- test-bun", "").replace("- bun-test", "").trim();
     }
   }
   return `${getOsEmoji()} ${getArchText()}`;

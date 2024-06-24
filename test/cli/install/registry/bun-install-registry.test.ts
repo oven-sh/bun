@@ -123,9 +123,7 @@ describe("optionalDependencies", () => {
         savesLockfile: !rootOptional,
       });
 
-      expect(err).toMatch(
-        `warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry/-/this-package-does-not-exist-in-the-registry-1.0.0.tgz - `,
-      );
+      expect(err).toMatch(`warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry - 404`);
     });
   }
 });

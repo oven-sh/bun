@@ -16,6 +16,7 @@ mkdir -Force build
 buildkite-agent artifact download "**" build --step "${Tag}-build-zig"
 buildkite-agent artifact download "**" build --step "${Tag}-build-cpp"
 buildkite-agent artifact download "**" build --step "${Tag}-build-deps"
+mv -Force -ErrorAction SilentlyContinue build\build\bun-deps\* build\bun-deps
 mv -Force -ErrorAction SilentlyContinue build\build\* build
 
 Set-Location build

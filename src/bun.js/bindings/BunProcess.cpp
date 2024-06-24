@@ -77,9 +77,6 @@ namespace Bun {
 
 using namespace JSC;
 
-#ifndef REPORTED_NODEJS_VERSION
-#define REPORTED_NODEJS_VERSION "22.3.0"
-#endif
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
 #define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator

@@ -304,14 +304,12 @@ pub const GenerateHeader = struct {
         }
 
         pub fn kernelVersion() Semver.Version {
-            if (comptime Environment.isLinux) {
+            if (comptime !Environment.isLinux) {
                 @compileError("This function is only implemented on Linux");
             }
             _ = forOS();
 
-            if (Environment.isLinux) {
-                return linux_kernel_version;
-            }
+            return linux_kernel_version;
         }
 
         fn forLinux() Analytics.Platform {

@@ -618,10 +618,19 @@ function parseTestStdout(stdout, testPath) {
     }
   }
 
+  let stdout;
+  const removeCount = lines.length - 100;
+  if (removeCount > 10) {
+    const omitLine = `${getAnsi("gray")}... omitted ${removeCount} lines ...${getAnsi("reset")}\n`;
+    stdout = [omitLine, ...lines.slice(-100)].join("\n");
+  } else {
+    stdout = lines.join("\n");
+  }
+
   return {
     tests,
     errors,
-    stdout: lines.join("\n"),
+    stdout,
   };
 }
 

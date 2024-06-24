@@ -58,19 +58,36 @@ extern "C" bool getaddrinfo_send_reply(mach_port_t port,
 }
 
 extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker) {
-  mach_msg_empty_send_t message{};
+  mach_msg_empty_send_t message;
+  memset(&message, 0, sizeof(message));
   message.header.msgh_size = sizeof(message);
-  message.header.msgh_bits =
-      MACH_MSGH_BITS_REMOTE(MACH_MSG_TYPE_MAKE_SEND_ONCE);
+  // We use COPY_SEND which will not increment any send ref
+  // counts because it'll reuse the existing send right.
+  message.header.msgh_bits = MACH_MSGH_BITS_REMOTE(MACH_MSG_TYPE_COPY_SEND);
   message.header.msgh_remote_port = waker;
-  kern_return_t kr = mach_msg_send(&message.header);
-  if (kr != KERN_SUCCESS) {
-    // If io_darwin_schedule_wakeup() is being called by other threads faster
-    // than the pump can dispatch work, the kernel message queue for the wakeup
-    // port can fill The kernel does return a SEND_ONCE right in the case of
-    // failure, which must be destroyed to avoid leaking.
-    mach_msg_destroy(&message.header);
-    return false;
+  message.header.msgh_local_port = MACH_PORT_NULL;
+  mach_msg_return_t kr = mach_msg_send(&message.header);
+  
+  switch (kr) {
+      case KERN_SUCCESS: {
+          break;
+      }
+      
+      // This means that the send would've blocked because the
+      // queue is full. We assume success because the port is full.
+      case MACH_SEND_TIMED_OUT: {
+          break;
+      }
+
+      // No space means it will wake up.
+      case MACH_SEND_NO_BUFFER: {
+          break;
+      }
+
+      default: {
+          mach_msg_destroy(&message.header);
+          return false;
+      }
   }
 
   return true;

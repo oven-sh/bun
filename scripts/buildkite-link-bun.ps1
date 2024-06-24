@@ -13,9 +13,9 @@ $UseLto = If ($Fast) { "OFF" } Else { "ON" }
 .\scripts\env.ps1 $TagSuffix
 
 mkdir -Force build
-buildkite-agent artifact download "**" .. --step "${Tag}-build-zig"
-buildkite-agent artifact download "**" .. --step "${Tag}-build-cpp"
-buildkite-agent artifact download "**" .. --step "${Tag}-build-deps"
+buildkite-agent artifact download "**" . --step "${Tag}-build-zig"
+buildkite-agent artifact download "**" . --step "${Tag}-build-cpp"
+buildkite-agent artifact download "**" . --step "${Tag}-build-deps"
 
 Set-Location build
 $CANARY_REVISION = 0

@@ -1,15 +1,16 @@
 steps:
-  - key: "build-darwin-aarch64-ci"
+  # macOS aarch64
+  - key: "darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
-      - key: "bun-darwin-aarch64-deps"
-        label: ":darwin: aarch64 - bun-deps"
+      - key: "darwin-aarch64-build-deps"
+        label: ":darwin: aarch64 - build-deps"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "src/deps/*"
+          - "build/bun-deps/**/*"
         env:
           CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -18,18 +19,15 @@ steps:
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
         command:
           - "./scripts/all-dependencies.sh"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-aarch64-zig"
-        label: ":darwin: aarch64 - bun-zig"
+
+      - key: "darwin-aarch64-build-zig"
+        label: ":darwin: aarch64 - build-zig"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-zig.o"
+          - "build/bun-zig.o"
         env:
           CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -37,77 +35,86 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-zig.sh darwin aarch64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-aarch64-cpp"
-        label: ":darwin: aarch64 - bun-cpp"
+
+      - key: "darwin-aarch64-build-cpp"
+        label: ":darwin: aarch64 - build-cpp"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build/bun-cpp-objects.a"
         env:
+          CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-cpp.sh --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-aarch64"
-        label: ":darwin: aarch64 - bun"
+
+      - key: "darwin-aarch64-build-bun"
+        label: ":darwin: aarch64 - build-bun"
         depends_on:
-          - "bun-darwin-aarch64-deps"
-          - "bun-darwin-aarch64-zig"
-          - "bun-darwin-aarch64-cpp"
+          - "darwin-aarch64-build-deps"
+          - "darwin-aarch64-build-zig"
+          - "darwin-aarch64-build-cpp"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-darwin-aarch64.zip"
-          - "bun-darwin-aarch64-profile.zip"
+          - "release/bun-darwin-aarch64.zip"
+          - "release/bun-darwin-aarch64-profile.zip"
         env:
+          CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/buildkite-link-bun.sh --tag darwin-aarch64 --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-aarch64-test"
-        label: ":darwin: aarch64 - bun-test-%n"
-        parallelism: 5
+
+      - key: "darwin-aarch64-test-macos-14"
+        label: ":darwin: 14 aarch64 - bun-test"
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "bun-darwin-aarch64"
+          - "darwin-aarch64-build-bun"
         agents:
-          queue: "darwin-aarch64-buildkite"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "aarch64"
+          release: "14"
         command:
-          - "./test/runner.node.mjs bun-darwin-aarch64"
+          - "./test/runner.node.mjs darwin-aarch64-build-bun"
 
-  - key: "build-darwin-x64-ci"
+      - key: "darwin-aarch64-test-macos-13"
+        label: ":darwin: 13 aarch64 - bun-test"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "darwin-aarch64-build-bun"
+        agents:
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "aarch64"
+          release: "13"
+        command:
+          - "./test/runner.node.mjs darwin-aarch64-build-bun"
+
+  # # macOS x64
+  - key: "darwin-x64"
     group: ":darwin: x64"
     steps:
-      - key: "bun-darwin-x64-deps"
-        label: ":darwin: x64 - bun-deps"
+      - key: "darwin-x64-build-deps"
+        label: ":darwin: x64 - build-deps"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         artifact_paths:
-          - "src/deps/*"
+          - "build/bun-deps/**/*"
         env:
           CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -116,18 +123,15 @@ steps:
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
         command:
           - "./scripts/all-dependencies.sh"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-x64-zig"
-        label: ":darwin: x64 - bun-zig"
+
+      - key: "darwin-x64-build-zig"
+        label: ":darwin: x64 - build-zig"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-zig.o"
+          - "build/bun-zig.o"
         env:
           CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -135,78 +139,86 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-zig.sh darwin x64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-x64-cpp"
-        label: ":darwin: x64 - bun-cpp"
+
+      - key: "darwin-x64-build-cpp"
+        label: ":darwin: x64 - build-cpp"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build/bun-cpp-objects.a"
         env:
+          CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-cpp.sh --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-x64"
-        label: ":darwin: x64 - bun"
+
+      - key: "darwin-x64-build-bun"
+        label: ":darwin: x64 - build-bun"
         depends_on:
-          - "bun-darwin-x64-deps"
-          - "bun-darwin-x64-zig"
-          - "bun-darwin-x64-cpp"
+          - "darwin-x64-build-deps"
+          - "darwin-x64-build-zig"
+          - "darwin-x64-build-cpp"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "x64"
         artifact_paths:
-          - "bun-darwin-x64.zip"
-          - "bun-darwin-x64-profile.zip"
+          - "release/bun-darwin-x64.zip"
+          - "release/bun-darwin-x64-profile.zip"
         env:
+          CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/buildkite-link-bun.sh --tag darwin-x64 --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-darwin-x64-test"
-        label: ":darwin: x64 - bun-test-%n"
-        parallelism: 5
+
+      - key: "darwin-x64-test-macos-14"
+        label: ":darwin: 14 x64 - bun-test"
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "bun-darwin-x64"
+          - "darwin-x64-build-bun"
         agents:
+          queue: "test-darwin"
           os: "darwin"
           arch: "x64"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
+          release: "14"
         command:
-          - "./test/runner.node.mjs bun-darwin-x64"
+          - "./test/runner.node.mjs darwin-x64-build-bun"
 
-  - key: "build-linux-aarch64-ci"
+      - key: "darwin-x64-test-macos-13"
+        label: ":darwin: 13 x64 - bun-test"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "darwin-x64-build-bun"
+        agents:
+          queue: "test-darwin"
+          os: "darwin"
+          arch: "x64"
+          release: "13"
+        command:
+          - "./test/runner.node.mjs darwin-x64-build-bun"
+
+  # # Linux aarch64
+  - key: "linux-aarch64"
     group: ":linux: aarch64"
     steps:
-      - key: "bun-linux-aarch64-deps"
-        label: ":linux: aarch64 - bun-deps"
+      - key: "linux-aarch64-build-deps"
+        label: ":linux: aarch64 - build-deps"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         artifact_paths:
-          - "src/deps/*"
+          - "build/bun-deps/**/*"
         env:
           CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -215,18 +227,15 @@ steps:
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
         command:
           - "./scripts/all-dependencies.sh"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-aarch64-zig"
-        label: ":linux: aarch64 - bun-zig"
+
+      - key: "linux-aarch64-build-zig"
+        label: ":linux: aarch64 - build-zig"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-zig.o"
+          - "build/bun-zig.o"
         env:
           CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -234,77 +243,120 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-zig.sh linux aarch64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-aarch64-cpp"
-        label: ":linux: aarch64 - bun-cpp"
+
+      - key: "linux-aarch64-build-cpp"
+        label: ":linux: aarch64 - build-cpp"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build/bun-cpp-objects.a"
         env:
+          CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-cpp.sh --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-aarch64"
-        label: ":linux: aarch64 - bun"
+
+      - key: "linux-aarch64-build-bun"
+        label: ":linux: aarch64 - build-bun"
         depends_on:
-          - "bun-linux-aarch64-deps"
-          - "bun-linux-aarch64-zig"
-          - "bun-linux-aarch64-cpp"
+          - "linux-aarch64-build-deps"
+          - "linux-aarch64-build-zig"
+          - "linux-aarch64-build-cpp"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "aarch64"
         artifact_paths:
-          - "bun-linux-aarch64.zip"
-          - "bun-linux-aarch64-profile.zip"
+          - "release/bun-linux-aarch64.zip"
+          - "release/bun-linux-aarch64-profile.zip"
         env:
+          CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/buildkite-link-bun.sh --tag linux-aarch64 --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-aarch64-test"
-        label: ":linux: aarch64 - bun-test-%n"
+
+      - key: "linux-aarch64-test-debian-12"
+        label: ":debian: 12 aarch64 - test-bun"
         parallelism: 5
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "bun-linux-aarch64"
+          - "linux-aarch64-build-bun"
         agents:
-          queue: "linux-aarch64-buildkite"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "debian"
+          release: "12"
         command:
-          - "./test/runner.node.mjs bun-linux-aarch64"
+          - "./test/runner.node.mjs linux-aarch64-build-bun"
 
-  - key: "build-linux-x64-ci"
+      - key: "linux-aarch64-test-debian-11"
+        label: ":debian: 11 aarch64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-aarch64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "debian"
+          release: "11"
+        command:
+          - "./test/runner.node.mjs linux-aarch64-build-bun"
+
+      - key: "linux-aarch64-test-ubuntu-2204"
+        label: ":ubuntu: 22.04 aarch64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-aarch64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "ubuntu"
+          release: "22.04"
+        command:
+          - "./test/runner.node.mjs linux-aarch64-build-bun"
+
+      - key: "linux-aarch64-test-ubuntu-2004"
+        label: ":ubuntu: 20.04 aarch64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-aarch64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "ubuntu"
+          release: "20.04"
+        command:
+          - "./test/runner.node.mjs linux-aarch64-build-bun"
+
+  # # Linux x64
+  - key: "linux-x64"
     group: ":linux: x64"
     steps:
-      - key: "bun-linux-x64-deps"
-        label: ":linux: x64 - bun-deps"
+      - key: "linux-x64-build-deps"
+        label: ":linux: x64 - build-deps"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "src/deps/*"
+          - "build/bun-deps/**/*"
         env:
           CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -313,18 +365,15 @@ steps:
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
         command:
           - "./scripts/all-dependencies.sh"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-zig"
-        label: ":linux: x64 - bun-zig"
+
+      - key: "linux-x64-build-zig"
+        label: ":linux: x64 - build-zig"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-zig.o"
+          - "build/bun-zig.o"
         env:
           CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -332,77 +381,120 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-zig.sh linux x64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-cpp"
-        label: ":linux: x64 - bun-cpp"
+
+      - key: "linux-x64-build-cpp"
+        label: ":linux: x64 - build-cpp"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build/bun-cpp-objects.a"
         env:
+          CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-cpp.sh --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64"
-        label: ":linux: x64 - bun"
+
+      - key: "linux-x64-build-bun"
+        label: ":linux: x64 - build-bun"
         depends_on:
-          - "bun-linux-x64-deps"
-          - "bun-linux-x64-zig"
-          - "bun-linux-x64-cpp"
+          - "linux-x64-build-deps"
+          - "linux-x64-build-zig"
+          - "linux-x64-build-cpp"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "bun-linux-x64.zip"
-          - "bun-linux-x64-profile.zip"
+          - "release/bun-linux-x64.zip"
+          - "release/bun-linux-x64-profile.zip"
         env:
+          CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/buildkite-link-bun.sh --tag linux-x64 --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-test"
-        label: ":linux: x64 - bun-test-%n"
+
+      - key: "linux-x64-test-debian-12"
+        label: ":debian: 12 x64 - test-bun"
         parallelism: 5
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "bun-linux-x64"
+          - "linux-x64-build-bun"
         agents:
-          queue: "linux-x64-buildkite"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "debian"
+          release: "12"
         command:
-          - "./test/runner.node.mjs bun-linux-x64"
+          - "./test/runner.node.mjs linux-x64-build-bun"
 
-  - key: "build-linux-x64-baseline-ci"
+      - key: "linux-x64-test-debian-11"
+        label: ":debian: 11 x64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-x64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "debian"
+          release: "11"
+        command:
+          - "./test/runner.node.mjs linux-x64-build-bun"
+
+      - key: "linux-x64-test-ubuntu-2204"
+        label: ":ubuntu: 22.04 x64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-x64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "ubuntu"
+          release: "22.04"
+        command:
+          - "./test/runner.node.mjs linux-x64-build-bun"
+
+      - key: "linux-x64-test-ubuntu-2004"
+        label: ":ubuntu: 20.04 x64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-x64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "ubuntu"
+          release: "20.04"
+        command:
+          - "./test/runner.node.mjs linux-x64-build-bun"
+
+  # # Linux x64-baseline
+  - key: "linux-x64-baseline"
     group: ":linux: x64-baseline"
     steps:
-      - key: "bun-linux-x64-baseline-deps"
-        label: ":linux: x64-baseline - bun-deps"
+      - key: "linux-x64-baseline-build-deps"
+        label: ":linux: x64-baseline - build-deps"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "src/deps/*"
+          - "build/bun-deps/**/*"
         env:
           CPU_TARGET: "nehalem"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -411,18 +503,15 @@ steps:
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
         command:
           - "./scripts/all-dependencies.sh"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-baseline-zig"
-        label: ":linux: x64-baseline - bun-zig"
+
+      - key: "linux-x64-baseline-build-zig"
+        label: ":linux: x64-baseline - build-zig"
         agents:
-          queue: "build"
+          queue: "build-darwin"
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "bun-zig.o"
+          - "build/bun-zig.o"
         env:
           CPU_TARGET: "nehalem"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -430,282 +519,268 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
           - "./scripts/build-bun-zig.sh linux x64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-baseline-cpp"
-        label: ":linux: x64-baseline - bun-cpp"
+
+      - key: "linux-x64-baseline-build-cpp"
+        label: ":linux: x64-baseline - build-cpp"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build/bun-cpp-objects.a"
         env:
+          CPU_TARGET: "nehalem"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/build-bun-cpp.sh --baseline --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-baseline"
-        label: ":linux: x64-baseline - bun"
+          - "./scripts/build-bun-cpp.sh --fast"
+
+      - key: "linux-x64-baseline-build-bun"
+        label: ":linux: x64-baseline - build-bun"
         depends_on:
-          - "bun-linux-x64-baseline-deps"
-          - "bun-linux-x64-baseline-zig"
-          - "bun-linux-x64-baseline-cpp"
+          - "linux-x64-baseline-build-deps"
+          - "linux-x64-baseline-build-zig"
+          - "linux-x64-baseline-build-cpp"
         agents:
-          queue: "build"
+          queue: "build-linux"
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "bun-linux-x64-baseline.zip"
-          - "bun-linux-x64-baseline-profile.zip"
+          - "release/bun-linux-x64-baseline.zip"
+          - "release/bun-linux-x64-baseline-profile.zip"
         env:
+          CPU_TARGET: "nehalem"
           CCACHE_DIR: "$$HOME/.cache/ccache"
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/buildkite-link-bun.sh --tag linux-x64-baseline --baseline --fast"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-linux-x64-baseline-test"
-        label: ":linux: x64-baseline - bun-test-%n"
+          - "./scripts/buildkite-link-bun.sh --tag linux-x64-baseline --fast"
+
+      - key: "linux-x64-baseline-test-debian-12"
+        label: ":debian: 12 x64-baseline - test-bun"
         parallelism: 5
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "bun-linux-x64-baseline"
+          - "linux-x64-baseline-build-bun"
         agents:
-          queue: "linux-x64-buildkite"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
-        command:
-          - "./test/runner.node.mjs bun-linux-x64-baseline"
-
-  - key: "build-windows-x64-ci"
-    group: ":windows: x64"
-    steps:
-      - key: "bun-windows-x64-deps"
-        label: ":windows: x64 - bun-deps"
-        agents:
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          - "src\\deps\\*.lib"
-        env:
-          CPU_TARGET: "haswell"
-        command:
-          - "powershell -command \".\\scripts\\all-dependencies.ps1\""
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-zig"
-        label: ":windows: x64 - bun-zig"
-        agents:
-          os: "darwin"
-          arch: "aarch64"
-        artifact_paths:
-          - "bun-zig.o"
-        env:
-          CPU_TARGET: "haswell"
-          CCACHE_DIR: "$$HOME/.cache/ccache"
-          SCCACHE_DIR: "$$HOME/.cache/sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
-        command:
-          - "./scripts/build-bun-zig.sh windows x64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-codegen"
-        label: ":windows: x64 - bun-codegen"
-        agents:
+          robobun: "true"
           os: "linux"
           arch: "x64"
-        artifact_paths:
-          - "codegen/**/*"
-          - "js/**/*"
-        env:
-          CPU_TARGET: "haswell"
+          distro: "debian"
+          release: "12"
         command:
-          - "./scripts/cross-compile-codegen.sh win32 x64"
-          - "mv build-codegen-win32-x64/js js"
-          - "mv build-codegen-win32-x64/codegen codegen"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-cpp"
-        label: ":windows: x64 - bun-cpp"
+          - "./test/runner.node.mjs linux-x64-baseline-build-bun"
+
+      - key: "linux-x64-baseline-test-debian-11"
+        label: ":debian: 11 x64-baseline - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
         depends_on:
-          - "bun-windows-x64-codegen"
+          - "linux-x64-baseline-build-bun"
         agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "debian"
+          release: "11"
+        command:
+          - "./test/runner.node.mjs linux-x64-baseline-build-bun"
+
+      - key: "linux-x64-baseline-test-ubuntu-2204"
+        label: ":ubuntu: 22.04 x64-baseline - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-x64-baseline-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "ubuntu"
+          release: "22.04"
+        command:
+          - "./test/runner.node.mjs linux-x64-baseline-build-bun"
+
+      - key: "linux-x64-baseline-test-ubuntu-2004"
+        label: ":ubuntu: 20.04 x64-baseline - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        depends_on:
+          - "linux-x64-baseline-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "ubuntu"
+          release: "20.04"
+        command:
+          - "./test/runner.node.mjs linux-x64-baseline-build-bun"
+
+  # Windows x64
+  - key: "windows-x64"
+    group: ":windows: x64"
+    steps:
+      - key: "bun-windows-x64-build-deps"
+        label: ":windows: x64 - build-deps"
+        agents:
+          queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build\\bun-deps\\*.lib"
+        env:
+          CPU_TARGET: "haswell"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - "mkdir build"
-          - 'buildkite-agent artifact download "**" build --step bun-windows-x64-codegen'
-          - "powershell -command \".\\scripts\\build-bun-cpp.ps1\" -Fast $$True"
-          - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64"
-        label: ":windows: x64 - bun"
-        depends_on:
-          - "bun-windows-x64-deps"
-          - "bun-windows-x64-zig"
-          - "bun-windows-x64-cpp"
+          - ".\\scripts\\all-dependencies.ps1"
+
+      - key: "bun-windows-x64-build-zig"
+        label: ":windows: x64 - build-zig"
         agents:
+          queue: "build-darwin"
+          os: "darwin" # cross-compile on Linux or Darwin
+          arch: "aarch64"
+        artifact_paths:
+          - "build/bun-zig.o"
+        env:
+          CPU_TARGET: "haswell"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+        command:
+          - "./scripts/build-bun-zig.sh windows x64"
+
+      - key: "bun-windows-x64-build-cpp"
+        label: ":windows: x64 - build-cpp"
+        agents:
+          queue: "build-windows"
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "build\\bun-cpp-objects.a"
+        command:
+          - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
+
+      - key: "bun-windows-x64-build-bun"
+        label: ":windows: x64 - build-bun"
+        depends_on:
+          - "bun-windows-x64-build-deps"
+          - "bun-windows-x64-build-zig"
+          - "bun-windows-x64-build-cpp"
+        agents:
+          queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
           - "bun-windows-x64.zip"
           - "bun-windows-x64-profile.zip"
           - "features.json"
+        env:
+          CPU_TARGET: "haswell"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - "powershell -command \".\\scripts\\buildkite-link-bun.ps1 -Fast $$True\""
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-test"
-        label: ":windows: x64 - bun-test-%n"
+          - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
+
+      - key: "bun-windows-x64-test-bun"
+        label: ":windows: x64 - test-bun"
         parallelism: 5
         soft_fail:
-          - exit_status: 2
+          - exit_status: 1
         depends_on:
-          - "bun-windows-x64"
+          - "bun-windows-x64-build-bun"
         agents:
+          robobun: "true"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
-        env:
-          CHERE_INVOKING: "1"
-          TMPDIR: "$$LOCALAPPDATA\\Temp"
         command:
-          - 'C:\\cygwin64\\bin\\bash --login -c ''node test/runner.node.mjs bun-windows-x64'''
+          - "node .\\test\\runner.node.mjs bun-windows-x64-build-bun"
 
-  - key: "build-windows-x64-baseline-ci"
+  # Windows x64-baseline
+  - key: "windows-x64-baseline"
     group: ":windows: x64-baseline"
     steps:
-      - key: "bun-windows-x64-baseline-deps"
-        label: ":windows: x64-baseline - bun-deps"
+      - key: "bun-windows-x64-baseline-build-deps"
+        label: ":windows: x64-baseline - build-deps"
         agents:
+          queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "src\\deps\\*.lib"
+          - "build\\bun-deps\\*.lib"
         env:
           CPU_TARGET: "nehalem"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - "powershell -command \".\\scripts\\all-dependencies.ps1\""
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-baseline-zig"
-        label: ":windows: x64-baseline - bun-zig"
+          - ".\\scripts\\all-dependencies.ps1"
+
+      - key: "bun-windows-x64-baseline-build-zig"
+        label: ":windows: x64-baseline - build-zig"
         agents:
-          os: "darwin"
+          queue: "build-darwin"
+          os: "darwin" # cross-compile on Linux or Darwin
           arch: "aarch64"
         artifact_paths:
-          - "bun-zig.o"
+          - "build/bun-zig.o"
         env:
           CPU_TARGET: "nehalem"
-          CCACHE_DIR: "$$HOME/.cache/ccache"
-          SCCACHE_DIR: "$$HOME/.cache/sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
           - "./scripts/build-bun-zig.sh windows x64"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-baseline-codegen"
-        label: ":windows: x64-baseline - bun-codegen"
+
+      - key: "bun-windows-x64-baseline-build-cpp"
+        label: ":windows: x64-baseline - build-cpp"
         agents:
-          os: "linux"
-          arch: "x64"
-        artifact_paths:
-          - "codegen/**/*"
-          - "js/**/*"
-        env:
-          CPU_TARGET: "nehalem"
-        command:
-          - "./scripts/cross-compile-codegen.sh win32 x64"
-          - "mv build-codegen-win32-x64/js js"
-          - "mv build-codegen-win32-x64/codegen codegen"
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-baseline-cpp"
-        label: ":windows: x64-baseline - bun-cpp"
-        depends_on:
-          - "bun-windows-x64-baseline-codegen"
-        agents:
+          queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-cpp-objects.a"
+          - "build\\bun-cpp-objects.a"
+        env:
+          CPU_TARGET: "nehalem"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - "mkdir build"
-          - 'buildkite-agent artifact download "**" build --step bun-windows-x64-baseline-codegen'
-          - "powershell -command \".\\scripts\\build-bun-cpp.ps1\" -Baseline $$True -Fast $$True"
-          - "powershell -command \"Move-Item -Path build\\bun-cpp-objects.a -Destination bun-cpp-objects.a\""
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-baseline"
-        label: ":windows: x64-baseline - bun"
+          - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
+
+      - key: "bun-windows-x64-baseline-build-bun"
+        label: ":windows: x64-baseline - build-bun"
         depends_on:
-          - "bun-windows-x64-baseline-deps"
-          - "bun-windows-x64-baseline-zig"
-          - "bun-windows-x64-baseline-cpp"
+          - "bun-windows-x64-baseline-build-deps"
+          - "bun-windows-x64-baseline-build-zig"
+          - "bun-windows-x64-baseline-build-cpp"
         agents:
+          queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
           - "bun-windows-x64-baseline.zip"
           - "bun-windows-x64-baseline-profile.zip"
           - "features.json"
+        env:
+          CPU_TARGET: "nehalem"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - "powershell -command \".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True\""
-        retry:
-          automatic:
-            - exit_status: "*"
-              limit: 3
-      - key: "bun-windows-x64-baseline-test"
-        label: ":windows: x64-baseline - bun-test-%n"
+          - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
+
+      - key: "bun-windows-x64-baseline-test-bun"
+        label: ":windows: x64-baseline - test-bun"
         parallelism: 5
         soft_fail:
-          - exit_status: 2
+          - exit_status: 1
         depends_on:
-          - "bun-windows-x64-baseline"
+          - "bun-windows-x64-baseline-build-bun"
         agents:
+          robobun: "true"
           os: "windows"
           arch: "x64"
-        artifact_paths:
-          - "logs/**/*.log"
-          - "summary.md"
-        env:
-          CHERE_INVOKING: "1"
-          TMPDIR: "$$LOCALAPPDATA\\Temp"
         command:
-          - 'C:\\cygwin64\\bin\\bash --login -c ''node test/runner.node.mjs bun-windows-x64-baseline'''
+          - "node .\\test\\runner.node.mjs bun-windows-x64-baseline-build-bun"

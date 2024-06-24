@@ -102,7 +102,7 @@ jobs:
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node test/runner.node.mjs $(which bun)
+          node scripts/runner.node.mjs $(which bun)
       - if: ${{ always() }}
         name: Upload Results
         uses: actions/upload-artifact@v4

@@ -88,7 +88,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         // the extra syscall.
                         // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                         const GETDIRENTRIES64_EXTENDED_BUFSIZE = 1024;
-                        comptime std.debug.assert(@sizeOf(@TypeOf(self.buf)) >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
+                        comptime bun.assert(@sizeOf(@TypeOf(self.buf)) >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                         self.received_eof = false;
                         // Always zero the bytes where the flag will be written
                         // so we don't confuse garbage with EOF.

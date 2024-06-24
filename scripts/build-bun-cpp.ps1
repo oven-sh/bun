@@ -17,7 +17,7 @@ $CANARY_REVISION = 0
 cd build
 
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
-  -DNO_CODEGEN=1 `
+  -DNO_CODEGEN=0 `
   -DNO_CONFIGURE_DEPENDS=1 `
   "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
   "-DUSE_LTO=${UseLto}" `

@@ -5580,6 +5580,11 @@ const Buffers = struct {
             return error.CorruptLockfile;
         }
 
+        // We shouldn't be going backwards.
+        if (start_pos < stream.pos) {
+            return error.CorruptLockfile;
+        }
+
         const end_pos = try reader.readInt(u64, .little);
 
         // If its 0xDEADBEEF, then that means the value was never written in the lockfile.

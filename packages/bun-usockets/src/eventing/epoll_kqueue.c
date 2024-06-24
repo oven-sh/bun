@@ -618,15 +618,24 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
 
 void us_internal_async_wakeup(struct us_internal_async *a) {
     struct us_internal_callback_t *internal_cb = (struct us_internal_callback_t *) a;
-    mach_msg_empty_send_t message;
-    memset(&message, 0, sizeof(message));
-    message.header.msgh_size = sizeof(message);
-    // We use COPY_SEND which will not increment any send ref
-    // counts because it'll reuse the existing send right.
-    message.header.msgh_bits = MACH_MSGH_BITS_REMOTE(MACH_MSG_TYPE_COPY_SEND);
-    message.header.msgh_remote_port = internal_cb->port;
-    message.header.msgh_local_port = MACH_PORT_NULL;
-    mach_msg_return_t kr = mach_msg_send(&message.header);
+    mach_msg_header_t msg = {
+        .msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0),
+        .msgh_size = sizeof(mach_msg_header_t),
+        .msgh_remote_port = internal_cb->port,
+        .msgh_local_port = MACH_PORT_NULL,
+        .msgh_voucher_port = 0,
+        .msgh_id = 0,
+    };
+
+    mach_msg_return_t kr = mach_msg(
+        &msg,
+        MACH_SEND_MSG | MACH_SEND_TIMEOUT,
+        msg.msgh_size,
+        0,
+        MACH_PORT_NULL,
+        0, // Fail instantly if the port is full
+        MACH_PORT_NULL
+    );
     
     switch (kr) {
         case KERN_SUCCESS: {
@@ -645,7 +654,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
         }
 
         default: {
-            mach_msg_destroy(&message.header);
+            break;
         }
     }
 }

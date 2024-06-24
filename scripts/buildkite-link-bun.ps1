@@ -13,9 +13,10 @@ $UseLto = If ($Fast) { "OFF" } Else { "ON" }
 .\scripts\env.ps1 $TagSuffix
 
 mkdir -Force build
-buildkite-agent artifact download "**" . --step "${Tag}-build-zig"
-buildkite-agent artifact download "**" . --step "${Tag}-build-cpp"
-buildkite-agent artifact download "**" . --step "${Tag}-build-deps"
+buildkite-agent artifact download "**" build --step "${Tag}-build-zig"
+buildkite-agent artifact download "**" build --step "${Tag}-build-cpp"
+buildkite-agent artifact download "**" build --step "${Tag}-build-deps"
+mv -Force -ErrorAction SilentlyContinue build\build\* build
 
 Set-Location build
 $CANARY_REVISION = 0
@@ -38,14 +39,14 @@ if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
 Set-Location ..
 $Dist = mkdir -Force "${Tag}"
-cp -r release\bun.exe "$Dist\bun.exe"
+cp -r build\bun.exe "$Dist\bun.exe"
 Compress-Archive -Force "$Dist" "${Dist}.zip"
 $Dist = "$Dist-profile"
 MkDir -Force "$Dist"
-cp -r release\bun.exe "$Dist\bun.exe"
-cp -r release\bun.pdb "$Dist\bun.pdb"
+cp -r build\bun.exe "$Dist\bun.exe"
+cp -r build\bun.pdb "$Dist\bun.pdb"
 Compress-Archive -Force "$Dist" "$Dist.zip"
 
 $env:BUN_GARBAGE_COLLECTOR_LEVEL = "1"
 $env:BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING = "1"
-.\release\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json
+.\build\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json

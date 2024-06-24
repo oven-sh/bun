@@ -1524,6 +1524,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
         reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
 
+    EnsureStillAliveScope sqlAliveScope(sqlStatement);
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
         sqlStatement->m_bindingNames.trimLeadingPrefix = (internalFlags & kStrictFlag) != 0;
@@ -1533,6 +1534,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     if (bindings.isObject()) {
         auto* castedThis = sqlStatement;
         DO_REBIND(bindings)
+
+        if (UNLIKELY(scope.exception())) {
+            // The SQLSttaement will never be returned
+            // So let's free it now.
+            castedThis->stmt = nullptr;
+            sqlite3_clear_bindings(statement);
+            sqlite3_finalize(statement);
+
+            return JSValue::encode(jsUndefined());
+        }
     }
     return JSValue::encode(JSValue(sqlStatement));
 }
@@ -1974,6 +1985,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int status = sqlite3_step(stmt);
@@ -2052,6 +2068,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int status = sqlite3_step(stmt);
@@ -2155,6 +2176,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     if (count > 0) {
         auto arg0 = callFrame->argument(0);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int status = sqlite3_step(stmt);
@@ -2234,6 +2260,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     if (callFrame->argumentCount() > 1) {
         auto arg0 = callFrame->argument(1);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_reset(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);

@@ -74,7 +74,8 @@ mkdir -p build
 bun run src/codegen/bundle-modules.ts --debug=OFF build
 
 echo "--- Building zig"
-cmake -B build -S . \
+cd build
+cmake .. \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_LTO=ON \
@@ -91,4 +92,4 @@ cmake -B build -S . \
   -DBUN_ZIG_OBJ_DIR="$cwd/build" \
   -DCANARY="$CANARY" \
   -DZIG_LIB_DIR=src/deps/zig/lib
-ONLY_ZIG=1 ninja -C build "$cwd/build/bun-zig.o" -v
+ONLY_ZIG=1 ninja "$cwd/build/bun-zig.o" -v

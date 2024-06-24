@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -eo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
+
+if [[ "$CI" ]]; then
+  $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
+fi
+
 FORCE=
 
 while getopts "f" opt; do

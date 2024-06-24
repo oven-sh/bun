@@ -2262,6 +2262,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         DO_REBIND(arg0);
 
         if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
             sqlite3_reset(stmt);
             return JSValue::encode(jsUndefined());
         }

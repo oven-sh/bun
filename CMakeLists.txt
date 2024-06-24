@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.16")
+set(Bun_VERSION "1.1.17")
 set(WEBKIT_TAG 5bbfe7e880090b9d0b5feaf3563e85957dd7b10d)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1421,10 +1421,6 @@ else()
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     )
-endif()
-
-if(WIN32)
-    # delayimp -delayload:shell32.dll -delayload:ole32.dll
 endif()
 
 if(BUN_LINK_ONLY)

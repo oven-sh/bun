@@ -9599,7 +9599,7 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var input: []u8 = @constCast(std.mem.trim(u8, positional, " \n\r\t"));
+                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
                 {
                     var temp: [2048]u8 = undefined;
                     const len = std.mem.replace(u8, input, "\\\\", "/", &temp);

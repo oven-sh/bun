@@ -46,9 +46,9 @@ if [[ -z "$TAG" ]]; then
 fi
 
 mkdir -p release
-buildkite-agent artifact download '**' release --step bun-$TAG-deps
-buildkite-agent artifact download '**' release --step bun-$TAG-zig
-buildkite-agent artifact download '**' release --step bun-$TAG-cpp
+buildkite-agent artifact download '**' release --step $TAG-build-deps
+buildkite-agent artifact download '**' release --step $TAG-build-zig
+buildkite-agent artifact download '**' release --step $TAG-build-cpp
 
 cmake \
   -GNinja \

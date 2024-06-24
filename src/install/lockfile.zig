@@ -5581,7 +5581,7 @@ const Buffers = struct {
         }
 
         // We shouldn't be going backwards.
-        if (start_pos < stream.pos) {
+        if (start_pos < (stream.pos -| @sizeOf(u64))) {
             return error.CorruptLockfile;
         }
 

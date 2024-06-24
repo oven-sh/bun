@@ -1090,7 +1090,7 @@ function getBuildLabel() {
   if (isBuildKite) {
     const label = process.env["BUILDKITE_LABEL"] || process.env["BUILDKITE_GROUP_LABEL"];
     if (label) {
-      return label.replace("- bun-test", "").trim();
+      return label.replace("- test-bun", "").trim();
     }
   }
   return `${getOsEmoji()} ${getArchText()}`;

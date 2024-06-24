@@ -844,11 +844,12 @@ async function getExecPathFromBuildKite(target) {
     command: "buildkite-agent",
     args: ["artifact", "download", "**", releasePath, "--step", target],
   });
+  console.log({ releasePath });
 
   let zipPath;
-  for (const path of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
-    if (/^bun.*\.zip$/i.test(path) && !path.includes("-profile.zip")) {
-      zipPath = join(releasePath, path);
+  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+    if (/^bun.*\.zip$/i.test(entry) && !entry.includes("-profile.zip")) {
+      zipPath = join(releasePath, entry);
       break;
     }
   }
@@ -869,12 +870,15 @@ async function getExecPathFromBuildKite(target) {
     });
   }
 
-  const execPath = join(releasePath, target, isWindows ? "bun.exe" : "bun");
-  if (!isExecutable(execPath)) {
-    throw new Error(`Could not find executable from BuildKite: ${execPath}`);
+  for (const entry of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+    const execPath = join(releasePath, entry);
+    if (entry.endsWith(".zip") || !isExecutable(execPath)) {
+      continue;
+    }
+    return execPath;
   }
 
-  return execPath;
+  throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
 /**

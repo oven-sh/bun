@@ -58,6 +58,7 @@ $CXXFLAGS = '/O2 /Zi'
 # $CXXFLAGS = '/O2 /Z7 /MT'
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
+$env:CPU_TARGET = $CPU_NAME
 
 $CFLAGS += " -march=${CPU_NAME}"
 $CXXFLAGS += " -march=${CPU_NAME}"

@@ -13,10 +13,10 @@ $UseLto = If ($Fast) { "OFF" } Else { "ON" }
 .\scripts\env.ps1 $TagSuffix
 
 mkdir -Force release
-buildkite-agent artifact download "**" release --step "${Tag}-codegen"
-buildkite-agent artifact download "**" release --step "${Tag}-zig"
-buildkite-agent artifact download "**" release --step "${Tag}-cpp"
-buildkite-agent artifact download "**" release --step "${Tag}-deps"
+buildkite-agent artifact download "**" release --step "${Tag}-build-codegen"
+buildkite-agent artifact download "**" release --step "${Tag}-build-zig"
+buildkite-agent artifact download "**" release --step "${Tag}-build-cpp"
+buildkite-agent artifact download "**" release --step "${Tag}-build-deps"
 
 Set-Location release
 $CANARY_REVISION = 0

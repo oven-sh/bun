@@ -553,7 +553,7 @@ pub const SlicedString = struct {
     slice: string,
 
     pub inline fn init(buf: string, slice: string) SlicedString {
-        if (Environment.allow_assert) {
+        if (Environment.allow_assert and !@inComptime()) {
             if (@intFromPtr(buf.ptr) > @intFromPtr(slice.ptr)) {
                 @panic("SlicedString.init buf is not in front of slice");
             }

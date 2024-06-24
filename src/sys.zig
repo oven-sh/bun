@@ -443,6 +443,90 @@ pub fn Maybe(comptime ReturnTypeT: type) type {
     return JSC.Node.Maybe(ReturnTypeT, Error);
 }
 
+/// Returns `true` if the two directories are on the same filesystem
+///
+/// This function does this test by trying to rename a file named from `dir_with_file_to_rename` -> `dir_to_rename_file_to`
+///
+/// The file must have the name `tmpname`
+pub fn testSameFileSystem(
+    dir_with_file_to_rename: std.fs.Dir,
+    dir_to_rename_file_to: std.fs.Dir,
+    tmpname: [:0]const u8,
+) bool {
+    // Make sure cachedir and cwd are in the same filesystem
+    std.posix.renameatZ(dir_with_file_to_rename.fd, tmpname, dir_to_rename_file_to.fd, tmpname) catch return false;
+    return true;
+}
+
+/// Variant of `testSameFileSystem` except the file to rename to is the abspath
+pub fn testSameFileSystemPaths(
+    dir_with_file_to_rename: std.fs.Dir,
+    abspath: [:0]const u8,
+    tmpname: [:0]const u8,
+) bool {
+    std.posix.renameatZ(dir_with_file_to_rename.fd, tmpname, std.fs.cwd().fd, abspath) catch return false;
+    return true;
+}
+
+pub const PosixPathComponentIter = struct {
+    path_to_iterate: []const u8,
+    start: usize = 0,
+
+    pub fn next(this: *PosixPathComponentIter) ?[]const u8 {
+        if (this.start >= this.path_to_iterate.len) return null;
+        const slash_idx = this.start + (std.mem.indexOfScalar(u8, this.path_to_iterate[this.start..], '/') orelse {
+            const remaining = this.path_to_iterate[this.start..];
+            if (remaining.len == 0) return null;
+            this.start = this.path_to_iterate.len;
+            return remaining;
+        });
+        if (slash_idx == 0) {
+            this.start = 1;
+            return "/";
+        }
+        this.start = slash_idx + 1;
+        return this.path_to_iterate[0..slash_idx];
+    }
+};
+
+/// Invariants:
+///
+/// - node_modules_folder_path is absolute path with no relative syntax
+pub fn findBestDirectoryInSameFileSystem(
+    node_modules_folder_path: []u8,
+    node_modules_dir: std.fs.Dir,
+    tmpname: [:0]const u8,
+    buf: *bun.PathBuffer,
+) ?struct { std.fs.Dir, []const u8 } {
+    const cache_debug = bun.Output.scoped(.same_fs_find, false);
+    if (bun.Environment.isWindows) bun.path.platformToPosixInPlace(u8, node_modules_folder_path);
+    const path_to_iterate = node_modules_folder_path;
+    bun.debugAssert(bun.path.Platform.isAbsolute(.posix, path_to_iterate));
+
+    var iter = PosixPathComponentIter{
+        .path_to_iterate = path_to_iterate,
+    };
+
+    while (iter.next()) |abspath| {
+        const abspath_to_tmpname = brk: {
+            if (abspath.len + tmpname.len + 1 >= bun.MAX_PATH_BYTES) @panic("Name too long");
+            break :brk bun.path.joinZBuf(buf[0..], &[_][]const u8{ abspath, tmpname }, .auto);
+        };
+
+        cache_debug("testing same filepath: {s}/{s} -> {s}", .{ node_modules_folder_path, tmpname, abspath_to_tmpname });
+
+        if (testSameFileSystemPaths(node_modules_dir, abspath_to_tmpname, tmpname)) {
+            defer std.fs.cwd().deleteFileZ(abspath_to_tmpname) catch {};
+            cache_debug("  that worked!", .{});
+            const dir = std.fs.cwd().openDir(abspath, .{}) catch continue;
+            return .{ dir, abspath };
+        }
+        cache_debug("  that didn't work!", .{});
+    }
+
+    return null;
+}
+
 pub fn getcwd(buf: *bun.PathBuffer) Maybe([]const u8) {
     const Result = Maybe([]const u8);
     return switch (getcwdZ(buf)) {

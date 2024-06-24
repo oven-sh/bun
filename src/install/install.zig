@@ -3367,85 +3367,6 @@ pub const PackageManager = struct {
         };
     }
 
-    fn testSameFileSystem(
-        dir_with_file_to_rename: std.fs.Dir,
-        dir_to_rename_file_to: std.fs.Dir,
-        tmpname: [:0]const u8,
-    ) bool {
-        // Make sure cachedir and cwd are in the same filesystem
-        std.posix.renameatZ(dir_with_file_to_rename.fd, tmpname, dir_to_rename_file_to.fd, tmpname) catch return false;
-        return true;
-    }
-
-    fn testSameFileSystemPaths(
-        dir_with_file_to_rename: std.fs.Dir,
-        abspath: [:0]const u8,
-        tmpname: [:0]const u8,
-    ) bool {
-        std.posix.renameatZ(dir_with_file_to_rename.fd, tmpname, std.fs.cwd().fd, abspath) catch return false;
-        return true;
-    }
-
-    const PosixPathComponentIter = struct {
-        path_to_iterate: []const u8,
-        start: usize = 0,
-
-        pub fn next(this: *PosixPathComponentIter) ?[]const u8 {
-            if (this.start >= this.path_to_iterate.len) return null;
-            const slash_idx = this.start + (std.mem.indexOfScalar(u8, this.path_to_iterate[this.start..], '/') orelse {
-                const remaining = this.path_to_iterate[this.start..];
-                if (remaining.len == 0) return null;
-                this.start = this.path_to_iterate.len;
-                return remaining;
-            });
-            if (slash_idx == 0) {
-                this.start = 1;
-                return "/";
-            }
-            this.start = slash_idx + 1;
-            return this.path_to_iterate[0..slash_idx];
-        }
-    };
-
-    const cache_debug = bun.Output.scoped(.install_cache, false);
-
-    /// Invariants:
-    ///
-    /// - node_modules_folder_path is absolute path with no relative syntax
-    fn findBestDirectoryInSameFileSystem(
-        node_modules_folder_path: []u8,
-        node_modules_dir: std.fs.Dir,
-        tmpname: [:0]const u8,
-        buf: *bun.PathBuffer,
-    ) ?struct { std.fs.Dir, []const u8 } {
-        if (bun.Environment.isWindows) bun.path.platformToPosixInPlace(u8, node_modules_folder_path);
-        const path_to_iterate = node_modules_folder_path;
-        bun.debugAssert(bun.path.Platform.isAbsolute(.posix, path_to_iterate));
-
-        var iter = PosixPathComponentIter{
-            .path_to_iterate = path_to_iterate,
-        };
-
-        while (iter.next()) |abspath| {
-            const abspath_to_tmpname = brk: {
-                if (abspath.len + tmpname.len + 1 >= bun.MAX_PATH_BYTES) @panic("Name too long");
-                break :brk bun.path.joinZBuf(buf[0..], &[_][]const u8{ abspath, tmpname }, .auto);
-            };
-
-            cache_debug("testing same filepath: {s}/{s} -> {s}", .{ node_modules_folder_path, tmpname, abspath_to_tmpname });
-
-            if (testSameFileSystemPaths(node_modules_dir, abspath_to_tmpname, tmpname)) {
-                defer std.fs.cwd().deleteFileZ(abspath_to_tmpname) catch {};
-                cache_debug("  that worked!", .{});
-                const dir = std.fs.cwd().openDir(abspath, .{}) catch continue;
-                return .{ dir, abspath };
-            }
-            cache_debug("  that didn't work!", .{});
-        }
-
-        return null;
-    }
-
     /// We try to get a cache directory on the same filesystem as the
     /// project's node_modules directory (if the user didn't explicitly
     /// set the cache directory).
@@ -3495,7 +3416,7 @@ pub const PackageManager = struct {
                     continue :loop;
                 };
 
-                if (!testSameFileSystem(node_modules, dir, tmpname)) {
+                if (!bun.sys.testSameFileSystem(node_modules, dir, tmpname)) {
                     if (cache_dir_set_kind.didExplicitlySet()) {
                         Output.warn(
                             "Bun's install cache directory was set to <cyan>{s}<r>, by the environment variable <b>{s}<r>.\n\nHowever, this directory exists <b>outside<r> of the filesystem the current project is located in. Moving files across filesystems is much slower than normal.\n\nIf you want to change this, set the environment variable to a path on the same filesystem as the project, or unset it and Bun will automatically do this for you.",
@@ -3516,7 +3437,7 @@ pub const PackageManager = struct {
                             },
                         };
 
-                        if (findBestDirectoryInSameFileSystem(node_modules_folder_path, node_modules, tmpname, &buf)) |result| out: {
+                        if (bun.sys.findBestDirectoryInSameFileSystem(node_modules_folder_path, node_modules, tmpname, &buf)) |result| out: {
                             const bestdir: std.fs.Dir = result[0];
                             const bestdir_path: []const u8 = result[1];
                             const is_node_modules = bun.strings.eql(node_modules_folder_path, bestdir_path);

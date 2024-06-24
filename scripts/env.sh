@@ -2,7 +2,6 @@
 
 # hack for buildkite
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
-  printenv
   if [[ $(uname -s) == 'Darwin' ]]; then
     export BUN_INSTALL="$HOME/.bun"
     export PATH="$BUN_INSTALL/bin:$PATH"

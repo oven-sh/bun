@@ -29,7 +29,7 @@ cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
   "-DUSE_LTO=${UseLto}" `
   "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../release/src/deps)" `
   "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../release/bun-cpp-objects.a)" `
-  "-DBUN_ZIG_OBJ=$(Resolve-Path ../release/bun-zig.o)" `
+  "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path ../release)" `
   "$Flags"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 

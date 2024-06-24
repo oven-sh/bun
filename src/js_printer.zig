@@ -3246,8 +3246,17 @@ fn NewPrinter(
                         last.visitRightAndFinish(p);
                     }
                 },
+                .e_inlined_enum =>  |e| {
+                    p.printExpr(e.value, level, flags);
+                    if(!p.options.minify_whitespace and !p.options.minify_identifiers) {
+                        p.print(" /* ");
+                        p.print(e.comment);
+                        p.print(" */");
+                    }
+                },
                 else => {
-                    // Global.panic("Unexpected expression of type {any}", .{std.meta.activeTag(expr.data});
+                    if(Environment.isDebug)
+                    Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },
             }
         }

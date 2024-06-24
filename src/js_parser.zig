@@ -2124,7 +2124,7 @@ pub const SideEffects = enum(u1) {
                 return Result{ .value = false, .side_effects = .could_have_side_effects, .ok = true };
             },
 
-            // always anull or undefined
+            // always a null or undefined
             .e_null, .e_undefined => {
                 return Result{ .value = true, .side_effects = .no_side_effects, .ok = true };
             },
@@ -2241,6 +2241,9 @@ pub const SideEffects = enum(u1) {
             },
             .e_object, .e_array, .e_class => {
                 return Result{ .ok = true, .value = true, .side_effects = .could_have_side_effects };
+            },
+            .e_inlined_enum => |e| {
+                return toBoolean(p, e.value.data);
             },
             .e_unary => |e_| {
                 switch (e_.op) {
@@ -4943,8 +4946,16 @@ fn NewParser_(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
+        ref_to_ts_namespace_member: std.AutoArrayHashMapUnmanaged(Ref, js_ast.TSNamespaceMember.Data) = .{},
+        ts_namespace: RecentTSNamespace = .{},
+
         // If this is true, then all top-level statements are wrapped in a try/catch
         will_wrap_module_in_try_catch_for_using: bool = false,
+
+        const RecentTSNamespace = struct {
+            ref: Ref = Ref.None,
+            data: ?*js_ast.TSNamespaceMemberMap = null,
+        };
 
         /// use this instead of checking p.source.index
         /// because when not bundling, p.source.index is `0`
@@ -5733,17 +5744,26 @@ fn NewParser_(
                 }
             }
 
+            // Create an error for assigning to an import namespace
             if ((opts.assign_target != .none or opts.is_delete_target) and p.symbols.items[ref.innerIndex()].kind == .import) {
-                // Create an error for assigning to an import namespace
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
                 p.log.addRangeErrorFmt(p.source, r, p.allocator, "Cannot assign to import \"{s}\"", .{
                     p.symbols.items[ref.innerIndex()].original_name,
                 }) catch unreachable;
             }
 
-            // TODO: TypeScript namespace
-            // if (opts.assign_target == .none and !opts.is_delete_target and p.options.bundle) {
-
+            // Substitute an EImportIdentifier now if this has a namespace alias
+            // if (opts.assign_target == .none and !opts.is_delete_target) {
+            //     const symbol = &p.symbols.items[ref.inner_index];
+            //     if (symbol.namespace_alias) |ns_alias| {
+            //         if (p.ref_to_ts_namespace_member.get(ns_alias.namespace_ref)) |ts_member_data| {
+            //             if (ts_member_data == .namespace) {
+            //                 if (ts_member_data.namespace.get(ns_alias.alias)) |member| {
+            //                     std.debug.panic("TODO: {}", .{member});
+            //                 }
+            //             }
+            //         }
+            //     }
             // }
 
             // Substitute an EImportIdentifier now if this is an import item
@@ -5752,6 +5772,32 @@ fn NewParser_(
                     E.ImportIdentifier{ .ref = ref, .was_originally_identifier = opts.was_originally_identifier },
                     loc,
                 );
+            }
+
+            if (p.ref_to_ts_namespace_member.get(ref)) |member_data| {
+                switch (member_data) {
+                    .enum_number => |num| return p.wrapInlinedEnum(
+                        .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
+                        p.symbols.items[ref.inner_index].original_name,
+                    ),
+                    .enum_string => |str| return p.wrapInlinedEnum(
+                        .{ .loc = loc, .data = .{ .e_string = str } },
+                        p.symbols.items[ref.inner_index].original_name,
+                    ),
+
+                    .namespace => |data| {
+                        p.ts_namespace = .{
+                            .ref = ref,
+                            .data = data,
+                        };
+                        return .{
+                            .loc = loc,
+                            .data = .{ .e_identifier = ident },
+                        };
+                    },
+
+                    else => {},
+                }
             }
 
             // Substitute a namespace export reference now if appropriate
@@ -11423,14 +11469,27 @@ fn NewParser_(
             const name_text = p.lexer.identifier;
             try p.lexer.expect(.t_identifier);
             var name = LocRef{ .loc = name_loc, .ref = Ref.None };
+
+            // Generate the namespace object
+            const exported_members = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export);
+            const ts_namespace = bun.create(p.allocator, js_ast.TSNamespaceScope, .{
+                .exported_members = exported_members,
+                .is_enum_scope = true,
+            });
+            const enum_member_data = js_ast.TSNamespaceMember.Data{ .namespace = exported_members };
+
+            // Declare the enum and create the scope
             var arg_ref = Ref.None;
             if (!opts.is_typescript_declare) {
                 name.ref = try p.declareSymbol(.ts_enum, name_loc, name_text);
                 _ = try p.pushScopeForParsePass(.entry, loc);
+                p.current_scope.ts_namespace = ts_namespace;
+                p.ref_to_ts_namespace_member.put(p.allocator, name.ref.?, enum_member_data) catch bun.outOfMemory();
             }
 
             try p.lexer.expect(.t_open_brace);
 
+            // Parse the body
             var values = std.ArrayList(js_ast.EnumValue).init(p.allocator);
             while (p.lexer.token != .t_close_brace) {
                 var value = js_ast.EnumValue{ .loc = p.lexer.loc(), .ref = Ref.None, .name = undefined, .value = null };
@@ -11456,13 +11515,18 @@ fn NewParser_(
                     value.ref = try p.declareSymbol(.other, value.loc, try value.name.string(p.allocator));
                 }
 
-                // Parse the initializer
+                // Parse the initializr
                 if (p.lexer.token == .t_equals) {
                     try p.lexer.next();
                     value.value = try p.parseExpr(.comma);
                 }
 
                 values.append(value) catch unreachable;
+
+                exported_members.put(p.allocator, value.name.data, .{
+                    .loc = value.loc,
+                    .data = .enum_property,
+                }) catch bun.outOfMemory();
 
                 if (p.lexer.token != .t_comma and p.lexer.token != .t_semicolon) {
                     break;
@@ -11510,6 +11574,7 @@ fn NewParser_(
                 } else {
                     arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;
                 }
+                p.ref_to_ts_namespace_member.put(p.allocator, arg_ref, enum_member_data) catch bun.outOfMemory();
 
                 p.popScope();
             }
@@ -11530,6 +11595,32 @@ fn NewParser_(
                 .values = values.items,
                 .is_export = opts.is_export,
             }, loc);
+        }
+
+        // Generate a TypeScript namespace object for this namespace's scope. If this
+        // namespace is another block that is to be merged with an existing namespace,
+        // use that earlier namespace's object instead.
+        pub fn getOrCreateExportedNamespaceMembers(p: *P, name: []const u8, is_export: bool) *js_ast.TSNamespaceMemberMap {
+            // Merge with a sibling namespace from the same scope
+            if (p.current_scope.members.get(name)) |existing_member| {
+                if (p.ref_to_ts_namespace_member.get(existing_member.ref)) |member_data| {
+                    if (member_data == .namespace)
+                        return member_data.namespace;
+                }
+            }
+
+            // Merge with a sibling namespace from a different scope
+            if (is_export) {
+                if (p.current_scope.ts_namespace) |ns| {
+                    if (ns.exported_members.get(name)) |member| {
+                        if (member.data == .namespace)
+                            return member.data.namespace;
+                    }
+                }
+            }
+
+            // Otherwise, generate a new namespace object
+            return bun.create(p.allocator, js_ast.TSNamespaceMemberMap, .{});
         }
 
         fn parseExportClause(p: *P) !ExportClauseResult {
@@ -17356,6 +17447,8 @@ fn NewParser_(
                     return true;
                 },
 
+                .e_inlined_enum => |e| return p.exprCanBeRemovedIfUnused(&e.value),
+
                 .e_dot => |ex| {
                     return ex.can_be_removed_if_unused;
                 },
@@ -17901,24 +17994,6 @@ fn NewParser_(
             return .{ .stmt = p.s(S.SExpr{ .value = value }, value.loc), .ok = true };
         }
 
-        // fn maybeInlineMacroObject(p: *P, decl: *G.Decl, macro: Expr) void {
-        //     if (decl.value == null) return;
-        //     switch (decl.binding.data) {
-        //         .b_identifier => |ident| {
-        //             if (macro.get(p.loadNameFromRef(ident.ref))) |val| {
-        //                 decl
-        //             }
-        //         }
-        //     }
-        // }
-        //  if (comptime allow_macros) {
-        //                         if (p.macro_call_count and data.decls[i].value != null and
-        //                             data.decls[i].value.?.data == .e_object and data.decls[i].value.?.data.e_object.was_originally_macro)
-        //                         {
-        //                             p.maybeInlineMacroObject(&data.decls[i], data.decls[i].value.?);
-        //                         }
-        //                     }
-
         // EDot nodes represent a property access. This function may return an
         // expression to replace the property access with. It assumes that the
         // target of the EDot expression has already been visited.
@@ -17932,7 +18007,6 @@ fn NewParser_(
         ) ?Expr {
             switch (target.data) {
                 .e_identifier => |id| {
-
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
                     // something else without paying the cost of a whole-tree traversal during
@@ -18214,11 +18288,32 @@ fn NewParser_(
                         }
                     }
 
-                    // If this is a known enum value, inline the value of the enum
-                    if (is_typescript_enabled) {
-                        if (p.known_enum_values.get(id.ref)) |enum_value_map| {
-                            if (enum_value_map.get(name)) |enum_value| {
-                                return p.newExpr(E.Number{ .value = enum_value }, loc);
+                    if (id.ref.eql(p.ts_namespace.ref) and
+                        identifier_opts.assign_target == .none and
+                        !identifier_opts.is_delete_target)
+                    {
+                        if (p.ts_namespace.data.?.get(name)) |value| {
+                            switch (value.data) {
+                                .enum_number => |num| return p.wrapInlinedEnum(
+                                    .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
+                                    name,
+                                ),
+                                .enum_string => |str| return p.wrapInlinedEnum(
+                                    .{ .loc = loc, .data = .{ .e_string = str } },
+                                    name,
+                                ),
+
+                                .namespace => |data| {
+                                    p.ts_namespace = .{
+                                        .ref = id.ref,
+                                        .data = data,
+                                    };
+                                    return .{
+                                        .loc = loc,
+                                        .data = .{ .e_identifier = id },
+                                    };
+                                },
+                                else => {},
                             }
                         }
                     }
@@ -18229,7 +18324,7 @@ fn NewParser_(
                         if (p.options.features.minify_syntax) {
                             // minify "long-string".length to 11
                             if (strings.eqlComptime(name, "length")) {
-                                return p.newExpr(E.Number{ .value = @as(f64, @floatFromInt(str.javascriptLength())) }, loc);
+                                return p.newExpr(E.Number{ .value = @floatFromInt(str.javascriptLength()) }, loc);
                             }
                         }
                     }
@@ -19375,10 +19470,22 @@ fn NewParser_(
                     return;
                 },
                 .s_enum => |data| {
-                    p.recordDeclaredSymbol(data.name.ref.?) catch unreachable;
-                    p.pushScopeForVisitPass(.entry, stmt.loc) catch unreachable;
+                    // Do not end the const local prefix after TypeScript enums. We process
+                    // them first within their scope so that they are inlined into all code in
+                    // that scope. We don't want that to cause the const local prefix to end.
+                    p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
+
+                    // Track cross-module enum constants during bundling
+                    const top_level_enum_values: @TypeOf(null) = null;
+                    if (p.current_scope == p.module_scope and p.options.bundle) {
+                        // TODO:
+                        // top_level_enum_values = null;
+                    }
+
+                    p.recordDeclaredSymbol(data.name.ref.?) catch bun.outOfMemory();
+                    p.pushScopeForVisitPass(.entry, stmt.loc) catch bun.outOfMemory();
                     defer p.popScope();
-                    p.recordDeclaredSymbol(data.arg) catch unreachable;
+                    p.recordDeclaredSymbol(data.arg) catch bun.outOfMemory();
 
                     const allocator = p.allocator;
                     // Scan ahead for any variables inside this namespace. This must be done
@@ -19387,78 +19494,118 @@ fn NewParser_(
                     // We need to convert the uses into property accesses on the namespace.
                     for (data.values) |value| {
                         if (!value.ref.isNull()) {
-                            p.is_exported_inside_namespace.put(allocator, value.ref, data.arg) catch unreachable;
+                            p.is_exported_inside_namespace.put(allocator, value.ref, data.arg) catch bun.outOfMemory();
                         }
                     }
 
                     // Values without initializers are initialized to one more than the
                     // previous value if the previous value is numeric. Otherwise values
                     // without initializers are initialized to undefined.
-                    var next_numeric_value: f64 = 0.0;
-                    var has_numeric_value = true;
+                    var next_numeric_value: ?f64 = 0.0;
 
-                    var value_exprs = ListManaged(Expr).initCapacity(allocator, data.values.len) catch unreachable;
+                    var value_exprs = ListManaged(Expr).initCapacity(allocator, data.values.len) catch bun.outOfMemory();
 
-                    // Track values so they can be used by constant folding. We need to follow
-                    // links here in case the enum was merged with a preceding namespace
-                    var values_so_far = StringHashMapUnmanaged(f64){};
+                    var all_values_are_pure = true;
 
-                    p.known_enum_values.put(allocator, data.name.ref orelse p.panic("Expected data.name.ref", .{}), values_so_far) catch unreachable;
-                    p.known_enum_values.put(allocator, data.arg, values_so_far) catch unreachable;
+                    const exported_members = p.current_scope.ts_namespace.?.exported_members;
 
                     // We normally don't fold numeric constants because they might increase code
                     // size, but it's important to fold numeric constants inside enums since
                     // that's what the TypeScript compiler does.
                     const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
                     p.should_fold_typescript_constant_expressions = true;
-                    for (data.values) |*enum_value| {
+
+                    // Create an assignment for each enum value
+                    for (data.values) |*value| {
                         // gotta allocate here so it lives after this function stack frame goes poof
-                        const name = enum_value.name;
-                        var assign_target: Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
+                        const name = value.name;
+
                         var has_string_value = false;
+                        if (value.value) |enum_value| {
+                            value.value = p.visitExpr(enum_value);
+                            next_numeric_value = null;
 
-                        if (enum_value.value != null) {
-                            enum_value.value = p.visitExpr(enum_value.value.?);
-                            switch (enum_value.value.?.data) {
+                            // "See through" any wrapped comments
+                            switch (value.value.?.data) {
                                 .e_number => |num| {
+                                    if (top_level_enum_values) |tlev| {
+                                        tlev.put(name.data, .{ .enum_number = num.value });
+                                    }
 
-                                    // prob never allocates in practice
-                                    values_so_far.put(allocator, name.string(allocator) catch unreachable, num.value) catch unreachable;
-                                    has_numeric_value = true;
+                                    const name_str = name.string(allocator) catch bun.outOfMemory();
+                                    exported_members.getPtr(name_str).?.data = .{ .enum_number = num.value };
+
+                                    p.ref_to_ts_namespace_member.put(
+                                        p.allocator,
+                                        value.ref,
+                                        .{ .enum_number = num.value },
+                                    ) catch bun.outOfMemory();
+
                                     next_numeric_value = num.value + 1.0;
                                 },
-                                .e_string => {
+                                .e_string => |str| {
                                     has_string_value = true;
+
+                                    if (top_level_enum_values) |tlev| {
+                                        tlev.put(name.data, .{ .enum_string = 1 });
+                                    }
+
+                                    const name_str = name.string(allocator) catch bun.outOfMemory();
+                                    exported_members.getPtr(name_str).?.data = .{ .enum_string = str };
+
+                                    p.ref_to_ts_namespace_member.put(
+                                        p.allocator,
+                                        value.ref,
+                                        .{ .enum_string = str },
+                                    ) catch bun.outOfMemory();
                                 },
-                                else => {},
+                                else => {
+                                    if (enum_value.knownPrimitive() == .string) {
+                                        has_string_value = true;
+                                    }
+
+                                    if (!p.exprCanBeRemovedIfUnused(&enum_value)) {
+                                        all_values_are_pure = false;
+                                    }
+                                },
                             }
-                        } else if (has_numeric_value) {
-                            enum_value.value = p.newExpr(E.Number{ .value = next_numeric_value }, enum_value.loc);
-                            values_so_far.put(allocator, name.string(allocator) catch unreachable, next_numeric_value) catch unreachable;
-                            next_numeric_value += 1;
+                        } else if (next_numeric_value) |num| {
+                            value.value = p.newExpr(E.Number{ .value = num }, value.loc);
+
+                            next_numeric_value = num + 1;
+
+                            const name_str = name.string(allocator) catch bun.outOfMemory();
+                            exported_members.getPtr(name_str).?.data = .{ .enum_number = num };
+
+                            p.ref_to_ts_namespace_member.put(
+                                p.allocator,
+                                value.ref,
+                                .{ .enum_number = num },
+                            ) catch bun.outOfMemory();
                         } else {
-                            enum_value.value = p.newExpr(E.Undefined{}, enum_value.loc);
+                            value.value = p.newExpr(E.Undefined{}, value.loc);
                         }
+
                         // "Enum['Name'] = value"
-                        assign_target = Expr.assign(
+                        const assign_target = Expr.assign(
                             p.newExpr(E.Index{
                                 .target = p.newExpr(
                                     E.Identifier{ .ref = data.arg },
-                                    enum_value.loc,
+                                    value.loc,
                                 ),
                                 .index = p.newExpr(
-                                    enum_value.name,
-                                    enum_value.loc,
+                                    value.name,
+                                    value.loc,
                                 ),
-                            }, enum_value.loc),
-                            enum_value.value orelse unreachable,
+                            }, value.loc),
+                            value.value.?,
                         );
 
                         p.recordUsage(data.arg);
 
                         // String-valued enums do not form a two-way map
                         if (has_string_value) {
-                            value_exprs.append(assign_target) catch unreachable;
+                            value_exprs.append(assign_target) catch bun.outOfMemory();
                         } else {
                             // "Enum[assignTarget] = 'Name'"
                             value_exprs.append(
@@ -19466,13 +19613,13 @@ fn NewParser_(
                                     p.newExpr(E.Index{
                                         .target = p.newExpr(
                                             E.Identifier{ .ref = data.arg },
-                                            enum_value.loc,
+                                            value.loc,
                                         ),
                                         .index = assign_target,
-                                    }, enum_value.loc),
-                                    p.newExpr(enum_value.name, enum_value.loc),
+                                    }, value.loc),
+                                    p.newExpr(value.name, value.loc),
                                 ),
-                            ) catch unreachable;
+                            ) catch bun.outOfMemory();
                         }
                         p.recordUsage(data.arg);
                     }
@@ -19493,6 +19640,7 @@ fn NewParser_(
                         data.name.ref.?,
                         data.arg,
                         value_stmts.items,
+                        all_values_are_pure,
                     );
                     return;
                 },
@@ -19533,6 +19681,7 @@ fn NewParser_(
                         data.name.ref.?,
                         data.arg,
                         prepend_list.items,
+                        false, // TODO(@paperdave)
                     );
                     return;
                 },
@@ -19867,6 +20016,7 @@ fn NewParser_(
             _name_ref: Ref,
             arg_ref: Ref,
             stmts_inside_closure: []Stmt,
+            all_values_are_pure: bool,
         ) anyerror!void {
             var name_ref = _name_ref;
             // Follow the link chain in case symbols were merged
@@ -19970,19 +20120,17 @@ fn NewParser_(
             func_args[0] = .{ .binding = p.b(B.Identifier{ .ref = arg_ref }, name_loc) };
             var args_list = allocator.alloc(ExprNodeIndex, 1) catch unreachable;
             args_list[0] = arg_expr;
-            const func = G.Fn{
-                .args = func_args,
-                .name = null,
-                .open_parens_loc = stmt_loc,
-                .body = G.FnBody{
-                    .loc = stmt_loc,
-                    .stmts = try allocator.dupe(StmtNodeIndex, stmts_inside_closure),
-                },
-            };
+
             const target = p.newExpr(
-                E.Function{
-                    .func = func,
-                },
+                E.Function{ .func = .{
+                    .args = func_args,
+                    .name = null,
+                    .open_parens_loc = stmt_loc,
+                    .body = G.FnBody{
+                        .loc = stmt_loc,
+                        .stmts = try allocator.dupe(StmtNodeIndex, stmts_inside_closure),
+                    },
+                } },
                 stmt_loc,
             );
 
@@ -19990,14 +20138,13 @@ fn NewParser_(
                 E.Call{
                     .target = target,
                     .args = ExprNodeList.init(args_list),
+                    .can_be_unwrapped_if_unused = all_values_are_pure,
                 },
                 stmt_loc,
             );
 
             const closure = p.s(
-                S.SExpr{
-                    .value = call,
-                },
+                S.SExpr{ .value = call },
                 stmt_loc,
             );
 
@@ -20589,6 +20736,19 @@ fn NewParser_(
             p.relocated_top_level_vars.append(p.allocator, LocRef{ .loc = loc, .ref = ref }) catch unreachable;
             p.recordUsage(ref);
             return Expr.initIdentifier(ref, loc);
+        }
+
+        fn wrapInlinedEnum(p: *P, value: Expr, comment: string) Expr {
+            if (bun.strings.containsComptime(comment, "*/")) {
+                // Don't wrap with a comment
+                return value;
+            }
+
+            // Wrap with a comment
+            return p.newExpr(E.InlinedEnum{
+                .value = value,
+                .comment = comment,
+            }, value.loc);
         }
 
         fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {

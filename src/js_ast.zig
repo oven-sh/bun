@@ -2718,6 +2718,11 @@ pub const E = struct {
         close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
+    pub const InlinedEnum = struct {
+        value: ExprNodeIndex,
+        comment: string,
+    };
+
     pub const Import = struct {
         expr: ExprNodeIndex,
         import_record_index: u32,
@@ -4324,6 +4329,9 @@ pub const Expr = struct {
                     },
                 };
             },
+            E.InlinedEnum => return .{ .loc = loc, .data = .{
+                .e_inlined_enum = Data.Store.append(@TypeOf(st), st),
+            } },
 
             else => {
                 @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
@@ -4383,6 +4391,7 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+        e_inlined_enum,
 
         /// A string that is UTF-8 encoded without escaping for use in JavaScript.
         e_utf8_string,
@@ -5048,6 +5057,7 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
+        e_inlined_enum: *E.InlinedEnum,
 
         e_utf8_string: *E.UTF8String,
 
@@ -5166,6 +5176,11 @@ pub const Expr = struct {
                     const item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
                     item.* = el.*;
                     return .{ .e_string = item };
+                },
+                .e_inlined_enum => |el| {
+                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_inlined_enum)));
+                    item.* = el.*;
+                    return .{ .e_inlined_enum = item };
                 },
                 else => this,
             };
@@ -5377,6 +5392,13 @@ pub const Expr = struct {
                         .is_utf16 = el.is_utf16,
                     });
                     return .{ .e_string = item };
+                },
+                .e_inlined_enum => |el| {
+                    const item = bun.create(allocator, E.InlinedEnum, .{
+                        .value = el.value,
+                        .comment = el.comment,
+                    });
+                    return .{ .e_inlined_enum = item };
                 },
                 else => this,
             };
@@ -6654,6 +6676,130 @@ pub const Span = struct {
     range: logger.Range = .{},
 };
 
+// This is for TypeScript "enum" and "namespace" blocks. Each block can
+// potentially be instantiated multiple times. The exported members of each
+// block are merged into a single namespace while the non-exported code is
+// still scoped to just within that block:
+//
+//	let x = 1;
+//	namespace Foo {
+//	  let x = 2;
+//	  export let y = 3;
+//	}
+//	namespace Foo {
+//	  console.log(x); // 1
+//	  console.log(y); // 3
+//	}
+//
+// Doing this also works inside an enum:
+//
+//	enum Foo {
+//	  A = 3,
+//	  B = A + 1,
+//	}
+//	enum Foo {
+//	  C = A + 2,
+//	}
+//	console.log(Foo.B) // 4
+//	console.log(Foo.C) // 5
+//
+// This is a form of identifier lookup that works differently than the
+// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
+// to search sibling scopes in addition to parent scopes. This is accomplished
+// by sharing the map of exported members between all matching sibling scopes.
+pub const TSNamespaceScope = struct {
+    // This is shared between all sibling namespace blocks
+    exported_members: *TSNamespaceMemberMap,
+
+    // This is a lazily-generated map of identifiers that actually represent
+    // property accesses to this namespace's properties. For example:
+    //
+    //   namespace x {
+    //     export let y = 123
+    //   }
+    //   namespace x {
+    //     export let z = y
+    //   }
+    //
+    // This should be compiled into the following code:
+    //
+    //   var x;
+    //   (function(x2) {
+    //     x2.y = 123;
+    //   })(x || (x = {}));
+    //   (function(x3) {
+    //     x3.z = x3.y;
+    //   })(x || (x = {}));
+    //
+    // When we try to find the symbol "y", we instead return one of these lazily
+    // generated proxy symbols that represent the property access "x3.y". This
+    // map is unique per namespace block because "x3" is the argument symbol that
+    // is specific to that particular namespace block.
+    property_accesses: std.StringArrayHashMapUnmanaged(Ref) = .{},
+
+    // This is specific to this namespace block. It's the argument of the
+    // immediately-invoked function expression that the namespace block is
+    // compiled into:
+    //
+    //   var ns;
+    //   (function (ns2) {
+    //     ns2.x = 123;
+    //   })(ns || (ns = {}));
+    //
+    // This variable is "ns2" in the above example. It's the symbol to use when
+    // generating property accesses off of this namespace when it's in scope.
+    // arg_ref: Ref,
+
+    // Even though enums are like namespaces and both enums and namespaces allow
+    // implicit references to properties of sibling scopes, they behave like
+    // separate, er, namespaces. Implicit references only work namespace-to-
+    // namespace and enum-to-enum. They do not work enum-to-namespace. And I'm
+    // not sure what's supposed to happen for the namespace-to-enum case because
+    // the compiler crashes: https://github.com/microsoft/TypeScript/issues/46891.
+    // So basically these both work:
+    //
+    //   enum a { b = 1 }
+    //   enum a { c = b }
+    //
+    //   namespace x { export let y = 1 }
+    //   namespace x { export let z = y }
+    //
+    // This doesn't work:
+    //
+    //   enum a { b = 1 }
+    //   namespace a { export let c = b }
+    //
+    // And this crashes the TypeScript compiler:
+    //
+    //   namespace a { export let b = 1 }
+    //   enum a { c = b }
+    //
+    // Therefore we only allow enum/enum and namespace/namespace interactions.
+    is_enum_scope: bool,
+};
+
+pub const TSNamespaceMemberMap = std.StringArrayHashMapUnmanaged(TSNamespaceMember);
+
+pub const TSNamespaceMember = struct {
+    loc: logger.Loc,
+    data: Data,
+
+    pub const Data = union(enum) {
+        /// "namespace ns { export let it }"
+        property,
+        /// "namespace ns { export namespace it {} }"
+        namespace: *TSNamespaceMemberMap,
+        /// "enum ns { it }"
+        enum_number: f64,
+        /// "enum ns { it = 'it' }"
+        enum_string: *E.String,
+        /// "enum ns { it = something() }"
+        enum_property: void,
+    };
+};
+
+pub const TSEnumValue = union(enum) {};
+
 pub const ExportsKind = enum {
     // This file doesn't have any kind of export, so it's impossible to say what
     // kind of file this is. An empty file is in this category, for example.
@@ -6953,6 +7099,9 @@ pub const Scope = struct {
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
     is_after_const_local_prefix: bool = false,
+
+    // This will be non-null if this is a TypeScript "namespace" or "enum"
+    ts_namespace: ?*TSNamespaceScope = null,
 
     pub const NestedScopeMap = std.AutoArrayHashMap(u32, bun.BabyList(*Scope));
 

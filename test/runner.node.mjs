@@ -310,8 +310,8 @@ async function spawnSafe({
       buffer = stack || message;
     }
   } else if (
-    (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n)/i.exec(buffer)) ||
-    (error = /panic\(.*\): (.*)(?:\r\n|\r|\n)/i.exec(buffer)) ||
+    (error = /thread \d+ panic: (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
+    (error = /panic\(.*\): (.*)(?:\r\n|\r|\n|\\n)/i.exec(buffer)) ||
     (error = /(Segmentation fault) at address/i.exec(buffer)) ||
     (error = /(Internal assertion failure)/i.exec(buffer)) ||
     (error = /(Illegal instruction) at address/i.exec(buffer)) ||
@@ -845,7 +845,18 @@ async function getExecPathFromBuildKite(target) {
     args: ["artifact", "download", "**", releasePath, "--step", target],
   });
 
-  const zipPath = join(releasePath, `${target}.zip`);
+  let zipPath;
+  for (const path of readdirSync(releasePath, { recursive: true, encoding: "utf-8" })) {
+    if (/^bun.*\.zip$/i.test(path) && !path.includes("-profile.zip")) {
+      zipPath = join(releasePath, path);
+      break;
+    }
+  }
+
+  if (!zipPath) {
+    throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
+  }
+
   if (isWindows) {
     await spawnSafe({
       command: "powershell",

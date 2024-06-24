@@ -748,7 +748,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
+          - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True -Fast $$True"
 
       - key: "bun-windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
@@ -769,7 +769,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
+          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
 
       - key: "bun-windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

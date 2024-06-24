@@ -12,24 +12,24 @@ $UseLto = If ($Fast) { "OFF" } Else { "ON" }
 
 .\scripts\env.ps1 $TagSuffix
 
-mkdir -Force release
-buildkite-agent artifact download "**" release --step "${Tag}-build-codegen"
-buildkite-agent artifact download "**" release --step "${Tag}-build-zig"
-buildkite-agent artifact download "**" release --step "${Tag}-build-cpp"
-buildkite-agent artifact download "**" release --step "${Tag}-build-deps"
+mkdir -Force build
+buildkite-agent artifact download "**" .. --step "${Tag}-build-zig"
+buildkite-agent artifact download "**" .. --step "${Tag}-build-cpp"
+buildkite-agent artifact download "**" .. --step "${Tag}-build-deps"
 
-Set-Location release
+Set-Location build
 $CANARY_REVISION = 0
 cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=1 `
   -DNO_CONFIGURE_DEPENDS=1 `
+  "-DCPU_TARGET=${CPU_TARGET}" `
   "-DCANARY=${CANARY_REVISION}" `
   -DBUN_LINK_ONLY=1 `
   "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
   "-DUSE_LTO=${UseLto}" `
-  "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../release/bun-deps)" `
-  "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../release/bun-cpp-objects.a)" `
-  "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path ../release)" `
+  "-DBUN_DEPS_OUT_DIR=$(Resolve-Path bun-deps)" `
+  "-DBUN_CPP_ARCHIVE=$(Resolve-Path bun-cpp-objects.a)" `
+  "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path .)" `
   "$Flags"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 

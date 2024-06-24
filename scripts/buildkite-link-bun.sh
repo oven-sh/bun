@@ -56,7 +56,7 @@ cmake \
   -DCPU_TARGET=${CPU_TARGET} \
   -DUSE_LTO=${USE_LTO} \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="$(pwd)/release/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="$(pwd)/release" \
   -DBUN_CPP_ARCHIVE="$(pwd)/release/bun-cpp-objects.a" \
   -DBUN_DEPS_OUT_DIR="$(pwd)/release/src/deps" \
   -DNO_CONFIGURE_DEPENDS=1

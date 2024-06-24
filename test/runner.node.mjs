@@ -1088,7 +1088,10 @@ function getBuildUrl() {
  */
 function getBuildLabel() {
   if (isBuildKite) {
-    return process.env["BUILDKITE_GROUP_LABEL"] || process.env["BUILDKITE_LABEL"];
+    const label = process.env["BUILDKITE_LABEL"] || process.env["BUILDKITE_GROUP_LABEL"];
+    if (label) {
+      return label.replace("- bun-test", "").trim();
+    }
   }
   return `${getOsEmoji()} ${getArchText()}`;
 }

@@ -12,7 +12,7 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
-const browser = await launch({
+const b = await launch({
   // While puppeteer is migrating to their new headless: `true` mode,
   // this causes strange issues on macOS in the cloud (AWS and MacStadium).
   //
@@ -34,18 +34,6 @@ const browser = await launch({
     // Uncomment if you want debug logs from Chromium:
     // "--enable-logging=stderr",
     // "--v=1",
-  ],
-});
-
-const b = await launch({
-  headless: true,
-  dumpio: true,
-  args: [
-    // Fixes 'dock_plist is not an NSDictionary' on AWS macOS
-    "--no-sandbox",
-    "--single-process",
-    // Fixes 'error: Navigating frame was detached'
-    "--disable-features=site-per-process",
   ],
 });
 

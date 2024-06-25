@@ -95,10 +95,7 @@ jobs:
           TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
         run: |
-          node scripts/runner.node.mjs \
-            --exec-path "${{ steps.setup-github.outputs.bun-path || steps.setup-release.outputs.bun-path }}" \
-            --include "${{ matrix.include }}" \
-            --exclude "${{ matrix.exclude }}"
+          node scripts/runner.node.mjs --exec-path "${{ steps.setup-github.outputs.bun-path || steps.setup-release.outputs.bun-path }}" --include "${{ matrix.include }}" --exclude "${{ matrix.exclude }}"
 
   # TODO: Enable when we start running the Node.js test suite
   # test-node:

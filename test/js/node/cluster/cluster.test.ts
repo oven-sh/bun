@@ -9,3 +9,4 @@ function new_test(name: string) {
 }
 
 new_test("cwd.ts");
+new_test("worker-constructor.ts");

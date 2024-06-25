@@ -11148,13 +11148,7 @@ pub const PackageManager = struct {
         }
 
         @memcpy(resolution_buf[resolution_label.len .. resolution_label.len + ".patch".len], ".patch");
-        var patch_filename: []const u8 = resolution_buf[0 .. resolution_label.len + ".patch".len];
-        var deinit = false;
-        if (escapePatchFilename(manager.allocator, patch_filename)) |escaped| {
-            deinit = true;
-            patch_filename = escaped;
-        }
-        defer if (deinit) manager.allocator.free(patch_filename);
+        const patch_filename: []const u8 = resolution_buf[0 .. resolution_label.len + ".patch".len];
 
         const path_in_patches_dir = bun.path.joinZ(
             &[_][]const u8{
@@ -11166,7 +11160,7 @@ pub const PackageManager = struct {
 
         var nodefs = bun.JSC.Node.NodeFS{};
         const args = bun.JSC.Node.Arguments.Mkdir{
-            .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
+            .path = .{ .string = bun.PathString.init(bun.path.dirname(path_in_patches_dir, .posix)) },
         };
         if (nodefs.mkdirRecursive(args, .sync).asErr()) |e| {
             Output.prettyError(

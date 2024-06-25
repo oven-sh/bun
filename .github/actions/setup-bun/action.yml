@@ -21,10 +21,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Setup upterm session
-      uses: lhotari/action-upterm@v1
-      with:
-        limit-access-to-actor: true
     - name: Setup Bun
       shell: bash
       run: |
@@ -49,5 +45,8 @@ runs:
         curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
         unzip ${target}.zip
         cd ${target}
-        ls
-        echo $(pwd) >> ${GITHUB_PATH}
+        if [[ "${os}" == "windows" ]]; then
+          echo $(cygpath -w $(pwd)) >> ${GITHUB_PATH}
+        else
+          echo $(pwd) >> ${GITHUB_PATH}
+        fi

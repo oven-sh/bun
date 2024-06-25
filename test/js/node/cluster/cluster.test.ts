@@ -10,3 +10,4 @@ function new_test(name: string) {
 
 new_test("cwd.ts");
 new_test("worker-constructor.ts");
+new_test("worker-death.ts");

@@ -58,15 +58,18 @@ runs:
         esac
         echo "arch=${arch}" >> $GITHUB_OUTPUT
         case "${{ inputs.baseline }}" in
-          true | 1) target="bun-${os}-${arch}-baseline";;
-          *)        target="bun-${os}-${arch}";;
+          true | 1) target="bun-${os}-${arch}-baseline" ;;
+          *)        target="bun-${os}-${arch}" ;;
         esac
         echo "target=${target}" >> $GITHUB_OUTPUT
         case "${{ inputs.bun-version }}" in
-          latest) release="latest";;
-          canary) release="canary";;
-          *)      release="bun-v${{ inputs.bun-version }}";;
+          latest) release="latest" ;;
+          canary) release="canary" ;;
+          *)      release="bun-v${{ inputs.bun-version }}" ;;
         esac
+        if [[ "${{ inputs.workflow-run-id }}" ]]; then
+          release="workflow-${{ inputs.workflow-run-id }}"
+        fi
         echo "release=${release}" >> $GITHUB_OUTPUT
 
     - if: ${{ inputs.workflow-run-id }}
@@ -81,30 +84,26 @@ runs:
       name: Download Bun from URL
       shell: bash
       run: |
-        curl -LO "${{ inputs.download-url }}/${{ steps.setup.outputs.release }}/${{ steps.setup.outputs.target }}.zip"
+        curl -LO ${{ inputs.download-url }}/${{ steps.setup.outputs.release }}/${{ steps.setup.outputs.target }}.zip
 
     - id: unpack
       name: Unpack Bun
       shell: bash
       run: |
-        unzip ${{ steps.setup.outputs.target }}.zip
-        tmp="${{ runner.temp }}/buntmp-$(date +%s)"
-        mkdir -p $tmp/.bun/bin
-        mv ${{ steps.setup.outputs.target }}/bun* $tmp/.bun/bin/
-        chmod +x $tmp/.bun/bin/*
-        path="$tmp/.bun/bin/bun"
+        mkdir -p ${{ steps.setup.outputs.release }}
+        unzip ${{ steps.setup.outputs.target }}.zip -d ${{ steps.setup.outputs.release }}
+        bin="${{ steps.setup.outputs.release }}/${{ steps.setup.outputs.target }}"
+        path="${bin}/bun"
         if [[ "${{ runner.os }}" == "Windows" ]]; then
+          bin=$(cygpath -w ${bin})
           path=$(cygpath -w ${path})
         fi
+        chmod +x ${bin}/*
+        echo "bun-bin=${path}" >> $GITHUB_OUTPUT
         echo "bun-path=${path}" >> ${GITHUB_OUTPUT}
 
     - if: ${{ inputs.add-to-path == 'true' }}
       name: Add Bun to Path
       shell: bash
       run: |
-        bin=$(dirname "${{ steps.unpack.outputs.bun-path }}")
-        if [[ "${{ runner.os }}" == "Windows" ]]; then
-          bin=$(cygpath -w ${bin})
-        fi
-        ls $bin
-        echo "${bin}" >> ${GITHUB_PATH}
+        echo "${{ steps.unpack.outputs.bun-bin }}" >> ${GITHUB_PATH}

@@ -91,13 +91,18 @@ runs:
         mkdir -p ${{ runner.temp }}/.bun/bin
         mv ${{ steps.setup.outputs.target }}/bun* ${{ runner.temp }}/.bun/bin/
         chmod +x ${{ runner.temp }}/.bun/bin/*
-        path="${{ runner.temp }}/.bun/bin"
-        if [[ "${{ steps.setup.outputs.os }}" == "windows" ]]; then
+        path="${{ runner.temp }}/.bun/bin/bun"
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
           path=$(cygpath -w ${path})
         fi
         echo "bun-path=${path}" >> ${GITHUB_OUTPUT}
 
-    - name: Add Bun to Path
+    - if: ${{ inputs.add-to-path }}
+      name: Add Bun to Path
       shell: bash
       run: |
-        echo "${{ steps.unpack.outputs.bun-path }}" >> ${GITHUB_PATH}
+        bin=$(dirname "${{ steps.unpack.outputs.bun-path }}")
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          bin=$(cygpath -w ${bin})
+        fi
+        echo "${bin}" >> ${GITHUB_PATH}
